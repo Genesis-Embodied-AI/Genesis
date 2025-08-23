@@ -1,47 +1,22 @@
 import itertools
 import queue
 import os
+import re
 import sys
-from io import BytesIO
-from pathlib import Path
+import time
 
 import numpy as np
+import pyglet
 import pytest
 import torch
-from PIL import Image
-from syrupy.extensions.image import PNGImageSnapshotExtension
-from syrupy.location import PyTestLocation
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter
 
+from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
-
-
-IMG_STD_ERR_THR = 0.8
-
-
-class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
-    def matches(self, *, serialized_data, snapshot_data) -> bool:
-        img_arrays = []
-        for data in (serialized_data, snapshot_data):
-            buffer = BytesIO()
-            buffer.write(data)
-            buffer.seek(0)
-            img_arrays.append(np.asarray(Image.open(buffer)))
-        img_delta = img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)
-        return np.std(img_delta) < IMG_STD_ERR_THR
-
-    # def diff_snapshots(self, serialized_data, snapshot_data) -> "SerializableData":
-    #     # re-run pixelmatch and return a diff image (can cache on the class instance)
-    #     pass
-
-
-@pytest.fixture
-def png_snapshot(snapshot):
-    return snapshot.use_extension(PixelMatchSnapshotExtension)
 
 
 @pytest.mark.required
@@ -568,6 +543,80 @@ def test_debug_draw(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_viewer):
+    IMAGE_FILENAME = tmp_path / "screenshot.png"
+
+    # Mock 'get_save_filename' to avoid poping up an interactive dialog
+    def get_save_filename(self, file_exts):
+        return IMAGE_FILENAME
+
+    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
+
+    # Mock 'on_key_press' to determine whether requests have been processed
+    is_done = False
+    on_key_press_orig = gs.ext.pyrender.viewer.Viewer.on_key_press
+
+    def on_key_press(self, symbol: int, modifiers: int):
+        nonlocal is_done
+        assert not is_done
+        ret = on_key_press_orig(self, symbol, modifiers)
+        is_done = True
+        return ret
+
+    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_press", on_key_press)
+
+    # Create a scene
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            # Force screen-independent low-quality resolution when running unit tests for consistency
+            res=(640, 480),
+            # Enable running in background thread if supported by the platform
+            run_in_thread=sys.platform == "linux",
+        ),
+        show_viewer=True,
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 0.0),
+        ),
+    )
+    scene.build()
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    # Try saving the current frame
+    pyrender_viewer.dispatch_event("on_key_press", pyglet.window.key.S, 0)
+
+    # Waiting for request completion
+    if pyrender_viewer.run_in_thread:
+        for i in range(100):
+            if is_done:
+                is_done = False
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("Keyboard event not processed before timeout")
+    else:
+        pyrender_viewer.dispatch_pending_events()
+        pyrender_viewer.dispatch_events()
+
+    # Skip test if necessary...
+    if sys.platform == "linux":
+        glinfo = pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        if "llvmpipe" in renderer:
+            llvm_version = re.search(r"LLVM\s+([\d.]+)", renderer).group(1)
+            if llvm_version < "20":
+                pytest.xfail("Text is blurry on Linux using old CPU-based Mesa rendering driver.")
+
+    # Make sure that the result is valid
+    with open(IMAGE_FILENAME, "rb") as f:
+        assert f.read() == png_snapshot
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("use_rasterizer", [True, False])
 @pytest.mark.parametrize("render_all_cameras", [True, False])
@@ -576,9 +625,6 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
     CAM_RES = (256, 256)
 
     pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
-
-    snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=png_snapshot.test_location))
-    get_hf_dataset(pattern=f"{snapshot_dir.name}/*", repo_name="snapshots", local_dir=snapshot_dir.parent)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

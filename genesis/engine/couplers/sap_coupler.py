@@ -3,7 +3,7 @@ import math
 
 import igl
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.options.solvers import SAPCouplerOptions
@@ -428,6 +428,8 @@ class SAPCoupler(RBC):
             )
 
     def _init_equality_constraint(self):
+        # TODO: Handling dynamically registered weld constraints would requiere passing 'constraint_state' as input.
+        # This is not a big deal for now since only joint equality constraints are support by this coupler.
         self.equality_constraint_handler = RigidConstraintHandler(self.sim)
         self.equality_constraint_handler.build_constraints(
             self.rigid_solver.equalities_info, self.rigid_solver.joints_info, self.rigid_solver._static_rigid_sim_config

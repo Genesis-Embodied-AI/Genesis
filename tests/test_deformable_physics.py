@@ -6,6 +6,7 @@ import genesis as gs
 from .utils import assert_allclose
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_muscle(muscle_material, show_viewer):
@@ -91,6 +92,7 @@ def test_muscle(muscle_material, show_viewer):
         scene.step()
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
     scene = gs.Scene(

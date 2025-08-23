@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 
@@ -12,8 +12,9 @@ class Elastic(Base):
 
     Note
     ----
-    Reference for the default values of `E` and `nu`: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L201
     Elastic objects is softened by multiplying the default E by 0.3.
+    Reference for the default values of `E` and `nu`:
+    https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L201
 
     Parameters
     ----------

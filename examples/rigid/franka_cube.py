@@ -1,5 +1,6 @@
+import argparse
+
 import numpy as np
-import time
 import genesis as gs
 
 

@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity

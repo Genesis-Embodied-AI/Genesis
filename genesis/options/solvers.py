@@ -154,7 +154,7 @@ class SAPCouplerOptions(BaseCouplerOptions):
     enable_fem_self_tet_contact : bool, optional
         Whether to use tetrahedral based self-contact. Defaults to True.
     rigid_rigid_type : str, optional
-        Type of contact between rigid bodies. Defaults to "hydroelastic". Can be "hydroelastic", "vert", or "none".
+        Type of contact between rigid bodies. Defaults to "tet". Can be "tet", "vert", or "none".
     rigid_floor_contact_type : str, optional
         Type of contact against the floor. Defaults to "tet". Can be "tet", "vert", or "none".
         Tet would be the default choice for most cases.

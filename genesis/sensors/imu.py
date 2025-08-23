@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import taichi as ti
+import gstaichi as ti
 import torch
 
 import genesis as gs
@@ -70,10 +70,10 @@ class IMUSharedMetadata(SharedSensorMetadata):
 
     solver: RigidSolver | None = None
     links_idx: list[int] = field(default_factory=list)
-    offsets_pos: torch.Tensor = torch.tensor([])
-    offsets_quat: torch.Tensor = torch.tensor([])
-    acc_bias: torch.Tensor = torch.tensor([])
-    ang_bias: torch.Tensor = torch.tensor([])
+    offsets_pos: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    offsets_quat: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    acc_bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    ang_bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
@@ -89,19 +89,28 @@ class IMU(Sensor):
 
         self._shared_metadata.links_idx.append(self._options.entity_idx + self._options.link_idx_local)
         self._shared_metadata.offsets_pos = torch.cat(
-            [self._shared_metadata.offsets_pos, torch.tensor([self._options.pos_offset], dtype=gs.tc_float)]
+            [
+                self._shared_metadata.offsets_pos,
+                torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
+            ]
         )
 
-        quat_tensor = torch.tensor(euler_to_quat(self._options.euler_offset), dtype=gs.tc_float).unsqueeze(0)
+        quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
         if self._shared_metadata.solver.n_envs > 0:
             quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
         self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
 
         self._shared_metadata.acc_bias = torch.cat(
-            [self._shared_metadata.acc_bias, torch.tensor([self._options.accelerometer_bias], dtype=gs.tc_float)]
+            [
+                self._shared_metadata.acc_bias,
+                torch.tensor([self._options.accelerometer_bias], dtype=gs.tc_float, device=gs.device),
+            ]
         )
         self._shared_metadata.ang_bias = torch.cat(
-            [self._shared_metadata.ang_bias, torch.tensor([self._options.gyroscope_bias], dtype=gs.tc_float)]
+            [
+                self._shared_metadata.ang_bias,
+                torch.tensor([self._options.gyroscope_bias], dtype=gs.tc_float, device=gs.device),
+            ]
         )
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:

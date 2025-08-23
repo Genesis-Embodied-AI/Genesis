@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 from ..rigid_entity import RigidLink
 from .avatar_geom import AvatarGeom, AvatarVisGeom

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
+import gstaichi as ti
 import numpy as np
 import numpy.typing as npt
-import taichi as ti
 import torch
 
 import genesis as gs
@@ -929,7 +929,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
         # timer.stamp("kernel_step_1")
 
@@ -952,7 +952,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island=self.constraint_solver.contact_island,
+                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             )
             # timer.stamp("kernel_step_2")
 
@@ -975,14 +975,28 @@ class RigidSolver(Solver):
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         self._func_constraint_clear()
         # timer.stamp("constraint_solver.clear")
+        if not self._disable_constraint and not self._use_contact_island:
+            self.constraint_solver.add_equality_constraints()
+            # timer.stamp("constraint_solver.add_equality_constraints")
 
         if self._enable_collision:
             self.collider.detection()
             # timer.stamp("detection")
 
         if not self._disable_constraint:
-            self.constraint_solver.handle_constraints()
-        # timer.stamp("constraint_solver.handle_constraints")
+            if self._use_contact_island:
+                self.constraint_solver.add_constraints()
+                # timer.stamp("constraint_solver.add_constraints")
+            else:
+                self.constraint_solver.add_frictionloss_constraints()
+                if self._enable_collision:
+                    self.constraint_solver.add_collision_constraints()
+                if self._enable_joint_limit:
+                    self.constraint_solver.add_joint_limit_constraints()
+                # timer.stamp("constraint_solver.add_other_constraints")
+
+            self.constraint_solver.resolve()
+            # timer.stamp("constraint_solver.resolve")
 
     def _func_constraint_clear(self):
         self.constraint_solver.constraint_state.n_constraints.fill(0)
@@ -1002,7 +1016,7 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island=self.constraint_solver.contact_island,
+            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
 
     def _func_update_acc(self):
@@ -1291,7 +1305,7 @@ class RigidSolver(Solver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island=self.constraint_solver.contact_island,
+                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             )
 
     def substep_post_coupling_grad(self, f):
@@ -1887,6 +1901,10 @@ class RigidSolver(Solver):
             kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
         elif name == "damping":
             kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+        elif name == "frictionloss":
+            kernel_set_dofs_frictionloss(
+                tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
+            )
         elif name == "limit":
             kernel_set_dofs_limit(
                 tensor_list[0], tensor_list[1], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
@@ -1914,6 +1932,9 @@ class RigidSolver(Solver):
 
     def set_dofs_damping(self, damping, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([damping], dofs_idx, "damping", envs_idx)
+
+    def set_dofs_frictionloss(self, frictionloss, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        self._set_dofs_info([frictionloss], dofs_idx, "frictionloss", envs_idx, unsafe=unsafe)
 
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx, unsafe=unsafe)
@@ -2597,7 +2618,7 @@ def kernel_init_dof_fields(
     # taichi variables
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
-    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to taichi
+    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to gstaichi
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -3078,7 +3099,7 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland
+    contact_island_state: array_class.ContactIslandState,
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -3091,7 +3112,7 @@ def kernel_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island=contact_island,
+        contact_island_state=contact_island_state,
     )
 
 
@@ -3531,7 +3552,7 @@ def kernel_rigid_entity_inverse_kinematics(
 
         if custom_init_qpos:
             for i_q in range(rigid_entity.n_qs):
-                rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b] = init_qpos[i_b, i_q]
+                rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b] = init_qpos[i_b_, i_q]
 
         for i_error in range(n_error_dims):
             rigid_entity._IK_err_pose_best[i_error, i_b] = 1e4
@@ -3558,7 +3579,7 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     i_l_ee = links_idx[i_ee]
 
-                    tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
+                    tgt_pos_i = ti.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
                     err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
@@ -3566,7 +3587,7 @@ def kernel_rigid_entity_inverse_kinematics(
                         solved = False
 
                     tgt_quat_i = ti.Vector(
-                        [quats[i_ee, i_b, 0], quats[i_ee, i_b, 1], quats[i_ee, i_b, 2], quats[i_ee, i_b, 3]]
+                        [quats[i_ee, i_b_, 0], quats[i_ee, i_b_, 1], quats[i_ee, i_b_, 2], quats[i_ee, i_b_, 3]]
                     )
                     err_rot_i = gu.ti_quat_to_rotvec(
                         gu.ti_transform_quat_by_quat(gu.ti_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i)
@@ -3678,7 +3699,7 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     i_l_ee = links_idx[i_ee]
 
-                    tgt_pos_i = ti.Vector([poss[i_ee, i_b, 0], poss[i_ee, i_b, 1], poss[i_ee, i_b, 2]])
+                    tgt_pos_i = ti.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
                     err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
@@ -3686,7 +3707,7 @@ def kernel_rigid_entity_inverse_kinematics(
                         solved = False
 
                     tgt_quat_i = ti.Vector(
-                        [quats[i_ee, i_b, 0], quats[i_ee, i_b, 1], quats[i_ee, i_b, 2], quats[i_ee, i_b, 3]]
+                        [quats[i_ee, i_b_, 0], quats[i_ee, i_b_, 1], quats[i_ee, i_b_, 2], quats[i_ee, i_b_, 3]]
                     )
                     err_rot_i = gu.ti_quat_to_rotvec(
                         gu.ti_transform_quat_by_quat(gu.ti_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i)
@@ -3799,7 +3820,7 @@ def func_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
 ):
     func_compute_mass_matrix(
         implicit_damping=ti.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
@@ -3830,7 +3851,7 @@ def func_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island=contact_island,
+        contact_island_state=contact_island_state,
     )
     func_update_acc(
         update_cacc=False,
@@ -3952,7 +3973,7 @@ def kernel_step_1(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
 ):
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
@@ -3984,7 +4005,7 @@ def kernel_step_1(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island=contact_island,
+        contact_island_state=contact_island_state,
     )
 
 
@@ -4064,7 +4085,7 @@ def kernel_step_2(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland
+    contact_island_state: array_class.ContactIslandState,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4108,7 +4129,7 @@ def kernel_step_2(
             collider_state=collider_state,
             unused__rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            contact_island=contact_island,
+            contact_island_state=contact_island_state,
         )
         func_aggregate_awake_entities(
             entities_state=entities_state,
@@ -4989,24 +5010,23 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     collider_state: array_class.ColliderState,
     unused__rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),  # ContactIsland,
+    contact_island_state: array_class.ContactIslandState,
 ) -> None:
 
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
-    ci = contact_island
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b in range(_B):
-        for island_idx in range(ci.n_islands[i_b]):
-            was_island_hibernated = ci.island_hibernated[island_idx, i_b]
+        for island_idx in range(contact_island_state.n_islands[i_b]):
+            was_island_hibernated = contact_island_state.island_hibernated[island_idx, i_b]
 
             if not was_island_hibernated:
                 are_all_entities_okay_for_hibernation = True
-                entity_ref_range = ci.island_entity[island_idx, i_b]
+                entity_ref_range = contact_island_state.island_entity[island_idx, i_b]
                 for i_entity_ref_offset_ in range(entity_ref_range.n):
                     entity_ref = entity_ref_range.start + i_entity_ref_offset_
-                    entity_idx = ci.entity_id[entity_ref, i_b]
+                    entity_idx = contact_island_state.entity_id[entity_ref, i_b]
 
                     # Hibernated entities already have zero dofs_state.acc/vel
                     is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
@@ -5027,7 +5047,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     # update collider sort_buffer with aabb extents along x-axis
                     for i_entity_ref_offset_ in range(entity_ref_range.n):
                         entity_ref = entity_ref_range.start + i_entity_ref_offset_
-                        entity_idx = ci.entity_id[entity_ref, i_b]
+                        entity_idx = contact_island_state.entity_id[entity_ref, i_b]
                         for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
                             min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
                             max_idx, max_val = geoms_state.max_buffer_idx[i_g, i_b], geoms_state.aabb_max[i_g, i_b][0]
@@ -5036,11 +5056,11 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                 else:
                     # perform hibernation
                     prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
-                    prev_entity_idx = ci.entity_id[prev_entity_ref, i_b]
+                    prev_entity_idx = contact_island_state.entity_id[prev_entity_ref, i_b]
 
                     for i_entity_ref_offset_ in range(entity_ref_range.n):
                         entity_ref = entity_ref_range.start + i_entity_ref_offset_
-                        entity_idx = ci.entity_id[entity_ref, i_b]
+                        entity_idx = contact_island_state.entity_id[entity_ref, i_b]
 
                         func_hibernate_entity_and_zero_dof_velocities(
                             entity_idx,
@@ -5239,7 +5259,7 @@ def func_torque_and_passive_force(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
 ):
     n_entities = entities_info.n_links.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
@@ -5335,7 +5355,7 @@ def func_torque_and_passive_force(
                 links_state,
                 geoms_state,
                 rigid_global_info,
-                contact_island,
+                contact_island_state,
             )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
@@ -6440,6 +6460,23 @@ def kernel_set_dofs_damping(
     else:
         for i_d_ in range(dofs_idx.shape[0]):
             dofs_info.damping[dofs_idx[i_d_]] = damping[i_d_]
+
+
+@ti.kernel
+def kernel_set_dofs_frictionloss(
+    frictionloss: ti.types.ndarray(),
+    dofs_idx: ti.types.ndarray(),
+    envs_idx: ti.types.ndarray(),
+    dofs_info: array_class.DofsInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    if ti.static(static_rigid_sim_config.batch_dofs_info):
+        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+            dofs_info.frictionloss[dofs_idx[i_d_], envs_idx[i_b_]] = frictionloss[i_b_, i_d_]
+    else:
+        for i_d_ in range(dofs_idx.shape[0]):
+            dofs_info.frictionloss[dofs_idx[i_d_]] = frictionloss[i_d_]
 
 
 @ti.kernel

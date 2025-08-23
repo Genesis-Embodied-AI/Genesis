@@ -18,6 +18,7 @@
 # Genesis
 
 ## 🔥 News
+- [2025-08-16] Released v0.3.1
 - [2025-08-05] Released v0.3.0 🎊 🎉
 - [2025-07-02] The development of Genesis is now officially supported by [Genesis AI](https://genesis-ai.company/).
 - [2025-01-09] We released a [detailed performance benchmarking and comparison report](https://github.com/zhouxian/genesis-speed-benchmark) on Genesis, together with all the test scripts.
@@ -86,12 +87,13 @@ pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
 ```
 Note that the package must still be updated manually to sync with main branch.
 
-Users seeking to edit the source code of Genesis are encourage to install Genesis in editable mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
+Users seeking to contribute are encouraged to install Genesis in editable mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
 pip install -e ".[dev]"
 ```
+It is recommended to systematically execute `pip install -e ".[dev]"` after moving HEAD to make sure that all dependencies and entrypoints are up-to-date.
 
 ## Docker
 

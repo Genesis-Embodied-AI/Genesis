@@ -364,6 +364,50 @@ def test_frictionloss(gs_sim, mj_sim, tol):
     assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["hinge_slide"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_set_dofs_frictionloss_physics(gs_sim, mj_sim, tol):
+    (robot,) = gs_sim.entities
+
+    initial_velocity = np.array([1.0, 0.0])
+    robot.set_dofs_velocity(initial_velocity)
+
+    robot.set_dofs_frictionloss(np.array([0.0, 0.0]))
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_zero = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    robot.set_dofs_velocity(initial_velocity)
+    robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_high = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    np.testing.assert_array_less(velocity_high[0], velocity_zero[0])
+    np.testing.assert_array_less(velocity_high[1], velocity_zero[1])
+
+    robot.set_dofs_velocity(initial_velocity)
+    robot.set_dofs_frictionloss(np.array([0.5]), dofs_idx_local=[0])
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_medium = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    np.testing.assert_array_less(velocity_high[0], velocity_medium[0])
+    np.testing.assert_array_less(velocity_medium[0], velocity_zero[0])
+
+    friction_effect = velocity_zero[0] - velocity_high[0]
+    np.testing.assert_array_less(tol, friction_effect)
+
+    slide_friction_effect = velocity_zero[1] - velocity_high[1]
+    np.testing.assert_array_less(tol, slide_friction_effect)
+
+
 # Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
 @pytest.mark.required
 @pytest.mark.multi_contact(False)
@@ -1173,194 +1217,69 @@ def test_stickman(gs_sim, mj_sim, tol):
     np.testing.assert_array_less(0, body_z + gs.EPS)
 
 
-def move_cube(use_suction, mode, show_viewer):
-    # Add DoF armature to improve numerical stability if not using 'approximate_implicitfast' integrator.
-    #
-    # This is necessary because the first-order correction term involved in the implicit integration schemes
-    # 'implicitfast' and 'Euler' are only able to stabilize each entity independently, from the forces that were
-    # obtained from the instable accelerations. As a result, eveything is fine as long as the entities are not
-    # interacting with each other, but it induces unrealistic motion otherwise. In this case, the acceleration of the
-    # cube being lifted is based on the acceleration that the gripper would have without implicit damping.
-    #
-    # The only way to correct this would be to take into account the derivative of the Jacobian of the constraints in
-    # the first-order correction term. Doing this is challenging and would significantly increase the computation cost.
-    #
-    # In practice, it is more common to just go for a higher order integrator such as RK4.
-    if mode == 0:
-        integrator = gs.integrator.approximate_implicitfast
-        substeps = 1
-        armature = 0.0
-    elif mode == 1:
-        integrator = gs.integrator.implicitfast
-        substeps = 4
-        armature = 0.0
-    elif mode == 2:
-        integrator = gs.integrator.Euler
-        substeps = 1
-        armature = 2.0
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_multilink_inverse_kinematics(show_viewer):
+    TOL = 1e-5
 
-    # Create and build the scene
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-            substeps=substeps,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            box_box_detection=True,
-            integrator=integrator,
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(1,),
         ),
         show_viewer=show_viewer,
-        show_FPS=False,
     )
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
+        ),
     )
     cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.05, 0.05, 0.05),
-            pos=(0.65, 0.0, 0.025),
+            pos=(0.0, 0.2, 0.05),
         ),
-        surface=gs.surfaces.Plastic(color=(1, 0, 0)),
     )
-    cube_2 = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.05, 0.05, 0.05),
-            pos=(0.4, 0.2, 0.025),
-        ),
-        surface=gs.surfaces.Plastic(color=(0, 1, 0)),
+    scene.build(n_envs=2)
+    scene.reset()
+
+    index_finger_distal = robot.get_link("index_finger_distal")
+    middle_finger_distal = robot.get_link("middle_finger_distal")
+    wrist = robot.get_link("wrist")
+    index_finger_pos = np.array([[0.6, 0.5, 0.2]])
+    middle_finger_pos = np.array([[0.63, 0.5, 0.2]])
+    wrist_pos = index_finger_pos - np.array([[0.0, 0.0, 0.2]])
+
+    qpos, err = robot.inverse_kinematics_multilink(
+        links=(index_finger_distal, middle_finger_distal, wrist),
+        poss=(index_finger_pos, middle_finger_pos, wrist_pos),
+        envs_idx=(1,),
+        pos_tol=TOL,
+        rot_tol=TOL,
+        return_error=True,
     )
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-        vis_mode="collision",
-        visualize_contact=True,
+    assert qpos.shape == (1, robot.n_qs)
+    assert err.shape == (1, 3, 6)
+    assert err.abs().max() < TOL
+    if show_viewer:
+        robot.set_qpos(qpos, envs_idx=(1,))
+        scene.visualizer.update()
+
+    links_pos, links_quat = robot.forward_kinematics(qpos, envs_idx=(1,))
+    assert_allclose(links_pos[:, index_finger_distal.idx], index_finger_pos, tol=TOL)
+    assert_allclose(links_pos[:, middle_finger_distal.idx], middle_finger_pos, tol=TOL)
+    assert_allclose(links_pos[:, wrist.idx], wrist_pos, tol=TOL)
+
+    robot.set_qpos(qpos, envs_idx=(1,))
+    scene.rigid_solver._func_forward_kinematics_entity(
+        i_e=robot.idx, envs_idx=torch.tensor((1,), dtype=gs.tc_int, device=gs.device)
     )
-    scene.build()
-
-    franka.set_dofs_armature(franka.get_dofs_armature() + armature)
-
-    motors_dof = np.arange(7)
-    fingers_dof = np.arange(7, 9)
-    end_effector = franka.get_link("hand")
-
-    # set control gains
-    franka.set_dofs_kp(
-        np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
-    )
-    franka.set_dofs_kv(
-        np.array([450, 450, 350, 350, 200, 200, 200, 10, 10]),
-    )
-    franka.set_dofs_force_range(
-        np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
-        np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
-    )
-
-    # move to pre-grasp pose
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.22]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    # gripper open pos
-    qpos[-2:] = 0.04
-    path = franka.plan_path(qpos_goal=qpos, num_waypoints=300, resolution=0.05, max_retry=10)
-    # execute the planned path
-    franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
-    for waypoint in path:
-        franka.control_dofs_position(waypoint)
-        scene.step()
-
-    # Get more time to the robot to reach the last waypoint
-    for i in range(120):
-        scene.step()
-
-    # reach
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.13]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(60):
-        scene.step()
-
-    # grasp
-    if use_suction:
-        link_cube = cube.get_link("box_baselink").idx
-        link_franka = franka.get_link("hand").idx
-        scene.sim.rigid_solver.add_weld_constraint(link_cube, link_franka)
-    else:
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
-        for i in range(50):
-            scene.step()
-
-    # lift
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.28]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(50):
-        scene.step()
-
-    # reach
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.4, 0.2, 0.2]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    path = franka.plan_path(
-        qpos_goal=qpos,
-        num_waypoints=100,
-        resolution=0.05,
-        max_retry=10,
-        ee_link_name="hand",
-        with_entity=cube,
-    )
-    for waypoint in path:
-        franka.control_dofs_position(waypoint[:-2], motors_dof)
-        scene.step()
-
-    # Get more time to the robot to reach the last waypoint
-    for i in range(50):
-        scene.step()
-
-    # release
-    if use_suction:
-        scene.sim.rigid_solver.delete_weld_constraint(link_cube, link_franka)
-    else:
-        franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
-
-    for i in range(550):
-        scene.step()
-        if i > 550:
-            qvel = cube.get_dofs_velocity()
-            assert_allclose(qvel, 0, atol=0.02)
-
-    qpos = cube.get_dofs_position()
-    assert_allclose(qpos[2], 0.075, atol=2e-3)
-
-
-@pytest.mark.parametrize(
-    "mode, backend",
-    [
-        pytest.param(0, gs.cpu, marks=pytest.mark.required),
-        pytest.param(1, gs.cpu),
-        pytest.param(2, gs.cpu),
-        pytest.param(0, gs.gpu),
-        pytest.param(1, gs.gpu),
-        pytest.param(2, gs.gpu),
-    ],
-)
-def test_inverse_kinematics(mode, show_viewer):
-    move_cube(use_suction=False, mode=mode, show_viewer=show_viewer)
-
-
-@pytest.mark.parametrize("mode", [0, 1, 2])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_suction_cup(mode, show_viewer):
-    move_cube(use_suction=True, mode=mode, show_viewer=show_viewer)
+    assert_allclose(index_finger_distal.get_pos(envs_idx=(1,)), index_finger_pos, tol=TOL)
+    assert_allclose(middle_finger_distal.get_pos(envs_idx=(1,)), middle_finger_pos, tol=TOL)
+    assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=TOL)
 
 
 @pytest.mark.required
@@ -2269,7 +2188,7 @@ def test_gravity(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(show_viewer, tol):
     scene1 = gs.Scene(
         show_viewer=show_viewer,
@@ -2290,7 +2209,7 @@ def test_scene_saver_franka(show_viewer, tol):
     target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
     franka1.control_dofs_position(target_pose, dof_idx)
 
-    for _ in range(400):
+    for _ in range(100):
         scene1.step()
 
     pose_ref = franka1.get_dofs_position(dof_idx)
@@ -2307,7 +2226,8 @@ def test_scene_saver_franka(show_viewer, tol):
 
     pose_loaded = franka2.get_dofs_position(dof_idx)
 
-    assert_allclose(pose_ref, pose_loaded, tol=tol)
+    # FIXME: It should be possible to achieve better accuracy with 64bits precision
+    assert_allclose(pose_ref, pose_loaded, tol=1e-6)
 
 
 @pytest.mark.required

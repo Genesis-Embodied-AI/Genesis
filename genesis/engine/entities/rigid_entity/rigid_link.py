@@ -1,9 +1,9 @@
 from typing import TYPE_CHECKING
 
+import gstaichi as ti
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
-import taichi as ti
 import torch
+from numpy.typing import ArrayLike
 
 import genesis as gs
 import trimesh

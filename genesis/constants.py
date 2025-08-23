@@ -1,6 +1,6 @@
 import enum
 
-import taichi as ti
+import gstaichi as ti
 
 # dynamic loading
 ACTIVE = 1

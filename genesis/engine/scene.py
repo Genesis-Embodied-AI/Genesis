@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-import taichi as ti
+import gstaichi as ti
 from numpy.typing import ArrayLike
 
 import genesis as gs
@@ -205,6 +205,11 @@ class Scene(RBC):
         self._is_built = False
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
+
+    def __del__(self):
+        if self._visualizer is not None:
+            self._visualizer.destroy()
+            self._visualizer = None
 
     def _validate_options(
         self,
@@ -1174,9 +1179,9 @@ class Scene(RBC):
         """
         arrays: dict[str, np.ndarray] = {}
 
-        for name, field in self.__dict__.items():
-            if isinstance(field, ti.Field):
-                arrays[".".join((self.__class__.__name__, name))] = field.to_numpy()
+        for name, value in self.__dict__.items():
+            if isinstance(value, (ti.Field, ti.Ndarray)):
+                arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
 
         for solver in self.active_solvers:
             arrays.update(solver.dump_ckpt_to_numpy())
@@ -1214,11 +1219,11 @@ class Scene(RBC):
 
         arrays = state["arrays"]
 
-        for name, field in self.__dict__.items():
-            if isinstance(field, ti.Field):
+        for name, value in self.__dict__.items():
+            if isinstance(value, (ti.Field, ti.Ndarray)):
                 key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
-                    field.from_numpy(arrays[key])
+                    value.from_numpy(arrays[key])
 
         for solver in self.active_solvers:
             solver.load_ckpt_from_numpy(arrays)

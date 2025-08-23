@@ -316,7 +316,7 @@ class Renderer(object):
             for p in mesh.primitives:
                 try:
                     p.delete()
-                except OpenGL.error.GLError:
+                except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                     pass
         self._meshes.clear()
 
@@ -324,14 +324,14 @@ class Renderer(object):
         for mesh_texture in self._mesh_textures:
             try:
                 mesh_texture.delete()
-            except OpenGL.error.GLError:
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                 pass
         self._mesh_textures.clear()
 
         for shadow_texture in self._shadow_textures:
             try:
                 shadow_texture.delete()
-            except OpenGL.error.GLError:
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                 pass
         self._shadow_textures.clear()
 

@@ -8,13 +8,13 @@ import traceback
 from platform import system
 from contextlib import redirect_stdout
 
-# Import taichi while collecting its output without printing directly
+# Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
 
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    import taichi as ti
+    import gstaichi as ti
 
 try:
     import torch
@@ -185,7 +185,7 @@ def init(
         if backend == gs_backend.cpu:
             taichi_kwargs.update(cpu_max_num_threads=1)
         else:
-            logger.warning("CPU backend is strongly recommended in debug mode.")
+            logger.warning("Debug mode is partially supported for GPU backend.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = True
@@ -211,7 +211,7 @@ def init(
     if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
         ti_arch = TI_ARCH[platform][gs_backend.cpu]
 
-    # init taichi
+    # init gstaichi
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=ti_arch,
@@ -230,10 +230,9 @@ def init(
             **taichi_kwargs,
         )
 
-    # Make sure that taichi arch is matching requirement
-    ti_runtime = ti.lang.impl.get_runtime()
-    ti_arch = ti_runtime.prog.config().arch
-    if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+    # Make sure that gstaichi arch is matching requirement
+    ti_config = ti.lang.impl.current_cfg()
+    if backend != gs.cpu and ti_config.arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
         device, device_name, total_mem, backend = get_device(gs.cpu)
 
     _globalize_backend(backend)
@@ -292,12 +291,10 @@ def destroy():
     # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
-        if scene._visualizer is not None:
-            scene._visualizer.destroy()
         del scene
     global_scene_list.clear()
 
-    # Reset taichi
+    # Reset gstaichi
     ti.reset()
 
     # Delete logger

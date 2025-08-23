@@ -116,10 +116,10 @@ class Viewer(RBC):
 
                 if i == len(all_opengl_platforms) - 1:
                     raise
-
-            # Select PyOpenGL backend compatible with `pyrender.OffscreenRenderer`
-            if platform not in ("osmesa", "pyglet", "egl"):
-                os.environ["PYOPENGL_PLATFORM"] = "pyglet"
+            finally:
+                del os.environ["PYOPENGL_PLATFORM"]
+                if opengl_platform_orig is not None:
+                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
 
         self.lock = ViewerLock(self._pyrender_viewer)
 

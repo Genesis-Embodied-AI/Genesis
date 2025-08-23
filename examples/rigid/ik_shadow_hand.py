@@ -66,19 +66,16 @@ def main():
     target_quat = np.array([1, 0, 0, 0])
     index_finger_distal = robot.get_link("index_finger_distal")
     middle_finger_distal = robot.get_link("middle_finger_distal")
-    wrist = robot.get_link("wrist")  # there is no link named "forearm"
+    wrist = robot.get_link("wrist")
 
     center = np.array([0.5, 0.5, 0.2])
     r1 = 0.1
     r2 = 0.13
-    # FIXME: we have this Debug info and the simulation runs very slow
-    # [DEBUG] Tensor had to be re-allocated because of incorrect dtype/device or non-contiguous memory.
-    # #This may impede performance if it occurs in the critical path of your application
 
-    for i in range(3):
+    for i in range(100):
         index_finger_pos = center + np.array([np.cos(i / 90 * np.pi), np.sin(i / 90 * np.pi), 0]) * r1
         middle_finger_pos = center + np.array([np.cos(i / 90 * np.pi), np.sin(i / 90 * np.pi), 0]) * r2
-        wrist_pos = index_finger_pos - np.array([0, 0, 0.40])
+        wrist_pos = index_finger_pos - np.array([0, 0, 0.20])
 
         target_1.set_qpos(np.concatenate([index_finger_pos, target_quat]))
         target_2.set_qpos(np.concatenate([middle_finger_pos, target_quat]))

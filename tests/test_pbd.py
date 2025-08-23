@@ -12,7 +12,7 @@ def pbd_material():
     return gs.materials.PBD.Elastic()
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.required
 def test_maxvolume(pbd_material, show_viewer, box_obj_path):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
