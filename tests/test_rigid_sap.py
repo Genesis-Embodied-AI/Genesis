@@ -79,6 +79,8 @@ def test_multiple_rigid_entities(show_viewer):
     )
 
 
+@pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_franka_panda_grasp_rigid_cube(show_viewer):
     """
     Test if the Franka Panda can successfully grasp the rigid cube.

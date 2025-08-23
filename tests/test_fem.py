@@ -366,6 +366,7 @@ def fem_material_linear_corotated_soft():
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -717,6 +718,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
     Test if a box with hard vertex constraints has those vertices fixed, and collisiong with a sphere works correctly.
@@ -806,6 +808,7 @@ def fem_material_linear_corotated_rough():
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
     """
     Test if the Franka Panda can successfully grasp the cube.
@@ -898,6 +901,7 @@ def fem_material_linear_corotated_soft_rough():
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough, show_viewer):
     """
     Test if the Franka Panda can successfully grasp the soft sphere.
