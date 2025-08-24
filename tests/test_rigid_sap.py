@@ -124,7 +124,7 @@ def test_franka_panda_grasp_rigid_cube(show_viewer):
     scene.build()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    qpos = np.array([-1.0119, 1.5576, 1.3673, -1.6867, -1.5812, 1.7745, 1.4598, 0.04, 0.04])
     franka.set_qpos(qpos)
     scene.step()
 
@@ -135,13 +135,8 @@ def test_franka_panda_grasp_rigid_cube(show_viewer):
         quat=np.array([0, 1, 0, 0]),
     )
 
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-
-    # hold
-    for i in range(10):
-        scene.step()
     # grasp
-    for i in range(30):
+    for i in range(15):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
@@ -149,16 +144,22 @@ def test_franka_panda_grasp_rigid_cube(show_viewer):
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
+        pos=np.array([0.65, 0.0, 0.185]),
         quat=np.array([0, 1, 0, 0]),
     )
-    for i in range(100):
+    for i in range(50):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
-        if i == 49:
+
+    # hold
+    for i in range(10):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
+        if i == 0:
             old_pos = cube.get_dofs_position()[:3]
-        if i == 99:
+        if i == 9:
             new_pos = cube.get_dofs_position()[:3]
     assert_allclose(
         new_pos,
