@@ -279,6 +279,8 @@ class SAPCoupler(RBC):
             self.rigid_tri_bvh = LBVH(self.rigid_tri_aabb, max_n_query_result_per_aabb)
 
     def _init_equality_constraint(self):
+        # TODO: Handling dynamically registered weld constraints would requiere passing 'constraint_state' as input.
+        # This is not a big deal for now since only joint equality constraints are support by this coupler.
         self.equality_constraint = RigidConstraintHandler(self.sim)
         self.equality_constraint.build_constraints(
             self.rigid_solver.equalities_info, self.rigid_solver.joints_info, self.rigid_solver._static_rigid_sim_config

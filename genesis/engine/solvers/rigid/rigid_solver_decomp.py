@@ -975,14 +975,28 @@ class RigidSolver(Solver):
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         self._func_constraint_clear()
         # timer.stamp("constraint_solver.clear")
+        if not self._disable_constraint and not self._use_contact_island:
+            self.constraint_solver.add_equality_constraints()
+            # timer.stamp("constraint_solver.add_equality_constraints")
 
         if self._enable_collision:
             self.collider.detection()
             # timer.stamp("detection")
 
         if not self._disable_constraint:
-            self.constraint_solver.handle_constraints()
-        # timer.stamp("constraint_solver.handle_constraints")
+            if self._use_contact_island:
+                self.constraint_solver.add_constraints()
+                # timer.stamp("constraint_solver.add_constraints")
+            else:
+                self.constraint_solver.add_frictionloss_constraints()
+                if self._enable_collision:
+                    self.constraint_solver.add_collision_constraints()
+                if self._enable_joint_limit:
+                    self.constraint_solver.add_joint_limit_constraints()
+                # timer.stamp("constraint_solver.add_other_constraints")
+
+            self.constraint_solver.resolve()
+            # timer.stamp("constraint_solver.resolve")
 
     def _func_constraint_clear(self):
         self.constraint_solver.constraint_state.n_constraints.fill(0)
@@ -2010,7 +2024,7 @@ class RigidSolver(Solver):
         )
         if not unsafe and not has_gains:
             raise gs.raise_exception(
-                "Please set control gains kp,kv using `get_dofs_kp`,`get_dofs_kv` prior to calling this method."
+                "Please set control gains kp,kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
             )
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False):
@@ -2024,7 +2038,7 @@ class RigidSolver(Solver):
         )
         if not unsafe and not has_gains:
             raise gs.raise_exception(
-                "Please set control gains kp,kv using `get_dofs_kp`,`get_dofs_kv` prior to calling this method."
+                "Please set control gains kp,kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
             )
 
     def get_sol_params(self, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
@@ -4713,7 +4727,6 @@ def func_forward_kinematics_entity(
                     ],
                     dt=gs.ti_float,
                 )
-                quat = gu.ti_normalize(quat)
                 xyz = gu.ti_quat_to_xyz(quat)
                 for i in ti.static(range(3)):
                     dofs_state.pos[dof_start + i, i_b] = pos[i]
@@ -6581,9 +6594,8 @@ def kernel_set_dofs_position(
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         dofs_state.pos[dofs_idx[i_d_], envs_idx[i_b_]] = position[i_b_, i_d_]
 
-    # also need to update qpos, as dofs_state.pos is not used for actual IK
-    # TODO: make this more efficient by only taking care of releavant qs/dofs
-
+    # Note that qpos must be updated, as dofs_state.pos is not used for actual IK.
+    # TODO: Make this more efficient by only taking care of releavant qs/dofs.
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_e, i_b_ in ti.ndrange(n_entities, envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -6599,7 +6611,9 @@ def kernel_set_dofs_position(
             I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
             joint_type = joints_info.type[I_j]
 
-            if joint_type == gs.JOINT_TYPE.FREE:
+            if joint_type == gs.JOINT_TYPE.FIXED:
+                pass
+            elif joint_type == gs.JOINT_TYPE.FREE:
                 xyz = ti.Vector(
                     [
                         dofs_state.pos[0 + 3 + dof_start, i_b],
@@ -6610,11 +6624,11 @@ def kernel_set_dofs_position(
                 )
                 quat = gu.ti_xyz_to_quat(xyz)
 
-                for i_q in ti.static(range(3)):
-                    rigid_global_info.qpos[i_q + q_start, i_b] = dofs_state.pos[i_q + dof_start, i_b]
+                for i in ti.static(range(3)):
+                    rigid_global_info.qpos[i + q_start, i_b] = dofs_state.pos[i + dof_start, i_b]
 
-                for i_q in ti.static(range(4)):
-                    rigid_global_info.qpos[i_q + 3 + q_start, i_b] = quat[i_q]
+                for i in ti.static(range(4)):
+                    rigid_global_info.qpos[i + 3 + q_start, i_b] = quat[i]
             elif joint_type == gs.JOINT_TYPE.SPHERICAL:
                 xyz = ti.Vector(
                     [
@@ -6627,10 +6641,11 @@ def kernel_set_dofs_position(
                 quat = gu.ti_xyz_to_quat(xyz)
                 for i_q_ in ti.static(range(4)):
                     i_q = q_start + i_q_
-                    rigid_global_info.qpos[i_q, i_b] = quat[i_q - q_start]
-            else:
-                for i_q in range(q_start, links_info.q_end[I_l]):
-                    rigid_global_info.qpos[i_q, i_b] = dofs_state.pos[dof_start + i_q - q_start, i_b]
+                    rigid_global_info.qpos[i_q, i_b] = quat[i_q_]
+            else:  # (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC)
+                rigid_global_info.qpos[q_start, i_b] = (
+                    rigid_global_info.qpos0[q_start, i_b] + dofs_state.pos[dof_start, i_b]
+                )
 
 
 @gs.maybe_pure
