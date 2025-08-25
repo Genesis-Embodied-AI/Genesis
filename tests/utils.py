@@ -30,6 +30,9 @@ from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
+HUGGINGFACE_ASSETS_REVISION = "0c0bb46db0978a59524381194478cf390b3ff996"
+HUGGINGFACE_SNAPSHOT_REVISION = "0b8ffa18f9cab79cfa213aa7867d9aaa0772dc57"
+
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
 
@@ -180,6 +183,13 @@ def get_hf_dataset(
 ):
     assert num_retry >= 1
 
+    if repo_name == "assets":
+        revision = HUGGINGFACE_ASSETS_REVISION
+    elif repo_name == "snapshots":
+        revision = HUGGINGFACE_SNAPSHOT_REVISION
+    else:
+        raise ValueError(f"Unsupported repository '{repo_name}'")
+
     for _ in range(num_retry):
         num_trials = 0
         try:
@@ -187,6 +197,7 @@ def get_hf_dataset(
             asset_path = snapshot_download(
                 repo_type="dataset",
                 repo_id=f"Genesis-Intelligence/{repo_name}",
+                revision=revision,
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
