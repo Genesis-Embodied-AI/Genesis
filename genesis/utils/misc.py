@@ -378,7 +378,7 @@ def _launch_kernel(self, t_kernel, *args):
 
     template_num = 0
     for i, v in enumerate(args):
-        needed = self.arguments[i].annotation
+        needed = self.arg_metas[i].annotation
         if isinstance(needed, ti.template):
             template_num += 1
             continue
