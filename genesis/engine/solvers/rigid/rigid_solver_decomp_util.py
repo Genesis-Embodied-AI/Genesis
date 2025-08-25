@@ -16,6 +16,7 @@ def func_wakeup_entity_and_its_temp_island(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     contact_island_state: array_class.ContactIslandState,
+    static_rigid_sim_config: ti.template(),
 ):
     # Note: Original function handled non-hibernated & fixed entities.
     # Now, we require a properly hibernated entity to be passed in.
@@ -36,21 +37,23 @@ def func_wakeup_entity_and_its_temp_island(
             n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
             rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
 
-            n_dofs = entities_info.n_dofs[entity_idx]
-            base_entity_dof_idx = entities_info.dof_start[entity_idx]
+            I_e = [entity_idx, i_b] if ti.static(static_rigid_sim_config.batch_entities_info) else entity_idx
+
+            n_dofs = entities_info.n_dofs[I_e]
+            base_entity_dof_idx = entities_info.dof_start[I_e]
             base_awake_dof_idx = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
             for i in range(n_dofs):
                 i_d = base_entity_dof_idx + i
                 dofs_state.hibernated[i_d, i_b] = False
                 rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
 
-            n_links = entities_info.n_links[entity_idx]
-            base_entity_link_idx = entities_info.link_start[entity_idx]
+            n_links = entities_info.n_links[I_e]
+            base_entity_link_idx = entities_info.link_start[I_e]
             base_awake_link_idx = ti.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
             for i in range(n_links):
                 i_l = base_entity_link_idx + i
                 links_state.hibernated[i_l, i_b] = False
                 rigid_global_info.awake_links[base_awake_link_idx + i, i_b] = i_l
 
-            for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
+            for i_g in range(entities_info.geom_start[I_e], entities_info.geom_end[I_e]):
                 geoms_state.hibernated[i_g, i_b] = False
