@@ -19,6 +19,7 @@ import genesis.utils.sdf_decomp as sdf
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 
+from .... import maybe_pure
 from .mpr_decomp import MPR
 from .gjk_decomp import GJK
 from ....utils.sdf_decomp import SDF
@@ -476,6 +477,7 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     return matres
 
 
+@maybe_pure
 @ti.kernel
 def collider_kernel_reset(
     envs_idx: ti.types.ndarray(),
@@ -495,6 +497,7 @@ def collider_kernel_reset(
 
 
 # only used with hibernation ??
+@maybe_pure
 @ti.kernel
 def kernel_collider_clear(
     envs_idx: ti.types.ndarray(),
@@ -547,6 +550,7 @@ def kernel_collider_clear(
             collider_state.n_contacts[i_b] = 0
 
 
+@maybe_pure
 @ti.kernel
 def collider_kernel_get_contacts(
     is_padded: ti.template(),
@@ -1110,6 +1114,7 @@ def func_check_collision_valid(
     return is_valid
 
 
+@maybe_pure
 @ti.kernel
 def func_broad_phase(
     links_state: array_class.LinksState,
@@ -1347,6 +1352,7 @@ def func_broad_phase(
                                     break
 
 
+@maybe_pure
 @ti.kernel
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,
@@ -1449,6 +1455,7 @@ def func_narrow_phase_convex_vs_convex(
                         )
 
 
+@maybe_pure
 @ti.kernel
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
@@ -1501,6 +1508,7 @@ def func_narrow_phase_convex_specializations(
                     )
 
 
+@maybe_pure
 @ti.kernel
 def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
@@ -1552,6 +1560,7 @@ def func_narrow_phase_any_vs_terrain(
                     )
 
 
+@maybe_pure
 @ti.kernel
 def func_narrow_phase_nonconvex_vs_nonterrain(
     links_state: array_class.LinksState,
