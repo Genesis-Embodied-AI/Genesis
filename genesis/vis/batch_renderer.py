@@ -9,9 +9,9 @@ from trimesh.visual.color import ColorVisuals
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
+from genesis.constants import IMAGE_TYPE
 
 from .rasterizer_context import SegmentationColorMap
-from .visualizer import IMAGE_TYPE
 
 try:
     from gs_madrona.renderer_gs import MadronaBatchRendererAdapter, GeomRetriever

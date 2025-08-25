@@ -84,6 +84,18 @@ class backend(IntEnum):
         return f"gs.{self.name}"
 
 
+# image types for visualization
+class IMAGE_TYPE(IntEnum):
+    RGB = 0
+    DEPTH = 1
+    SEGMENTATION = 2
+    NORMAL = 3
+    NUM_TYPES = 4
+
+    def __str__(self):
+        return self.name.lower()
+
+
 GS_ARCH = {
     "macOS": {
         backend.cpu: backend.cpu,

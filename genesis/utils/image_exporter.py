@@ -6,7 +6,7 @@ from functools import partial
 from concurrent.futures import ThreadPoolExecutor
 
 import genesis as gs
-from genesis.vis.visualizer import IMAGE_TYPE
+from genesis.constants import IMAGE_TYPE
 
 
 class ImageComponent:

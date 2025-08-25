@@ -1,5 +1,3 @@
-import enum
-
 import pyglet
 
 import genesis as gs
@@ -11,17 +9,6 @@ from .rasterizer import Rasterizer
 
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
-
-
-class IMAGE_TYPE(enum.IntEnum):
-    RGB = 0
-    DEPTH = 1
-    SEGMENTATION = 2
-    NORMAL = 3
-    NUM_TYPES = 4
-
-    def __str__(self):
-        return self.name.lower()
 
 
 class DummyViewerLock:
@@ -173,13 +160,13 @@ class Visualizer(RBC):
         if self._raytracer is not None:
             self._raytracer.add_mesh_light(mesh, color, intensity, pos, quat, revert_dir, double_sided, cutoff)
         else:
-            gs.raise_exception("`add_mesh_light` is only supported by raytracer renderer.")
+            gs.raise_exception("`add_mesh_light` is specific to raytracer renderer.")
 
     def add_light(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
         else:
-            gs.raise_exception("`add_light` is only supported by batch renderer.")
+            gs.raise_exception("`add_light` is specific to batch renderer.")
 
     def reset(self):
         self._t = -1
