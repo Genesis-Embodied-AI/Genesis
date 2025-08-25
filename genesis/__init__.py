@@ -291,7 +291,8 @@ def destroy():
     # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
-        del scene
+        if scene.visualizer is not None:
+            scene.visualizer.destroy()
     global_scene_list.clear()
 
     # Reset gstaichi
