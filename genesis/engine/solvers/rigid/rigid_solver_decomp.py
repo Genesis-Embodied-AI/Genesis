@@ -3086,24 +3086,25 @@ def kernel_init_geom_fields(
 @ti.kernel
 def kernel_adjust_link_inertia(
     link_idx: ti.i32,
-    ratio: ti.f32,
+    ratio: ti.f64,  # cannot use gs.ti_float() here as there will be a circular import
     links_info: array_class.LinksInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    ratio_float = gs.ti_float(ratio)
     if ti.static(static_rigid_sim_config.batch_links_info):
         _B = links_info.root_idx.shape[1]
         for i_b in range(_B):
             for j in ti.static(range(2)):
-                links_info.invweight[link_idx, i_b][j] /= ratio
-            links_info.inertial_mass[link_idx, i_b] *= ratio
+                links_info.invweight[link_idx, i_b][j] /= ratio_float
+            links_info.inertial_mass[link_idx, i_b] *= ratio_float
             for j1, j2 in ti.static(ti.ndrange(3, 3)):
-                links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio
+                links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio_float
     else:
         for j in ti.static(range(2)):
-            links_info.invweight[link_idx][j] /= ratio
-        links_info.inertial_mass[link_idx] *= ratio
+            links_info.invweight[link_idx][j] /= ratio_float
+        links_info.inertial_mass[link_idx] *= ratio_float
         for j1, j2 in ti.static(ti.ndrange(3, 3)):
-            links_info.inertial_i[link_idx][j1, j2] *= ratio
+            links_info.inertial_i[link_idx][j1, j2] *= ratio_float
 
 
 @ti.kernel
@@ -5496,18 +5497,20 @@ def func_torque_and_passive_force(
                     if ti.abs(force) > gs.EPS:
                         wakeup = True
 
-        if ti.static(static_rigid_sim_config.use_hibernation) and entities_state.hibernated[i_e, i_b] and wakeup:
-            func_wakeup_entity_and_its_temp_island(
-                i_e,
-                i_b,
-                entities_state,
-                entities_info,
-                dofs_state,
-                links_state,
-                geoms_state,
-                rigid_global_info,
-                contact_island_state,
-            )
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            if entities_state.hibernated[i_e, i_b] and wakeup:
+                func_wakeup_entity_and_its_temp_island(
+                    i_e,
+                    i_b,
+                    entities_state,
+                    entities_info,
+                    dofs_state,
+                    links_state,
+                    geoms_state,
+                    rigid_global_info,
+                    contact_island_state,
+                    static_rigid_sim_config,
+                )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)

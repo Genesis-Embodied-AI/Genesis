@@ -239,6 +239,7 @@ class ConstraintSolverIsland:
                         self._solver.geoms_state,
                         self._solver.data_manager.rigid_global_info,
                         self.contact_island,
+                        self._solver._static_rigid_sim_config,
                     )
 
     @ti.func

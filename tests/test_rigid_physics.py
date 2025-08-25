@@ -2553,7 +2553,6 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
-
         # Check getter and setter without row or column masking
         if getter is not None:
             datas = getter()
