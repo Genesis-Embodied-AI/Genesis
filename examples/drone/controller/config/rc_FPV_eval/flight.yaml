@@ -1,0 +1,82 @@
+
+# =========== pid_param =============
+ang:
+  kp_r: 6500
+  ki_r: 0.005
+  kd_r: 0.0001
+  kf_r: 0.0
+
+  kp_p: 6500
+  ki_p: 0.005
+  kd_p: 0.0001
+  kf_p: 0.0
+
+  kp_y: 4000                                          
+  ki_y: 0.0
+  kd_y: 0.0
+  kf_y: 0.0
+
+rat:
+  kp_r: 6500
+  ki_r: 0.01
+  kd_r: 0.0
+  kf_r: 0.0
+
+  kp_p: 6500
+  ki_p: 0.01
+  kd_p: 0.0
+  kf_p: 0.0
+
+  kp_y: 5000.0
+  ki_y: 0.0
+  kd_y: 0.0
+  kf_y: 0.0
+
+pos:
+  kp_x: 1.0
+  ki_x: 0.001
+  kd_x: 0.0
+  kf_x: 0.0
+
+  kp_y: 1.0
+  ki_y: 0.001
+  kd_y: 0.0
+  kf_y: 0.0
+
+  kp_t: 1.0
+  ki_t: 0.001
+  kd_t: 0.0
+  kf_t: 0.0
+
+pid_exec_freq: 60
+
+# =========== drone_param =============
+# see in assets/drone_urdf/cf2x.urdf
+thrust_compensate: 0.7
+weight: 0.5   
+motor_inertia: 2.6e-07
+g: 9.81   
+kf: 3.16e-10
+base_rpm: 62293.9641914   # equal to (m*g/4*kf)^0.5
+inertia_matrix:       # no use
+  - [0.0014, 0.0,     0.0,     0.0]
+  - [0.0,    0.0014,  0.0,     0.0]
+  - [0.0,    0.0,     0.00217, 0.0]
+  - [0.0,    0.0,     0.0,     1.0]
+
+# =========== mavlink_param =============
+USB_path: "/dev/ttyUSB0"
+baudrate: 2000000
+
+ARM:       "ch5"
+ANGLE:     "ch6"
+OFFBOARD:  "ch8"
+YAW:       "ch3" 
+PITCH:     "ch2"
+ROLL:      "ch1"
+THRUTTLE:  "ch4"   
+
+# =========== odom_param =============
+gyro_update_freq: 8000
+att_update_freq: 100
+acc_update_freqL: 1000
