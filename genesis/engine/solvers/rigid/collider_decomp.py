@@ -142,10 +142,14 @@ class Collider:
         """
         solver = self._solver
         n_geoms = solver.n_geoms_
+        n_equalities = solver._static_rigid_sim_config.n_equalities
         enable_self_collision = solver._static_rigid_sim_config.enable_self_collision
         enable_adjacent_collision = solver._static_rigid_sim_config.enable_adjacent_collision
         batch_links_info = solver._static_rigid_sim_config.batch_links_info
 
+        eq_type = solver.equalities_info.eq_type.to_numpy()[:, 0]
+        eq_obj1id = solver.equalities_info.eq_obj1id.to_numpy()[:, 0]
+        eq_obj2id = solver.equalities_info.eq_obj2id.to_numpy()[:, 0]
         geoms_link_idx = solver.geoms_info.link_idx.to_numpy()
         geoms_contype = solver.geoms_info.contype.to_numpy()
         geoms_conaffinity = solver.geoms_info.conaffinity.to_numpy()
@@ -183,6 +187,16 @@ class Collider:
                         links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
                     ):
                         continue
+
+                # Filter out right away weld constraint that have been declared statically and cannot be removed
+                is_valid = True
+                for i_eq in range(n_equalities):
+                    if eq_type[i_eq] == gs.EQUALITY_TYPE.WELD:
+                        i_leqa, i_leqb = eq_obj1id[i_eq], eq_obj2id[i_eq]
+                        if (i_leqa == i_la and i_leqb == i_lb) or (i_leqa == i_lb and i_leqb == i_la):
+                            is_valid = False
+                if not is_valid:
+                    continue
 
                 # contype and conaffinity
                 if (
@@ -305,7 +319,9 @@ class Collider:
             self._solver.geoms_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
+            self._solver.constraint_solver.constraint_state,
             self._collider_state,
+            self._solver.equalities_info,
             self._collider_info,
         )
         # timer.stamp("func_broad_phase")
@@ -1092,21 +1108,33 @@ def func_check_collision_valid(
     links_info: array_class.LinksInfo,
     geoms_info: array_class.GeomsInfo,
     static_rigid_sim_config: ti.template(),
+    constraint_state: array_class.ConstraintState,
+    equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
 ):
     is_valid = collider_info.collision_pair_validity[i_ga, i_gb]
 
-    # hibernated <-> fixed links
-    if ti.static(static_rigid_sim_config.use_hibernation):
+    if is_valid:
         i_la = geoms_info.link_idx[i_ga]
         i_lb = geoms_info.link_idx[i_gb]
-        I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
-        I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-        if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-            links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
-        ):
-            is_valid = False
+        # Filter out collision pairs that are involved in dynamically registered weld equality constraints
+        for i_eq in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
+            if equalities_info.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
+                i_leqa = equalities_info.eq_obj1id[i_eq, i_b]
+                i_leqb = equalities_info.eq_obj2id[i_eq, i_b]
+                if (i_leqa == i_la and i_leqb == i_lb) or (i_leqa == i_lb and i_leqb == i_la):
+                    is_valid = False
+
+        # hibernated <-> fixed links
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
+            I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
+
+            if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+            ):
+                is_valid = False
 
     return is_valid
 
@@ -1120,7 +1148,9 @@ def func_broad_phase(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to gstaichi
+    constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
+    equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
 ):
     """
@@ -1222,6 +1252,8 @@ def func_broad_phase(
                             links_info,
                             geoms_info,
                             static_rigid_sim_config,
+                            constraint_state,
+                            equalities_info,
                             collider_info,
                         ):
                             continue
@@ -1275,6 +1307,8 @@ def func_broad_phase(
                                 links_info,
                                 geoms_info,
                                 static_rigid_sim_config,
+                                constraint_state,
+                                equalities_info,
                                 collider_info,
                             ):
                                 continue
@@ -1308,6 +1342,8 @@ def func_broad_phase(
                                     links_info,
                                     geoms_info,
                                     static_rigid_sim_config,
+                                    constraint_state,
+                                    equalities_info,
                                     collider_info,
                                 ):
                                     continue
