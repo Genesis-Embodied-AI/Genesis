@@ -166,14 +166,14 @@ class GenesisGeomRetriever(GeomRetriever):
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_property_torch(self, num_worlds):
         geom_rgb_torch = self.rigid_solver.vgeoms_info.color.to_torch()
-        geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)  # Cast to int32
+        geom_rgb_int = (geom_rgb_torch * 255).to(torch.uint32)
         geom_rgb_uint = (geom_rgb_int[:, 0] << 16) | (geom_rgb_int[:, 1] << 8) | geom_rgb_int[:, 2]
         geom_rgb = geom_rgb_uint.unsqueeze(0).repeat(num_worlds, 1)
 
-        geom_mat_ids = torch.full((self.n_vgeoms,), -1, dtype=torch.int32)
+        geom_mat_ids = torch.full((self.n_vgeoms,), -1, dtype=torch.int32, device=gs.device)
         geom_mat_ids = geom_mat_ids.unsqueeze(0).repeat(num_worlds, 1)
 
-        geom_sizes = torch.ones((self.n_vgeoms, 3), dtype=torch.float32)
+        geom_sizes = torch.ones((self.n_vgeoms, 3), dtype=torch.float32, device=gs.device)
         geom_sizes = geom_sizes.unsqueeze(0).repeat(num_worlds, 1, 1)
         return geom_mat_ids, geom_rgb, geom_sizes
 
@@ -271,26 +271,34 @@ class BatchRenderer(RBC):
         n_cameras = len(self._cameras)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
-        cameras_fov = torch.tensor([camera.fov for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
-        cameras_near = torch.tensor([camera.near for camera in self._cameras], dtype=gs.tc_float, device=gs.device)
-        cameras_far = torch.tensor([camera.far for camera in self.cameras], dtype=gs.tc_float, device=gs.device)
+        cameras_fov = torch.tensor([camera.fov for camera in self._cameras], dtype=torch.float32, device=gs.device)
+        cameras_near = torch.tensor([camera.near for camera in self._cameras], dtype=torch.float32, device=gs.device)
+        cameras_far = torch.tensor([camera.far for camera in self.cameras], dtype=torch.float32, device=gs.device)
 
         # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
         # consider storing light properties as taichi fields in Genesis.
         n_lights = len(self._lights)
         if n_lights:
-            light_pos = torch.tensor([light.pos for light in self._lights], dtype=gs.tc_float)
-            light_dir = torch.tensor([light.dir for light in self._lights], dtype=gs.tc_float)
-            light_rgb = torch.tensor([light.color for light in self._lights], dtype=gs.tc_float)
+            light_pos = torch.tensor([light.pos for light in self._lights], dtype=torch.float32, device=gs.device)
+            light_dir = torch.tensor([light.dir for light in self._lights], dtype=torch.float32, device=gs.device)
+            light_rgb = torch.tensor([light.color for light in self._lights], dtype=torch.float32, device=gs.device)
         else:
-            light_pos = torch.empty((0, 3), dtype=gs.tc_float)
-            light_dir = torch.empty((0, 3), dtype=gs.tc_float)
-            light_rgb = torch.empty((0, 3), dtype=gs.tc_float)
-        light_directional = torch.tensor([light.directional for light in self._lights], dtype=gs.tc_int)
-        light_castshadow = torch.tensor([light.castshadow for light in self._lights], dtype=gs.tc_int)
-        light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=gs.tc_float)
-        light_attenuation = torch.tensor([light.attenuation for light in self._lights], dtype=gs.tc_float)
-        light_intensity = torch.tensor([light.intensity for light in self._lights], dtype=gs.tc_float)
+            light_pos = torch.empty((0, 3), dtype=torch.float32, device=gs.device)
+            light_dir = torch.empty((0, 3), dtype=torch.float32, device=gs.device)
+            light_rgb = torch.empty((0, 3), dtype=torch.float32, device=gs.device)
+        light_directional = torch.tensor(
+            [light.directional for light in self._lights], dtype=torch.bool, device=gs.device
+        )
+        light_castshadow = torch.tensor(
+            [light.castshadow for light in self._lights], dtype=torch.bool, device=gs.device
+        )
+        light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=torch.float32, device=gs.device)
+        light_attenuation = torch.tensor(
+            [light.attenuation for light in self._lights], dtype=torch.float32, device=gs.device
+        )
+        light_intensity = torch.tensor(
+            [light.intensity for light in self._lights], dtype=torch.float32, device=gs.device
+        )
 
         self._renderer = MadronaBatchRendererAdapter(
             self._geom_retriever,
