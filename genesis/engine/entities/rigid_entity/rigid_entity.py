@@ -2708,7 +2708,7 @@ class RigidEntity(Entity):
         mass : float
             The mass to set.
         """
-        ratio = gs.np_float(mass) / self.get_mass()
+        ratio = float(mass) / self.get_mass()
         for link in self.links:
             link.set_mass(link.get_mass() * ratio)
 
