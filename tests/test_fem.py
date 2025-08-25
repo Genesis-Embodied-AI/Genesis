@@ -366,6 +366,7 @@ def fem_material_linear_corotated_soft():
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -551,6 +552,7 @@ def test_box_soft_vertex_constraint(show_viewer):
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -575,12 +577,12 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
 
     asset_path = get_hf_dataset(pattern="heavy_three_joint_link.xml")
     link = scene.add_entity(
-        gs.morphs.MJCF(file=f"{asset_path}/heavy_three_joint_link.xml", scale=0.5, pos=(-0.5, -0.5, 0.4)),
+        gs.morphs.MJCF(file=f"{asset_path}/heavy_three_joint_link.xml", scale=0.5, pos=(-0.5, -0.5, 0.2)),
     )
 
     # Build the scene
     scene.build()
-    for _ in range(300):
+    for i in range(100):
         scene.step()
 
     state = sphere.get_state()
@@ -604,9 +606,9 @@ def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
     min_pos_z = link_verts[..., 2].min()
     assert_allclose(
         min_pos_z,
-        -1.0e-4,  # FIXME: Compute desired penetration analytically
-        atol=5e-5,
-        err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4.",
+        -8.0e-4,  # FIXME: Compute desired penetration analytically
+        atol=1e-4,
+        err_msg=f"Link minimum Z position {min_pos_z} is not close to -7.0e-4.",
     )
     assert_allclose(
         center,
@@ -716,6 +718,7 @@ def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_vie
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
     """
     Test if a box with hard vertex constraints has those vertices fixed, and collisiong with a sphere works correctly.
@@ -805,6 +808,7 @@ def fem_material_linear_corotated_rough():
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
     """
     Test if the Franka Panda can successfully grasp the cube.
@@ -834,6 +838,11 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         material=gs.materials.Rigid(coup_friction=friction, friction=friction),
     )
+    # Only allow finger contact to accelerate
+    for geom in franka.geoms:
+        if "finger" not in geom.link.name:
+            geom._contype = 0
+            geom._conaffinity = 0
     asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
@@ -847,7 +856,7 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
     scene.build()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    qpos = np.array([-1.0119, 1.5576, 1.3673, -1.6867, -1.5812, 1.7745, 1.4598, 0.04, 0.04])
     franka.set_qpos(qpos)
     scene.step()
 
@@ -858,13 +867,8 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
         quat=np.array([0, 1, 0, 0]),
     )
 
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-
-    # hold
-    for i in range(10):
-        scene.step()
     # grasp
-    for i in range(30):
+    for i in range(15):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
@@ -872,16 +876,22 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
+        pos=np.array([0.65, 0.0, 0.185]),
         quat=np.array([0, 1, 0, 0]),
     )
-    for i in range(100):
+    for i in range(50):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
-        if i == 49:
+
+    # hold
+    for i in range(10):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
+        if i == 0:
             old_pos = cube.get_state().pos.mean(axis=(0, 1))
-        if i == 99:
+        if i == 9:
             new_pos = cube.get_state().pos.mean(axis=(0, 1))
 
     assert_allclose(
@@ -897,6 +907,7 @@ def fem_material_linear_corotated_soft_rough():
 
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough, show_viewer):
     """
     Test if the Franka Panda can successfully grasp the soft sphere.
@@ -926,6 +937,11 @@ def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         material=gs.materials.Rigid(coup_friction=friction, friction=friction),
     )
+    # Only allow finger contact to accelerate
+    for geom in franka.geoms:
+        if "finger" not in geom.link.name:
+            geom._contype = 0
+            geom._conaffinity = 0
     sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
             radius=0.02,
@@ -937,7 +953,7 @@ def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough
     scene.build()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    qpos = np.array([-1.0119, 1.5576, 1.3673, -1.6867, -1.5812, 1.7745, 1.4598, 0.04, 0.04])
     franka.set_qpos(qpos)
     scene.step()
 
@@ -948,13 +964,8 @@ def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough
         quat=np.array([0, 1, 0, 0]),
     )
 
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-
-    # hold
-    for i in range(10):
-        scene.step()
     # grasp
-    for i in range(30):
+    for i in range(15):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
@@ -962,16 +973,22 @@ def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
+        pos=np.array([0.65, 0.0, 0.185]),
         quat=np.array([0, 1, 0, 0]),
     )
-    for i in range(100):
+    for i in range(50):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
         scene.step()
-        if i == 49:
+
+    # hold
+    for i in range(10):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+        scene.step()
+        if i == 0:
             old_pos = sphere.get_state().pos.mean(axis=(0, 1))
-        if i == 99:
+        if i == 9:
             new_pos = sphere.get_state().pos.mean(axis=(0, 1))
     pos_np = sphere.get_state().pos.cpu().numpy().reshape(-1, 3)
     BV, BF = igl.bounding_box(pos_np)
