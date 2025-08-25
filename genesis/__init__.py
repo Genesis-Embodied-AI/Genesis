@@ -231,9 +231,8 @@ def init(
         )
 
     # Make sure that gstaichi arch is matching requirement
-    ti_runtime = ti.lang.impl.get_runtime()
-    ti_arch = ti_runtime.prog.config().arch
-    if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+    ti_config = ti.lang.impl.current_cfg()
+    if backend != gs.cpu and ti_config.arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
         device, device_name, total_mem, backend = get_device(gs.cpu)
 
     _globalize_backend(backend)
@@ -292,9 +291,8 @@ def destroy():
     # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
-        if scene._visualizer is not None:
-            scene._visualizer.destroy()
-        del scene
+        if scene.visualizer is not None:
+            scene.visualizer.destroy()
     global_scene_list.clear()
 
     # Reset gstaichi
