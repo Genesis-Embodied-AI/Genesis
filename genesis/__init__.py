@@ -282,17 +282,14 @@ def init(
 
     _initialized = True
 
-    # Reload all Genesis submodules in order.
+    # Reload all Genesis submodules.
     # This enables dynamically updating global variables based on environment variables and propagating their new values
     # in all child submodules. Although this mechanism is somewhat fragile as it would not affect any 3rd party module,
     # it is not a big deal as there is no plan to advertise this feature. Still, the feature is essential internally for
     # running the unit tests with different values for the global variables.
-    subnames = sorted(
-        (subname for subname in sys.modules.keys() if subname.startswith(__name__ + ".")),
-        key=lambda m: m.count("."),
-    )
-    for subname in subnames:
-        importlib.reload(sys.modules[subname])
+    for subname, submodule in tuple(sys.modules.items()):
+        if subname.startswith(__name__ + "."):
+            importlib.reload(submodule)
 
 
 ########################## init ##########################
