@@ -67,8 +67,8 @@ class Surface(Options):
     double_sided : bool | None, optional
         Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth
         material and False for others.
-    beam_angle : float
-        The beam angle of emission. Defaults to 180.0.
+    cutoff : float
+        The cutoff angle of emission. Defaults to 180.0.
     normal_diff_clamp : float, optional
         Controls the threshold for computing surface normals by interpolating vertex normals.
     recon_backend : str, optional
@@ -99,8 +99,8 @@ class Surface(Options):
     vis_mode: Optional[str] = None
     smooth: bool = True
     double_sided: Optional[bool] = None
-    beam_angle: float = 180
-    normal_diff_clamp: float = 180
+    cutoff: float = 180.0
+    normal_diff_clamp: float = 180.0
     recon_backend: str = "splashsurf"
     generate_foam: bool = False
     foam_options: Optional[FoamOptions] = None

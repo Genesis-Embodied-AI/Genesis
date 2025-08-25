@@ -11,6 +11,9 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
+from genesis.utils.image_exporter import normalize_depth
+
+T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
 
 
 # quat for Madrona needs to be transformed to y-forward
@@ -61,9 +64,11 @@ class Camera(RBC):
         Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
         option when building RayTracer.
     near : float
-        The near plane of the camera.
+        Distance from camera center to near plane in meters.
+        Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.05.
     far : float
-        The far plane of the camera.
+        Distance from camera center to far plane in meters.
+        Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 100.0.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
     env_idx : int, optional
@@ -115,7 +120,7 @@ class Camera(RBC):
         self._initial_transform = None
         if transform is not None:
             self._initial_transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
-        self._aspect_ratio = self._res[0] / self._res[1]
+        self._aspect_ratio = self._res[0] / self._res[1]  # width / height
         self._visualizer = visualizer
         self._is_built = False
         self._attached_link = None
@@ -147,6 +152,11 @@ class Camera(RBC):
         self._multi_env_transform_tensor = torch.empty((n_envs, 4, 4), dtype=gs.tc_float, device=gs.device)
         self._multi_env_quat_tensor = torch.empty((n_envs, 4), dtype=gs.tc_float, device=gs.device)
 
+        is_parallel = self._visualizer.scene.n_envs > 0
+        if is_parallel:
+            self._env_idx = self._visualizer._scene._sanitize_envs_idx(self._env_idx)
+        else:
+            self._env_idx = 0
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
         self._rasterizer = self._visualizer.rasterizer
@@ -154,21 +164,17 @@ class Camera(RBC):
         self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
 
         if self._batch_renderer is not None:
-            self._rgb_stacked = True
-            self._other_stacked = True
+            self._rgb_stacked = is_parallel
+            self._other_stacked = is_parallel
         else:
-            if self._env_idx is None:
-                self._env_idx = 0
-            elif not isinstance(self._env_idx, int) or self._env_idx >= max(self._visualizer.scene.n_envs, 1):
-                gs.raise_exception("Tracked environment index out-of-bounds")
             if self._raytracer is not None:
                 self._raytracer.add_camera(self)
                 self._rgb_stacked = False
                 self._other_stacked = False
             else:
                 self._rasterizer.add_camera(self)
-                self._rgb_stacked = self._visualizer._context.env_separate_rigid
-                self._other_stacked = self._visualizer._context.env_separate_rigid
+                self._rgb_stacked = is_parallel and self._visualizer._context.env_separate_rigid
+                self._other_stacked = is_parallel and self._visualizer._context.env_separate_rigid
 
         self._is_built = True
         self.set_pose(
@@ -326,7 +332,7 @@ class Camera(RBC):
         """
         assert self._visualizer._batch_renderer is not None
         rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(
-            rgb, depth, segmentation, normal, force_render, antialiasing
+            rgb, depth, segmentation, normal, antialiasing, force_render
         )
         # The first dimension of the array is camera.
         # If n_envs > 0, the second dimension of the output is env.
@@ -350,8 +356,8 @@ class Camera(RBC):
         segmentation=False,
         colorize_seg=False,
         normal=False,
+        antialiasing=False,
         force_render=False,
-        antialiasing=True,
     ):
         """
         Render the camera view.
@@ -377,10 +383,10 @@ class Camera(RBC):
             If True, the segmentation mask will be colorized.
         normal : bool, optional
             Whether to render the surface normal.
-        force_render : bool, optional
-            Whether to force rendering even if the scene has not changed.
         antialiasing : bool, optional
             Whether to apply anti-aliasing. Only supported by 'BatchRenderer' for now.
+        force_render : bool, optional
+            Whether to force rendering even if the scene has not changed.
 
         Returns
         -------
@@ -397,7 +403,7 @@ class Camera(RBC):
 
         if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
-                rgb, depth, segmentation, normal, force_render, antialiasing
+                rgb, depth, segmentation, normal, antialiasing, force_render
             )
         elif self._raytracer is not None:
             if rgb:
@@ -417,7 +423,7 @@ class Camera(RBC):
 
         if seg_idxc_arr is not None:
             if colorize_seg or (self._GUI and self._visualizer.has_display):
-                seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
+                seg_color_arr = self._visualizer.colorize_seg_idxc_arr(seg_idxc_arr)
             seg_arr = seg_color_arr if colorize_seg else seg_idxc_arr
 
         if self._in_recording or self._GUI and self._visualizer.has_display:
@@ -441,13 +447,7 @@ class Camera(RBC):
 
             other_env = " Environment 0" if self._other_stacked else ""
             if depth:
-                depth_min = depth_np.min()
-                depth_max = depth_np.max()
-                if depth_max - depth_min > gs.EPS:
-                    depth_normalized = (depth_max - depth_np) / (depth_max - depth_min)
-                    depth_img = (depth_normalized * 255).astype(np.uint8)
-                else:
-                    depth_img = np.zeros_like(depth_arr, dtype=np.uint8)
+                depth_img = normalize_depth(depth_np[..., None], np.inf, "linear")
                 if self._other_stacked:
                     depth_img = depth_img[0]
                 cv2.imshow(f"{title + other_env} [Depth]", depth_img)
@@ -471,20 +471,16 @@ class Camera(RBC):
 
         return rgb_arr, depth_arr, seg_arr, normal_arr
 
-    @gs.assert_built
-    def get_segmentation_idx_dict(self):
-        """
-        Returns a dictionary mapping segmentation indices to scene entities.
+    def distance_center_to_plane(self, center_dis):
+        width, height = self.res
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
-        In the segmentation map:
-        - Index 0 corresponds to the background (-1).
-        - Indices > 0 correspond to scene elements, which may be represented as:
-            - `entity_id`
-            - `(entity_id, link_id)`
-            - `(entity_id, link_id, geom_id)`
-          depending on the material type and the configured segmentation level.
-        """
-        return self._rasterizer._context.seg_idxc_map
+        v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+        xd = (u + 0.5 - cx) / fx
+        yd = (v + 0.5 - cy) / fy
+        return center_dis / np.sqrt(xd**2 + yd**2 + 1.0)
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
@@ -499,48 +495,56 @@ class Camera(RBC):
         Returns
         -------
         pc : np.ndarray
-            Numpy array of shape (res[0], res[1], 3) representing the point cloud in each pixel.
+            Numpy array of shape (res[0], res[1], 3) or (N, res[0], res[1], 3).
+            Represents the point cloud in each pixel.
         mask_arr : np.ndarray
-            The valid depth mask.
+            The valid depth mask. boolean array of same shape as depth_arr
         """
         # Compute the (denormalized) depth map using PyRender systematically.
         # TODO: Add support of BatchRendered (requires access to projection matrix)
-        self._rasterizer.update_scene()
-        rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-            self, rgb=False, depth=True, segmentation=False, normal=False
-        )
+        if self._batch_renderer is not None:
+            _, depth_arr, _, _ = self._batch_render(
+                rgb=False,
+                depth=True,
+                segmentation=False,
+                normal=False,
+            )
+        elif self._rasterizer is not None:
+            self._rasterizer.update_scene()
+            _, depth_arr, _, _ = self._rasterizer.render_camera(
+                self, rgb=False, depth=True, segmentation=False, normal=False
+            )
+        else:
+            gs.raise_exception("Render point cloud not supported.")
 
         # Convert OpenGL projection matrix to camera intrinsics
-        P = self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix()
-        height, width = depth_arr.shape
-        fx = P[0, 0] * width / 2.0
-        fy = P[1, 1] * height / 2.0
-        cx = (1.0 - P[0, 2]) * width / 2.0
-        cy = (1.0 + P[1, 2]) * height / 2.0
-
-        # Extract camera pose if needed
-        if world_frame:
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
-            cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
+        width, height = self.res
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
         # Mask out invalid depth
-        mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
+        mask = (self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3))
 
         # Compute normalized pixel coordinates
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
-        u = u.reshape((-1,))
-        v = v.reshape((-1,))
 
         # Convert to world coordinates
-        depth_grid = depth_arr[v, u]
+        depth_grid = depth_arr[..., v, u]
         world_x = depth_grid * (u + 0.5 - cx) / fx
         world_y = depth_grid * (v + 0.5 - cy) / fy
         world_z = depth_grid
 
-        point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth_arr.size,), dtype=np.float32)), axis=-1)
+        point_cloud = np.stack((world_x, world_y, world_z, np.ones_like(world_z, dtype=np.float32)), axis=-1)
         if world_frame:
-            point_cloud = point_cloud @ cam_pose.T
-        point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
+            cam_pose = self.transform @ T_OPENGL_TO_OPENCV  # (n, 4, 4) or (4, 4)
+            if cam_pose.ndim == 2:
+                point_cloud = point_cloud @ cam_pose.T
+            else:
+                point_cloud_reshaped = point_cloud.reshape(-1, height * width, 4)
+                point_cloud = (point_cloud_reshaped @ cam_pose.swapaxes(-1, -2)).reshape(point_cloud.shape)
+
+        point_cloud = point_cloud[..., :3]
         return point_cloud, mask
 
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
@@ -887,7 +891,37 @@ class Camera(RBC):
     def intrinsics(self):
         """The current intrinsics matrix of the camera."""
         # compute intrinsics using fov and resolution
-        f = 0.5 * self._res[1] / np.tan(np.deg2rad(0.5 * self._fov))
-        cx = 0.5 * self._res[0]
-        cy = 0.5 * self._res[1]
-        return np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
+        f = self.f
+        return np.array([[f, 0, self.cx], [0, f, self.cy], [0, 0, 1]])
+
+    @property
+    def n_envs(self):
+        return max(self._visualizer.scene.n_envs, 1)
+
+    @property
+    def projection_matrix(self):
+        """Return the projection matrix for this camera."""
+        a = self._aspect_ratio
+        t = np.tan(np.deg2rad(0.5 * self._fov))
+        n = self.near
+        f = self.far
+        return np.array(
+            [
+                [1.0 / (a * t), 0.0, 0.0, 0.0],
+                [0.0, 1.0 / t, 0.0, 0.0],
+                [0.0, 0.0, (f + n) / (n - f), (2 * f * n) / (n - f)],
+                [0.0, 0.0, -1.0, 0.0],
+            ]
+        )
+
+    @property
+    def f(self):
+        return 0.5 * self._res[1] / np.tan(np.deg2rad(0.5 * self._fov))
+
+    @property
+    def cx(self):
+        return 0.5 * self._res[0]
+
+    @property
+    def cy(self):
+        return 0.5 * self._res[1]
