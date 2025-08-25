@@ -400,6 +400,7 @@ class ConstraintSolver:
         )
 
 
+@gs.maybe_pure
 @ti.kernel
 def constraint_solver_kernel_clear(
     envs_idx: ti.types.ndarray(),
@@ -414,6 +415,7 @@ def constraint_solver_kernel_clear(
         constraint_state.n_constraints_frictionloss[i_b] = 0
 
 
+@gs.maybe_pure
 @ti.kernel
 def constraint_solver_kernel_reset(
     envs_idx: ti.types.ndarray(),
@@ -433,6 +435,7 @@ def constraint_solver_kernel_reset(
             constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
+@gs.maybe_pure
 @ti.kernel
 def add_collision_constraints(
     links_info: array_class.LinksInfo,
@@ -717,6 +720,7 @@ def func_equality_joint(
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
 
+@gs.maybe_pure
 @ti.kernel
 def add_equality_constraints(
     links_info: array_class.LinksInfo,
@@ -961,6 +965,7 @@ def func_equality_weld(
         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
 
 
+@gs.maybe_pure
 @ti.kernel
 def add_joint_limit_constraints(
     links_info: array_class.LinksInfo,
@@ -1018,6 +1023,7 @@ def add_joint_limit_constraints(
                             constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
 
 
+@gs.maybe_pure
 @ti.kernel
 def add_frictionloss_constraints(
     links_info: array_class.LinksInfo,
@@ -1286,6 +1292,7 @@ def func_nt_chol_solve(
         constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_d, i_d, i_b]
 
 
+@gs.maybe_pure
 @ti.kernel
 def func_update_contact_force(
     links_state: array_class.LinksState,
@@ -1328,6 +1335,7 @@ def func_update_contact_force(
             )
 
 
+@gs.maybe_pure
 @ti.kernel
 def func_update_qacc(
     qacc_ws: array_class.V_ANNOTATION,
@@ -1347,6 +1355,7 @@ def func_update_qacc(
         qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
+@gs.maybe_pure
 @ti.kernel
 def func_solve(
     entities_info: array_class.EntitiesInfo,
@@ -1982,6 +1991,7 @@ def initialize_Ma(
             Ma[i_d1, i_b] = Ma_
 
 
+@gs.maybe_pure
 @ti.kernel
 def func_init_solver(
     dofs_state: array_class.DofsState,
@@ -2090,6 +2100,7 @@ def func_init_solver(
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_add_weld_constraint(
     link1_idx: ti.i32,
@@ -2141,6 +2152,7 @@ def kernel_add_weld_constraint(
     return overflow
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_delete_weld_constraint(
     link1_idx: ti.i32,
@@ -2166,6 +2178,7 @@ def kernel_delete_weld_constraint(
                 constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_get_equality_constraints(
     is_padded: ti.template(),
