@@ -347,7 +347,6 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
             pytest.skip("No GPU available on this machine")
         yield
     finally:
-        pyglet.app.exit()
         gs.destroy()
         gc.collect()
 
