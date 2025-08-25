@@ -213,7 +213,7 @@ class RigidOptions(Options):
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Deprecated.
     enable_collision : bool, optional
         Whether to enable collision detection. Defaults to True.
     enable_joint_limit : bool, optional
@@ -321,6 +321,11 @@ class RigidOptions(Options):
     def __init__(self, **data):
         super().__init__(**data)
 
+        if self.gravity is not None:
+            gs.raise_exception(
+                "RigidOptions.gravity is deprecated. Use SimOptions.gravity instead. This option will be removed in the future."
+            )
+
 
 class AvatarOptions(Options):
     """
@@ -370,7 +375,7 @@ class MPMOptions(Options):
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Deprecated.
     particle_size : float, optional
         Particle diameter in meters. If not given, we will compute `particle_size` based on `grid_density`, where `particle_size` will be linearly proportional to the grid cell size. A reference value is `particle_size = 0.01` for `grid_density = 64`. Defaults to None.
     grid_density : float, optional
@@ -411,6 +416,11 @@ class MPMOptions(Options):
         if self.particle_size is None:
             self.particle_size = 0.01 * 64.0 / self.grid_density
 
+        if self.gravity is not None:
+            gs.raise_exception(
+                "MPMOptions.gravity is deprecated. Use SimOptions.gravity instead. This option will be removed in the future."
+            )
+
 
 class SPHOptions(Options):
     """
@@ -425,7 +435,7 @@ class SPHOptions(Options):
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Deprecated.
     particle_size : float, optional
         Particle diameter in meters. Defaults to 0.02.
     pressure_solver : str, optional
@@ -495,6 +505,11 @@ class SPHOptions(Options):
                 f"Pressure solver {self.pressure_solver} not implemented. Please select among {pressure_solver_available}."
             )
 
+        if self.gravity is not None:
+            gs.raise_exception(
+                "SPHOptions.gravity is deprecated. Use SimOptions.gravity instead. This option will be removed in the future."
+            )
+
 
 class PBDOptions(Options):
     """
@@ -509,7 +524,7 @@ class PBDOptions(Options):
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Deprecated.
     max_stretch_solver_iterations : int, optional
         Maximum number of iterations for the solving stretch constraints. Defaults to 4.
     max_bending_solver_iterations : int, optional
@@ -577,6 +592,11 @@ class PBDOptions(Options):
         else:
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
+        if self.gravity is not None:
+            gs.raise_exception(
+                "PBDOptions.gravity is deprecated. Use SimOptions.gravity instead. This option will be removed in the future."
+            )
+
 
 class FEMOptions(Options):
     """
@@ -594,7 +614,7 @@ class FEMOptions(Options):
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Deprecated.
     damping : float, optional
         Damping factor. Defaults to 0.0.
     floor_height : float, optional
@@ -639,6 +659,14 @@ class FEMOptions(Options):
     damping_alpha: float = 0.5
     damping_beta: float = 5e-4
     enable_vertex_constraints: bool = False
+
+    def __init__(self, **data):
+        super().__init__(**data)
+
+        if self.gravity is not None:
+            gs.raise_exception(
+                "FEMOptions.gravity is deprecated. Use SimOptions.gravity instead. This option will be removed in the future."
+            )
 
 
 class SFOptions(Options):

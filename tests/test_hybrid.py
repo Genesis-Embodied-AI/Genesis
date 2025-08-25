@@ -14,15 +14,14 @@ def test_rigid_mpm_muscle(show_viewer):
         sim_options=gs.options.SimOptions(
             dt=3e-3,
             substeps=10,
+            gravity=(0, 0, -9.8),
         ),
         rigid_options=gs.options.RigidOptions(
-            gravity=(0, 0, -9.8),
             constraint_timeconst=0.02,
         ),
         mpm_options=gs.options.MPMOptions(
             lower_bound=(0.0, 0.0, -0.2),
             upper_bound=(1.0, 1.0, 1.0),
-            gravity=(0.0, 0.0, 0.0),  # mimic gravity compensation
             enable_CPIC=True,
         ),
         viewer_options=gs.options.ViewerOptions(
