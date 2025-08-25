@@ -1,3 +1,4 @@
+import importlib
 import io
 import os
 import sys
@@ -7,7 +8,7 @@ import logging as _logging
 import traceback
 from platform import system
 from contextlib import redirect_stdout
-from typing import Callable
+from typing import Callable, TypeVar, ParamSpec
 
 # Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
@@ -42,12 +43,20 @@ exit_callbacks = []
 global_scene_list = set()
 
 
+_P = ParamSpec("P")
+_R = TypeVar("R")
 
-def nop(fn: Callable) -> Callable:
+
+def _noop(fn: Callable[_P, _R]) -> Callable[_P, _R]:
     return fn
 
 
-maybe_pure: Callable
+if os.environ.get("GS_BETA_PURE") == "1":
+    maybe_pure: Callable[[Callable[_P, _R]], Callable[_P, _R]] = ti.pure
+else:
+    maybe_pure = _noop
+
+
 ########################## init ##########################
 def init(
     seed=None,
@@ -66,6 +75,9 @@ def init(
 
     # Make sure evertything is properly destroyed, just in case initialization failed previously
     destroy()
+
+    # Force re-loading genesis right away
+    importlib.reload(sys.modules[__name__])
 
     # genesis._theme
     global _theme
@@ -205,6 +217,9 @@ def init(
             "increasing compilation time is not a concern."
         )
 
+    if os.environ.get("GS_BETA_PURE") == "1":
+        logger.info("Enabling pure kernels for fast cache loading.")
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -261,17 +276,20 @@ def init(
     global exit_callbacks
     exit_callbacks = []
 
-    if os.environ.get("GENESIS_BETA_PURE") == "1":
-        logger.info("Enabling pure kernels, for fast cache loading")
-        maybe_pure = ti.pure
-    else:
-        maybe_pure = nop
-
     logger.info(
         f"🚀 Genesis initialized. 🔖 version: ~~<{__version__}>~~, 🌱 seed: ~~<{seed}>~~, 📏 precision: '~~<{precision}>~~', 🐛 debug: ~~<{debug}>~~, 🎨 theme: '~~<{theme}>~~'."
     )
 
     _initialized = True
+
+    # Reload all Genesis submodules.
+    # This enables dynamically updating global variables based on environment variables and propagating their new values
+    # in all child submodules. Although this mechanism is somewhat fragile as it would not affect any 3rd party module,
+    # it is not a big deal as there is no plan to advertise this feature. Still, the feature is essential internally for
+    # running the unit tests with different values for the global variables.
+    for subname, submodule in tuple(sys.modules.items()):
+        if subname.startswith(__name__ + "."):
+            importlib.reload(submodule)
 
 
 ########################## init ##########################
@@ -289,7 +307,7 @@ def destroy():
     _initialized = False
 
     # Unregister at-exit callback that is not longer relevant.
-    # This is important when `init` / `destory` is called multiple times, which is typically the case for unit tests.
+    # This is important when `init` / `destroy` is called multiple times, which is typically the case for unit tests.
     atexit.unregister(destroy)
 
     # Display any buffered error message if logger is configured
