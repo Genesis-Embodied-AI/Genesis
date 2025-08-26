@@ -186,14 +186,17 @@ class BatchRenderer(RBC):
             self._visualizer.scene.rigid_solver, cameras_pos, cameras_quat, render_options
         )
 
-        # Post-processing: Remove alpha channel from RGBA, squeeze env dim if necessary, and split along camera dim
-        buffers = [rgba_arr_all[..., :3], depth_arr_all]
+        # Post-processing:
+        # * Remove alpha channel from RGBA
+        # * Squeeze env and channel dims if necessary
+        # * Split along camera dim
+        buffers = [rgba_arr_all, depth_arr_all]
         for i, data in enumerate(buffers):
             if data is not None:
                 data = data.swapaxes(0, 1)
                 if self._visualizer.scene.n_envs == 0:
                     data = data.squeeze(1)
-                buffers[i] = tuple(data)
+                buffers[i] = tuple(data[..., :3].squeeze(-1))
 
         # Update cache
         self._t = self._visualizer.scene.t
