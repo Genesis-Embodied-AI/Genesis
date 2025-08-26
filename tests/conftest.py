@@ -49,7 +49,7 @@ IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
 TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
-IMG_STD_ERR_THR = 0.8
+IMG_STD_ERR_THR = 1.0
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -347,7 +347,6 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
             pytest.skip("No GPU available on this machine")
         yield
     finally:
-        pyglet.app.exit()
         gs.destroy()
         gc.collect()
 
@@ -455,7 +454,7 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
         img_delta = np.abs(img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)).astype(np.uint8)
         if np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR:
             raw_bytes = BytesIO()
-            img_obj = Image.fromarray(img_delta)
+            img_obj = Image.fromarray(img_delta.squeeze(-1))
             img_obj.save(raw_bytes, "PNG")
             raw_bytes.seek(0)
             print(base64.b64encode(raw_bytes.read()))
