@@ -451,7 +451,7 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             buffer = BytesIO()
             buffer.write(data)
             buffer.seek(0)
-            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
+            img_arrays.append(np.asarray(Image.open(buffer)))
         img_delta = np.abs(img_arrays[1].astype(np.int32) - img_arrays[0].astype(np.int32)).astype(np.uint8)
         if np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR:
             raw_bytes = BytesIO()

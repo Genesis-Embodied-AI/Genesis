@@ -134,6 +134,7 @@ class FrameImageExporter:
         for i_cam in camera_idx:
             frame_args = {}
             for t in range(IMAGE_TYPE.NUM_TYPES):
+                frames = component_frames[t]
                 frame_args[str(IMAGE_TYPE(t))] = None if frames is None else frames[i_cam]
             self.export_frame_single_camera(i_step, i_cam, **frame_args)
 

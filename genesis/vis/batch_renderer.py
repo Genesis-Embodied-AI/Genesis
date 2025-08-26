@@ -22,6 +22,12 @@ except ImportError as e:
 TYPES = (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENTATION)  # order of RenderOption
 
 
+def transform_camera_quat(quat):
+    # quat for Madrona needs to be transformed to y-forward
+    w, x, y, z = torch.unbind(quat, dim=-1)
+    return torch.stack([x + w, x - w, y - z, y + z], dim=-1) / math.sqrt(2.0)
+
+
 class GenesisGeomRetriever(GeomRetriever):
     def __init__(self, rigid_solver, seg_level):
         self.rigid_solver = rigid_solver
@@ -166,7 +172,7 @@ class GenesisGeomRetriever(GeomRetriever):
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_property_torch(self, num_worlds):
         geom_rgb_torch = self.rigid_solver.vgeoms_info.color.to_torch()
-        geom_rgb_int = (geom_rgb_torch * 255).to(torch.uint32)
+        geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)
         geom_rgb_uint = (geom_rgb_int[:, 0] << 16) | (geom_rgb_int[:, 1] << 8) | geom_rgb_int[:, 2]
         geom_rgb = geom_rgb_uint.unsqueeze(0).repeat(num_worlds, 1)
 
@@ -189,7 +195,7 @@ class GenesisGeomRetriever(GeomRetriever):
 class Light:
     def __init__(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         self._pos = pos
-        self._dir = dir / np.linalg.norm(dir)
+        self._dir = tuple(dir / np.linalg.norm(dir))  # Converting list of arrays to tensor is inefficient.
         self._color = color
         self._intensity = intensity
         self._directional = directional
@@ -271,6 +277,7 @@ class BatchRenderer(RBC):
         n_cameras = len(self._cameras)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+        cameras_quat = transform_camera_quat(cameras_quat)
         cameras_fov = torch.tensor([camera.fov for camera in self._cameras], dtype=torch.float32, device=gs.device)
         cameras_near = torch.tensor([camera.near for camera in self._cameras], dtype=torch.float32, device=gs.device)
         cameras_far = torch.tensor([camera.far for camera in self.cameras], dtype=torch.float32, device=gs.device)
@@ -378,6 +385,7 @@ class BatchRenderer(RBC):
         self.update_scene()
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+        cameras_quat = transform_camera_quat(cameras_quat)
         render_flags = np.array(
             (
                 *(need[t] for t in TYPES),

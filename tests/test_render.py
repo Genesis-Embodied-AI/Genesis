@@ -755,14 +755,14 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
 
             assert len(rgba) == len(depth) == len(scene.visualizer.cameras)
             assert all(e.shape == (*batch_shape, 3) for e in rgba)
-            assert all(e.shape == (*batch_shape, 1) for e in depth)
+            assert all(e.shape == batch_shape for e in depth)
 
             exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
             rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
 
             assert rgba.shape == (*batch_shape, 3)
-            assert depth.shape == (*batch_shape, 1)
+            assert depth.shape == batch_shape
 
             exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
 
