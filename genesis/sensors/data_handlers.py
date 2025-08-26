@@ -1,13 +1,16 @@
 import csv
 import os
+from collections import defaultdict
 from collections.abc import Iterable
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
+import torch
 from pydantic_core import core_schema
 
 import genesis as gs
+from genesis.utils import tensor_to_array
 from genesis.utils.tools import animate
 
 
@@ -17,7 +20,7 @@ class DataHandler:
     def initialize(self):
         raise NotImplementedError()
 
-    def process(self, data):
+    def process(self, data, cur_time):
         raise NotImplementedError()
 
     def cleanup(self):
@@ -52,7 +55,7 @@ class VideoFileWriter(DataHandler):
     def initialize(self):
         self.frames.clear()
 
-    def process(self, data):
+    def process(self, data, cur_time):
         """Expects incoming data to be np.ndarray or list[np.ndarray] if multiple videos are incoming."""
         if self.streams_idx is None:
             self.frames.append(data)
@@ -144,7 +147,7 @@ class VideoFileStreamer(DataHandler):
 
             self.video_writers.append(video_writer)
 
-    def process(self, data):
+    def process(self, data, cur_time):
         if len(self.streams_idx) == 1:
             data = [data]
 
@@ -165,7 +168,7 @@ class VideoFileStreamer(DataHandler):
 
 class CSVFileWriter(DataHandler):
     """
-    Writes to a .csv file using csv.writer.
+    Writes to a .csv file using `csv.writer`. Can handle any array-like or dictionary output from sensors.
 
     Parameters
     ----------
@@ -175,11 +178,15 @@ class CSVFileWriter(DataHandler):
         Determines how often the data is saved to disk. None = only at cleanup, 0 = every write, >0 = every N writes.
     """
 
-    def __init__(self, filename: str, flush_interval: Optional[int] = None):
+    def __init__(self, filename: str, header: list[str] | None = None, flush_interval: Optional[int] = None):
         assert filename.endswith(".csv"), "CSV output must be a CSV file"
         self.filename = filename
         self.file_handle = None
         self.csv_writer = None
+
+        self.header = header
+        self.wrote_header = False
+
         self.flush_interval = flush_interval
         if flush_interval is not None:
             self.flush_counter = 0
@@ -189,11 +196,31 @@ class CSVFileWriter(DataHandler):
         self.file_handle = open(self.filename, "w", encoding="utf-8", newline="")
         self.csv_writer = csv.writer(self.file_handle)
 
-    def process(self, data):
-        # data = np.atleast_1d(data) # Data shape may not be homogeneous
-        if not isinstance(data, Iterable):
-            data = [data]
-        self.csv_writer.writerow(data)
+    def process(self, data, cur_time):
+        row_data = [cur_time]
+        if isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, torch.Tensor):
+                    value = tensor_to_array(value).tolist()
+                row_data.append(value)
+        else:
+            row_data.extend(tensor_to_array(data).tolist())
+
+        if not self.wrote_header:
+            header = {"timestamp"}
+            if self.header:
+                header.update(self.header)
+            else:
+                if isinstance(data, dict):
+                    for key in data.keys():
+                        header.add(key)
+                else:
+                    header.update(["data" + i for i in (len(data) if isinstance(data, Iterable) else 1)])
+            assert len(header) == len(row_data), "CSVFileWriter: header length must match data length"
+            self.csv_writer.writerow(header)
+            self.wrote_header = True
+
+        self.csv_writer.writerow(row_data)
         if self.flush_interval is not None:
             self.flush_counter += 1
             if self.flush_counter >= self.flush_interval:
@@ -209,7 +236,7 @@ class CSVFileWriter(DataHandler):
 
 class NPZFileWriter(DataHandler):
     """
-    Buffers all data and writes to a .npz file at cleanup.
+    Buffers all data and writes to a .npz file at cleanup. Can handle any array-like or dictionary output from sensors.
 
     Parameters
     ----------
@@ -220,22 +247,31 @@ class NPZFileWriter(DataHandler):
     def __init__(self, filename: str):
         assert filename.endswith(".npz"), "NPZ output must be an .npz file"
         self.filename = filename
-        self.all_data: list[np.ndarray] = []
+        self.all_data: dict[str, list] = defaultdict(list)
 
     def initialize(self):
         self.all_data.clear()
 
-    def process(self, data):
-        self.all_data.append(data)
+    def process(self, data, cur_time):
+        self.all_data["timestamp"].append(cur_time)
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, torch.Tensor):
+                    value = tensor_to_array(value)
+                self.all_data[key].append(value)
+        else:
+            self.all_data["data"].append(data)
 
     def cleanup(self):
         gs.logger.info(f'Saving data to "~<{self.filename}>~"...')
+        saved_data = {k: np.array(v) for k, v in self.all_data.items()}
         try:
-            np.savez_compressed(self.filename, np.array(self.all_data))
+            np.savez_compressed(self.filename, **saved_data)
         except ValueError as error:
             gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
-            np.savez_compressed(self.filename, np.array(self.all_data, dtype=object))
-        gs.logger.info("NPZ data saved.")
+            saved_data = {k: np.array(v, dtype=object) for k, v in self.all_data.items()}
+            np.savez_compressed(self.filename, **saved_data)
+        gs.logger.info(f"NPZ data saved with keys {list(saved_data.keys())}.")
 
 
 class CallbackHandler(DataHandler):
@@ -254,8 +290,8 @@ class CallbackHandler(DataHandler):
     def initialize(self):
         pass
 
-    def process(self, data):
-        self.callback(data)
+    def process(self, data, cur_time):
+        self.callback(data, cur_time)
 
     def cleanup(self):
         pass

@@ -527,6 +527,21 @@ class Scene(RBC):
     def add_sensor(self, sensor_options: "SensorOptions"):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
+    @gs.assert_built
+    def start_recording_all(self):
+        for data_recorder in self._sim._sensor_manager._data_recorders:
+            data_recorder.start()
+
+    @gs.assert_built
+    def pause_recording_all(self):
+        for data_recorder in self._sim._sensor_manager._data_recorders:
+            data_recorder.pause()
+
+    @gs.assert_built
+    def stop_recording_all(self):
+        for data_recorder in self._sim._sensor_manager._data_recorders:
+            data_recorder.stop()
+
     @gs.assert_unbuilt
     def add_camera(
         self,
