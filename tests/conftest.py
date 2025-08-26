@@ -331,6 +331,11 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
 
+        if gs.backend != gs.cpu:
+            device_index = gs.device.index
+            if device_index is not None and device_index not in _get_gpu_indices():
+                assert RuntimeError("Wrong CUDA GPU device.")
+
         import gstaichi as ti
 
         ti_runtime = ti.lang.impl.get_runtime()
