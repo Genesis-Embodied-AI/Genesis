@@ -10,7 +10,7 @@ from .time_elapser import TimeElapser
 
 class GenesisFormatter(logging.Formatter):
     def __init__(self, verbose_time=True):
-        super(GenesisFormatter, self).__init__()
+        super().__init__()
 
         self.mapping = {
             logging.DEBUG: colors.GREEN,

@@ -90,7 +90,7 @@ class BatchRenderer(RBC):
         rigid = self._visualizer.scene.rigid_solver
         n_envs = max(self._visualizer.scene.n_envs, 1)
         res = self._cameras[0].res
-        gpu_id = gs.device.index
+        gpu_id = gs.device.index if gs.device.index is not None else 0
         use_rasterizer = self._renderer_options.use_rasterizer
 
         # Cameras

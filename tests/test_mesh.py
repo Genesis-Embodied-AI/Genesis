@@ -1,6 +1,5 @@
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,7 +7,6 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
-import genesis.utils.mesh as mu
 import genesis.utils.usda as usda_utils
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset

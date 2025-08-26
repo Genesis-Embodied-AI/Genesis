@@ -1238,7 +1238,7 @@ class Viewer(pyglet.window.Window):
             # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
             # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
             try:
-                super(Viewer, self).__init__(
+                super().__init__(
                     config=conf,
                     visible=False,
                     resizable=True,

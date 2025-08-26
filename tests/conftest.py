@@ -1,4 +1,5 @@
 import base64
+import ctypes
 import gc
 import os
 import re
@@ -115,6 +116,49 @@ def _get_gpu_indices():
     return (0,)
 
 
+def _get_egl_index(gpu_index):
+    from OpenGL import EGL
+    from OpenGL.EGL.NV.device_cuda import EGL_CUDA_DEVICE_NV
+
+    # Get the list of Nvidia GPU that are visible
+    nvidia_gpu_indices = _get_gpu_indices()
+
+    # Define some ctypes for convenience
+    EGLDeviceEXT = ctypes.c_void_p
+    EGLAttrib = ctypes.c_ssize_t
+    EGLint = ctypes.c_int
+    EGLuint = ctypes.c_uint
+
+    # Load EGL extension functions dynamically
+    EGLuint = ctypes.c_uint
+    eglQueryDevicesEXT_addr = EGL.eglGetProcAddress(b"eglQueryDevicesEXT")
+    if not eglQueryDevicesEXT_addr:
+        raise RuntimeError("eglQueryDevicesEXT not available")
+    eglQueryDevicesEXT = ctypes.CFUNCTYPE(EGLuint, EGLint, ctypes.POINTER(EGLDeviceEXT), ctypes.POINTER(EGLint))(
+        eglQueryDevicesEXT_addr
+    )
+    eglQueryDeviceAttribEXT_addr = EGL.eglGetProcAddress(b"eglQueryDeviceAttribEXT")
+    if not eglQueryDeviceAttribEXT_addr:
+        raise RuntimeError("eglQueryDeviceAttribEXT not available")
+    eglQueryDeviceAttribEXT = ctypes.CFUNCTYPE(EGLuint, EGLDeviceEXT, EGLint, ctypes.POINTER(EGLAttrib))(
+        eglQueryDeviceAttribEXT_addr
+    )
+
+    # Query EGL devices
+    num_devices = EGLint()
+    eglQueryDevicesEXT(0, None, ctypes.byref(num_devices))
+    devices = (EGLDeviceEXT * num_devices.value)()
+    eglQueryDevicesEXT(num_devices, devices, ctypes.byref(num_devices))
+    egl_map = {}
+    for i in range(num_devices.value):
+        dev = devices[i]
+        cuda_id = EGLAttrib()
+        if eglQueryDeviceAttribEXT(dev, EGL_CUDA_DEVICE_NV, ctypes.byref(cuda_id)):
+            egl_map[nvidia_gpu_indices[cuda_id.value]] = i
+
+    return egl_map[gpu_index]
+
+
 def pytest_xdist_auto_num_workers(config):
     import genesis as gs
 
@@ -161,14 +205,18 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_runtest_setup(item):
-    # Enforce GPU affinity that distributed framework is enabled
+    # Enforce GPU affinity if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
         worker_num = int(worker_id[2:])
         gpu_indices = _get_gpu_indices()
-        gpu_num = worker_num % len(gpu_indices)
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_indices[gpu_num])
-        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_indices[gpu_num])
+        gpu_index = gpu_indices[worker_num % len(gpu_indices)]
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+        try:
+            os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
+        except Exception:
+            pass
 
 
 def pytest_addoption(parser):
@@ -330,6 +378,11 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+
+        if gs.backend != gs.cpu:
+            device_index = gs.device.index
+            if device_index is not None and device_index not in _get_gpu_indices():
+                assert RuntimeError("Wrong CUDA GPU device.")
 
         import gstaichi as ti
 

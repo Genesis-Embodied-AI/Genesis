@@ -1,6 +1,5 @@
 import math
 import os
-import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
