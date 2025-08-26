@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import time
+import enum
 
 import numpy as np
 import pyglet
@@ -19,15 +20,38 @@ from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 
+IMG_STD_ERR_THR = 0.8
+
+
+class RENDER_TYPE(enum.IntEnum):
+    RASTERIZER = 0
+    RAYTRACER = 1
+    BATCHRENDER_RASTERIZER = 2
+    BATCHRENDER_RAYTRACER = 3
+
+
+def get_render_options(render_type):
+    if render_type == RENDER_TYPE.RASTERIZER:
+        return gs.renderers.Rasterizer()
+    elif render_type == RENDER_TYPE.RAYTRACER:
+        return gs.renderers.RayTracer()
+    else:
+        return gs.renderers.BatchRenderer(use_rasterizer=render_type == RENDER_TYPE.BATCHRENDER_RASTERIZER)
+
+
 @pytest.mark.required
-@pytest.mark.parametrize("segmentation_level", ["entity", "link"])
+@pytest.mark.parametrize("segmentation_level", ["entity", "link", "geom"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
-def test_segmentation(segmentation_level, particle_mode):
+@pytest.mark.parametrize(
+    "render_type", [RENDER_TYPE.RASTERIZER, RENDER_TYPE.BATCHRENDER_RASTERIZER, RENDER_TYPE.BATCHRENDER_RAYTRACER]
+)
+def test_segmentation(segmentation_level, particle_mode, render_type):
     """Test segmentation rendering."""
     scene = gs.Scene(
         fem_options=gs.options.FEMOptions(use_implicit_solver=True),
         vis_options=gs.options.VisOptions(segmentation_level=segmentation_level),
         show_viewer=False,
+        renderer=get_render_options(render_type),
     )
 
     robot = scene.add_entity(
@@ -40,8 +64,10 @@ def test_segmentation(segmentation_level, particle_mode):
 
     # We don't test "recon" for vis_mode because it is hard to install.
     sph_mode = "particle" if particle_mode == "visual" else particle_mode
-    materials = [
+    all_sup_mats = [
         (gs.materials.Rigid(), "visual"),
+    ]
+    other_mats = [
         (gs.materials.Tool(), "visual"),
         (gs.materials.FEM.Elastic(), "visual"),
         (gs.materials.MPM.Elastic(), particle_mode),
@@ -49,6 +75,12 @@ def test_segmentation(segmentation_level, particle_mode):
         (gs.materials.SPH.Liquid(), sph_mode),
         # TODO: Add avatar. Currently avatar solver is buggy.
     ]
+
+    if render_type == RENDER_TYPE.RASTERIZER:
+        materials = all_sup_mats + other_mats
+    else:
+        materials = all_sup_mats
+
     ducks = []
     spacing = 0.5
     for i, pack in enumerate(materials):
@@ -78,14 +110,14 @@ def test_segmentation(segmentation_level, particle_mode):
     )
     scene.build()
 
-    seg_num = len(materials) + (3 if segmentation_level == "link" else 2)
-    idx_dict = camera.get_segmentation_idx_dict()
+    seg_num = len(materials) + (2 if segmentation_level == "entity" else 3)
+    idx_dict = scene.segmentation_idx_dict
     assert len(idx_dict) == seg_num
     comp_key = 0
     for seg_key in idx_dict.values():
         if isinstance(seg_key, tuple):
             comp_key += 1
-    assert comp_key == (3 if segmentation_level == "link" else 0)
+    assert comp_key == (0 if segmentation_level == "entity" else 3)
 
     for i in range(2):
         scene.step()
@@ -293,7 +325,10 @@ def test_render_api(show_viewer):
 
 
 @pytest.mark.required
-def test_point_cloud(show_viewer):
+@pytest.mark.parametrize(
+    "render_type", [RENDER_TYPE.RASTERIZER, RENDER_TYPE.BATCHRENDER_RASTERIZER, RENDER_TYPE.BATCHRENDER_RAYTRACER]
+)
+def test_point_cloud(show_viewer, render_type):
     CAMERA_DIST = 8.0
     OBJ_OFFSET = 10.0
     BOX_HALFSIZE = 1.0
@@ -302,6 +337,7 @@ def test_point_cloud(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
+        renderer=get_render_options(render_type),
     )
     scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -314,6 +350,8 @@ def test_point_cloud(show_viewer):
         pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
         lookat=(0.0, OBJ_OFFSET, 0.0),
         GUI=show_viewer,
+        near=2.0,
+        far=15.0,
     )
     scene.add_entity(
         morph=gs.morphs.Box(
@@ -326,15 +364,16 @@ def test_point_cloud(show_viewer):
         pos=(0.0, -OBJ_OFFSET, CAMERA_DIST),
         lookat=(0.0, -OBJ_OFFSET, 0.0),
         GUI=show_viewer,
+        near=2.0,
+        far=15.0,
     )
     camera_box_2 = scene.add_camera(
         pos=np.array((CAMERA_DIST, CAMERA_DIST - OBJ_OFFSET, CAMERA_DIST)),
         lookat=(0.0, -OBJ_OFFSET, 0.0),
         GUI=show_viewer,
+        near=2.0,
+        far=15.0,
     )
-    for camera in scene.visualizer.cameras:
-        camera._near = 2.0
-        camera._far = 15.0
     scene.build()
 
     if show_viewer:
@@ -667,16 +706,16 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
         GUI=show_viewer,
     )
     scene.add_light(
-        pos=[0.0, 0.0, 1.5],
-        dir=[1.0, 1.0, -2.0],
+        pos=(0.0, 0.0, 1.5),
+        dir=(1.0, 1.0, -2.0),
         directional=True,
         castshadow=True,
         cutoff=45.0,
         intensity=0.5,
     )
     scene.add_light(
-        pos=[4.0, -4.0, 4.0],
-        dir=[-1.0, 1.0, -1.0],
+        pos=(4.0, -4.0, 4.0),
+        dir=(-1.0, 1.0, -1.0),
         directional=False,
         castshadow=True,
         cutoff=45.0,
@@ -716,14 +755,14 @@ def test_madrona_batch_rendering(tmp_path, use_rasterizer, render_all_cameras, n
 
             assert len(rgba) == len(depth) == len(scene.visualizer.cameras)
             assert all(e.shape == (*batch_shape, 3) for e in rgba)
-            assert all(e.shape == (*batch_shape, 1) for e in depth)
+            assert all(e.shape == batch_shape for e in depth)
 
             exporter.export_frame_all_cameras(i, rgb=rgba, depth=depth)
         else:
             rgba, depth, _, _ = cam_1.render(rgb=True, depth=True)
 
             assert rgba.shape == (*batch_shape, 3)
-            assert depth.shape == (*batch_shape, 1)
+            assert depth.shape == batch_shape
 
             exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba, depth=depth)
 

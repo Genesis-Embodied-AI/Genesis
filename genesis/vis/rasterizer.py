@@ -56,7 +56,9 @@ class Rasterizer(RBC):
 
     def update_camera(self, camera):
         self._camera_nodes[camera.uid].camera.yfov = np.deg2rad(camera.fov)
-        self._context.set_node_pose(self._camera_nodes[camera.uid], camera.transform)
+        self._context.set_node_pose(
+            self._camera_nodes[camera.uid], camera.transform[0] if self._context.scene.n_envs > 0 else camera.transform
+        )
         self._context.update_camera_frustum(camera)
 
     def remove_camera(self, camera):

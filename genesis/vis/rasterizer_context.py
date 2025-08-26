@@ -13,6 +13,34 @@ from genesis.ext.pyrender.jit_render import JITRenderer
 from genesis.utils.misc import tensor_to_array
 
 
+class SegmentationColorMap:
+    def __init__(self, seed=42):
+        self.seed = seed
+        self.idxc_map = {0: -1}
+        self.key_map = {-1: 0}
+        self.idxc_to_color = None
+
+    def seg_key_to_idxc(self, seg_key):
+        seg_idxc = self.key_map.setdefault(seg_key, len(self.key_map))
+        self.idxc_map[seg_idxc] = seg_key
+        return seg_idxc
+
+    def seg_idxc_to_key(self, seg_idxc):
+        return self.idxc_map[seg_idxc]
+
+    def colorize_seg_idxc_arr(self, seg_idxc_arr):
+        return self.idxc_to_color[seg_idxc_arr]
+
+    def generate_seg_colors(self):
+        # seg_key: same as entity/link/geom's idx
+        # seg_idxc: segmentation index of objects
+        # seg_idxc_rgb: colorized seg_idxc internally used by renderer
+        num_keys = len(self.key_map)
+        rng = np.random.default_rng(seed=self.seed)
+        self.idxc_to_color = rng.integers(0, 255, size=(num_keys, 3), dtype=np.uint8)
+        self.idxc_to_color[0] = 0  # background uses black
+
+
 class RasterizerContext:
     def __init__(self, options):
         self.show_world_frame = options.show_world_frame
@@ -46,8 +74,7 @@ class RasterizerContext:
         self.dynamic_nodes = list()  # nodes that live within single frame
         self.external_nodes = dict()  # nodes added by external user
         self.seg_node_map = dict()
-        self.seg_idxc_map = {0: -1}
-        self.seg_key_map = {-1: 0}
+        self.seg_color_map = SegmentationColorMap()
 
         self.init_meshes()
 
@@ -108,7 +135,7 @@ class RasterizerContext:
         self.on_fem()
 
         # segmentation mapping
-        self.generate_seg_vars()
+        self.seg_color_map.generate_seg_colors()
 
     def destroy(self):
         self.clear_dynamic_nodes()
@@ -140,7 +167,6 @@ class RasterizerContext:
         # create segemtation id
         if self.segmentation_level == "geom":
             seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
-            assert False, "geom level segmentation not supported yet"
         elif self.segmentation_level == "link":
             seg_key = (geom.entity.idx, geom.link.idx)
         elif self.segmentation_level == "entity":
@@ -195,7 +221,10 @@ class RasterizerContext:
 
     def update_camera_frustum(self, camera):
         if self.camera_frustum_shown:
-            self.set_node_pose(self.frustum_nodes[camera.uid], camera.transform)
+            self.set_node_pose(
+                self.frustum_nodes[camera.uid],
+                camera.transform[0] if self._context.scene.n_envs > 0 else camera.transform,
+            )
 
     def on_camera_frustum(self):
         if not self.camera_frustum_shown:
@@ -205,7 +234,6 @@ class RasterizerContext:
                         mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)),
                         smooth=False,
                     ),
-                    pose=camera.transform,
                 )
             self.camera_frustum_shown = True
 
@@ -871,26 +899,12 @@ class RasterizerContext:
             gs.raise_exception(f"Unsupported light type: {light['type']}")
 
     def create_node_seg(self, seg_key, seg_node):
-        seg_idxc = self.seg_key_to_idxc(seg_key)
+        seg_idxc = self.seg_color_map.seg_key_to_idxc(seg_key)
         if seg_node:
             self.seg_node_map[seg_node] = self.seg_idxc_to_idxc_rgb(seg_idxc)
 
     def remove_node_seg(self, seg_node):
         self.seg_node_map.pop(seg_node, None)
-
-    def generate_seg_vars(self):
-        # seg_key: same as entity/link/geom's idx
-        # seg_idxc: segmentation index of objects
-        # seg_idxc_rgb: colorized seg_idxc internally used by renderer
-        num_keys = len(self.seg_key_map)
-        rng = np.random.default_rng(seed=42)
-        self.seg_idxc_to_color = rng.integers(0, 255, size=(num_keys, 3), dtype=np.uint8)
-        self.seg_idxc_to_color[0] = 0  # background uses black
-
-    def seg_key_to_idxc(self, seg_key):
-        seg_idxc = self.seg_key_map.setdefault(seg_key, len(self.seg_key_map))
-        self.seg_idxc_map[seg_idxc] = seg_key
-        return seg_idxc
 
     def seg_idxc_to_idxc_rgb(self, seg_idxc):
         seg_idxc_rgb = np.array(
@@ -903,17 +917,18 @@ class RasterizerContext:
         )
         return seg_idxc_rgb
 
-    def seg_idxc_to_key(self, seg_idxc):
-        return self.seg_idxc_map[seg_idxc]
-
     def seg_idxc_rgb_arr_to_idxc_arr(self, seg_idxc_rgb_arr):
         # Combine the RGB components into a single integer
         seg_idxc_rgb_arr = seg_idxc_rgb_arr.astype(np.int64, copy=False)
         return seg_idxc_rgb_arr[..., 0] * (256 * 256) + seg_idxc_rgb_arr[..., 1] * 256 + seg_idxc_rgb_arr[..., 2]
 
     def colorize_seg_idxc_arr(self, seg_idxc_arr):
-        return self.seg_idxc_to_color[seg_idxc_arr]
+        return self.seg_color_map.colorize_seg_idxc_arr(seg_idxc_arr)
 
     @property
     def cameras(self):
         return self.visualizer.cameras
+
+    @property
+    def seg_idxc_map(self):
+        return self.seg_color_map.idxc_map
