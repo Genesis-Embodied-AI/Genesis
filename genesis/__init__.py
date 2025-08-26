@@ -68,7 +68,7 @@ def init(
     logger_verbose_time=False,
     performance_mode: bool = False,  # True: compilation up to 6x slower (GJK), but runs ~1-5% faster
 ):
-    global _initialized, maybe_pure
+    global _initialized
     if _initialized:
         raise_exception("Genesis already initialized.")
 

@@ -1000,7 +1000,7 @@ def export_obj(
 
 
 def ColorVisuals__init(self, mesh=None, face_colors=None, vertex_colors=None):
-    trimesh.visual.ColorVisuals.__init__wrapped__(self, mesh, face_colors, vertex_colors)
+    ColorVisuals__init__orig(self, mesh, face_colors, vertex_colors)
     self.defaults = {
         "material_diffuse": np.array([102, 102, 102, 255], dtype=np.uint8),
         "material_ambient": np.array([64, 64, 64, 255], dtype=np.uint8),
@@ -1014,6 +1014,5 @@ trimesh.visual.DEFAULT_COLOR[:] = [102, 102, 102, 255]
 trimesh.exchange.obj.load_obj = load_obj
 
 trimesh.exchange.load.mesh_loaders.update({"obj": load_obj})
-if not hasattr(trimesh.visual.ColorVisuals, "__init__wrapped__"):
-    trimesh.visual.ColorVisuals.__init__wrapped__ = trimesh.visual.ColorVisuals.__init__
+ColorVisuals__init__orig = trimesh.visual.ColorVisuals.__init__
 trimesh.visual.ColorVisuals.__init__ = ColorVisuals__init

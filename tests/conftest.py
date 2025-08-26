@@ -1,8 +1,5 @@
 import base64
-import builtins
 import gc
-import importlib
-import inspect
 import os
 import re
 import sys
@@ -10,7 +7,6 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
-import numpy as np
 import psutil
 import pyglet
 import pytest
@@ -47,35 +43,6 @@ if not has_display and has_egl:
     # It is necessary to configure pyglet in headless mode if necessary before importing Genesis
     pyglet.options["headless"] = True
     os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
-
-
-# Patch builtin special method '__import__' so as to keep track Genesis submodules import order
-submodules = {}
-is_frozen = False
-orig_import = builtins.__import__
-
-
-def _trace_import(name, globals=None, locals=None, fromlist=(), level=0):
-    global submodules
-
-    module = orig_import(name, globals, locals, fromlist, level)
-
-    submodule_hierarchy = module.__name__.split(".")
-    if submodule_hierarchy[0] == "genesis":
-        for i in range(len(submodule_hierarchy)):
-            subname = ".".join(submodule_hierarchy[: (i + 1)])
-            if subname not in submodules:
-                submodules[subname] = module
-
-    return module
-
-
-builtins.__import__ = _trace_import
-
-import genesis as gs
-
-builtins.__import__ = orig_import
-
 
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
@@ -149,6 +116,8 @@ def _get_gpu_indices():
 
 
 def pytest_xdist_auto_num_workers(config):
+    import genesis as gs
+
     # Get available memory (RAM & VRAM) and number of cores
     physical_core_count = psutil.cpu_count(logical=config.option.logical)
     _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
@@ -218,6 +187,8 @@ def show_viewer(pytestconfig):
 
 @pytest.fixture(scope="session")
 def backend(pytestconfig):
+    import genesis as gs
+
     backend = pytestconfig.getoption("--backend") or gs.cpu
     if isinstance(backend, str):
         return getattr(gs.constants.backend, backend)
@@ -231,11 +202,16 @@ def asset_tmp_path(tmp_path_factory):
 
 @pytest.fixture
 def tol():
+    import numpy as np
+    import genesis as gs
+
     return TOL_DOUBLE if gs.np_float == np.float64 else TOL_SINGLE
 
 
 @pytest.fixture
 def precision(request, backend):
+    import genesis as gs
+
     precision = None
     for mark in request.node.iter_markers("precision"):
         if mark.args:
@@ -340,20 +316,7 @@ def taichi_offline_cache(request):
 
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, backend, precision, taichi_offline_cache):
-    global is_frozen, submodules
-
-    import gstaichi as ti
-
-    # Force re-loading genesis if necessary.
-    # This enables dynamically updating global variables based on environment variables and propagating their new values
-    # in all child submodules. This feature is essential internally for running the unit tests with different values for
-    # the global variables.
-    builtins.__import__ = _trace_import
-    if is_frozen:
-        importlib.reload(gs)
-        for module in submodules.values():
-            importlib.reload(module)
-        is_frozen = False
+    import genesis as gs
 
     logging_level = request.config.getoption("--log-cli-level")
     debug = request.config.getoption("--dev")
@@ -367,6 +330,8 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+
+        import gstaichi as ti
 
         ti_runtime = ti.lang.impl.get_runtime()
         ti_config = ti.lang.impl.current_cfg()
@@ -382,10 +347,6 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
     finally:
         gs.destroy()
         gc.collect()
-
-        # Freeze genesis submodules
-        builtins.__import__ = orig_import
-        is_frozen = True
 
 
 @pytest.fixture
@@ -482,6 +443,8 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
 
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
     def matches(self, *, serialized_data, snapshot_data) -> bool:
+        import numpy as np
+
         img_arrays = []
         for data in (serialized_data, snapshot_data):
             buffer = BytesIO()
