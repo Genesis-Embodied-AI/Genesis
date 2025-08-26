@@ -7,7 +7,7 @@ import sys
 import time
 import threading
 from threading import Event, RLock, Semaphore, Thread
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import imageio
 import numpy as np
@@ -15,7 +15,6 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-from genesis.vis.rasterizer_context import RasterizerContext
 
 # Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
@@ -52,6 +51,9 @@ from .node import Node
 from .renderer import Renderer
 from .shader_program import ShaderProgram, ShaderProgramCache
 from .trackball import Trackball
+
+if TYPE_CHECKING:
+    from genesis.vis.rasterizer_context import RasterizerContext
 
 
 pyglet.options["shadow_window"] = False
@@ -193,7 +195,7 @@ class Viewer(pyglet.window.Window):
 
     def __init__(
         self,
-        context: RasterizerContext,
+        context: "RasterizerContext",
         viewport_size=None,
         render_flags=None,
         viewer_flags=None,
@@ -1236,7 +1238,7 @@ class Viewer(pyglet.window.Window):
             # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
             # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
             try:
-                super(Viewer, self).__init__(
+                super().__init__(
                     config=conf,
                     visible=False,
                     resizable=True,

@@ -270,8 +270,8 @@ class BatchRenderer(RBC):
         self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
         self._geom_retriever.build()
         n_envs = max(self._visualizer.scene.n_envs, 1)
-        res = self._cameras[0].res  # FIXME: Madrona only takes first camera's resolution
-        gpu_id = gs.device.index
+        res = self._cameras[0].res  # Madrona uses resolution of first (non-debug) camera
+        gpu_id = gs.device.index if gs.device.index is not None else 0
 
         # Cameras
         n_cameras = len(self._cameras)
