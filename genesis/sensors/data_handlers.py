@@ -1,20 +1,17 @@
 import csv
 import os
-import sys
+from collections import defaultdict
 from collections.abc import Iterable
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
+import torch
 from pydantic_core import core_schema
 
 import genesis as gs
+from genesis.utils import tensor_to_array
 from genesis.utils.tools import animate
-
-try:
-    import pyqtgraph as pg
-except ImportError:
-    pass
 
 
 class DataHandler:
@@ -171,7 +168,7 @@ class VideoFileStreamer(DataHandler):
 
 class CSVFileWriter(DataHandler):
     """
-    Writes to a .csv file using csv.writer.
+    Writes to a .csv file using `csv.writer`. Can handle any array-like or dictionary output from sensors.
 
     Parameters
     ----------
@@ -181,11 +178,15 @@ class CSVFileWriter(DataHandler):
         Determines how often the data is saved to disk. None = only at cleanup, 0 = every write, >0 = every N writes.
     """
 
-    def __init__(self, filename: str, flush_interval: Optional[int] = None):
+    def __init__(self, filename: str, header: list[str] | None = None, flush_interval: Optional[int] = None):
         assert filename.endswith(".csv"), "CSV output must be a CSV file"
         self.filename = filename
         self.file_handle = None
         self.csv_writer = None
+
+        self.header = header
+        self.wrote_header = False
+
         self.flush_interval = flush_interval
         if flush_interval is not None:
             self.flush_counter = 0
@@ -196,10 +197,30 @@ class CSVFileWriter(DataHandler):
         self.csv_writer = csv.writer(self.file_handle)
 
     def process(self, data, cur_time):
-        # data = np.atleast_1d(data) # Data shape may not be homogeneous
-        if not isinstance(data, Iterable):
-            data = [data]
-        self.csv_writer.writerow(data)
+        row_data = [cur_time]
+        if isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, torch.Tensor):
+                    value = tensor_to_array(value).tolist()
+                row_data.append(value)
+        else:
+            row_data.extend(tensor_to_array(data).tolist())
+
+        if not self.wrote_header:
+            header = {"timestamp"}
+            if self.header:
+                header.update(self.header)
+            else:
+                if isinstance(data, dict):
+                    for key in data.keys():
+                        header.add(key)
+                else:
+                    header.update(["data" + i for i in (len(data) if isinstance(data, Iterable) else 1)])
+            assert len(header) == len(row_data), "CSVFileWriter: header length must match data length"
+            self.csv_writer.writerow(header)
+            self.wrote_header = True
+
+        self.csv_writer.writerow(row_data)
         if self.flush_interval is not None:
             self.flush_counter += 1
             if self.flush_counter >= self.flush_interval:
@@ -215,7 +236,7 @@ class CSVFileWriter(DataHandler):
 
 class NPZFileWriter(DataHandler):
     """
-    Buffers all data and writes to a .npz file at cleanup.
+    Buffers all data and writes to a .npz file at cleanup. Can handle any array-like or dictionary output from sensors.
 
     Parameters
     ----------
@@ -226,133 +247,31 @@ class NPZFileWriter(DataHandler):
     def __init__(self, filename: str):
         assert filename.endswith(".npz"), "NPZ output must be an .npz file"
         self.filename = filename
-        self.all_data: list[np.ndarray] = []
+        self.all_data: dict[str, list] = defaultdict(list)
 
     def initialize(self):
         self.all_data.clear()
 
     def process(self, data, cur_time):
-        self.all_data.append(data)
+        self.all_data["timestamp"].append(cur_time)
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, torch.Tensor):
+                    value = tensor_to_array(value)
+                self.all_data[key].append(value)
+        else:
+            self.all_data["data"].append(data)
 
     def cleanup(self):
         gs.logger.info(f'Saving data to "~<{self.filename}>~"...')
+        saved_data = {k: np.array(v) for k, v in self.all_data.items()}
         try:
-            np.savez_compressed(self.filename, np.array(self.all_data))
+            np.savez_compressed(self.filename, **saved_data)
         except ValueError as error:
             gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
-            np.savez_compressed(self.filename, np.array(self.all_data, dtype=object))
-        gs.logger.info("NPZ data saved.")
-
-
-class PyQtGraphPlotter(DataHandler):
-    """
-    Real-time plot using PyQtGraph for live sensor data visualization.
-
-    Creates a live updating plot window showing sensor data as it arrives.
-    Uses PyQtGraph for efficient real-time plotting performance.
-
-    Parameters
-    ----------
-    labels : list[str]
-        Labels for each data channel to plot.
-    vis_window_size : tuple[int, int], optional
-        The size of the plot window. Defaults to (800, 600).
-    rolling_window_size : int, optional
-        Number of data points to display in the rolling window. Defaults to 100.
-    title : str, optional
-        Plot window title. Defaults to "Live Sensor Data".
-    """
-
-    def __init__(
-        self,
-        labels: list[str],
-        vis_window_size: tuple[int, int] = (800, 600),
-        rolling_window_size: int = 100,
-        title: str = "Live Sensor Data",
-    ):
-        if "pyqtgraph" not in sys.modules:
-            gs.raise_exception(
-                "PyQtGraphPlotter: pyqtgraph is not installed. Please install it with `pip install pyqtgraph`."
-            )
-
-        self.labels = labels
-        self.vis_window_size = vis_window_size
-        self.rolling_window_size = rolling_window_size
-        self.title = title
-
-        self.x_data = []
-        self.y_data = [[] for _ in labels]
-
-        self.app = None
-        self.widget = None
-        self.plot_widget = None
-        self.curves = []
-
-    def initialize(self):
-        """Initialize PyQtGraph application and plot window."""
-        if not pg.QtWidgets.QApplication.instance():
-            self.app = pg.QtWidgets.QApplication([])
-        else:
-            self.app = pg.QtWidgets.QApplication.instance()
-
-        self.widget = pg.GraphicsLayoutWidget(show=True, title=self.title)
-        self.widget.resize(*self.vis_window_size)
-
-        self.plot_widget = self.widget.addPlot(title=self.title)
-        self.plot_widget.setLabel("left", "Value")
-        self.plot_widget.setLabel("bottom", "Time Step")
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.addLegend()
-
-        self.curves = []
-        colors = ["r", "g", "b", "c", "m", "y", "w"]  # https://pyqtgraph.readthedocs.io/en/latest/user_guide/style.html
-        for i, label in enumerate(self.labels):
-            color = colors[i % len(colors)]
-            curve = self.plot_widget.plot(pen=pg.mkPen(color=color, width=2), name=label)
-            self.curves.append(curve)
-
-        self.x_data.clear()
-        for y_list in self.y_data:
-            y_list.clear()
-
-        gs.logger.info("PyQtGraphPlotter: created PyQtGraph window")
-
-    def process(self, data, cur_time):
-        """Process new data point and update plot."""
-        data = np.atleast_1d(data)
-
-        if len(data) != len(self.labels):
-            gs.raise_exception(
-                f"PyQtGraphPlotter: Data length ({len(data)}) doesn't match number of labels ({len(self.labels)})"
-            )
-
-        self.x_data.append(cur_time)
-        for i, value in enumerate(data):
-            self.y_data[i].append(float(value))
-
-        if len(self.x_data) > self.rolling_window_size:
-            self.x_data.pop(0)
-            for y_list in self.y_data:
-                y_list.pop(0)
-
-        for curve, y_data in zip(self.curves, self.y_data):
-            curve.setData(x=self.x_data, y=y_data)
-
-        if self.app:
-            self.app.processEvents()
-
-    def cleanup(self):
-        """Clean up PyQtGraph resources."""
-        if self.widget:
-            try:
-                self.widget.close()
-                gs.logger.debug("PyQtGraphPlotter: closed PyQtGraph window")
-            except Exception as e:
-                gs.logger.warning(f"PyQtGraphPlotter: Error closing window: {e}")
-            finally:
-                self.widget = None
-                self.plot_widget = None
-                self.curves.clear()
+            saved_data = {k: np.array(v, dtype=object) for k, v in self.all_data.items()}
+            np.savez_compressed(self.filename, **saved_data)
+        gs.logger.info(f"NPZ data saved with keys {list(saved_data.keys())}.")
 
 
 class CallbackHandler(DataHandler):
