@@ -1,14 +1,14 @@
 import argparse
 
 import numpy as np
+from custom_data_handlers import IS_PYQTGRAPH_AVAILABLE, PyQtGraphPlotter
 from tqdm import tqdm
 
 import genesis as gs
-from genesis.sensors.data_handlers import PyQtGraphPlotter
+from genesis.sensors.data_handlers import NPZFileWriter
 
 
 def main():
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=True)
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
@@ -57,18 +57,24 @@ def main():
             interpolate_for_delay=True,
         )
     )
-    imu.add_recorder(
-        handler=PyQtGraphPlotter(title="IMU Accelerometer Measured Data", labels=["acc_x", "acc_y", "acc_z"]),
-        rec_options=gs.options.RecordingOptions(
-            preprocess_func=lambda data, ground_truth_data: data["lin_acc"],
-        ),
-    )
-    imu.add_recorder(
-        handler=PyQtGraphPlotter(title="IMU Accelerometer Ground Truth Data", labels=["acc_x", "acc_y", "acc_z"]),
-        rec_options=gs.options.RecordingOptions(
-            preprocess_func=lambda data, ground_truth_data: ground_truth_data["lin_acc"],
-        ),
-    )
+    if IS_PYQTGRAPH_AVAILABLE:
+        imu.add_recorder(
+            handler=PyQtGraphPlotter(title="IMU Accelerometer Measured Data", labels=["acc_x", "acc_y", "acc_z"]),
+            rec_options=gs.options.RecordingOptions(
+                preprocess_func=lambda data, ground_truth_data: data["lin_acc"],
+            ),
+        )
+        imu.add_recorder(
+            handler=PyQtGraphPlotter(title="IMU Accelerometer Ground Truth Data", labels=["acc_x", "acc_y", "acc_z"]),
+            rec_options=gs.options.RecordingOptions(
+                preprocess_func=lambda data, ground_truth_data: ground_truth_data["lin_acc"],
+            ),
+        )
+    else:
+        print("pyqtgraph not found, skipping real-time plotting and saving IMU data as .npz instead.")
+        imu.add_recorder(
+            handler=NPZFileWriter(filename="imu_data.npz"),
+        )
     imu.start_recording()
 
     ########################## build ##########################
