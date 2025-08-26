@@ -1,10 +1,16 @@
+import sys
+
+import numpy as np
+
+import genesis as gs
 from genesis.sensors.data_handlers import DataHandler
+from genesis.utils.misc import tensor_to_array
 
 IS_PYQTGRAPH_AVAILABLE = False
 try:
     import pyqtgraph as pg
 
-    PYQTGRAPH_AVAILABLE = True
+    IS_PYQTGRAPH_AVAILABLE = True
 except ImportError:
     pass
 
@@ -84,7 +90,7 @@ class PyQtGraphPlotter(DataHandler):
 
     def process(self, data, cur_time):
         """Process new data point and update plot."""
-        data = np.atleast_1d(data)
+        data = np.atleast_1d(tensor_to_array(data))
 
         if len(data) != len(self.labels):
             gs.raise_exception(
