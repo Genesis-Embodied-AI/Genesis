@@ -7,6 +7,7 @@ import logging as _logging
 import traceback
 from platform import system
 from contextlib import redirect_stdout
+from typing import Callable, TypeVar, ParamSpec
 
 # Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
@@ -39,6 +40,20 @@ _initialized = False
 backend = None
 exit_callbacks = []
 global_scene_list = set()
+
+
+_P = ParamSpec("P")
+_R = TypeVar("R")
+
+
+def _noop(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+    return fn
+
+
+if os.environ.get("GS_BETA_PURE") == "1":
+    maybe_pure: Callable[[Callable[_P, _R]], Callable[_P, _R]] = ti.pure
+else:
+    maybe_pure = _noop
 
 
 ########################## init ##########################
@@ -198,6 +213,9 @@ def init(
             "increasing compilation time is not a concern."
         )
 
+    if os.environ.get("GS_BETA_PURE") == "1":
+        logger.info("Enabling pure kernels for fast cache loading.")
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -275,7 +293,7 @@ def destroy():
     _initialized = False
 
     # Unregister at-exit callback that is not longer relevant.
-    # This is important when `init` / `destory` is called multiple times, which is typically the case for unit tests.
+    # This is important when `init` / `destroy` is called multiple times, which is typically the case for unit tests.
     atexit.unregister(destroy)
 
     # Display any buffered error message if logger is configured
