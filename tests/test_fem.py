@@ -8,7 +8,8 @@ from genesis.utils.misc import tensor_to_array
 from .utils import assert_allclose, get_hf_dataset
 
 
-@pytest.fixture(scope="session")
+# Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
+@pytest.fixture(scope="function")
 def fem_material():
     """Fixture for common FEM material properties"""
     return gs.materials.FEM.Muscle(
@@ -17,6 +18,36 @@ def fem_material():
         rho=1000.0,
         model="stable_neohookean",
     )
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated")
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic()
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated_soft():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated_rough():
+    """Fixture for rough FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated_soft_rough():
+    """Fixture for soft rough FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
 
 
 @pytest.mark.required
@@ -200,12 +231,6 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
     )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic()
-
-
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
 def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
@@ -299,12 +324,6 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated")
-
-
 # FIXME: Compilation is crashing on Apple Metal backend
 @pytest.mark.required
 def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
@@ -357,15 +376,9 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated_soft():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
-
-
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
-def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
+def test_fem_sphere_box_self(fem_material_linear_corotated, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1 / 60,
@@ -796,12 +809,6 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated_rough():
-    """Fixture for rough FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
-
-
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
@@ -886,12 +893,6 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
     assert_allclose(
         new_pos, old_pos, atol=5e-4, err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}."
     )
-
-
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated_soft_rough():
-    """Fixture for soft rough FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
 
 
 # @pytest.mark.required
