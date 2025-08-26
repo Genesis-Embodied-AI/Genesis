@@ -62,7 +62,7 @@ def build_scene():
             enable_collision=True,
             gravity=(0, 0, -9.8),
             box_box_detection=True,
-            constraint_timeconst=0.02,
+            constraint_timeconst=0.01,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 0.0, 0.7),
