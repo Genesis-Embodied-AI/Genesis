@@ -7,7 +7,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
-import numpy as np
+import psutil
 import pyglet
 import pytest
 from _pytest.mark import Expression, MarkMatcher
@@ -43,7 +43,6 @@ if not has_display and has_egl:
     # It is necessary to configure pyglet in headless mode if necessary before importing Genesis
     pyglet.options["headless"] = True
     os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
-
 
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
@@ -117,7 +116,6 @@ def _get_gpu_indices():
 
 
 def pytest_xdist_auto_num_workers(config):
-    import psutil
     import genesis as gs
 
     # Get available memory (RAM & VRAM) and number of cores
@@ -318,10 +316,7 @@ def taichi_offline_cache(request):
 
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, backend, precision, taichi_offline_cache):
-    import pyglet
-    import gstaichi as ti
     import genesis as gs
-    from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
     logging_level = request.config.getoption("--log-cli-level")
     debug = request.config.getoption("--dev")
@@ -336,6 +331,8 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
 
+        import gstaichi as ti
+
         ti_runtime = ti.lang.impl.get_runtime()
         ti_config = ti.lang.impl.current_cfg()
         if ti_config.arch == ti.metal and precision == "64":
@@ -345,6 +342,7 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")
+
         yield
     finally:
         gs.destroy()
@@ -445,6 +443,8 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
 
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
     def matches(self, *, serialized_data, snapshot_data) -> bool:
+        import numpy as np
+
         img_arrays = []
         for data in (serialized_data, snapshot_data):
             buffer = BytesIO()

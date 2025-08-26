@@ -2527,6 +2527,7 @@ class RigidSolver(Solver):
         return gs.List(equality for entity in self._entities for equality in entity.equalities)
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_compute_mass_matrix(
     # taichi variables
@@ -2560,6 +2561,7 @@ def kernel_compute_mass_matrix(
         )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_invweight(
     links_invweight: ti.types.ndarray(),
@@ -2578,6 +2580,7 @@ def kernel_init_invweight(
             dofs_info.invweight[I] = dofs_invweight[I[0]]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_meaninertia(
     # taichi variables
@@ -2601,6 +2604,7 @@ def kernel_init_meaninertia(
             rigid_global_info.meaninertia[i_b] = 1.0
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_dof_fields(
     # input np array
@@ -2658,6 +2662,7 @@ def kernel_init_dof_fields(
             rigid_global_info.n_awake_dofs[b] = n_dofs
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_link_fields(
     links_parent_idx: ti.types.ndarray(),
@@ -2742,6 +2747,7 @@ def kernel_init_link_fields(
             rigid_global_info.n_awake_links[b] = n_links
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_joint_fields(
     joints_type: ti.types.ndarray(),
@@ -2771,6 +2777,7 @@ def kernel_init_joint_fields(
             joints_info.pos[I][j] = joints_pos[i, j]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_vert_fields(
     verts: ti.types.ndarray(),
@@ -2817,6 +2824,7 @@ def kernel_init_vert_fields(
         edges_info.length[i] = (verts_info.init_pos[edges[i, 0]] - verts_info.init_pos[edges[i, 1]]).norm()
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_vvert_fields(
     vverts: ti.types.ndarray(),
@@ -2845,6 +2853,7 @@ def kernel_init_vvert_fields(
         vfaces_info.vgeom_idx[i] = vverts_vgeom_idx[vfaces[i, 0]]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_geom_fields(
     geoms_pos: ti.types.ndarray(),
@@ -2947,6 +2956,7 @@ def kernel_init_geom_fields(
         geoms_state.friction_ratio[i_g, i_b] = 1.0
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_adjust_link_inertia(
     link_idx: ti.i32,
@@ -2970,6 +2980,7 @@ def kernel_adjust_link_inertia(
             links_info.inertial_i[link_idx][j1, j2] *= ratio
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_vgeom_fields(
     vgeoms_pos: ti.types.ndarray(),
@@ -3006,6 +3017,7 @@ def kernel_init_vgeom_fields(
             vgeoms_info.color[i][j] = vgeoms_color[i, j]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_entity_fields(
     entities_dof_start: ti.types.ndarray(),
@@ -3061,6 +3073,7 @@ def kernel_init_entity_fields(
             rigid_global_info.n_awake_entities[b] = n_entities
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_init_equality_fields(
     equalities_type: ti.types.ndarray(),
@@ -3087,6 +3100,7 @@ def kernel_init_equality_fields(
             equalities_info.sol_params[i, b][j] = equalities_sol_params[i, j]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_forward_dynamics(
     links_state: array_class.LinksState,
@@ -3116,6 +3130,7 @@ def kernel_forward_dynamics(
     )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_acc(
     dofs_state: array_class.DofsState,
@@ -3503,6 +3518,7 @@ def func_solve_mass(
         )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_rigid_entity_inverse_kinematics(
     links_idx: ti.types.ndarray(),
@@ -3885,6 +3901,7 @@ def func_forward_dynamics(
     )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_clear_external_force(
     links_state: array_class.LinksState,
@@ -3959,6 +3976,7 @@ def func_update_cartesian_space(
     )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_step_1(
     links_state: array_class.LinksState,
@@ -4070,6 +4088,7 @@ def func_implicit_damping(
             rigid_global_info._mass_mat_mask[i_e, i_b] = 1
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_step_2(
     dofs_state: array_class.DofsState,
@@ -4158,6 +4177,7 @@ def kernel_step_2(
             )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_forward_kinematics_links_geoms(
     envs_idx: ti.types.ndarray(),
@@ -4602,6 +4622,7 @@ def func_forward_velocity(
             )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_forward_kinematics_entity(
     i_e: ti.int32,
@@ -4825,6 +4846,7 @@ def func_forward_velocity_entity(
         links_state.cd_ang[i_l, i_b] = cvel_ang
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_geoms(
     envs_idx: ti.types.ndarray(),
@@ -4895,6 +4917,7 @@ def func_update_geoms(
             geoms_state.verts_updated[i_g, i_b] = 0
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_verts_for_geom(
     i_g: ti.i32,
@@ -4953,6 +4976,7 @@ def func_update_all_verts(self):
             )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_geom_aabbs(
     geoms_state: array_class.GeomsState,
@@ -4977,6 +5001,7 @@ def kernel_update_geom_aabbs(
         geoms_state.aabb_max[i_g, i_b] = upper
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_vgeoms(
     vgeoms_info: array_class.VGeomsInfo,
@@ -5139,6 +5164,7 @@ def func_hibernate_entity_and_zero_dof_velocities(
         geoms_state.hibernated[i_g, i_b] = True
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_apply_links_external_force(
     force: ti.types.ndarray(),
@@ -5155,6 +5181,7 @@ def kernel_apply_links_external_force(
         func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local, links_state)
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_apply_links_external_torque(
     torque: ti.types.ndarray(),
@@ -5972,6 +5999,7 @@ def func_integrate_dq_entity(
                     )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_geoms_render_T(
     geoms_render_T: ti.types.ndarray(),
@@ -5991,6 +6019,7 @@ def kernel_update_geoms_render_T(
             geoms_render_T[i_g, i_b, i, j] = ti.cast(geom_T[i, j], ti.float32)
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_vgeoms_render_T(
     vgeoms_render_T: ti.types.ndarray(),
@@ -6012,6 +6041,7 @@ def kernel_update_vgeoms_render_T(
             vgeoms_render_T[i_g, i_b, i, j] = ti.cast(geom_T[i, j], ti.float32)
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_get_state(
     qpos: ti.types.ndarray(),
@@ -6056,6 +6086,7 @@ def kernel_get_state(
         friction_ratio[i_b, i_l] = geoms_state.friction_ratio[i_l, i_b]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_state(
     qpos: ti.types.ndarray(),
@@ -6100,6 +6131,7 @@ def kernel_set_state(
         geoms_state.friction_ratio[i_l, envs_idx[i_b_]] = friction_ratio[envs_idx[i_b_], i_l]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_links_pos(
     relative: ti.i32,
@@ -6135,6 +6167,7 @@ def kernel_set_links_pos(
                     )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_links_quat(
     relative: ti.i32,
@@ -6189,6 +6222,7 @@ def kernel_set_links_quat(
                     rigid_global_info.qpos[q_start + i + 3, i_b] = quat[i_b_, i_l_, i]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_links_mass_shift(
     mass: ti.types.ndarray(),
@@ -6202,6 +6236,7 @@ def kernel_set_links_mass_shift(
         links_state.mass_shift[links_idx[i_l_], envs_idx[i_b_]] = mass[i_b_, i_l_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_links_COM_shift(
     com: ti.types.ndarray(),
@@ -6216,6 +6251,7 @@ def kernel_set_links_COM_shift(
             links_state.i_pos_shift[links_idx[i_l_], envs_idx[i_b_]][i] = com[i_b_, i_l_, i]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_links_inertial_mass(
     inertial_mass: ti.types.ndarray(),
@@ -6233,6 +6269,7 @@ def kernel_set_links_inertial_mass(
             links_info.inertial_mass[links_idx[i_l_]] = inertial_mass[i_l_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_links_invweight(
     invweight: ti.types.ndarray(),
@@ -6250,6 +6287,7 @@ def kernel_set_links_invweight(
             links_info.invweight[links_idx[i_l_]][j] = invweight[i_l_, j]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_geoms_friction_ratio(
     friction_ratio: ti.types.ndarray(),
@@ -6263,6 +6301,7 @@ def kernel_set_geoms_friction_ratio(
         geoms_state.friction_ratio[geoms_idx[i_g_], envs_idx[i_b_]] = friction_ratio[i_b_, i_g_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_qpos(
     qpos: ti.types.ndarray(),
@@ -6276,6 +6315,7 @@ def kernel_set_qpos(
         rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_global_sol_params(
     sol_params: ti.types.ndarray(),
@@ -6306,6 +6346,7 @@ def kernel_set_global_sol_params(
             equalities_info.sol_params[i_eq, i_b][i] = sol_params[i]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_sol_params(
     constraint_type: ti.template(),
@@ -6339,6 +6380,7 @@ def kernel_set_sol_params(
                 equalities_info.sol_params[inputs_idx[i_eq_], envs_idx[i_b_]][i] = sol_params[i_b_, i_eq_, i]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_kp(
     kp: ti.types.ndarray(),
@@ -6356,6 +6398,7 @@ def kernel_set_dofs_kp(
             dofs_info.kp[dofs_idx[i_d_]] = kp[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_kv(
     kv: ti.types.ndarray(),
@@ -6373,6 +6416,7 @@ def kernel_set_dofs_kv(
             dofs_info.kv[dofs_idx[i_d_]] = kv[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_force_range(
     lower: ti.types.ndarray(),
@@ -6393,6 +6437,7 @@ def kernel_set_dofs_force_range(
             dofs_info.force_range[dofs_idx[i_d_]][1] = upper[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_stiffness(
     stiffness: ti.types.ndarray(),
@@ -6410,6 +6455,7 @@ def kernel_set_dofs_stiffness(
             dofs_info.stiffness[dofs_idx[i_d_]] = stiffness[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_invweight(
     invweight: ti.types.ndarray(),
@@ -6427,6 +6473,7 @@ def kernel_set_dofs_invweight(
             dofs_info.invweight[dofs_idx[i_d_]] = invweight[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_armature(
     armature: ti.types.ndarray(),
@@ -6444,6 +6491,7 @@ def kernel_set_dofs_armature(
             dofs_info.armature[dofs_idx[i_d_]] = armature[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_damping(
     damping: ti.types.ndarray(),
@@ -6461,6 +6509,7 @@ def kernel_set_dofs_damping(
             dofs_info.damping[dofs_idx[i_d_]] = damping[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_frictionloss(
     frictionloss: ti.types.ndarray(),
@@ -6478,6 +6527,7 @@ def kernel_set_dofs_frictionloss(
             dofs_info.frictionloss[dofs_idx[i_d_]] = frictionloss[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_limit(
     lower: ti.types.ndarray(),
@@ -6498,6 +6548,7 @@ def kernel_set_dofs_limit(
             dofs_info.limit[dofs_idx[i_d_]][1] = upper[i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_velocity(
     velocity: ti.types.ndarray(),
@@ -6511,6 +6562,7 @@ def kernel_set_dofs_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = velocity[i_b_, i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_zero_velocity(
     dofs_idx: ti.types.ndarray(),
@@ -6523,6 +6575,7 @@ def kernel_set_dofs_zero_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_dofs_position(
     position: ti.types.ndarray(),
@@ -6595,6 +6648,7 @@ def kernel_set_dofs_position(
                 )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_control_dofs_force(
     force: ti.types.ndarray(),
@@ -6609,6 +6663,7 @@ def kernel_control_dofs_force(
         dofs_state.ctrl_force[dofs_idx[i_d_], envs_idx[i_b_]] = force[i_b_, i_d_]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_control_dofs_velocity(
     velocity: ti.types.ndarray(),
@@ -6632,6 +6687,7 @@ def kernel_control_dofs_velocity(
     return has_gains
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_control_dofs_position(
     position: ti.types.ndarray(),
@@ -6655,6 +6711,7 @@ def kernel_control_dofs_position(
     return has_gains
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_get_links_vel(
     tensor: ti.types.ndarray(),
@@ -6683,6 +6740,7 @@ def kernel_get_links_vel(
             tensor[i_b_, i_l_, i] = vel[i]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_get_links_acc(
     tensor: ti.types.ndarray(),
@@ -6710,6 +6768,7 @@ def kernel_get_links_acc(
             tensor[i_b_, i_l_, i] = acc_classic_lin[i]
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_get_dofs_control_force(
     tensor: ti.types.ndarray(),
@@ -6742,6 +6801,7 @@ def kernel_get_dofs_control_force(
         )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_drone_rpm(
     n_propellers: ti.i32,
@@ -6774,6 +6834,7 @@ def kernel_set_drone_rpm(
             func_apply_link_external_torque(torque, i_l, i_b, 1, 1, links_state)
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_update_drone_propeller_vgeoms(
     n_propellers: ti.i32,
@@ -6795,11 +6856,13 @@ def kernel_update_drone_propeller_vgeoms(
         )
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_geom_friction(geoms_idx: ti.i32, friction: ti.f32, geoms_info: array_class.GeomsInfo):
     geoms_info.friction[geoms_idx] = friction
 
 
+@gs.maybe_pure
 @ti.kernel
 def kernel_set_geoms_friction(
     friction: ti.types.ndarray(),
