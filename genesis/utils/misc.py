@@ -119,6 +119,7 @@ class redirect_libc_stderr:
 def assert_initialized(cls):
     original_init = cls.__init__
 
+    @functools.wraps(original_init)
     def new_init(self, *args, **kwargs):
         if not gs._initialized:
             raise RuntimeError("Genesis hasn't been initialized. Did you call `gs.init()`?")

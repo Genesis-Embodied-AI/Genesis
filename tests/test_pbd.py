@@ -1,6 +1,3 @@
-import uuid
-
-import numpy as np
 import pytest
 
 import genesis as gs

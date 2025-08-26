@@ -161,7 +161,7 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_runtest_setup(item):
-    # Enforce GPU affinity that distributed framework is enabled
+    # Enforce GPU affinity if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
         worker_num = int(worker_id[2:])
