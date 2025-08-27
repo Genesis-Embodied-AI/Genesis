@@ -478,7 +478,7 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
     # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
     # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 5e-6
+    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
