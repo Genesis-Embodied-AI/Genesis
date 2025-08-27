@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import gstaichi as ti
@@ -85,7 +85,9 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: RigidSolver | None = None
-    expanded_links_idx: torch.Tensor = torch.tensor([])
+    expanded_links_idx: torch.Tensor = field(
+        default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
+    )
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata)
@@ -101,7 +103,7 @@ class ContactSensor(Sensor):
 
         self._shared_metadata.expanded_links_idx = torch.cat(
             [
-                self._shared_metadata.expanded_links_idx.to(gs.device),
+                self._shared_metadata.expanded_links_idx,
                 torch.tensor(
                     [self._options.entity_idx + self._options.link_idx_local], dtype=gs.tc_int, device=gs.device
                 )
@@ -200,8 +202,8 @@ class ForceSensorMetadata(NoisySensorMetadataBase):
     """
 
     solver: RigidSolver | None = None
-    links_idx: torch.Tensor = torch.tensor([])
-    min_max_force: torch.Tensor = torch.tensor([])
+    links_idx: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    min_max_force: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
 
 
 @register_sensor(ForceSensorOptions, ForceSensorMetadata)
@@ -219,7 +221,7 @@ class ForceSensor(NoisySensorBase):
 
         self._shared_metadata.links_idx = torch.cat(
             [
-                self._shared_metadata.links_idx.to(gs.device),
+                self._shared_metadata.links_idx,
                 torch.tensor(
                     [self._options.entity_idx + self._options.link_idx_local], dtype=gs.tc_int, device=gs.device
                 ),

@@ -13,7 +13,12 @@ from genesis.utils.geom import (
     transform_quat_by_quat,
 )
 
-from .base_sensor import NoisySensorBase, NoisySensorMetadataBase, NoisySensorOptionsBase, RigidSensorOptionsBase
+from .base_sensor import (
+    NoisySensorBase,
+    NoisySensorMetadataBase,
+    NoisySensorOptionsBase,
+    RigidSensorOptionsBase,
+)
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
@@ -96,18 +101,18 @@ class IMUSharedMetadata(NoisySensorMetadataBase):
 
     solver: RigidSolver | None = None
     links_idx: list[int] = field(default_factory=list)
-    offsets_pos: torch.Tensor = torch.tensor([])
-    offsets_quat: torch.Tensor = torch.tensor([])
-    alignment_rot_matrix: torch.Tensor = torch.tensor([])
-
-    acc_indices: torch.Tensor = torch.tensor([])
-    gyro_indices: torch.Tensor = torch.tensor([])
+    offsets_pos: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    offsets_quat: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    alignment_rot_matrix: torch.Tensor = field(
+        default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
+    )
+    acc_indices: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    gyro_indices: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
 class IMU(NoisySensorBase):
-
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -173,7 +178,7 @@ class IMU(NoisySensorBase):
         self._shared_metadata.links_idx.append(self._options.entity_idx + self._options.link_idx_local)
         self._shared_metadata.offsets_pos = torch.cat(
             [
-                self._shared_metadata.offsets_pos.to(gs.device),
+                self._shared_metadata.offsets_pos,
                 torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
             ]
         )
@@ -181,21 +186,17 @@ class IMU(NoisySensorBase):
         quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
         if self._shared_metadata.solver.n_envs > 0:
             quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
-        self._shared_metadata.offsets_quat = torch.cat(
-            [self._shared_metadata.offsets_quat.to(gs.device), quat_tensor], dim=-2
-        )
+        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
 
         self._shared_metadata.alignment_rot_matrix = torch.cat(
             [
-                self._shared_metadata.alignment_rot_matrix.to(gs.device),
+                self._shared_metadata.alignment_rot_matrix,
                 torch.stack(
                     [
                         self._get_skew_to_alignment_matrix(self._options.acc_axes_skew),
                         self._get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
                     ],
-                )
-                .expand(self._manager._sim._B, -1, -1, -1)
-                .to(gs.device),
+                ).expand(self._manager._sim._B, -1, -1, -1),
             ],
             dim=1,
         )
@@ -292,7 +293,7 @@ class IMU(NoisySensorBase):
 
         if isinstance(input, float):
             # set off-diagonal elements to the scalar value
-            matrix[~torch.eye(3, dtype=gs.tc_bool)] = input
+            matrix[~torch.eye(3, dtype=gs.tc_bool, device=gs.device)] = input
         elif isinstance(input, torch.Tensor):
             matrix.copy_(input)
         else:
@@ -306,5 +307,5 @@ class IMU(NoisySensorBase):
                 matrix[0, 2] = np_input[2]
                 matrix[1, 2] = np_input[2]
             elif np_input.shape == (3, 3):
-                matrix.copy_(torch.tensor(np_input, dtype=gs.tc_float))
+                matrix.copy_(torch.tensor(np_input, dtype=gs.tc_float, device=gs.device))
         return matrix
