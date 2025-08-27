@@ -1779,6 +1779,9 @@ def func_solve_body(
             for i_d in range(n_dofs):
                 constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
                 constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
+            print("CG")
+        else:
+            print("Newton")
 
         func_update_constraint(
             i_b,

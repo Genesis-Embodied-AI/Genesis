@@ -5,6 +5,7 @@ import inspect
 from typing import Any, Type, cast
 
 import gstaichi as ti
+from gstaichi.lang._fast_caching import FIELD_METADATA_CACHE_VALUE, args_hasher
 
 import genesis as gs
 import numpy as np
@@ -2002,6 +2003,70 @@ def get_entities_state(solver):
                     setattr(self, k, v)
 
         return ClassEntitiesState()
+
+
+# =========================================== StaticRigidSimConfig ===========================================
+
+
+@dataclasses.dataclass
+class StaticRigidSimConfig:
+    para_level: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    use_hibernation: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    use_contact_island: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    batch_links_info: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    batch_dofs_info: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    batch_joints_info: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    enable_mujoco_compatibility: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    enable_multi_contact: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    enable_self_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    enable_adjacent_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    enable_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    box_box_detection: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    integrator: gs.integrator.Integrator = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    sparse_solve: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    solver_type: gs.constraint_solver.ConstraintSolver = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+
+    # dynamic properties
+    substep_dt: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    iterations: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    tolerance: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    ls_iterations: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    ls_tolerance: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    n_equalities: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    n_equalities_candidate: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    hibernation_thresh_acc: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    hibernation_thresh_vel: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+
+
+def get_static_rigid_sim_config(solver):
+    kwargs = {
+        "para_level": solver.sim._para_level,
+        "use_hibernation": getattr(solver, "_use_hibernation", False),
+        "use_contact_island": getattr(solver, "_use_contact_island", False),
+        "batch_links_info": getattr(solver._options, "batch_links_info", False),
+        "batch_dofs_info": getattr(solver._options, "batch_dofs_info", False),
+        "batch_joints_info": getattr(solver._options, "batch_joints_info", False),
+        "enable_mujoco_compatibility": getattr(solver, "_enable_mujoco_compatibility", False),
+        "enable_multi_contact": getattr(solver, "_enable_multi_contact", True),
+        "enable_self_collision": getattr(solver, "_enable_self_collision", True),
+        "enable_adjacent_collision": getattr(solver, "_enable_adjacent_collision", False),
+        "enable_collision": getattr(solver, "_enable_collision", False),
+        "box_box_detection": getattr(solver, "_box_box_detection", False),
+        "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
+        "sparse_solve": getattr(solver._options, "sparse_solve", False),
+        "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
+        # dynamic properties
+        "substep_dt": solver._substep_dt,
+        "iterations": getattr(solver._options, "iterations", 10),
+        "tolerance": getattr(solver._options, "tolerance", 1e-6),
+        "ls_iterations": getattr(solver._options, "ls_iterations", 10),
+        "ls_tolerance": getattr(solver._options, "ls_tolerance", 1e-6),
+        "n_equalities": solver._n_equalities,
+        "n_equalities_candidate": solver.n_equalities_candidate,
+        "hibernation_thresh_acc": getattr(solver, "_hibernation_thresh_acc", 0.0),
+        "hibernation_thresh_vel": getattr(solver, "_hibernation_thresh_vel", 0.0),
+    }
+    return StaticRigidSimConfig(**kwargs)
 
 
 # =========================================== DataManager ===========================================

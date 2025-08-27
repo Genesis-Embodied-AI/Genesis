@@ -80,34 +80,34 @@ class RigidSolver(Solver):
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    @ti.data_oriented
-    class StaticRigidSimConfig:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
+    # @ti.data_oriented
+    # class StaticRigidSimConfig:
+    #     def __init__(self, **kwargs):
+    #         for key, value in kwargs.items():
+    #             setattr(self, key, value)
 
-        # # store static arguments here
-        # para_level: int = 0
-        # use_hibernation: bool = False
-        # use_contact_island: bool = False
-        # batch_links_info: bool = False
-        # batch_dofs_info: bool = False
-        # batch_joints_info: bool = False
-        # enable_mujoco_compatibility: bool = False
-        # enable_multi_contact: bool = True
-        # enable_self_collision: bool = True
-        # enable_adjacent_collision: bool = False
-        # enable_collision: bool = False
-        # box_box_detection: bool = False
-        # integrator: gs.integrator = gs.integrator.implicitfast
-        # sparse_solve: bool = False
-        # solver_type: gs.constraint_solver = gs.constraint_solver.CG
-        # # dynamic properties
-        # substep_dt: float = 0.01
-        # iterations: int = 10
-        # tolerance: float = 1e-6
-        # ls_iterations: int = 10
-        # ls_tolerance: float = 1e-6
+    # # store static arguments here
+    # para_level: int = 0
+    # use_hibernation: bool = False
+    # use_contact_island: bool = False
+    # batch_links_info: bool = False
+    # batch_dofs_info: bool = False
+    # batch_joints_info: bool = False
+    # enable_mujoco_compatibility: bool = False
+    # enable_multi_contact: bool = True
+    # enable_self_collision: bool = True
+    # enable_adjacent_collision: bool = False
+    # enable_collision: bool = False
+    # box_box_detection: bool = False
+    # integrator: gs.integrator = gs.integrator.implicitfast
+    # sparse_solve: bool = False
+    # solver_type: gs.constraint_solver = gs.constraint_solver.CG
+    # # dynamic properties
+    # substep_dt: float = 0.01
+    # iterations: int = 10
+    # tolerance: float = 1e-6
+    # ls_iterations: int = 10
+    # ls_tolerance: float = 1e-6
 
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
@@ -261,33 +261,7 @@ class RigidSolver(Solver):
         # Note optional hibernation_threshold_acc/vel params at the bottom of the initialization list.
         # This is caused by this code being also run by AvatarSolver, which inherits from this class
         # but does not have all the attributes of the base class.
-        self._static_rigid_sim_config = self.StaticRigidSimConfig(
-            para_level=self.sim._para_level,
-            use_hibernation=getattr(self, "_use_hibernation", False),
-            use_contact_island=getattr(self, "_use_contact_island", False),
-            batch_links_info=getattr(self._options, "batch_links_info", False),
-            batch_dofs_info=getattr(self._options, "batch_dofs_info", False),
-            batch_joints_info=getattr(self._options, "batch_joints_info", False),
-            enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
-            enable_multi_contact=getattr(self, "_enable_multi_contact", True),
-            enable_self_collision=getattr(self, "_enable_self_collision", True),
-            enable_adjacent_collision=getattr(self, "_enable_adjacent_collision", False),
-            enable_collision=getattr(self, "_enable_collision", False),
-            box_box_detection=getattr(self, "_box_box_detection", False),
-            integrator=getattr(self, "_integrator", gs.integrator.implicitfast),
-            sparse_solve=getattr(self._options, "sparse_solve", False),
-            solver_type=getattr(self._options, "constraint_solver", gs.constraint_solver.CG),
-            # dynamic properties
-            substep_dt=self._substep_dt,
-            iterations=getattr(self._options, "iterations", 10),
-            tolerance=getattr(self._options, "tolerance", 1e-6),
-            ls_iterations=getattr(self._options, "ls_iterations", 10),
-            ls_tolerance=getattr(self._options, "ls_tolerance", 1e-6),
-            n_equalities=self._n_equalities,
-            n_equalities_candidate=self.n_equalities_candidate,
-            hibernation_thresh_acc=getattr(self, "_hibernation_thresh_acc", 0.0),
-            hibernation_thresh_vel=getattr(self, "_hibernation_thresh_vel", 0.0),
-        )
+        self._static_rigid_sim_config = array_class.get_static_rigid_sim_config(self)
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point

@@ -22,6 +22,10 @@ def main():
         ),
         rigid_options=gs.options.RigidOptions(
             # constraint_solver=gs.constraint_solver.Newton,
+            constraint_solver=gs.constraint_solver.CG,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
         ),
         show_viewer=args.vis,
     )
