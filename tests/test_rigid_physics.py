@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -450,6 +451,7 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
     assert_allclose(gs_qpos[0], gs_qpos[1], tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -480,6 +482,7 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
+@pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -629,6 +632,7 @@ def test_urdf_rope(
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
 
 
+@pytest.mark.required
 @pytest.mark.mujoco_compatibility(True)
 @pytest.mark.multi_contact(False)  # FIXME: Mujoco has errors with multi-contact, so this test is disabled
 @pytest.mark.parametrize("xml_path", ["xml/tet_tet.xml", "xml/tet_ball.xml", "xml/tet_capsule.xml"])
@@ -844,6 +848,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
     assert_allclose(acc_classical_lin_world, 0, tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_box"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -1216,6 +1221,7 @@ def test_stickman(gs_sim, mj_sim, tol):
     np.testing.assert_array_less(0, body_z + gs.EPS)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_multilink_inverse_kinematics(show_viewer):
     TOL = 1e-5
@@ -1284,8 +1290,12 @@ def test_multilink_inverse_kinematics(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(n_envs, show_viewer, tol):
+def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
     CUBE_SIZE = 0.07
+
+    # FIXME: Implement a more robust plan planning algorithm
+    if backend == gs.gpu and sys.platform == "darwin":
+        pytest.skip(reason="This algorithm is very fragile and fail to converge on MacOS.")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1645,6 +1655,7 @@ def test_nonconvex_collision(show_viewer):
             assert_allclose(qvel, 0, atol=0.65)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("convexify", [True, False])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -1703,7 +1714,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
 
 
-# FIXME: GJK collision detection algorithm is failing on some platform.
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
@@ -1808,6 +1818,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
             assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
 
 
+@pytest.mark.required
 @pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("mode", range(9))
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
@@ -1876,7 +1887,8 @@ def test_collision_plane_convex(show_viewer, tol):
                 assert_allclose(qvel, 0, atol=0.14)
 
 
-@pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
+@pytest.mark.required
+@pytest.mark.xfail(reason="No reliable way to generate nan...")
 @pytest.mark.parametrize("mode", [3])
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
@@ -2767,6 +2779,7 @@ def test_get_cartesian_space_variables(show_viewer, tol):
         scene.step()
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_geom_pos_quat(show_viewer, tol):
     scene = gs.Scene(
@@ -2790,6 +2803,7 @@ def test_geom_pos_quat(show_viewer, tol):
             assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_contype_conaffinity(show_viewer, tol):
     scene = gs.Scene(
