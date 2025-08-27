@@ -1302,7 +1302,7 @@ class StructLinksState:
     cd_ang: V_ANNOTATION
     cd_vel: V_ANNOTATION
     mass_sum: V_ANNOTATION
-    COM: V_ANNOTATION
+    root_COM: V_ANNOTATION  # COM of the kinematic tree
     mass_shift: V_ANNOTATION
     i_pos_shift: V_ANNOTATION
     cacc_ang: V_ANNOTATION
@@ -1339,7 +1339,7 @@ def get_links_state(solver):
         "cd_ang": V(dtype=gs.ti_vec3, shape=shape),
         "cd_vel": V(dtype=gs.ti_vec3, shape=shape),
         "mass_sum": V(dtype=gs.ti_float, shape=shape),
-        "COM": V(dtype=gs.ti_vec3, shape=shape),
+        "root_COM": V(dtype=gs.ti_vec3, shape=shape),
         "mass_shift": V(dtype=gs.ti_float, shape=shape),
         "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape),
         "cacc_ang": V(dtype=gs.ti_vec3, shape=shape),

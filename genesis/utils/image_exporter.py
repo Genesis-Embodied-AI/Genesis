@@ -50,8 +50,8 @@ class FrameImageExporter:
             depth = torch.log(depth + 1)
 
         # Calculate min/max for each image in the batch
-        depth_min = depth.amin(dim=(-3, -2), keepdim=True)
-        depth_max = depth.amax(dim=(-3, -2), keepdim=True)
+        depth_min = depth.amin(dim=(-2, -1), keepdim=True)
+        depth_max = depth.amax(dim=(-2, -1), keepdim=True)
 
         # Normalize to 0-255 range
         return torch.where(
@@ -118,14 +118,12 @@ class FrameImageExporter:
         if depth is not None:
             depth = torch.as_tensor(depth, dtype=torch.float32, device=gs.device)
 
-            # Unsqueeze depth to (n_envs, H, W, 1)
-            if depth.ndim == 3:
+            # Unsqueeze depth to (n_envs, H, W)
+            if depth.ndim == 2:
                 depth = depth.unsqueeze(0)
-            elif depth.ndim == 2:
-                depth = depth.reshape((1, *depth.shape, 1))
             depth = self._normalize_depth(depth)
-            if depth.ndim != 4 or depth.shape[-1] != 1:
-                gs.raise_exception("'rgb' must be a tensor of shape (n_envs, H, W, 1)")
+            if depth.ndim != 3:
+                gs.raise_exception("'depth' must be a tensor of shape (n_envs, H, W)")
 
             depth_job = partial(
                 _export_frame_depth_camera,
