@@ -105,6 +105,7 @@ def test_imu_sensor(show_viewer):
     assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-5)
 
 
+@pytest.mark.required
 def test_rigid_tactile_sensors_gravity_force(show_viewer):
     """Test if the sensor will detect the correct forces being applied on a falling box."""
     GRAVITY = -10.0
