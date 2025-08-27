@@ -1628,9 +1628,16 @@ class RigidEntity(Entity):
         return self._solver.get_links_ang(self._base_links_idx, envs_idx, unsafe=unsafe).squeeze(-2)
 
     @gs.assert_built
-    def get_links_pos(self, links_idx_local=None, envs_idx=None, *, unsafe=False):
+    def get_links_pos(
+        self,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        unsafe=False,
+    ):
         """
-        Returns position of all the entity's links.
+        Returns the position of a given reference point for all the entity's links.
 
         Parameters
         ----------
@@ -1638,6 +1645,11 @@ class RigidEntity(Entity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com"
+            The reference point being used to express the position of each link.
+            * "root_com": center of mass of the sub-entities to which the link belongs. As a reminder, a single
+              kinematic tree (aka. 'RigidEntity') may compromise multiple "physical" entities, i.e. a kinematic tree
+              that may have at most one free joint, at its root.
 
         Returns
         -------
@@ -1645,7 +1657,7 @@ class RigidEntity(Entity):
             The position of all the entity's links.
         """
         links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_pos(links_idx, envs_idx, unsafe=unsafe)
+        return self._solver.get_links_pos(links_idx, envs_idx, ref=ref, unsafe=unsafe)
 
     @gs.assert_built
     def get_links_quat(self, links_idx_local=None, envs_idx=None, *, unsafe=False):

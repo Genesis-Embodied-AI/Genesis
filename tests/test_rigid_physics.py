@@ -2858,6 +2858,7 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mesh_primitive_COM(show_viewer, tol):
     scene = gs.Scene(
@@ -2895,6 +2896,11 @@ def test_mesh_primitive_COM(show_viewer, tol):
     cube_z = link_COM[2, 2]
     root_bunny_z = root_COM[1, 2]
     root_cube_z = root_COM[2, 2]
+
+    assert_allclose(bunny_z, bunny.get_links_pos(links_idx_local=[0], ref="link_com")[0, 2], atol=gs.EPS)
+    assert_allclose(cube_z, cube.get_links_pos(links_idx_local=[0], ref="link_com")[0, 2], atol=gs.EPS)
+    assert_allclose(root_bunny_z, bunny.get_links_pos(links_idx_local=[0], ref="root_com")[0, 2], atol=gs.EPS)
+    assert_allclose(root_cube_z, cube.get_links_pos(links_idx_local=[0], ref="root_com")[0, 2], atol=gs.EPS)
 
     # in the old (wrong) code, their initial COM are (0,0,0)
     # but now their z are above the plane
