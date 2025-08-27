@@ -372,7 +372,7 @@ def _ensure_compiled(self, *args):
     return key
 
 
-def _launch_kernel(self, t_kernel, *args):
+def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
     launch_ctx = t_kernel.make_launch_context()
 
     template_num = 0
@@ -412,7 +412,8 @@ def _launch_kernel(self, t_kernel, *args):
 
     try:
         prog = impl.get_runtime().prog
-        compiled_kernel_data = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
+        if compiled_kernel_data is None:
+            compiled_kernel_data = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
         prog.launch_kernel(compiled_kernel_data, launch_ctx)
     except Exception as e:
         e = handle_exception_from_cpp(e)
