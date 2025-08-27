@@ -665,7 +665,7 @@ def test_link_velocity(gs_sim, tol):
     assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), tol=tol)
 
     init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
-    COM = gs_sim.rigid_solver.links_state.COM[0, 0]
+    COM = gs_sim.rigid_solver.links_state.root_COM[0, 0]
     assert_allclose(COM, np.array([0.375, 0.125, 0.0]), tol=tol)
     xanchor = gs_sim.rigid_solver.joints_state.xanchor[1, 0]
     assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), tol=tol)
@@ -679,7 +679,7 @@ def test_link_velocity(gs_sim, tol):
     theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), tol=tol)
     assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), tol=tol)
-    COM = gs_sim.rigid_solver.links_state.COM[0, 0]
+    COM = gs_sim.rigid_solver.links_state.root_COM[0, 0]
     COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
     COM_1 = np.array(
         [
@@ -688,6 +688,11 @@ def test_link_velocity(gs_sim, tol):
             0.0,
         ]
     )
+    link_COM0 = gs_sim.rigid_solver.get_links_pos(ref="link_com")[0]
+    link_COM1 = gs_sim.rigid_solver.get_links_pos(ref="link_com")[1]
+
+    assert_allclose(link_COM0, COM_0, tol=tol)
+    assert_allclose(link_COM1, COM_1, tol=tol)
     assert_allclose(COM, 0.5 * (COM_0 + COM_1), tol=tol)
 
     cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
@@ -805,7 +810,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
 
         # Linear spatial acceleration
         cacc_spatial_lin_world = gs_sim.rigid_solver.links_state.cacc_lin.to_numpy()[[0, 2, 4], 0]
-        com = gs_sim.rigid_solver.links_state.COM.to_numpy()[-1, 0]
+        com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[-1, 0]
         pos = gs_sim.rigid_solver.links_state.pos.to_numpy()[[0, 2, 4], 0]
         assert_allclose(cacc_spatial_lin_world[1], np.cross(acc_ang[2], com), tol=tol)
         acc_spatial_lin_world = cacc_spatial_lin_world + np.cross(acc_ang[[0, 2, 4]], pos - com)
@@ -2508,7 +2513,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_links, n_envs, gs_s.get_links_vel, None, None),
         (gs_s.n_links, n_envs, gs_s.get_links_ang, None, gs_s.links_state.cd_ang),
         (gs_s.n_links, n_envs, gs_s.get_links_acc, None, None),
-        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.links_state.COM),
+        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.links_state.root_COM),
         (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.links_state.mass_shift),
         (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.links_state.i_pos_shift),
         (gs_s.n_links, -1, gs_s.get_links_inertial_mass, gs_s.set_links_inertial_mass, gs_s.links_info.inertial_mass),
@@ -2851,3 +2856,51 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
     assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
     assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mesh_primitive_COM(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, -10.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    bunny = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/bunny.obj",
+            pos=(-1.0, -1.0, 1.0),
+        ),
+        vis_mode="collision",
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(1.0, 1.0, 1.0),
+        ),
+        vis_mode="collision",
+    )
+    ############# build ##########################
+    scene.build()
+    rigid = scene.sim.rigid_solver
+    for i in range(500):
+        scene.step()
+
+    link_COM = rigid.get_links_pos(ref="link_com")
+    root_COM = rigid.get_links_pos(ref="root_com")
+    bunny_z = link_COM[1, 2]
+    cube_z = link_COM[2, 2]
+    root_bunny_z = root_COM[1, 2]
+    root_cube_z = root_COM[2, 2]
+
+    # in the old (wrong) code, their initial COM are (0,0,0)
+    # but now their z are above the plane
+    assert_allclose(bunny_z, 0.3424, atol=1e-3)
+    assert_allclose(cube_z, 0.2499, atol=1e-3)
+
+    # root and link COM should be the same for single link
+    assert_allclose(root_bunny_z, bunny_z, atol=tol)
+    assert_allclose(root_cube_z, cube_z, atol=tol)

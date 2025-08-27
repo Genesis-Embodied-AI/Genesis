@@ -191,7 +191,7 @@ class RigidEntity(Entity):
                 name=f"{link_name_prefix}_baselink",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
-                inertial_pos=gu.zero_pos(),
+                inertial_pos=None,  # we will compute the COM later based on the geometry
                 inertial_quat=gu.identity_quat(),
                 parent_idx=-1,
             ),
@@ -263,7 +263,7 @@ class RigidEntity(Entity):
                 name=f"{link_name}_baselink",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
-                inertial_pos=gu.zero_pos(),
+                inertial_pos=None,  # we will compute the COM later based on the geometry
                 inertial_quat=gu.identity_quat(),
                 parent_idx=-1,
             ),

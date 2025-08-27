@@ -930,7 +930,7 @@ def check_mujoco_data_consistency(
 
     # ------------------------------------------------------------------------
 
-    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
+    gs_com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[:, 0]
     gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
     mj_com = mj_sim.data.subtree_com
     mj_root_idx = np.unique(mj_sim.model.body_rootid[mj_bodies_idx])
