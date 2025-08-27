@@ -1980,7 +1980,7 @@ class RigidContactHandler(BaseContactHandler):
                     cdof_vel = self.rigid_solver.dofs_state.cdof_vel[i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = self.contact_pairs[i_p].contact_pos - self.rigid_solver.links_state.COM[link, i_b]
+                    t_pos = self.contact_pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
                     _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
 
                     diff = vel

@@ -191,7 +191,7 @@ class ConstraintSolverIsland:
 
                             t_quat = gu.ti_identity_quat()
                             contact_pos = self._collider._collider_state.contact_data.pos[i_col, i_b]
-                            t_pos = contact_pos - self._solver.links_state.COM[link, i_b]
+                            t_pos = contact_pos - self._solver.links_state.root_COM[link, i_b]
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel

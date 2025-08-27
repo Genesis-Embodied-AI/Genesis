@@ -2061,8 +2061,36 @@ class RigidSolver(Solver):
             tensor = ti_field_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, unsafe=unsafe)
         return tensor
 
-    def get_links_pos(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        tensor = ti_field_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+    @staticmethod
+    def _convert_ref_to_idx(ref: Literal["link_origin", "link_com", "root_com"]):
+        if ref == "root_com":
+            return 0
+        elif ref == "link_com":
+            return 1
+        elif ref == "link_origin":
+            return 2
+        else:
+            raise gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+
+    def get_links_pos(
+        self,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        unsafe: bool = False,
+    ):
+        ref = self._convert_ref_to_idx(ref)
+        if ref == 0:
+            tensor = ti_field_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        elif ref == 1:
+            i_pos = ti_field_to_torch(self.links_state.i_pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+            root_COM = ti_field_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+            tensor = i_pos + root_COM
+        elif ref == 2:
+            tensor = ti_field_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        else:
+            raise gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, unsafe=False):
@@ -2081,14 +2109,7 @@ class RigidSolver(Solver):
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )
         tensor = _tensor.unsqueeze(0) if self.n_envs == 0 else _tensor
-        if ref == "root_com":
-            ref = 0
-        elif ref == "link_com":
-            ref = 1
-        elif ref == "link_origin":
-            ref = 2
-        else:
-            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+        ref = self._convert_ref_to_idx(ref)
         kernel_get_links_vel(tensor, links_idx, envs_idx, ref, self.links_state, self._static_rigid_sim_config)
         return _tensor
 
@@ -2121,7 +2142,7 @@ class RigidSolver(Solver):
         This corresponds to the global COM of each entity, assuming a single-rooted structure — that is, as long as no
         two successive links are connected by a free-floating joint (ie a joint that allows all 6 degrees of freedom).
         """
-        tensor = ti_field_to_torch(self.links_state.COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+        tensor = ti_field_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, unsafe=False):
@@ -3156,7 +3177,7 @@ def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksSt
     """
     Velocity of a certain point on a rigid link.
     """
-    vel_rot = links_state.cd_ang[link_idx, i_b].cross(pos_world - links_state.COM[link_idx, i_b])
+    vel_rot = links_state.cd_ang[link_idx, i_b].cross(pos_world - links_state.root_COM[link_idx, i_b])
     vel_lin = links_state.cd_vel[link_idx, i_b]
     return vel_rot + vel_lin
 
@@ -4232,7 +4253,7 @@ def func_COM_links(
         for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
             i_l = rigid_global_info.awake_links[i_l_, i_b]
 
-            links_state.COM[i_l, i_b].fill(0.0)
+            links_state.root_COM[i_l, i_b].fill(0.0)
             links_state.mass_sum[i_l, i_b] = 0.0
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -4253,7 +4274,7 @@ def func_COM_links(
 
             i_r = links_info.root_idx[I_l]
             links_state.mass_sum[i_r, i_b] += mass
-            links_state.COM[i_r, i_b] += mass * links_state.i_pos[i_l, i_b]
+            links_state.root_COM[i_r, i_b] += mass * links_state.i_pos[i_l, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
@@ -4262,7 +4283,7 @@ def func_COM_links(
 
             i_r = links_info.root_idx[I_l]
             if i_l == i_r:
-                links_state.COM[i_l, i_b] = links_state.COM[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+                links_state.root_COM[i_l, i_b] = links_state.root_COM[i_l, i_b] / links_state.mass_sum[i_l, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
@@ -4270,7 +4291,7 @@ def func_COM_links(
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
             i_r = links_info.root_idx[I_l]
-            links_state.COM[i_l, i_b] = links_state.COM[i_r, i_b]
+            links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
@@ -4278,7 +4299,7 @@ def func_COM_links(
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
             i_r = links_info.root_idx[I_l]
-            links_state.i_pos[i_l, i_b] = links_state.i_pos[i_l, i_b] - links_state.COM[i_l, i_b]
+            links_state.i_pos[i_l, i_b] = links_state.i_pos[i_l, i_b] - links_state.root_COM[i_l, i_b]
 
             i_inertial = links_info.inertial_i[I_l]
             i_mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
@@ -4352,7 +4373,7 @@ def func_COM_links(
                         dofs_info.motion_ang[I_d], links_state.j_quat[i_l, i_b]
                     )
 
-                    offset_pos = links_state.COM[i_l, i_b] - links_state.j_pos[i_l, i_b]
+                    offset_pos = links_state.root_COM[i_l, i_b] - links_state.j_pos[i_l, i_b]
                     (
                         dofs_state.cdof_ang[i_d, i_b],
                         dofs_state.cdof_vel[i_d, i_b],
@@ -4377,7 +4398,7 @@ def func_COM_links(
                     dofs_state.cdof_ang[i_d, i_b] = gu.ti_transform_by_quat(motion_ang, links_state.j_quat[i_l, i_b])
                     dofs_state.cdof_vel[i_d, i_b] = gu.ti_transform_by_quat(motion_vel, links_state.j_quat[i_l, i_b])
 
-                    offset_pos = links_state.COM[i_l, i_b] - links_state.j_pos[i_l, i_b]
+                    offset_pos = links_state.root_COM[i_l, i_b] - links_state.j_pos[i_l, i_b]
                     (
                         dofs_state.cdof_ang[i_d, i_b],
                         dofs_state.cdof_vel[i_d, i_b],
@@ -4393,7 +4414,7 @@ def func_COM_links(
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l in range(n_links):
-            links_state.COM[i_l, i_b].fill(0.0)
+            links_state.root_COM[i_l, i_b].fill(0.0)
             links_state.mass_sum[i_l, i_b] = 0.0
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -4413,7 +4434,7 @@ def func_COM_links(
 
             i_r = links_info.root_idx[I_l]
             links_state.mass_sum[i_r, i_b] += mass
-            links_state.COM[i_r, i_b] += mass * links_state.i_pos[i_l, i_b]
+            links_state.root_COM[i_r, i_b] += mass * links_state.i_pos[i_l, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l in range(n_links):
@@ -4422,21 +4443,21 @@ def func_COM_links(
             i_r = links_info.root_idx[I_l]
             if i_l == i_r:
                 if links_state.mass_sum[i_l, i_b] > 0.0:
-                    links_state.COM[i_l, i_b] = links_state.COM[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+                    links_state.root_COM[i_l, i_b] = links_state.root_COM[i_l, i_b] / links_state.mass_sum[i_l, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l in range(n_links):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
             i_r = links_info.root_idx[I_l]
-            links_state.COM[i_l, i_b] = links_state.COM[i_r, i_b]
+            links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l in range(n_links):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
             i_r = links_info.root_idx[I_l]
-            links_state.i_pos[i_l, i_b] = links_state.i_pos[i_l, i_b] - links_state.COM[i_l, i_b]
+            links_state.i_pos[i_l, i_b] = links_state.i_pos[i_l, i_b] - links_state.root_COM[i_l, i_b]
 
             i_inertial = links_info.inertial_i[I_l]
             i_mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
@@ -4497,7 +4518,7 @@ def func_COM_links(
                 continue
 
             for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
-                offset_pos = links_state.COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
+                offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
                 I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                 joint_type = joints_info.type[I_j]
 
@@ -5200,7 +5221,7 @@ def kernel_apply_links_external_torque(
 
 @ti.func
 def func_apply_external_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
-    torque = (pos - links_state.COM[link_idx, env_idx]).cross(force)
+    torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
     links_state.cfrc_applied_ang[link_idx, env_idx] -= torque
     links_state.cfrc_applied_vel[link_idx, env_idx] -= force
 
@@ -5222,7 +5243,7 @@ def func_apply_link_external_force(
     if ti.static(ref == 2):  # link's origin
         if ti.static(local == 1):
             force = gu.ti_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
-        torque = (links_state.pos[link_idx, env_idx] - links_state.COM[link_idx, env_idx]).cross(force)
+        torque = (links_state.pos[link_idx, env_idx] - links_state.root_COM[link_idx, env_idx]).cross(force)
 
     links_state.cfrc_applied_vel[link_idx, env_idx] -= force
     links_state.cfrc_applied_ang[link_idx, env_idx] -= torque
@@ -6733,7 +6754,7 @@ def kernel_get_links_vel(
             )
         if ti.static(ref == 2):  # link's origin
             vel = vel + links_state.cd_ang[links_idx[i_l_], envs_idx[i_b_]].cross(
-                links_state.pos[links_idx[i_l_], envs_idx[i_b_]] - links_state.COM[links_idx[i_l_], envs_idx[i_b_]]
+                links_state.pos[links_idx[i_l_], envs_idx[i_b_]] - links_state.root_COM[links_idx[i_l_], envs_idx[i_b_]]
             )
 
         for i in ti.static(range(3)):
@@ -6755,7 +6776,7 @@ def kernel_get_links_acc(
         i_b = envs_idx[i_b_]
 
         # Compute links spatial acceleration expressed at links origin in world coordinates
-        cpos = links_state.pos[i_l, i_b] - links_state.COM[i_l, i_b]
+        cpos = links_state.pos[i_l, i_b] - links_state.root_COM[i_l, i_b]
         acc_ang = links_state.cacc_ang[i_l, i_b]
         acc_lin = links_state.cacc_lin[i_l, i_b] + acc_ang.cross(cpos)
 
