@@ -86,29 +86,6 @@ class RigidSolver(Solver):
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
-    # # store static arguments here
-    # para_level: int = 0
-    # use_hibernation: bool = False
-    # use_contact_island: bool = False
-    # batch_links_info: bool = False
-    # batch_dofs_info: bool = False
-    # batch_joints_info: bool = False
-    # enable_mujoco_compatibility: bool = False
-    # enable_multi_contact: bool = True
-    # enable_self_collision: bool = True
-    # enable_adjacent_collision: bool = False
-    # enable_collision: bool = False
-    # box_box_detection: bool = False
-    # integrator: gs.integrator = gs.integrator.implicitfast
-    # sparse_solve: bool = False
-    # solver_type: gs.constraint_solver = gs.constraint_solver.CG
-    # # dynamic properties
-    # substep_dt: float = 0.01
-    # iterations: int = 10
-    # tolerance: float = 1e-6
-    # ls_iterations: int = 10
-    # ls_tolerance: float = 1e-6
-
     def __init__(self, scene: "Scene", sim: "Simulator", options: RigidOptions) -> None:
         super().__init__(scene, sim, options)
 

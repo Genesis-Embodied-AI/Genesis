@@ -21,11 +21,7 @@ def main():
             camera_fov=40,
         ),
         rigid_options=gs.options.RigidOptions(
-            constraint_solver=gs.constraint_solver.Newton,
-            # constraint_solver=gs.constraint_solver.CG,
-        ),
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
+            # constraint_solver=gs.constraint_solver.Newton,
         ),
         show_viewer=args.vis,
     )
