@@ -2026,17 +2026,6 @@ class StaticRigidSimDummy:
     sparse_solve: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
     solver_type: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
 
-    # dynamic properties
-    substep_dt: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    iterations: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    tolerance: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    ls_iterations: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    ls_tolerance: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    n_equalities: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    n_equalities_candidate: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    hibernation_thresh_acc: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    hibernation_thresh_vel: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-
 
 def get_static_rigid_sim_dummy(solver):
     kwargs = {
@@ -2055,16 +2044,6 @@ def get_static_rigid_sim_dummy(solver):
         "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
         "sparse_solve": getattr(solver._options, "sparse_solve", False),
         "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
-        # dynamic properties
-        "substep_dt": solver._substep_dt,
-        "iterations": getattr(solver._options, "iterations", 10),
-        "tolerance": getattr(solver._options, "tolerance", 1e-6),
-        "ls_iterations": getattr(solver._options, "ls_iterations", 10),
-        "ls_tolerance": getattr(solver._options, "ls_tolerance", 1e-6),
-        "n_equalities": solver._n_equalities,
-        "n_equalities_candidate": solver.n_equalities_candidate,
-        "hibernation_thresh_acc": getattr(solver, "_hibernation_thresh_acc", 0.0),
-        "hibernation_thresh_vel": getattr(solver, "_hibernation_thresh_vel", 0.0),
     }
     return StaticRigidSimDummy(**kwargs)
 
