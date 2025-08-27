@@ -46,7 +46,7 @@ class SensorOptions(Options):
         if not np.isclose(delay_hz, round(delay_hz), atol=1e-6):
             gs.logger.warn(
                 f"Read delay should be a multiple of the simulation time step. Got {self.delay}"
-                f" and {scene._sim.dt}. Actual read delay will be {1/round(delay_hz)}."
+                f" and {scene._sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
             )
 
 
@@ -332,16 +332,14 @@ class NoisySensorOptionsBase(SensorOptions):
         If True, the sensor will only update the ground truth cache, and not the measured cache.
     """
 
-    bias: tuple[float, ...] = field(default_factory=tuple)
-    bias_drift_std: tuple[float, ...] = field(default_factory=tuple)
-    noise_std: tuple[float, ...] = field(default_factory=tuple)
+    bias: float | tuple[float, ...] = 0.0
+    bias_drift_std: float | tuple[float, ...] = 0.0
+    noise_std: float | tuple[float, ...] = 0.0
     jitter: float = 0.0
     interpolate_for_delay: bool = False
 
     def validate(self, scene):
         super().validate(scene)
-        assert len(self.bias_drift_std) == len(self.bias), "Bias drift std must be the same length as bias."
-        assert len(self.noise_std) == len(self.bias), "Noise std must be the same length as bias."
         assert self.jitter <= self.delay, "Jitter must be less than or equal to read delay."
 
 
@@ -356,6 +354,7 @@ class NoisySensorMetadataBase(SharedSensorMetadata):
     bias_drift_std: torch.Tensor = torch.tensor([])
     noise_std: torch.Tensor = torch.tensor([])
     jitter_std_in_steps: torch.Tensor = torch.tensor([])
+    jitter_in_steps: torch.Tensor = torch.tensor([])
     delay_in_steps: torch.Tensor = torch.tensor([])
     interpolate_for_delay: list[bool] = field(default_factory=list)
 
