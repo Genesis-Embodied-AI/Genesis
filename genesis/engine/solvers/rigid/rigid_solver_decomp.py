@@ -1031,6 +1031,7 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_dummy=self._static_rigid_sim_dummy,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
 
@@ -1042,6 +1043,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_dummy=self._static_rigid_sim_dummy,
         )
 
     def _func_forward_kinematics_entity(self, i_e, envs_idx):
@@ -1057,6 +1059,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_dummy=self._static_rigid_sim_dummy,
         )
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
@@ -2391,6 +2394,7 @@ class RigidSolver(Solver):
             self.entities_info,
             self._rigid_global_info,
             self._static_rigid_sim_config,
+            self._static_rigid_sim_dummy,
         )
 
     def update_drone_propeller_vgeoms(self, n_propellers, propellers_vgeom_idxs, propellers_revs, propellers_spin):
@@ -3158,8 +3162,8 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    contact_island_state: array_class.ContactIslandState,
     static_rigid_sim_dummy: array_class.StaticRigidSimDummy,
+    contact_island_state: array_class.ContactIslandState,
 ):
     func_forward_dynamics(
         links_state=links_state,

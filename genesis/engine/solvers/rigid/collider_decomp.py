@@ -427,6 +427,7 @@ class Collider:
                 fout,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
+                self._solver._static_rigid_sim_dummy,
                 self._collider_state,
                 self._collider_info,
             )

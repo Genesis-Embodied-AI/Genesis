@@ -401,6 +401,7 @@ class RigidLink(RBC):
             ratio=ratio,
             links_info=self._solver.links_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_dummy=self._solver._static_rigid_sim_dummy,
         )
 
     @gs.assert_built

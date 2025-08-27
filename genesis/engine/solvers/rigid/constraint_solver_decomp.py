@@ -309,6 +309,7 @@ class ConstraintSolver:
                 self.constraint_state,
                 self._solver.equalities_info,
                 self._solver._static_rigid_sim_config,
+                self._solver._static_rigid_sim_dummy,
             )
 
         if as_tensor:
@@ -390,6 +391,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.links_state,
             self._solver._static_rigid_sim_config,
+            self._solver._static_rigid_sim_dummy,
         )
         if overflow:
             gs.logger.warning(
@@ -408,6 +410,7 @@ class ConstraintSolver:
             self._solver.equalities_info,
             self.constraint_state,
             self._solver._static_rigid_sim_config,
+            self._solver._static_rigid_sim_dummy,
         )
 
 
@@ -1799,9 +1802,6 @@ def func_solve_body(
             for i_d in range(n_dofs):
                 constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
                 constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
-            print("CG")
-        else:
-            print("Newton")
 
         func_update_constraint(
             i_b,
