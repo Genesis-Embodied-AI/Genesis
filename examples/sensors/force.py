@@ -5,7 +5,6 @@ from huggingface_hub import snapshot_download
 from tqdm import tqdm
 
 import genesis as gs
-from genesis.sensors import ForceSensorOptions
 from genesis.sensors.data_handlers import NPZFileWriter
 
 
@@ -62,8 +61,7 @@ def main():
     )
     palm = hand.get_link("base_link")
 
-    force_sensor = scene.add_sensor(ForceSensorOptions(entity_idx=palm.idx))
-    normtan_force_sensor = scene.add_sensor(ForceSensorOptions(entity_idx=box.idx, return_normtan=True))
+    force_sensor = scene.add_sensor(gs.sensors.ContactForce(entity_idx=palm.idx))
 
     if IS_PYQTGRAPH_AVAILABLE:
         force_sensor.add_recorder(
@@ -72,24 +70,14 @@ def main():
                 preprocess_func=lambda data, ground_truth_data: data["force"],
             ),
         )
-        normtan_force_sensor.add_recorder(
-            handler=PyQtGraphPlotter(title="Normal Tangential Force Sensor Measured Data", labels=["normal force"]),
-            rec_options=gs.options.RecordingOptions(
-                preprocess_func=lambda data, ground_truth_data: data["normal"],
-            ),
-        )
     else:
         print("pyqtgraph not found, skipping real-time plotting.")
 
     force_sensor.add_recorder(
         handler=NPZFileWriter(filename="force_data.npz"),
     )
-    normtan_force_sensor.add_recorder(
-        handler=NPZFileWriter(filename="normtan_force_data.npz"),
-    )
 
     force_sensor.start_recording()
-    normtan_force_sensor.start_recording()
 
     scene.build()
 
