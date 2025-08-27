@@ -1,5 +1,6 @@
 from .base_sensor import Sensor
-from .contact_force import ContactSensorOptions, ForceSensorOptions
+from .contact_force import ContactSensorOptions as Contact
+from .contact_force import ForceSensorOptions as ContactForce
 from .data_handlers import (
     CallbackHandler,
     CSVFileWriter,
@@ -9,4 +10,4 @@ from .data_handlers import (
     VideoFileWriter,
 )
 from .data_recorder import SensorDataRecorder
-from .imu import IMUOptions
+from .imu import IMUOptions as IMU

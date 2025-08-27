@@ -147,7 +147,7 @@ class ContactSensor(Sensor):
 # ==========================================================================================================
 
 
-class ForceSensorOptions(NoisySensorOptionsBase, RigidSensorOptionsBase):
+class ContactForceSensorOptions(NoisySensorOptionsBase, RigidSensorOptionsBase):
     """
     Sensor that returns contact force in the associated RigidLink's local frame.
 
@@ -196,7 +196,7 @@ class ForceSensorOptions(NoisySensorOptionsBase, RigidSensorOptionsBase):
 
 
 @dataclass
-class ForceSensorMetadata(NoisySensorMetadataBase):
+class ContactForceSensorMetadata(NoisySensorMetadataBase):
     """
     Metadata for all rigid contact force sensors.
     """
@@ -206,9 +206,9 @@ class ForceSensorMetadata(NoisySensorMetadataBase):
     min_max_force: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
 
 
-@register_sensor(ForceSensorOptions, ForceSensorMetadata)
+@register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
 @ti.data_oriented
-class ForceSensor(NoisySensorBase):
+class ContactForceSensor(NoisySensorBase):
     """
     Sensor that returns the contact force in the associated RigidLink's local frame.
     """
@@ -259,7 +259,7 @@ class ForceSensor(NoisySensorBase):
 
     @classmethod
     def update_shared_ground_truth_cache(
-        cls, shared_metadata: ForceSensorMetadata, shared_ground_truth_cache: torch.Tensor
+        cls, shared_metadata: ContactForceSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         shared_ground_truth_cache.fill_(0.0)
@@ -285,7 +285,7 @@ class ForceSensor(NoisySensorBase):
     @classmethod
     def update_shared_cache(
         cls,
-        shared_metadata: ForceSensorMetadata,
+        shared_metadata: ContactForceSensorMetadata,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",

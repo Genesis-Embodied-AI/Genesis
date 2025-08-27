@@ -42,7 +42,7 @@ def main():
     motors_dof = np.arange(7)
 
     imu = scene.add_sensor(
-        gs.sensors.IMUOptions(
+        gs.sensors.IMU(
             entity_idx=franka.idx,
             link_idx_local=end_effector.idx_local,
             # noise parameters
