@@ -3,8 +3,7 @@ import pytest
 import torch
 
 import genesis as gs
-from genesis.sensors.imu import IMUOptions
-from genesis.sensors.tactile import ContactSensorOptions, ForceSensorOptions
+from genesis.sensors import ContactSensorOptions, ForceSensorOptions, IMUOptions
 
 from .utils import assert_allclose, assert_array_equal
 
@@ -110,6 +109,8 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
     """Test if the sensor will detect the correct forces being applied on a falling box."""
     GRAVITY = -10.0
     N_ENVS = 0
+    BIAS = (0.1, 0.2, 0.3)
+    NOISE = 0.01
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -132,19 +133,35 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
     )
 
     bool_sensor = scene.add_sensor(ContactSensorOptions(entity_idx=box.idx))
-    force_sensor = scene.add_sensor(ForceSensorOptions(entity_idx=box.idx))
-    normtan_force_sensor = scene.add_sensor(ForceSensorOptions(entity_idx=box.idx, return_normtan=True))
+    force_sensor = scene.add_sensor(
+        ForceSensorOptions(
+            entity_idx=box.idx,
+            min_force=0.1,
+            max_force=(10.0, 20.0, -GRAVITY / 2),
+            noise_std=NOISE,
+            bias=BIAS,
+            bias_drift_std=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
+            delay=0.05,
+            jitter=0.01,
+            interpolate_for_delay=True,
+        )
+    )
 
     scene.build(n_envs=N_ENVS)
 
+    scene.step()
+
     assert not bool_sensor.read().any(), "RigidContactSensor should not be in contact with the ground yet."
     assert_array_equal(
-        force_sensor.read()["force"], 0.0, err_msg="RigidContactForceSensor should be zero before contact."
-    )
-    assert_array_equal(
-        normtan_force_sensor.read()["normal"],
+        force_sensor.read_ground_truth(),
         0.0,
-        err_msg="RigidContactForceSensor normal should be zero before contact.",
+        err_msg="RigidContactForceSensor ground truth should be zero before contact.",
+    )
+    assert_allclose(
+        force_sensor.read(),
+        BIAS,
+        tol=NOISE * 2,
+        err_msg="RigidContactForceSensor should only read bias and small amount of noise before contact.",
     )
 
     for _ in range(100):
@@ -152,20 +169,14 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
 
     assert bool_sensor.read().all(), "Sensor should detect contact with the ground"
     assert_allclose(
-        force_sensor.read()["force"],
+        force_sensor.read_ground_truth(),
         torch.tensor([0.0, 0.0, -GRAVITY]),
         tol=1e-6,
-        err_msg="Force should be equal to -gravity (normal) force.",
+        err_msg="RigidContactForceSensor ground truth should be equal to -gravity (normal) force.",
     )
     assert_allclose(
-        force_sensor.read()["magnitude"],
-        -GRAVITY,
-        tol=1e-6,
-        err_msg="Force magnitude should be equal to -gravity (normal) force.",
-    )
-    assert_allclose(
-        normtan_force_sensor.read()["normal"],
-        -GRAVITY,
-        tol=1e-6,
-        err_msg="Normal force should be equal to -gravity (normal) force.",
+        force_sensor.read(),
+        ([BIAS[0], BIAS[1], -GRAVITY / 2]),
+        tol=NOISE * 10,
+        err_msg="RigidContactForceSensor should read bias and noise and -gravity (normal) force clipped by max_force.",
     )

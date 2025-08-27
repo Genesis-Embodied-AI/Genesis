@@ -1,4 +1,5 @@
 from .base_sensor import Sensor
+from .contact_force import ContactSensorOptions, ForceSensorOptions
 from .data_handlers import (
     CallbackHandler,
     CSVFileWriter,
@@ -9,4 +10,4 @@ from .data_handlers import (
 )
 from .data_recorder import SensorDataRecorder
 from .imu import IMUOptions
-from .tactile import ContactSensorOptions, ForceSensorOptions
+from .tactile import TactileArrayOptions
