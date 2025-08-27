@@ -407,3 +407,44 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
         ),
     )
     scene.build()
+
+
+@pytest.mark.required
+def test_2_channels_luminance_alpha_textures(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = get_hf_dataset(pattern="fridge/*")
+    fridge = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/fridge/fridge.urdf",
+            fixed=True,
+        )
+    )
+    scene.build()
+
+
+@pytest.mark.required
+def test_splashsurf_surface_reconstruction(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    water = scene.add_entity(
+        material=gs.materials.SPH.Liquid(),
+        morph=gs.morphs.Box(
+            pos=(0.15, 0.15, 0.22),
+            size=(0.25, 0.25, 0.4),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.6, 1.0, 1.0),
+            vis_mode="recon",
+        ),
+    )
+    cam = scene.add_camera(
+        pos=(1.3, 1.3, 0.8),
+        lookat=(0.0, 0.0, 0.2),
+        GUI=show_viewer,
+    )
+    scene.build()
+    cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
