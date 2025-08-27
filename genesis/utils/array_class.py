@@ -2009,7 +2009,7 @@ def get_entities_state(solver):
 
 
 @dataclasses.dataclass
-class StaticRigidSimConfig:
+class StaticRigidSimDummy:
     para_level: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
     use_hibernation: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
     use_contact_island: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
@@ -2038,7 +2038,7 @@ class StaticRigidSimConfig:
     hibernation_thresh_vel: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
 
 
-def get_static_rigid_sim_config(solver):
+def get_static_rigid_sim_dummy(solver):
     kwargs = {
         "para_level": solver.sim._para_level,
         "use_hibernation": getattr(solver, "_use_hibernation", False),
@@ -2066,7 +2066,7 @@ def get_static_rigid_sim_config(solver):
         "hibernation_thresh_acc": getattr(solver, "_hibernation_thresh_acc", 0.0),
         "hibernation_thresh_vel": getattr(solver, "_hibernation_thresh_vel", 0.0),
     }
-    return StaticRigidSimConfig(**kwargs)
+    return StaticRigidSimDummy(**kwargs)
 
 
 # =========================================== DataManager ===========================================

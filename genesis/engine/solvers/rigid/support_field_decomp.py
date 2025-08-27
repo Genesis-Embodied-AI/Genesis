@@ -91,13 +91,19 @@ class SupportField:
         self._support_field_info = array_class.get_support_field_info(self.solver.n_geoms, n_support_cells)
 
         _kernel_init_support(
-            self.solver._static_rigid_sim_config, self._support_field_info, support_cell_start, support_v, support_vid
+            self.solver._static_rigid_sim_config,
+            self.solver._static_rigid_sim_dummy,
+            self._support_field_info,
+            support_cell_start,
+            support_v,
+            support_vid,
         )
 
 
 @ti.kernel
 def _kernel_init_support(
-    static_rigid_sim_config: array_class.StaticRigidSimConfig,
+    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_dummy: array_class.StaticRigidSimDummy,
     support_field_info: array_class.SupportFieldInfo,
     support_cell_start: ti.types.ndarray(),
     support_v: ti.types.ndarray(),

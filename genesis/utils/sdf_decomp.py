@@ -42,7 +42,7 @@ def sdf_kernel_init_geom_fields(
     geoms_sdf_max: ti.types.ndarray(),
     geoms_sdf_cell_size: ti.types.ndarray(),
     geoms_sdf_closest_vert: ti.types.ndarray(),
-    static_rigid_sim_config: array_class.StaticRigidSimConfig,
+    static_rigid_sim_config: ti.template(),
     sdf_info: array_class.SDFInfo,
 ):
     n_geoms = sdf_info.geoms_sdf_start.shape[0]
