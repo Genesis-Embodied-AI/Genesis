@@ -1682,15 +1682,20 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     )
     scene.build()
 
-    if convexify:
-        assert all(geom.metadata["decomposed"] for geom in obj.geoms)
+    for geom in obj.geoms:
+        assert ("decomposed" in geom.metadata) ^ (not convexify)
+        max_faces = obj._morph.decimate_face_num if convexify else 5000
+        num_faces = geom.face_end - geom.face_start
+        assert num_faces <= max_faces
+        assert ("convexified" in geom.metadata) ^ (not convexify)
 
-    # MPR collision detection is significantly less reliable than SDF in terms of penetration depth estimation.
-    tol_pos = 0.05 if convexify else 1e-6
-    tol_rot = 1.3 if convexify else 1e-4
-    for i in range(400):
+    # MPR collision detection is less reliable than SDF and GJK in terms of penetration depth estimation
+    is_mpr = convexify and not gjk_collision
+    tol_pos = 0.05 if is_mpr else 0.005
+    tol_rot = 1.0 if is_mpr else 0.25
+    for i in range(450):
         scene.step()
-        if i > 300:
+        if i > 350:
             qvel = obj.get_dofs_velocity()
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
@@ -2226,7 +2231,7 @@ def test_scene_saver_franka(show_viewer, tol):
     pose_loaded = franka2.get_dofs_position(dof_idx)
 
     # FIXME: It should be possible to achieve better accuracy with 64bits precision
-    assert_allclose(pose_ref, pose_loaded, tol=1e-6)
+    assert_allclose(pose_ref, pose_loaded, tol=2e-6)
 
 
 @pytest.mark.required

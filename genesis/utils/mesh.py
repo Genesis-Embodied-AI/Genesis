@@ -448,20 +448,28 @@ def postprocess_collision_geoms(
     for g_info in g_infos:
         mesh = g_info["mesh"]
         tmesh = mesh.trimesh
-        num_vertices = len(tmesh.vertices)
-        if not decimate and num_vertices > 5000:
+
+        num_faces = len(tmesh.faces)
+        if not decimate and num_faces > 5000:
             gs.logger.warning(
-                f"At least one of the meshes contain many vertices ({num_vertices}). Consider setting "
+                f"At least one of the meshes contain many faces ({num_faces}). Consider setting "
                 "'morph.decimate=True' to speed up collision detection and improve numerical stability."
             )
         if decimate and decimate_face_num < 100:
             gs.logger.warning(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
+
+        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
+        if not must_decimate:
+            gs.logger.debug(
+                "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
+            )
+
         mesh = gs.Mesh.from_trimesh(
             mesh=tmesh,
             convexify=convexify,
-            decimate=decimate,
+            decimate=decimate and must_decimate,
             decimate_face_num=decimate_face_num,
             decimate_aggressiveness=decimate_aggressiveness,
             surface=gs.surfaces.Collision(),

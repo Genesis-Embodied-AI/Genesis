@@ -478,11 +478,11 @@ class FileMorph(Morph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
-        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
         sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
         module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
         and `False` for other deformable entities.
@@ -514,7 +514,7 @@ class FileMorph(Morph):
     scale: Union[float, tuple] = 1.0
     decimate: bool = True
     decimate_face_num: int = 500
-    decimate_aggressiveness: int = 5
+    decimate_aggressiveness: int = 2
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
     decompose_object_error_threshold: float = 0.15
