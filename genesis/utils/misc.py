@@ -422,12 +422,8 @@ def _launch_kernel(self, t_kernel, *args):
 
 
 _to_pytorch_type_fast = functools.lru_cache(maxsize=None)(to_pytorch_type)
-_tensor_to_ext_arr_fast = ti.kernel(tensor_to_ext_arr._primal.func)
-_tensor_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _tensor_to_ext_arr_fast._primal)
-_tensor_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _tensor_to_ext_arr_fast._primal)
-_matrix_to_ext_arr_fast = ti.kernel(matrix_to_ext_arr._primal.func)
-_matrix_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _matrix_to_ext_arr_fast._primal)
-_matrix_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _matrix_to_ext_arr_fast._primal)
+_tensor_to_ext_arr_fast = tensor_to_ext_arr
+_matrix_to_ext_arr_fast = matrix_to_ext_arr
 
 
 def ti_field_to_torch(
