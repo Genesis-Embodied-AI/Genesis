@@ -97,7 +97,7 @@ class SupportField:
 
 @ti.kernel
 def _kernel_init_support(
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: array_class.StaticRigidSimConfig,
     support_field_info: array_class.SupportFieldInfo,
     support_cell_start: ti.types.ndarray(),
     support_v: ti.types.ndarray(),

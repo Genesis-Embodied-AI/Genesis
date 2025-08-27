@@ -2022,9 +2022,9 @@ class StaticRigidSimConfig:
     enable_adjacent_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
     enable_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
     box_box_detection: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    integrator: gs.integrator.Integrator = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    integrator: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
     sparse_solve: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    solver_type: gs.constraint_solver.ConstraintSolver = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    solver_type: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
 
     # dynamic properties
     substep_dt: float = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})

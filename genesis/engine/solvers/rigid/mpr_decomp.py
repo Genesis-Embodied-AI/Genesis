@@ -334,7 +334,7 @@ def mpr_refine_portal(
 
 @ti.func
 def mpr_find_pos(
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: array_class.StaticRigidSimConfig,
     mpr_state: array_class.MPRState,
     mpr_static_config: ti.template(),
     i_ga,
@@ -393,7 +393,7 @@ def mpr_find_penetr_segment(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 def mpr_find_penetration(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: array_class.StaticRigidSimConfig,
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     collider_state: array_class.ColliderState,
@@ -651,7 +651,7 @@ def guess_geoms_center(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: array_class.StaticRigidSimConfig,
     mpr_static_config: ti.template(),
     i_ga,
     i_gb,
@@ -734,7 +734,7 @@ def guess_geoms_center(
 def func_mpr_contact_from_centers(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: array_class.StaticRigidSimConfig,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
@@ -813,7 +813,7 @@ def func_mpr_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: array_class.StaticRigidSimConfig,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),

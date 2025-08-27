@@ -1641,7 +1641,7 @@ class RigidConstraintHandler(BaseConstraintHandler):
         self,
         equalities_info: array_class.EqualitiesInfo,
         joints_info: array_class.JointsInfo,
-        static_rigid_sim_config: ti.template(),
+        static_rigid_sim_config: array_class.StaticRigidSimConfig,
     ):
         self.n_constraints[None] = 0
         self.Jt.fill(0.0)
