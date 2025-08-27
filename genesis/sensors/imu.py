@@ -112,7 +112,7 @@ class IMUSharedMetadata(NoisySensorMetadataBase):
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMU(NoisySensorBase):
+class IMUSensor(NoisySensorBase):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)

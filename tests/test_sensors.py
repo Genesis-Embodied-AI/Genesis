@@ -34,10 +34,10 @@ def test_imu_sensor(show_viewer):
         ),
     )
 
-    imu_biased = scene.add_sensor(IMUOptions(entity_idx=box.idx, acc_bias=BIAS, gyro_bias=BIAS))
-    imu_delayed = scene.add_sensor(IMUOptions(entity_idx=box.idx, delay=DT * 2))
+    imu_biased = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx, acc_bias=BIAS, gyro_bias=BIAS))
+    imu_delayed = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx, delay=DT * 2))
     imu_noisy = scene.add_sensor(
-        IMUOptions(
+        gs.sensors.IMU(
             entity_idx=box.idx,
             acc_axes_skew=0.01,
             gyro_axes_skew=(0.02, 0.03, 0.04),
@@ -51,7 +51,7 @@ def test_imu_sensor(show_viewer):
         )
     )
     imu_skewed = scene.add_sensor(
-        IMUOptions(
+        gs.sensors.IMU(
             entity_idx=box.idx,
             acc_axes_skew=(0.0, 0.0, 1.0),
         )
@@ -133,9 +133,9 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
         material=gs.materials.Rigid(rho=1.0),  # mass = 1 kg
     )
 
-    bool_sensor = scene.add_sensor(ContactSensorOptions(entity_idx=box.idx))
+    bool_sensor = scene.add_sensor(gs.sensors.Contact(entity_idx=box.idx))
     force_sensor = scene.add_sensor(
-        ForceSensorOptions(
+        gs.sensors.ContactForce(
             entity_idx=box.idx,
             min_force=0.1,
             max_force=(10.0, 20.0, -GRAVITY / 2),
