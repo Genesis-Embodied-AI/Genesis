@@ -10,4 +10,3 @@ from .data_handlers import (
 )
 from .data_recorder import SensorDataRecorder
 from .imu import IMUOptions
-from .tactile import TactileArrayOptions

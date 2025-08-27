@@ -5,8 +5,8 @@ from huggingface_hub import snapshot_download
 from tqdm import tqdm
 
 import genesis as gs
+from genesis.sensors import ForceSensorOptions
 from genesis.sensors.data_handlers import NPZFileWriter
-from genesis.sensors.tactile import ForceSensorOptions
 
 
 def main():
