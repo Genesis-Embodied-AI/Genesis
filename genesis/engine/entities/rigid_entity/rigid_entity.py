@@ -155,7 +155,7 @@ class RigidEntity(Entity):
             link_name_prefix = "cylinder"
 
         elif isinstance(morph, gs.options.morphs.Plane):
-            tmesh, cmesh = mu.create_plane(normal=morph.normal, size=morph.size, ntiles=morph.ntiles)
+            tmesh, cmesh = mu.create_plane(normal=morph.normal, size=morph.size, n_tiles=morph.n_tiles)
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"

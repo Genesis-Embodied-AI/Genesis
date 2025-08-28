@@ -889,7 +889,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(normal=(0.0, 0.0, 1.0), size=(1e3, 1e3), ntiles=(1e3, 1e3), color=None):
+def create_plane(normal=(0.0, 0.0, 1.0), size=(1e3, 1e3), n_tiles=(1e3, 1e3), color=None):
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[size[0], size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
@@ -916,11 +916,11 @@ def create_plane(normal=(0.0, 0.0, 1.0), size=(1e3, 1e3), ntiles=(1e3, 1e3), col
             uv=np.array(
                 [
                     [0, 0],
-                    [ntiles[0], 0],
-                    [ntiles[0], ntiles[1]],
+                    [n_tiles[0], 0],
+                    [n_tiles[0], n_tiles[1]],
                     [0, 0],
-                    [ntiles[0], ntiles[1]],
-                    [0, ntiles[1]],
+                    [n_tiles[0], n_tiles[1]],
+                    [0, n_tiles[1]],
                 ],
                 dtype=np.float32,
             ),
