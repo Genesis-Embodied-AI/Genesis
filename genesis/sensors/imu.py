@@ -12,9 +12,15 @@ from genesis.utils.geom import (
 )
 
 from .base_sensor import (
-    NoisySensorBase,
-    NoisySensorMetadataBase,
-    NoisySensorOptionsBase,
+    NoisySensorMetadataMixin,
+    NoisySensorMixin,
+    NoisySensorOptionsMixin,
+    RigidSensorMetadataMixin,
+    RigidSensorMixin,
+    RigidSensorOptionsMixin,
+    Sensor,
+    SensorOptions,
+    SharedSensorMetadata,
 )
 from .sensor_manager import register_sensor
 
@@ -22,7 +28,7 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-class IMUOptions(NoisySensorOptionsBase):
+class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -48,7 +54,7 @@ class IMUOptions(NoisySensorOptionsBase):
         The standard deviation of the white noise for each axis of the accelerometer.
     acc_bias : tuple[float, float, float]
         The additive bias for each axis of the accelerometer.
-    acc_bias_drift_std : tuple[float, float, float]
+    acc_random_walk_std : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the accelerometer.
     gyro_resolution : float, optional
         The measurement resolution of the gyroscope. Default is 1e-5.
@@ -58,17 +64,17 @@ class IMUOptions(NoisySensorOptionsBase):
         The standard deviation of the white noise for each axis of the gyroscope.
     gyro_bias : tuple[float, float, float]
         The additive bias for each axis of the gyroscope.
-    gyro_bias_drift_std : tuple[float, float, float]
+    gyro_random_walk_std : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the gyroscope.
     delay : float, optional
         The delay in seconds before the sensor data is read.
     jitter : float, optional
         The time jitter standard deviation in seconds before the sensor data is read.
-    interpolate_for_delay : bool, optional
+    interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used. Default is False.
     update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth cache, and not the measured cache.
+        If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
     acc_resolution: float = 1e-6
@@ -79,8 +85,8 @@ class IMUOptions(NoisySensorOptionsBase):
     gyro_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
     acc_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
     gyro_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    acc_bias_drift_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    gyro_bias_drift_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    acc_random_walk_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    gyro_random_walk_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def validate(self, scene):
         super().validate(scene)
@@ -89,14 +95,14 @@ class IMUOptions(NoisySensorOptionsBase):
 
     def _validate_axes_skew(self, axes_skew):
         np_axes_skew = np.array(axes_skew)
-        assert np_axes_skew.shape in [(), (3,), (3, 3)], "Invalid input shape for axes alignment."
-        assert np.all(np_axes_skew >= 0.0) and np.all(
-            np_axes_skew <= 1.0
-        ), "Values for axes alignment matrix should be between 0.0 and 1.0."
+        if np_axes_skew.shape not in [(), (3,), (3, 3)]:
+            gs.raise_exception(f"axes_skew shape should be (), (3,), or (3, 3), got: {np_axes_skew.shape}")
+        if np.any(np_axes_skew < 0.0) or np.any(np_axes_skew > 1.0):
+            gs.raise_exception(f"axes_skew values should be between 0.0 and 1.0, got: {axes_skew}")
 
 
 @dataclass
-class IMUSharedMetadata(NoisySensorMetadataBase):
+class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
     """
     Shared metadata between all IMU sensors.
     """
@@ -110,42 +116,46 @@ class IMUSharedMetadata(NoisySensorMetadataBase):
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMUSensor(NoisySensorBase):
+class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = self._get_skew_to_alignment_matrix(axes_skew)
-        self._shared_metadata.alignment_rot_matrix[envs_idx, self._sensor_idx * 2, :, :] = rot_matrix
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2, :, :] = rot_matrix
 
     @gs.assert_built
     def set_gyro_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = self._get_skew_to_alignment_matrix(axes_skew)
-        self._shared_metadata.alignment_rot_matrix[envs_idx, self._sensor_idx * 2 + 1, :, :] = rot_matrix
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2 + 1, :, :] = rot_matrix
 
     @gs.assert_built
     def set_acc_bias(self, bias, envs_idx=None):
-        self._set_metadata_tensor(bias, self._shared_metadata.acc_bias, envs_idx, 3)
+        self._set_metadata_field(bias, self._shared_metadata.acc_bias, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
     def set_gyro_bias(self, bias, envs_idx=None):
-        self._set_metadata_tensor(bias, self._shared_metadata.gyro_bias, envs_idx, 3)
+        self._set_metadata_field(bias, self._shared_metadata.gyro_bias, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
-    def set_acc_bias_drift_std(self, bias_drift_std, envs_idx=None):
-        self._set_metadata_tensor(bias_drift_std, self._shared_metadata.acc_bias_drift_std, envs_idx, 3)
+    def set_acc_random_walk_std(self, random_walk_std, envs_idx=None):
+        self._set_metadata_field(
+            random_walk_std, self._shared_metadata.acc_random_walk_std, field_size=3, envs_idx=envs_idx
+        )
 
     @gs.assert_built
-    def set_gyro_bias_drift_std(self, bias_drift_std, envs_idx=None):
-        self._set_metadata_tensor(bias_drift_std, self._shared_metadata.gyro_bias_drift_std, envs_idx, 3)
+    def set_gyro_random_walk_std(self, random_walk_std, envs_idx=None):
+        self._set_metadata_field(
+            random_walk_std, self._shared_metadata.gyro_random_walk_std, field_size=3, envs_idx=envs_idx
+        )
 
     @gs.assert_built
     def set_acc_noise_std(self, noise_std, envs_idx=None):
-        self._set_metadata_tensor(noise_std, self._shared_metadata.acc_noise_std, envs_idx, 3)
+        self._set_metadata_field(noise_std, self._shared_metadata.acc_noise_std, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
     def set_gyro_noise_std(self, noise_std, envs_idx=None):
-        self._set_metadata_tensor(noise_std, self._shared_metadata.gyro_noise_std, envs_idx, 3)
+        self._set_metadata_field(noise_std, self._shared_metadata.gyro_noise_std, field_size=3, envs_idx=envs_idx)
 
     # ================================ internal methods ================================
 
@@ -153,10 +163,10 @@ class IMUSensor(NoisySensorBase):
         """
         Initialize all shared metadata needed to update all IMU sensors.
         """
-        self._options.resolution = (self._options.acc_resolution, self._options.gyro_resolution)
+        self._options.resolution = tuple([self._options.acc_resolution] * 3 + [self._options.gyro_resolution] * 3)
         self._options.bias = tuple(self._options.acc_bias) + tuple(self._options.gyro_bias)
-        self._options.bias_drift_std = tuple(self._options.acc_bias_drift_std) + tuple(
-            self._options.gyro_bias_drift_std
+        self._options.random_walk_std = tuple(self._options.acc_random_walk_std) + tuple(
+            self._options.gyro_random_walk_std
         )
         self._options.noise_std = tuple(self._options.acc_noise_std) + tuple(self._options.gyro_noise_std)
         super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
@@ -164,8 +174,8 @@ class IMUSensor(NoisySensorBase):
         self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
             self._shared_metadata.bias
         )
-        self._shared_metadata.acc_bias_drift_std, self._shared_metadata.gyro_bias_drift_std = (
-            self._view_metadata_as_acc_gyro(self._shared_metadata.bias_drift_std)
+        self._shared_metadata.acc_random_walk_std, self._shared_metadata.gyro_random_walk_std = (
+            self._view_metadata_as_acc_gyro(self._shared_metadata.random_walk_std)
         )
         self._shared_metadata.acc_noise_std, self._shared_metadata.gyro_noise_std = self._view_metadata_as_acc_gyro(
             self._shared_metadata.noise_std
@@ -183,17 +193,17 @@ class IMUSensor(NoisySensorBase):
             dim=1,
         )
 
-    def get_return_format(self) -> dict[str, tuple[int, ...]]:
+    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return {
             "lin_acc": (3,),
             "ang_vel": (3,),
         }
 
-    def get_cache_length(self) -> int:
+    def _get_cache_length(self) -> int:
         return 1
 
     @classmethod
-    def update_shared_ground_truth_cache(
+    def _update_shared_ground_truth_cache(
         cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         """
@@ -219,7 +229,7 @@ class IMUSensor(NoisySensorBase):
         strided_ground_truth_cache[..., 1, :].copy_(local_ang)
 
     @classmethod
-    def update_shared_cache(
+    def _update_shared_cache(
         cls,
         shared_metadata: dict[str, Any],
         shared_ground_truth_cache: torch.Tensor,
@@ -230,13 +240,13 @@ class IMUSensor(NoisySensorBase):
         Update the current measured sensor data for all IMU sensors.
         """
         buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.jitter_in_steps)
+        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.cur_jitter_in_steps)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.jitter_in_steps,
-            shared_metadata.interpolate_for_delay,
+            shared_metadata.cur_jitter_in_steps,
+            shared_metadata.interpolate,
         )
         # apply rotation matrix to the shared cache
         shared_cache_xyz_view = shared_cache.view(shared_cache.shape[0], -1, 3)
@@ -245,10 +255,10 @@ class IMUSensor(NoisySensorBase):
         )
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata, shared_cache_xyz_view.permute(0, 2, 1))
+        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
     @classmethod
-    def get_cache_dtype(cls) -> torch.dtype:
+    def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
     # ================================ helper methods ================================

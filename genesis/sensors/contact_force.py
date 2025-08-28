@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 import gstaichi as ti
 import numpy as np
@@ -12,11 +12,14 @@ from genesis.utils.geom import (
 )
 
 from .base_sensor import (
-    NoisySensorBase,
-    NoisySensorMetadataBase,
-    NoisySensorOptionsBase,
-    RigidSensorOptionsBase,
+    NoisySensorMetadataMixin,
+    NoisySensorMixin,
+    NoisySensorOptionsMixin,
+    RigidSensorMetadataMixin,
+    RigidSensorMixin,
+    RigidSensorOptionsMixin,
     Sensor,
+    SensorOptions,
     SharedSensorMetadata,
 )
 from .sensor_manager import register_sensor
@@ -61,7 +64,7 @@ def _kernel_get_contacts_forces(
                     output[i_b, j_s + j] += force_b[j]
 
 
-class ContactSensorOptions(RigidSensorOptionsBase):
+class ContactSensorOptions(RigidSensorOptionsMixin, SensorOptions):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
 
@@ -74,7 +77,7 @@ class ContactSensorOptions(RigidSensorOptionsBase):
     delay : float
         The delay in seconds before the sensor data is read.
     update_ground_truth_only : bool
-        If True, the sensor will only update the ground truth cache, and not the measured cache.
+        If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
 
@@ -113,18 +116,18 @@ class ContactSensor(Sensor):
             dim=-1,
         )
 
-    def get_return_format(self) -> tuple[int, ...]:
+    def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
 
-    def get_cache_length(self) -> int:
+    def _get_cache_length(self) -> int:
         return 1
 
     @classmethod
-    def get_cache_dtype(cls) -> torch.dtype:
+    def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_bool
 
     @classmethod
-    def update_shared_ground_truth_cache(
+    def _update_shared_ground_truth_cache(
         cls, shared_metadata: ContactSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
@@ -133,7 +136,7 @@ class ContactSensor(Sensor):
         shared_ground_truth_cache.copy_(is_contact)
 
     @classmethod
-    def update_shared_cache(
+    def _update_shared_cache(
         cls,
         shared_metadata: ContactSensorMetadata,
         shared_ground_truth_cache: torch.Tensor,
@@ -147,7 +150,7 @@ class ContactSensor(Sensor):
 # ==========================================================================================================
 
 
-class ContactForceSensorOptions(NoisySensorOptionsBase):
+class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
@@ -165,17 +168,17 @@ class ContactForceSensorOptions(NoisySensorOptionsBase):
         The standard deviation of the noise.
     bias : float | tuple[float, float, float], optional
         The bias of the sensor.
-    bias_drift_std : float | tuple[float, float, float], optional
+    random_walk_std : float | tuple[float, float, float], optional
         The standard deviation of the bias drift.
     delay : float, optional
         The delay in seconds before the sensor data is read.
     jitter : float, optional
         The time jitter standard deviation in seconds before the sensor data is read.
-    interpolate_for_delay : bool, optional
+    interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used.
     update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth cache, and not the measured cache.
+        If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
     min_force: float | tuple[float, float, float] = 0.0
@@ -183,18 +186,26 @@ class ContactForceSensorOptions(NoisySensorOptionsBase):
 
     def validate(self, scene):
         super().validate(scene)
-        assert (
-            isinstance(self.min_force, float) or len(self.min_force) == 3
-        ), "Min force must be a float or tuple of 3 floats."
-        assert (
-            isinstance(self.max_force, float) or len(self.max_force) == 3
-        ), "Max force must be a float or tuple of 3 floats."
-        assert np.all(np.array(self.min_force) >= 0), "Min/max force must be non-negative."
-        assert np.all(np.array(self.max_force) > np.array(self.min_force)), "Min force should be less than max force."
+        if not (
+            isinstance(self.min_force, float) or (isinstance(self.min_force, Iterable) and len(self.min_force) == 3)
+        ):
+            gs.raise_exception(f"min_force must be a float or tuple of 3 floats, got: {self.min_force}")
+        if not (
+            isinstance(self.max_force, float) or (isinstance(self.max_force, Iterable) and len(self.max_force) == 3)
+        ):
+            gs.raise_exception(f"max_force must be a float or tuple of 3 floats, got: {self.max_force}")
+        if np.any(np.array(self.min_force) < 0):
+            gs.raise_exception(f"min_force must be non-negative, got: {self.min_force}")
+        if np.any(np.array(self.max_force) <= np.array(self.min_force)):
+            gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
+        if self.resolution is not None and not (
+            isinstance(self.resolution, float) or (isinstance(self.resolution, Iterable) and len(self.resolution) == 3)
+        ):
+            gs.raise_exception(f"resolution must be a float or tuple of 3 floats, got: {self.resolution}")
 
 
 @dataclass
-class ContactForceSensorMetadata(NoisySensorMetadataBase):
+class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
     """
     Shared metadata for all contact force sensors.
     """
@@ -204,12 +215,15 @@ class ContactForceSensorMetadata(NoisySensorMetadataBase):
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
 @ti.data_oriented
-class ContactForceSensor(NoisySensorBase):
+class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
 
     def build(self):
+        if not isinstance(self._options.resolution, Iterable):
+            self._options.resolution = tuple([self._options.resolution] * 3)
+
         super().build()
 
         if self._shared_metadata.solver is None:
@@ -233,18 +247,18 @@ class ContactForceSensor(NoisySensorBase):
             else torch.stack((self._shared_metadata.min_max_force, min_max_force))
         )
 
-    def get_return_format(self) -> dict[str, tuple[int, ...]]:
+    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return (3,)
 
-    def get_cache_length(self) -> int:
+    def _get_cache_length(self) -> int:
         return 1
 
     @classmethod
-    def get_cache_dtype(cls) -> torch.dtype:
+    def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
     @classmethod
-    def update_shared_ground_truth_cache(
+    def _update_shared_ground_truth_cache(
         cls, shared_metadata: ContactForceSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
@@ -269,7 +283,7 @@ class ContactForceSensor(NoisySensorBase):
         )
 
     @classmethod
-    def update_shared_cache(
+    def _update_shared_cache(
         cls,
         shared_metadata: ContactForceSensorMetadata,
         shared_ground_truth_cache: torch.Tensor,
@@ -277,16 +291,16 @@ class ContactForceSensor(NoisySensorBase):
         buffered_data: "TensorRingBuffer",
     ):
         buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.jitter_in_steps)
+        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.cur_jitter_in_steps)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.jitter_in_steps,
-            shared_metadata.interpolate_for_delay,
+            shared_metadata.cur_jitter_in_steps,
+            shared_metadata.interpolate,
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         reshaped_cache = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
         reshaped_cache.clamp_(max=shared_metadata.min_max_force[:, 1, :])  # clip for max force
         reshaped_cache[reshaped_cache < shared_metadata.min_max_force[:, 0, :]] = 0.0  # set to 0 for undetectable force
-        cls._quantize_to_resolution(shared_metadata, shared_cache)
+        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)

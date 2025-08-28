@@ -2,7 +2,7 @@ import os
 import pickle
 import sys
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 import torch
@@ -26,6 +26,7 @@ from genesis.options import (
     MPMOptions,
     PBDOptions,
     ProfilingOptions,
+    RecordingOptions,
     RigidOptions,
     SFOptions,
     SimOptions,
@@ -542,22 +543,35 @@ class Scene(RBC):
 
     @gs.assert_unbuilt
     def add_sensor(self, sensor_options: "SensorOptions"):
+        """
+        Add a sensor to the scene.
+
+        Sensors extract information from the scene without modifying the physics simulation.
+
+        Parameters
+        ----------
+        sensor_options : SensorOptions
+            The options for the sensor.
+        """
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
-    @gs.assert_built
-    def start_recording_all(self):
-        for data_recorder in self._sim._sensor_manager._data_recorders:
-            data_recorder.start()
+    def add_recording(self, rec_options: RecordingOptions):
+        """
+        Add a recording to the scene. See RecordingOptions for more details.
+
+        Data from `rec_options.data_func` is automatically read and processed using `rec_options.handler` at the
+        frequency `rec_options.hz` (or every step if not specified) as the scene is stepped.
+
+        Parameters
+        ----------
+        rec_options : RecordingOptions
+            The options for the recording.
+        """
+        return self._sim._data_recorder.add_recording(rec_options)
 
     @gs.assert_built
-    def pause_recording_all(self):
-        for data_recorder in self._sim._sensor_manager._data_recorders:
-            data_recorder.pause()
-
-    @gs.assert_built
-    def stop_recording_all(self):
-        for data_recorder in self._sim._sensor_manager._data_recorders:
-            data_recorder.stop()
+    def stop_recording(self):
+        self._sim._data_recorder.stop()
 
     @gs.assert_unbuilt
     def add_camera(
