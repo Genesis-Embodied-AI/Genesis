@@ -2007,24 +2007,26 @@ def get_entities_state(solver):
 
 # =========================================== StaticRigidSimConfig ===========================================
 
+cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: True})
+
 
 @dataclasses.dataclass
 class StaticRigidSimDummy:
-    para_level: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    use_hibernation: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    use_contact_island: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    batch_links_info: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    batch_dofs_info: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    batch_joints_info: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    enable_mujoco_compatibility: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    enable_multi_contact: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    enable_self_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    enable_adjacent_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    enable_collision: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    box_box_detection: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    integrator: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    sparse_solve: bool = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
-    solver_type: int = dataclasses.field(metadata={FIELD_METADATA_CACHE_VALUE: True})
+    para_level: int = cache_value()
+    use_hibernation: bool = cache_value()
+    use_contact_island: bool = cache_value()
+    batch_links_info: bool = cache_value()
+    batch_dofs_info: bool = cache_value()
+    batch_joints_info: bool = cache_value()
+    enable_mujoco_compatibility: bool = cache_value()
+    enable_multi_contact: bool = cache_value()
+    enable_self_collision: bool = cache_value()
+    enable_adjacent_collision: bool = cache_value()
+    enable_collision: bool = cache_value()
+    box_box_detection: bool = cache_value()
+    integrator: int = cache_value()
+    sparse_solve: bool = cache_value()
+    solver_type: int = cache_value()
 
 
 def get_static_rigid_sim_dummy(solver):
