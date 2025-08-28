@@ -9,5 +9,13 @@ from .data_handlers import (
     VideoFileStreamer,
     VideoFileWriter,
 )
-from .data_recorder import SensorDataRecorder
+from .data_recorder import DataRecorder
 from .imu import IMUOptions as IMU
+
+# Pydantic: rebuild RecordingOptions after DataHandler (avoid circular import)
+try:
+    from genesis.options.recording import RecordingOptions
+
+    RecordingOptions.model_rebuild()
+except ImportError:
+    pass

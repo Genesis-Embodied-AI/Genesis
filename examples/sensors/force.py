@@ -1,6 +1,6 @@
 import argparse
 
-from custom_data_handlers import IS_PYQTGRAPH_AVAILABLE, PyQtGraphPlotter
+from custom_data_handlers import IS_MATPLOTLIB_AVAILABLE, IS_PYQTGRAPH_AVAILABLE, MPLPlotter, PyQtGraphPlotter
 from huggingface_hub import snapshot_download
 from tqdm import tqdm
 
@@ -63,18 +63,17 @@ def main():
 
     force_sensor = scene.add_sensor(gs.sensors.ContactForce(entity_idx=palm.idx))
 
-    if IS_PYQTGRAPH_AVAILABLE:
-        force_sensor.add_recorder(
-            handler=PyQtGraphPlotter(title="Force Sensor Measured Data", labels=["force_x", "force_y", "force_z"])
+    plotter_cls = PyQtGraphPlotter if IS_PYQTGRAPH_AVAILABLE else (MPLPlotter if IS_MATPLOTLIB_AVAILABLE else None)
+    if plotter_cls is not None:
+        force_sensor.add_recording(
+            gs.options.RecordingOptions(
+                handler=plotter_cls(title="Force Sensor Measured Data", labels=["force_x", "force_y", "force_z"])
+            )
         )
     else:
         print("pyqtgraph not found, skipping real-time plotting.")
 
-    force_sensor.add_recorder(
-        handler=NPZFileWriter(filename="force_data.npz"),
-    )
-
-    force_sensor.start_recording()
+    force_sensor.add_recording(gs.options.RecordingOptions(handler=NPZFileWriter(filename="force_data.npz")))
 
     scene.build()
 
@@ -88,7 +87,7 @@ def main():
     finally:
         gs.logger.info("Simulation finished.")
 
-        scene.stop_recording_all()
+        scene.stop_recording()
 
 
 if __name__ == "__main__":
