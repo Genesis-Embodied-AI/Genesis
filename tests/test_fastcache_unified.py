@@ -13,9 +13,8 @@ def gs_static_child(args: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable-multi-contact", action="store_true")
     parser.add_argument("--expected-num-contacts", type=int, required=True)
-    parser.add_argument("--expected-use-src-ll-cache", type=int, required=True)
-    parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
-    # parser.add_argument("--expected-pure", action="store_true")
+    parser.add_argument("--expected-use-src-ll-cache", action="store_true")
+    parser.add_argument("--expected-src-ll-cache-hit", action="store_true")
     parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args(args)
 
@@ -49,11 +48,6 @@ def gs_static_child(args: list[str]):
     print('actual', actual_contacts, type(actual_contacts))
     assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy() == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
-    # print("dir(func_narrow_phase_convex_vs_convex)", dir(func_narrow_phase_convex_vs_convex))
-    # print("dir(func_narrow_phase_convex_vs_convex._primal)", dir(func_narrow_phase_convex_vs_convex._primal))
-    # print("dir(func_narrow_phase_convex_vs_convex._primal.fn)", dir(func_narrow_phase_convex_vs_convex._primal.fn))
-    # print("dir(func_narrow_phase_convex_vs_convex._primal.fn.src_ll_cache_observations)", dir(func_narrow_phase_convex_vs_convex._primal.fn.src_ll_cache_observations))
-    # print("func_narrow_phase_convex_vs_convex._primal.fn.src_ll_cache_observations", func_narrow_phase_convex_vs_convex._primal.fn.src_ll_cache_observations)
     assert func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
     assert func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
@@ -83,8 +77,6 @@ def test_gs_static(enable_multicontact: bool, enable_pure: bool, test_backend: s
         ]
         if enable_multicontact:
             cmd_line += ["--enable-multi-contact"]
-        # if enable_pure:
-        #     cmd_line += ["--expected-pure"]
         env = dict(os.environ)
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
