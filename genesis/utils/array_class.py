@@ -1,8 +1,8 @@
-from typing import Callable
 import dataclasses
-import os
 import inspect
-from typing import Any, Type, cast
+import os
+from functools import partial
+from typing import Any, Callable, Type, cast
 
 import gstaichi as ti
 from gstaichi.lang._fast_caching import FIELD_METADATA_CACHE_VALUE, args_hasher
