@@ -6,17 +6,17 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.engine.solvers import RigidSolver
 from genesis.utils.geom import (
-    euler_to_quat,
     inv_transform_by_trans_quat,
     transform_quat_by_quat,
 )
 
 from .base_sensor import (
-    NoisySensorBase,
-    NoisySensorMetadataBase,
-    NoisySensorOptionsBase,
+    AnalogSensorBase,
+    AnalogSensorMetadataBase,
+    AnalogSensorOptionsBase,
+    RigidSensorBase,
+    RigidSensorMetadataBase,
     RigidSensorOptionsBase,
 )
 from .sensor_manager import register_sensor
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-class IMUOptions(RigidSensorOptionsBase, NoisySensorOptionsBase):
+class IMUOptions(RigidSensorOptionsBase, AnalogSensorOptionsBase):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -68,8 +68,6 @@ class IMUOptions(RigidSensorOptionsBase, NoisySensorOptionsBase):
         Otherwise, the sensor data at the closest time step will be used.
     """
 
-    pos_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    euler_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     acc_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
     gyro_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
 
@@ -94,15 +92,11 @@ class IMUOptions(RigidSensorOptionsBase, NoisySensorOptionsBase):
 
 
 @dataclass
-class IMUSharedMetadata(NoisySensorMetadataBase):
+class IMUSharedMetadata(RigidSensorMetadataBase, AnalogSensorMetadataBase):
     """
     Shared metadata between all IMU sensors.
     """
 
-    solver: RigidSolver | None = None
-    links_idx: list[int] = field(default_factory=list)
-    offsets_pos: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    offsets_quat: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     alignment_rot_matrix: torch.Tensor = field(
         default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
     )
@@ -112,7 +106,7 @@ class IMUSharedMetadata(NoisySensorMetadataBase):
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMUSensor(NoisySensorBase):
+class IMUSensor(RigidSensorBase, AnalogSensorBase):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -160,7 +154,7 @@ class IMUSensor(NoisySensorBase):
         self._options.bias_drift_std = tuple(self._options.acc_bias_drift_std) + tuple(
             self._options.gyro_bias_drift_std
         )
-        super().build()  # set all shared metadata for the NoisySensor base class
+        super().build()  # set all shared metadata from RigidSensorBase and AnalogSensorBase
 
         self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
             self._shared_metadata.bias
@@ -171,23 +165,6 @@ class IMUSensor(NoisySensorBase):
         self._shared_metadata.acc_noise_std, self._shared_metadata.gyro_noise_std = self._view_metadata_as_acc_gyro(
             self._shared_metadata.noise_std
         )
-
-        if self._shared_metadata.solver is None:
-            self._shared_metadata.solver = self._manager._sim.rigid_solver
-
-        self._shared_metadata.links_idx.append(self._options.entity_idx + self._options.link_idx_local)
-        self._shared_metadata.offsets_pos = torch.cat(
-            [
-                self._shared_metadata.offsets_pos,
-                torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
-            ]
-        )
-
-        quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
-        if self._shared_metadata.solver.n_envs > 0:
-            quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
-        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
-
         self._shared_metadata.alignment_rot_matrix = torch.cat(
             [
                 self._shared_metadata.alignment_rot_matrix,
@@ -263,6 +240,7 @@ class IMUSensor(NoisySensorBase):
         )
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
+        cls._quantize_to_resolution(shared_metadata, shared_cache)
 
     @classmethod
     def get_cache_dtype(cls) -> torch.dtype:
