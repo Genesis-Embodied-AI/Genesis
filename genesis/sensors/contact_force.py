@@ -12,9 +12,9 @@ from genesis.utils.geom import (
 )
 
 from .base_sensor import (
-    AnalogSensorBase,
-    AnalogSensorMetadataBase,
-    AnalogSensorOptionsBase,
+    NoisySensorBase,
+    NoisySensorMetadataBase,
+    NoisySensorOptionsBase,
     RigidSensorOptionsBase,
     Sensor,
     SharedSensorMetadata,
@@ -147,7 +147,7 @@ class ContactSensor(Sensor):
 # ==========================================================================================================
 
 
-class ContactForceSensorOptions(AnalogSensorOptionsBase):
+class ContactForceSensorOptions(NoisySensorOptionsBase):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
@@ -194,7 +194,7 @@ class ContactForceSensorOptions(AnalogSensorOptionsBase):
 
 
 @dataclass
-class ContactForceSensorMetadata(AnalogSensorMetadataBase):
+class ContactForceSensorMetadata(NoisySensorMetadataBase):
     """
     Shared metadata for all contact force sensors.
     """
@@ -204,7 +204,7 @@ class ContactForceSensorMetadata(AnalogSensorMetadataBase):
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
 @ti.data_oriented
-class ContactForceSensor(AnalogSensorBase):
+class ContactForceSensor(NoisySensorBase):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """

@@ -12,9 +12,9 @@ from genesis.utils.geom import (
 )
 
 from .base_sensor import (
-    AnalogSensorBase,
-    AnalogSensorMetadataBase,
-    AnalogSensorOptionsBase,
+    NoisySensorBase,
+    NoisySensorMetadataBase,
+    NoisySensorOptionsBase,
 )
 from .sensor_manager import register_sensor
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-class IMUOptions(AnalogSensorOptionsBase):
+class IMUOptions(NoisySensorOptionsBase):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -96,7 +96,7 @@ class IMUOptions(AnalogSensorOptionsBase):
 
 
 @dataclass
-class IMUSharedMetadata(AnalogSensorMetadataBase):
+class IMUSharedMetadata(NoisySensorMetadataBase):
     """
     Shared metadata between all IMU sensors.
     """
@@ -110,7 +110,7 @@ class IMUSharedMetadata(AnalogSensorMetadataBase):
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMUSensor(AnalogSensorBase):
+class IMUSensor(NoisySensorBase):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -159,7 +159,7 @@ class IMUSensor(AnalogSensorBase):
             self._options.gyro_bias_drift_std
         )
         self._options.noise_std = tuple(self._options.acc_noise_std) + tuple(self._options.gyro_noise_std)
-        super().build()  # set all shared metadata from RigidSensorBase and AnalogSensorBase
+        super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
 
         self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
             self._shared_metadata.bias
