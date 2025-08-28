@@ -12,9 +12,9 @@ from genesis.utils.geom import (
 )
 
 from .base_sensor import (
-    NoisySensorBase,
-    NoisySensorMetadataBase,
-    NoisySensorOptionsBase,
+    AnalogSensorBase,
+    AnalogSensorMetadataBase,
+    AnalogSensorOptionsBase,
     RigidSensorOptionsBase,
     Sensor,
     SharedSensorMetadata,
@@ -147,7 +147,7 @@ class ContactSensor(Sensor):
 # ==========================================================================================================
 
 
-class ContactForceSensorOptions(NoisySensorOptionsBase, RigidSensorOptionsBase):
+class ContactForceSensorOptions(AnalogSensorOptionsBase, RigidSensorOptionsBase):
     """
     Sensor that returns contact force in the associated RigidLink's local frame.
 
@@ -196,7 +196,7 @@ class ContactForceSensorOptions(NoisySensorOptionsBase, RigidSensorOptionsBase):
 
 
 @dataclass
-class ContactForceSensorMetadata(NoisySensorMetadataBase):
+class ContactForceSensorMetadata(AnalogSensorMetadataBase):
     """
     Metadata for all rigid contact force sensors.
     """
@@ -208,7 +208,7 @@ class ContactForceSensorMetadata(NoisySensorMetadataBase):
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
 @ti.data_oriented
-class ContactForceSensor(NoisySensorBase):
+class ContactForceSensor(AnalogSensorBase):
     """
     Sensor that returns the contact force in the associated RigidLink's local frame.
     """
@@ -301,4 +301,6 @@ class ContactForceSensor(NoisySensorBase):
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         reshaped_cache = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
-        reshaped_cache.clamp_(min=shared_metadata.min_max_force[:, 0, :], max=shared_metadata.min_max_force[:, 1, :])
+        reshaped_cache.clamp_(max=shared_metadata.min_max_force[:, 1, :])
+        reshaped_cache[reshaped_cache < shared_metadata.min_max_force[:, 0, :]] = 0.0
+        cls._quantize_to_resolution(shared_metadata, shared_cache)
