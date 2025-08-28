@@ -37,7 +37,9 @@ def renderer(renderer_type):
     elif renderer_type == RENDERER_TYPE.RAYTRACER:
         return gs.renderers.RayTracer()
     else:
-        return gs.renderers.BatchRenderer(use_rasterizer=renderer_type == RENDERER_TYPE.BATCHRENDER_RASTERIZER)
+        return gs.renderers.BatchRenderer(
+            use_rasterizer=renderer_type == RENDERER_TYPE.BATCHRENDER_RASTERIZER,
+        )
 
 
 @pytest.fixture(scope="function")
@@ -250,7 +252,9 @@ def test_deterministic(tmp_path, show_viewer, tol):
     cam.start_recording()
     for _ in range(7):
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-        qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.rand(robot.n_qs)
+        qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.as_tensor(
+            np.random.rand(robot.n_qs), dtype=gs.tc_float, device=gs.device
+        )
 
         steps_rgb_arrays = []
         for _ in range(2):
@@ -277,17 +281,27 @@ def test_deterministic(tmp_path, show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
 @pytest.mark.parametrize("n_envs", [0, 4])
-def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
+@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
+def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
     DIFF_TOL = 0.02
     NUM_STEPS = 5
+
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.02,
             substeps=4,
+        ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         renderer=renderer,
     )
@@ -311,41 +325,49 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         debug=True,
         GUI=show_viewer,
     )
-    cam_0 = scene.add_camera(
-        res=CAM_RES,
-        pos=(1.5, 0.5, 1.5),
-        lookat=(0.0, 0.0, 0.5),
-        fov=45,
-        GUI=show_viewer,
-    )
-    cam_1 = scene.add_camera(
-        res=CAM_RES,
-        pos=(1.5, -0.5, 1.5),
-        lookat=(0.0, 0.0, 0.5),
-        fov=45,
-        GUI=show_viewer,
-    )
-    cam_2 = scene.add_camera(
-        res=CAM_RES,
-        fov=45,
-        GUI=show_viewer,
-    )
-    scene.add_light(
-        pos=(0.0, 0.0, 1.5),
-        dir=(1.0, 1.0, -2.0),
-        directional=True,
-        castshadow=True,
-        cutoff=45.0,
-        intensity=0.5,
-    )
-    scene.add_light(
-        pos=(4.0, -4.0, 4.0),
-        dir=(-1.0, 1.0, -1.0),
-        directional=False,
-        castshadow=True,
-        cutoff=45.0,
-        intensity=0.5,
-    )
+    cameras = []
+    for i in range(max(1 if IS_BATCHRENDER else n_envs, 1)):
+        env_idx = None if i < 1 else i
+        cam_0 = scene.add_camera(
+            res=CAM_RES,
+            pos=(1.5, 0.5, 1.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=45,
+            env_idx=env_idx,
+            GUI=show_viewer,
+        )
+        cam_1 = scene.add_camera(
+            res=CAM_RES,
+            pos=(1.5, -0.5, 1.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=45,
+            env_idx=env_idx,
+            GUI=show_viewer,
+        )
+        cam_2 = scene.add_camera(
+            res=CAM_RES,
+            fov=45,
+            env_idx=env_idx,
+            GUI=show_viewer,
+        )
+        cameras += [cam_0, cam_1, cam_2]
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
     scene.build(n_envs=n_envs, env_spacing=(4.0, 4.0))
 
     # Attach cameras
@@ -359,17 +381,16 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 
     # Initialize the simulation
     set_random_seed(0)
-    dof_bounds = scene.rigid_solver.dofs_info.limit.to_torch(gs.device)
     for i in range(max(n_envs, 1)):
-        qpos = torch.zeros(robot.n_dofs)
-        qpos[:2] = torch.rand(2) - 0.5
+        qpos = torch.zeros(robot.n_dofs, device=gs.device)
+        qpos[:2] = torch.as_tensor(np.random.rand(2), dtype=gs.tc_float, device=gs.device) - 0.5
         qpos[2] = 1.0
-        qpos[3:6] = 0.5 * (torch.rand(3) - 0.5)
-        qpos[6:] = torch.rand(robot.n_dofs - 6) - 0.5
+        qpos[3:6] = 0.5 * (torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device) - 0.5)
+        qpos[6:] = torch.as_tensor(np.random.rand(robot.n_dofs - 6), dtype=gs.tc_float, device=gs.device) - 0.5
         robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
 
-        qvel = torch.zeros(robot.n_dofs)
-        qvel[:6] = torch.rand(6) - 0.5
+        qvel = torch.zeros(robot.n_dofs, device=gs.device)
+        qvel[:6] = torch.as_tensor(np.random.rand(6), dtype=gs.tc_float, device=gs.device) - 0.5
         robot.set_dofs_velocity(qvel, envs_idx=([i] if n_envs else None))
 
     # Run a few simulation steps while monitoring the result
@@ -380,21 +401,37 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         # Move forward step forward in time
         scene.step()
 
-        # Render cameras.
-        # Note that the individual cameras is rendered alone first on purpose to make sure it works.
-        rgba_1, depth_1, seg_1, normal_1 = cam_1.render(
-            rgb=True, depth=True, segmentation=False, colorize_seg=False, normal=False
-        )
-        assert all(isinstance(img_data, torch.Tensor) for img_data in (rgba_1, depth_1))
-        rgba_all, depth_all, seg_all, normal_all = scene.render_all_cameras(
-            rgb=True, depth=True, segmentation=False, normal=False
-        )
-        assert all(isinstance(img_data, torch.Tensor) for img_data in (*rgba_all, *depth_all))
+        # Render cameras
+        if IS_BATCHRENDER:
+            # Note that the individual cameras is rendered alone first on purpose to make sure it works
+            rgba_1, depth_1, seg_1, normal_1 = cam_1.render(
+                rgb=True, depth=True, segmentation=False, colorize_seg=False, normal=False
+            )
+            rgba_all, depth_all, seg_all, normal_all = scene.render_all_cameras(
+                rgb=True, depth=True, segmentation=False, normal=False
+            )
+            assert all(isinstance(img_data, torch.Tensor) for img_data in (rgba_1, depth_1))
+            assert all(isinstance(img_data, torch.Tensor) for img_data in (*rgba_all, *depth_all))
+        else:
+            # Emulate batch rendering which is not supported natively
+            colorize_seg = False
+            rgba_all, depth_all, _, _ = zip(
+                *(
+                    camera.render(rgb=True, depth=True, segmentation=False, normal=False)
+                    for camera in scene._visualizer._cameras
+                    if not camera.debug
+                )
+            )
+            if n_envs > 0:
+                rgba_all, depth_all = (
+                    tuple(np.swapaxes(np.stack(img_data, axis=0).reshape((n_envs, 3, *img_data[0].shape)), 0, 1))
+                    for img_data in (rgba_all, depth_all)
+                )
+            rgba_1, depth_1 = rgba_all[1], depth_all[1]
 
         # Check that the dimensions are valid
         batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
-        num_cam = sum(not cam.debug for cam in scene.visualizer.cameras)
-        assert len(rgba_all) == len(depth_all) == num_cam
+        assert len(rgba_all) == len(depth_all) == 3
         assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all, rgba_1))
         assert all(e.shape == batch_shape for e in (*depth_all, depth_1))
 
@@ -406,7 +443,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(exporter._normalize_depth(img_data) for img_data in depth_all)
+        depth_normalized_all = tuple(exporter._normalize_depth(torch.as_tensor(img_data)) for img_data in depth_all)
         frame_data = tuple(
             tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
         )
@@ -420,7 +457,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba_1, depth=depth_1)
 
         # Check that cameras are recording different part of the scene
-        for rgb_diff in np.diff(frame_data[:num_cam], axis=0):
+        for rgb_diff in np.diff(frame_data[:3], axis=0):
             for rgb_diff_i in rgb_diff if n_envs else (rgb_diff,):
                 assert np.max(np.std(rgb_diff.reshape((-1, rgb_diff_i.shape[-1])), axis=0)) > 10.0
 

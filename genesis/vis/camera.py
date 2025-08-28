@@ -233,7 +233,7 @@ class Camera(RBC):
         link_quat = self._attached_link.get_quat(self._env_idx)
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = torch.matmul(link_T, self._attached_offset_T)
-        self.set_pose(transform=transform, env_idx=self._env_idx)
+        self.set_pose(transform=transform, env_idx=self._env_idx if self._visualizer.scene.n_envs > 0 else None)
 
     def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
         """
