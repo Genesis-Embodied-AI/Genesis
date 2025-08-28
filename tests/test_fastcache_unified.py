@@ -13,8 +13,8 @@ def gs_static_child(args: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable-multi-contact", action="store_true")
     parser.add_argument("--expected-num-contacts", type=int, required=True)
-    parser.add_argument("--expected-use-src-ll-cache", action="store_true")
-    parser.add_argument("--expected-src-ll-cache-hit", action="store_true")
+    parser.add_argument("--expected-use-src-ll-cache", type=int, required=True)
+    parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
     parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args(args)
 
