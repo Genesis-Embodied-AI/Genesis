@@ -260,7 +260,7 @@ class NPZFileWriter(DataHandler):
                     value = tensor_to_array(value)
                 self.all_data[key].append(value)
         else:
-            self.all_data["data"].append(data)
+            self.all_data["data"].append(tensor_to_array(data))
 
     def cleanup(self):
         gs.logger.info(f'Saving data to "~<{self.filename}>~"...')

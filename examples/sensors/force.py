@@ -65,10 +65,7 @@ def main():
 
     if IS_PYQTGRAPH_AVAILABLE:
         force_sensor.add_recorder(
-            handler=PyQtGraphPlotter(title="Force Sensor Measured Data", labels=["force_x", "force_y", "force_z"]),
-            rec_options=gs.options.RecordingOptions(
-                preprocess_func=lambda data, ground_truth_data: data["force"],
-            ),
+            handler=PyQtGraphPlotter(title="Force Sensor Measured Data", labels=["force_x", "force_y", "force_z"])
         )
     else:
         print("pyqtgraph not found, skipping real-time plotting.")
