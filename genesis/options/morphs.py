@@ -429,10 +429,16 @@ class Plane(Primitive):
     conaffinity : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
         the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    size: tuple, optional
+        The size of the plane in meters. Defaults to (1e3, 1e3).
+    ntiles: tuple, optional
+        The number of tiles in the plane. Defaults to `size`.
     """
 
     fixed: bool = True
     normal: tuple = (0, 0, 1)
+    size: tuple = (1e3, 1e3)
+    ntiles: tuple = size
 
     def __init__(self, **data):
         super().__init__(**data)
