@@ -286,7 +286,7 @@ class SAPCoupler(RBC):
             self.rigid_solver.equalities_info,
             self.rigid_solver.joints_info,
             self.rigid_solver._static_rigid_sim_config,
-            self.rigid_solver._static_rigid_sim_dummy,
+            self.rigid_solver._static_rigid_sim_cache_key,
         )
 
     def _init_sap_fields(self):
@@ -1645,7 +1645,7 @@ class RigidConstraintHandler(BaseConstraintHandler):
         equalities_info: array_class.EqualitiesInfo,
         joints_info: array_class.JointsInfo,
         static_rigid_sim_config: ti.template(),
-        static_rigid_sim_dummy: array_class.StaticRigidSimDummy,
+        static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     ):
         self.n_constraints[None] = 0
         self.Jt.fill(0.0)

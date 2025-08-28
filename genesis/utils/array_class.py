@@ -2011,16 +2011,14 @@ cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: T
 
 
 @dataclasses.dataclass
-class StaticRigidSimDummy:
+class StaticRigidSimCacheKey:
     para_level: int = cache_value()
     use_hibernation: bool = cache_value()
-    use_contact_island: bool = cache_value()
     batch_links_info: bool = cache_value()
     batch_dofs_info: bool = cache_value()
     batch_joints_info: bool = cache_value()
     enable_mujoco_compatibility: bool = cache_value()
     enable_multi_contact: bool = cache_value()
-    enable_self_collision: bool = cache_value()
     enable_adjacent_collision: bool = cache_value()
     enable_collision: bool = cache_value()
     box_box_detection: bool = cache_value()
@@ -2029,17 +2027,15 @@ class StaticRigidSimDummy:
     solver_type: int = cache_value()
 
 
-def get_static_rigid_sim_dummy(solver):
+def get_static_rigid_sim_cache_key(solver):
     kwargs = {
         "para_level": solver.sim._para_level,
         "use_hibernation": getattr(solver, "_use_hibernation", False),
-        "use_contact_island": getattr(solver, "_use_contact_island", False),
         "batch_links_info": getattr(solver._options, "batch_links_info", False),
         "batch_dofs_info": getattr(solver._options, "batch_dofs_info", False),
         "batch_joints_info": getattr(solver._options, "batch_joints_info", False),
         "enable_mujoco_compatibility": getattr(solver, "_enable_mujoco_compatibility", False),
         "enable_multi_contact": getattr(solver, "_enable_multi_contact", True),
-        "enable_self_collision": getattr(solver, "_enable_self_collision", True),
         "enable_adjacent_collision": getattr(solver, "_enable_adjacent_collision", False),
         "enable_collision": getattr(solver, "_enable_collision", False),
         "box_box_detection": getattr(solver, "_box_box_detection", False),
@@ -2047,7 +2043,7 @@ def get_static_rigid_sim_dummy(solver):
         "sparse_solve": getattr(solver._options, "sparse_solve", False),
         "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
     }
-    return StaticRigidSimDummy(**kwargs)
+    return StaticRigidSimCacheKey(**kwargs)
 
 
 # =========================================== DataManager ===========================================
