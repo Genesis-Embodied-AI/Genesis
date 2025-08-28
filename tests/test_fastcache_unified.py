@@ -58,6 +58,7 @@ def gs_static_child(args: list[str]):
     )
 
 
+@pytest.mark.required
 @pytest.mark.parametrize(
     "enable_multicontact,expected_num_contacts",
     [
