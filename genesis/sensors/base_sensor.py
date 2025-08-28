@@ -106,7 +106,7 @@ class Sensor(RBC):
         This method is called by the SensorManager during the scene build phase to initialize the sensor.
         This is where any shared metadata should be initialized.
         """
-        raise NotImplementedError("Sensors must implement `build()`.")
+        raise NotImplementedError(f"{type(self).__name__} has not implemented `build()`.")
 
     def get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
@@ -120,20 +120,20 @@ class Sensor(RBC):
             - If dict a dictionary with string keys and tensor values will be returned.
                 e.g. {"pos": (3,), "quat": (4,)} returns a dict of tensors [0:3] and [3:7] from the cache.
         """
-        raise NotImplementedError(f"{type(self).__name__} must implement `get_return_format()`.")
+        raise NotImplementedError(f"{type(self).__name__} has not implemented `get_return_format()`.")
 
     def get_cache_length(self) -> int:
         """
         The length of the cache for this sensor instance, e.g. number of points for a Lidar point cloud.
         """
-        raise NotImplementedError(f"{type(self).__name__} must implement `get_cache_length()`.")
+        raise NotImplementedError(f"{type(self).__name__} has not implemented `get_cache_length()`.")
 
     @classmethod
     def update_shared_ground_truth_cache(cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor):
         """
         Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
         """
-        raise NotImplementedError(f"{cls.__name__} must implement `update_shared_ground_truth_cache()`.")
+        raise NotImplementedError(f"{cls.__name__} has not implemented `update_shared_ground_truth_cache()`.")
 
     @classmethod
     def update_shared_cache(
@@ -149,14 +149,14 @@ class Sensor(RBC):
         The information in shared_cache should be the final measured sensor data after all noise and post-processing.
         NOTE: The implementation should include applying the delay using the `_apply_delay_to_shared_cache()` method.
         """
-        raise NotImplementedError(f"{cls.__name__} must implement `update_shared_cache()`.")
+        raise NotImplementedError(f"{cls.__name__} has not implemented `update_shared_cache()`.")
 
     @classmethod
     def get_cache_dtype(cls) -> torch.dtype:
         """
         The dtype of the cache for this sensor.
         """
-        raise NotImplementedError(f"{cls.__name__} must implement `get_cache_dtype()`.")
+        raise NotImplementedError(f"{cls.__name__} has not implemented `get_cache_dtype()`.")
 
     # =============================== public shared methods ===============================
 
