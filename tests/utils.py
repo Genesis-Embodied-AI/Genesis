@@ -31,7 +31,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "0c0bb46db0978a59524381194478cf390b3ff996"
-HUGGINGFACE_SNAPSHOT_REVISION = "b12232bf6a3a4aef11926ee7a3067aca428097b2"
+HUGGINGFACE_SNAPSHOT_REVISION = "b027a2474135ea7e07eb8b50d478b6199a5aec9b"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -190,8 +190,7 @@ def get_hf_dataset(
     else:
         raise ValueError(f"Unsupported repository '{repo_name}'")
 
-    for _ in range(num_retry):
-        num_trials = 0
+    for i in range(num_retry):
         try:
             # Try downloading the assets
             asset_path = snapshot_download(
@@ -236,8 +235,7 @@ def get_hf_dataset(
             if not has_files:
                 raise HTTPError("No file downloaded.")
         except (HTTPError, FileNotFoundError) as e:
-            num_trials += 1
-            if num_trials == num_retry:
+            if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
             time.sleep(retry_delay)

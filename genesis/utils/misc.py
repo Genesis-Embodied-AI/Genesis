@@ -150,10 +150,12 @@ def assert_built(method):
 
 
 def set_random_seed(seed):
-    # Note: we don't set seed for taichi, since taichi doesn't support stochastic operations in gradient computation. Therefore, we only allow deterministic taichi operations.
+    # Note: we don't set seed for taichi, since taichi doesn't support stochastic operations in gradient computation.
+    # Therefore, we only allow deterministic taichi operations.
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
 
@@ -517,18 +519,12 @@ def ti_field_to_torch(
     is_metal = gs.device.type == "mps"
     tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
     if isinstance(field, ti.lang.ScalarField):
-        if is_metal:
-            out = torch.zeros(size=field_shape, dtype=tc_dtype, device="cpu")
-        else:
-            out = torch.zeros(size=field_shape, dtype=tc_dtype, device=gs.device)
+        out = torch.zeros(size=field_shape, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
         _tensor_to_ext_arr_fast(field, out)
     else:
         as_vector = field.m == 1
         shape_ext = (field.n,) if as_vector else (field.n, field.m)
-        if is_metal:
-            out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu")
-        else:
-            out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device=gs.device)
+        out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
         _matrix_to_ext_arr_fast(field, out, as_vector)
     if is_metal:
         out = out.to(gs.device)
