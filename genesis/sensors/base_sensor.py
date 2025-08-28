@@ -356,7 +356,7 @@ class RigidSensorBase(Sensor):
         self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
 
 
-class AnalogSensorOptionsBase(RigidSensorOptionsBase):
+class NoisySensorOptionsBase(RigidSensorOptionsBase):
     """
     Utility base options class for analog sensors that are attached to a RigidEntity.
 
@@ -402,7 +402,7 @@ class AnalogSensorOptionsBase(RigidSensorOptionsBase):
 
 
 @dataclass
-class AnalogSensorMetadataBase(RigidSensorMetadataBase):
+class NoisySensorMetadataBase(RigidSensorMetadataBase):
     """
     Utility base shared metadata class for analog sensors that are attached to a RigidEntity.
     """
@@ -420,7 +420,7 @@ class AnalogSensorMetadataBase(RigidSensorMetadataBase):
     interpolate_for_delay: list[bool] = field(default_factory=list)
 
 
-class AnalogSensorBase(RigidSensorBase):
+class NoisySensorBase(RigidSensorBase):
     """
     Utility base sensor class for analog sensors that are attached to a RigidEntity.
     """
@@ -525,7 +525,7 @@ class AnalogSensorBase(RigidSensorBase):
     @classmethod
     def update_shared_cache(
         cls,
-        shared_metadata: AnalogSensorMetadataBase,
+        shared_metadata: NoisySensorMetadataBase,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
@@ -551,12 +551,12 @@ class AnalogSensorBase(RigidSensorBase):
         cls._quantize_to_resolution(shared_metadata, shared_cache)
 
     @classmethod
-    def _add_noise_drift_bias(cls, shared_metadata: AnalogSensorMetadataBase, output: torch.Tensor):
+    def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataBase, output: torch.Tensor):
         shared_metadata.bias_drift += torch.normal(0, shared_metadata.bias_drift_std)
         output += torch.normal(shared_metadata.bias, shared_metadata.noise_std) + shared_metadata.bias_drift
 
     @classmethod
-    def _quantize_to_resolution(cls, shared_metadata: AnalogSensorMetadataBase, output: torch.Tensor):
+    def _quantize_to_resolution(cls, shared_metadata: NoisySensorMetadataBase, output: torch.Tensor):
         output = torch.round(output / shared_metadata.resolution) * shared_metadata.resolution
 
     @classmethod
