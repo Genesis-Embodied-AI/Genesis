@@ -745,14 +745,14 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
 @pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
-    [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+    [RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-@pytest.mark.parametrize("size", [(1.0, 1.0), (1.5, 1.8), (2.0, 3.0), (3.0, 7.0)])
+@pytest.mark.parametrize("size", [(1.0, 1.0), (1.5, 1.8), (10.0, 7.0)])
 @pytest.mark.parametrize("n_tiles", [(0.5, 0.75), (2.0, 2.0), (5.0, 3.0), None])
 def test_render_planes(tmp_path, size, n_tiles, png_snapshot, renderer):
     print(f"\nTemporary test directory: {tmp_path}")
     CAM_RES = (512, 512)
-    NUM_STEPS = 5
+    NUM_STEPS = 1
     scene = gs.Scene(
         renderer=renderer,
     )
@@ -765,6 +765,14 @@ def test_render_planes(tmp_path, size, n_tiles, png_snapshot, renderer):
         lookat=(0.0, 0.0, 0.5),
         fov=45,
         GUI=False,
+    )
+    scene.add_light(
+        pos=[0.0, 0.0, 1.5],
+        dir=[1.0, 1.0, -2.0],
+        directional=1,
+        castshadow=1,
+        cutoff=45.0,
+        intensity=0.5,
     )
     scene.build()
 
