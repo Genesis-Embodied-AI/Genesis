@@ -1,6 +1,6 @@
 from .base_sensor import Sensor
+from .contact_force import ContactForceSensorOptions as ContactForce
 from .contact_force import ContactSensorOptions as Contact
-from .contact_force import ForceSensorOptions as ContactForce
 from .data_handlers import (
     CallbackHandler,
     CSVFileWriter,

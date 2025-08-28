@@ -8,9 +8,11 @@ import torch
 
 import genesis as gs
 from genesis.engine.entities import RigidEntity
+from genesis.engine.solvers import RigidSolver
 from genesis.options import Options
 from genesis.options.recording import RecordingOptions
 from genesis.repr_base import RBC
+from genesis.utils.geom import euler_to_quat
 
 from .data_handlers import DataHandler
 from .data_recorder import SensorDataRecorder
@@ -118,20 +120,20 @@ class Sensor(RBC):
             - If dict a dictionary with string keys and tensor values will be returned.
                 e.g. {"pos": (3,), "quat": (4,)} returns a dict of tensors [0:3] and [3:7] from the cache.
         """
-        raise NotImplementedError("Sensors must implement `return_format()`.")
+        raise NotImplementedError(f"{type(self).__name__} must implement `get_return_format()`.")
 
     def get_cache_length(self) -> int:
         """
         The length of the cache for this sensor instance, e.g. number of points for a Lidar point cloud.
         """
-        raise NotImplementedError("Sensors must implement `cache_length()`.")
+        raise NotImplementedError(f"{type(self).__name__} must implement `get_cache_length()`.")
 
     @classmethod
     def update_shared_ground_truth_cache(cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor):
         """
         Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
         """
-        raise NotImplementedError("Sensors must implement `update_shared_ground_truth_cache()`.")
+        raise NotImplementedError(f"{cls.__name__} must implement `update_shared_ground_truth_cache()`.")
 
     @classmethod
     def update_shared_cache(
@@ -147,14 +149,14 @@ class Sensor(RBC):
         The information in shared_cache should be the final measured sensor data after all noise and post-processing.
         NOTE: The implementation should include applying the delay using the `_apply_delay_to_shared_cache()` method.
         """
-        raise NotImplementedError("Sensors must implement `update_shared_cache()`.")
+        raise NotImplementedError(f"{cls.__name__} must implement `update_shared_cache()`.")
 
     @classmethod
     def get_cache_dtype(cls) -> torch.dtype:
         """
         The dtype of the cache for this sensor.
         """
-        raise NotImplementedError("Sensors must implement `get_cache_dtype()`.")
+        raise NotImplementedError(f"{cls.__name__} must implement `get_cache_dtype()`.")
 
     # =============================== public shared methods ===============================
 
@@ -291,11 +293,13 @@ class Sensor(RBC):
 
 class RigidSensorOptionsBase(SensorOptions):
     """
-    Base class for rigid entity sensor options.
+    Utility base class for sensors that are attached to a RigidEntity.
     """
 
     entity_idx: int
     link_idx_local: int = 0
+    pos_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    euler_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def validate(self, scene):
         super().validate(scene)
@@ -307,18 +311,56 @@ class RigidSensorOptionsBase(SensorOptions):
         ), "Invalid RigidLink index."
 
 
-class NoisySensorOptionsBase(SensorOptions):
+@dataclass
+class RigidSensorMetadataBase(SharedSensorMetadata):
+    """
+    Utility base class for sensors that are attached to a RigidEntity.
+    """
+
+    solver: RigidSolver | None = None
+    links_idx: list[int] = field(default_factory=list)
+    offsets_pos: torch.Tensor = torch.tensor([])
+    offsets_quat: torch.Tensor = torch.tensor([])
+
+
+class RigidSensorBase(Sensor):
+    """
+    Utility base class for sensors that are attached to a RigidEntity.
+    """
+
+    def build(self):
+        if self._shared_metadata.solver is None:
+            self._shared_metadata.solver = self._manager._sim.rigid_solver
+
+        self._shared_metadata.links_idx.append(self._options.link_idx_local + self._options.entity_idx)
+        self._shared_metadata.offsets_pos = torch.cat(
+            [
+                self._shared_metadata.offsets_pos.to(gs.device),
+                torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
+            ]
+        )
+        quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
+        if self._shared_metadata.solver.n_envs > 0:
+            quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
+        self._shared_metadata.offsets_quat = torch.cat(
+            [self._shared_metadata.offsets_quat.to(gs.device), quat_tensor], dim=-2
+        )
+
+
+class AnalogSensorOptionsBase(SensorOptions):
     """
     Base class for noisy sensor options.
 
     Parameters
     ----------
-    noise_std : tuple[float, ...]
-        The standard deviation of the noise.
+    resolution : tuple[float, ...]
+        The measurement resolution of the sensor (smallest increment of change in the sensor reading). Default is 1e-6.
     bias : tuple[float, ...]
         The bias of the sensor.
     bias_drift_std : tuple[float, ...]
         The standard deviation of the bias drift.
+    noise_std : tuple[float, ...]
+        The standard deviation of the noise.
     delay : float
         The delay in seconds before the sensor data is read.
     jitter : float
@@ -332,6 +374,7 @@ class NoisySensorOptionsBase(SensorOptions):
         If True, the sensor will only update the ground truth cache, and not the measured cache.
     """
 
+    resolution: float | tuple[float, ...] = 1e-6
     bias: float | tuple[float, ...] = 0.0
     bias_drift_std: float | tuple[float, ...] = 0.0
     noise_std: float | tuple[float, ...] = 0.0
@@ -344,7 +387,7 @@ class NoisySensorOptionsBase(SensorOptions):
 
 
 @dataclass
-class NoisySensorMetadataBase(SharedSensorMetadata):
+class AnalogSensorMetadataBase(SharedSensorMetadata):
     """
     Base class for all common sensor metadata.
     """
@@ -359,7 +402,7 @@ class NoisySensorMetadataBase(SharedSensorMetadata):
     interpolate_for_delay: list[bool] = field(default_factory=list)
 
 
-class NoisySensorBase(Sensor):
+class AnalogSensorBase(Sensor):
     """
     Base class for sensors with noise, bias, drift, and jitter.
     """
@@ -455,7 +498,7 @@ class NoisySensorBase(Sensor):
     @classmethod
     def update_shared_cache(
         cls,
-        shared_metadata: NoisySensorMetadataBase,
+        shared_metadata: AnalogSensorMetadataBase,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
@@ -478,11 +521,16 @@ class NoisySensorBase(Sensor):
             shared_metadata.interpolate_for_delay,
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
+        cls._quantize_to_resolution(shared_metadata, shared_cache)
 
     @classmethod
-    def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataBase, shared_cache: torch.Tensor):
+    def _add_noise_drift_bias(cls, shared_metadata: AnalogSensorMetadataBase, output: torch.Tensor):
         shared_metadata.bias_drift += torch.normal(0, shared_metadata.bias_drift_std)
-        shared_cache += torch.normal(shared_metadata.bias, shared_metadata.noise_std) + shared_metadata.bias_drift
+        output += torch.normal(shared_metadata.bias, shared_metadata.noise_std) + shared_metadata.bias_drift
+
+    @classmethod
+    def _quantize_to_resolution(cls, shared_metadata: AnalogSensorMetadataBase, output: torch.Tensor):
+        output = torch.round(output / shared_metadata.resolution) * shared_metadata.resolution
 
     @classmethod
     def get_cache_dtype(cls) -> torch.dtype:
