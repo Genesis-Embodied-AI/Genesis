@@ -147,9 +147,9 @@ class ContactSensor(Sensor):
 # ==========================================================================================================
 
 
-class ContactForceSensorOptions(AnalogSensorOptionsBase, RigidSensorOptionsBase):
+class ContactForceSensorOptions(AnalogSensorOptionsBase):
     """
-    Sensor that returns contact force in the associated RigidLink's local frame.
+    Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
     Parameters
     ----------
@@ -171,8 +171,6 @@ class ContactForceSensorOptions(AnalogSensorOptionsBase, RigidSensorOptionsBase)
         The delay in seconds before the sensor data is read.
     jitter : float, optional
         The time jitter standard deviation in seconds before the sensor data is read.
-    delay : float, optional
-        The read delay time in seconds. Data read will be outdated by this amount.
     interpolate_for_delay : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used.
@@ -198,11 +196,9 @@ class ContactForceSensorOptions(AnalogSensorOptionsBase, RigidSensorOptionsBase)
 @dataclass
 class ContactForceSensorMetadata(AnalogSensorMetadataBase):
     """
-    Metadata for all rigid contact force sensors.
+    Shared metadata for all contact force sensors.
     """
 
-    solver: RigidSolver | None = None
-    links_idx: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     min_max_force: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
 
 
@@ -210,7 +206,7 @@ class ContactForceSensorMetadata(AnalogSensorMetadataBase):
 @ti.data_oriented
 class ContactForceSensor(AnalogSensorBase):
     """
-    Sensor that returns the contact force in the associated RigidLink's local frame.
+    Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
 
     def build(self):
@@ -218,16 +214,6 @@ class ContactForceSensor(AnalogSensorBase):
 
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
-
-        self._shared_metadata.links_idx = torch.cat(
-            [
-                self._shared_metadata.links_idx,
-                torch.tensor(
-                    [self._options.entity_idx + self._options.link_idx_local], dtype=gs.tc_int, device=gs.device
-                ),
-            ],
-            dim=-1,
-        )
 
         # shape of min_max_force is (n_sensors, 2, 3)
         min_max_force = torch.zeros((2, 3), dtype=gs.tc_float, device=gs.device)
@@ -278,7 +264,7 @@ class ContactForceSensor(AnalogSensorBase):
             all_contacts["link_a"].contiguous(),
             all_contacts["link_b"].contiguous(),
             links_quat.contiguous(),
-            shared_metadata.links_idx,
+            np.array(shared_metadata.links_idx, dtype=gs.np_int),
             shared_ground_truth_cache,
         )
 
@@ -301,6 +287,6 @@ class ContactForceSensor(AnalogSensorBase):
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         reshaped_cache = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
-        reshaped_cache.clamp_(max=shared_metadata.min_max_force[:, 1, :])
-        reshaped_cache[reshaped_cache < shared_metadata.min_max_force[:, 0, :]] = 0.0
+        reshaped_cache.clamp_(max=shared_metadata.min_max_force[:, 1, :])  # clip for max force
+        reshaped_cache[reshaped_cache < shared_metadata.min_max_force[:, 0, :]] = 0.0  # set to 0 for undetectable force
         cls._quantize_to_resolution(shared_metadata, shared_cache)

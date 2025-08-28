@@ -3,7 +3,6 @@ import pytest
 import torch
 
 import genesis as gs
-from genesis.sensors import ContactSensorOptions, ForceSensorOptions, IMUOptions
 
 from .utils import assert_allclose, assert_array_equal
 
@@ -21,8 +20,8 @@ def test_imu_sensor(show_viewer):
             substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         show_viewer=show_viewer,
-        show_FPS=False,
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -109,7 +108,6 @@ def test_imu_sensor(show_viewer):
 def test_rigid_tactile_sensors_gravity_force(show_viewer):
     """Test if the sensor will detect the correct forces being applied on a falling box."""
     GRAVITY = -10.0
-    N_ENVS = 0
     BIAS = (0.1, 0.2, 0.3)
     NOISE = 0.01
 
@@ -119,8 +117,8 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
             substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         show_viewer=show_viewer,
-        show_FPS=False,
     )
 
     scene.add_entity(morph=gs.morphs.Plane())
@@ -148,7 +146,7 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
         )
     )
 
-    scene.build(n_envs=N_ENVS)
+    scene.build()
 
     scene.step()
 
