@@ -1,7 +1,7 @@
 import argparse
 
 import numpy as np
-from custom_data_handlers import IS_PYQTGRAPH_AVAILABLE, PyQtGraphPlotter
+from custom_data_handlers import IS_MATPLOTLIB_AVAILABLE, IS_PYQTGRAPH_AVAILABLE, MPLPlotter, PyQtGraphPlotter
 from tqdm import tqdm
 
 import genesis as gs
@@ -50,33 +50,44 @@ def main():
             gyro_axes_skew=(0.03, 0.04, 0.05),
             acc_noise_std=(0.01, 0.01, 0.01),
             gyro_noise_std=(0.01, 0.01, 0.01),
-            acc_bias_drift_std=(0.001, 0.001, 0.001),
-            gyro_bias_drift_std=(0.001, 0.001, 0.001),
+            acc_random_walk_std=(0.001, 0.001, 0.001),
+            gyro_random_walk_std=(0.001, 0.001, 0.001),
             delay=0.01,
             jitter=0.01,
-            interpolate_for_delay=True,
+            interpolate=True,
         )
     )
+    labels = {"lin_acc": ["acc_x", "acc_y", "acc_z"], "ang_vel": ["gyro_x", "gyro_y", "gyro_z"]}
     if IS_PYQTGRAPH_AVAILABLE:
-        imu.add_recorder(
-            handler=PyQtGraphPlotter(title="IMU Accelerometer Measured Data", labels=["acc_x", "acc_y", "acc_z"]),
-            rec_options=gs.options.RecordingOptions(
-                preprocess_func=lambda data, ground_truth_data: data["lin_acc"],
-            ),
+        imu.add_recording(
+            gs.options.RecordingOptions(handler=PyQtGraphPlotter(title="IMU Measured Data", labels=labels))
         )
-        imu.add_recorder(
-            handler=PyQtGraphPlotter(title="IMU Accelerometer Ground Truth Data", labels=["acc_x", "acc_y", "acc_z"]),
-            rec_options=gs.options.RecordingOptions(
-                preprocess_func=lambda data, ground_truth_data: ground_truth_data["lin_acc"],
+        imu.add_recording(
+            gs.options.RecordingOptions(handler=PyQtGraphPlotter(title="IMU Ground Truth Data", labels=labels)),
+            read_ground_truth=True,
+        )
+    elif IS_MATPLOTLIB_AVAILABLE:
+        imu.add_recording(
+            gs.options.RecordingOptions(
+                handler=MPLPlotter(title="IMU Measured Data", labels=labels),
+                run_in_thread=False,
+            )
+        )
+        imu.add_recording(
+            gs.options.RecordingOptions(
+                handler=MPLPlotter(title="IMU Ground Truth Data", labels=labels),
+                run_in_thread=False,
             ),
+            read_ground_truth=True,
         )
     else:
-        print("pyqtgraph not found, skipping real-time plotting and saving IMU data as .npz instead.")
-        imu.add_recorder(
+        print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
+
+    imu.add_recording(
+        gs.options.RecordingOptions(
             handler=NPZFileWriter(filename="imu_data.npz"),
         )
-    imu.start_recording()
-
+    )
     ########################## build ##########################
     scene.build()
 
@@ -121,7 +132,7 @@ def main():
         print("Measured data:")
         print(imu.read())
 
-    imu.stop_recording()
+    scene.stop_recording()
 
 
 if __name__ == "__main__":

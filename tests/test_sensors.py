@@ -42,11 +42,11 @@ def test_imu_sensor(show_viewer):
             gyro_axes_skew=(0.02, 0.03, 0.04),
             acc_noise_std=(0.01, 0.01, 0.01),
             gyro_noise_std=(0.01, 0.01, 0.01),
-            acc_bias_drift_std=(0.001, 0.001, 0.001),
-            gyro_bias_drift_std=(0.001, 0.001, 0.001),
+            acc_random_walk_std=(0.001, 0.001, 0.001),
+            gyro_random_walk_std=(0.001, 0.001, 0.001),
             delay=DT,
             jitter=DT * 0.1,
-            interpolate_for_delay=True,
+            interpolate=True,
         )
     )
     imu_skewed = scene.add_sensor(
@@ -135,14 +135,14 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
     force_sensor = scene.add_sensor(
         gs.sensors.ContactForce(
             entity_idx=box.idx,
-            min_force=0.1,
+            min_force=0.01,
             max_force=(10.0, 20.0, -GRAVITY / 2),
             noise_std=NOISE,
             bias=BIAS,
-            bias_drift_std=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
+            random_walk_std=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
             delay=0.05,
             jitter=0.01,
-            interpolate_for_delay=True,
+            interpolate=True,
         )
     )
 
