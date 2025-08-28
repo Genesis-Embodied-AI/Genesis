@@ -15,9 +15,6 @@ from .base_sensor import (
     AnalogSensorBase,
     AnalogSensorMetadataBase,
     AnalogSensorOptionsBase,
-    RigidSensorBase,
-    RigidSensorMetadataBase,
-    RigidSensorOptionsBase,
 )
 from .sensor_manager import register_sensor
 
@@ -25,7 +22,7 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-class IMUOptions(RigidSensorOptionsBase, AnalogSensorOptionsBase):
+class IMUOptions(AnalogSensorOptionsBase):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -36,10 +33,12 @@ class IMUOptions(RigidSensorOptionsBase, AnalogSensorOptionsBase):
         The global entity index of the RigidEntity to which this IMU sensor is attached.
     link_idx_local : int, optional
         The local index of the RigidLink of the RigidEntity to which this IMU sensor is attached.
-    pos_offset : tuple[float, float, float]
-        The offset of the IMU sensor from the RigidLink.
-    euler_offset : tuple[float, float, float]
-        The offset of the IMU sensor from the RigidLink in euler angles.
+    pos_offset : tuple[float, float, float], optional
+        The positional offset of the IMU sensor from the RigidLink.
+    euler_offset : tuple[float, float, float], optional
+        The rotational offset of the IMU sensor from the RigidLink in degrees.
+    acc_resolution : float, optional
+        The measurement resolution of the accelerometer. Default is 1e-6.
     acc_axes_skew : float | tuple[float, float, float] | Iterable[float]
         Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
         for each axis, and off-diagonal elements account for cross-axis misalignment effects.
@@ -51,6 +50,8 @@ class IMUOptions(RigidSensorOptionsBase, AnalogSensorOptionsBase):
         The additive bias for each axis of the accelerometer.
     acc_bias_drift_std : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the accelerometer.
+    gyro_resolution : float, optional
+        The measurement resolution of the gyroscope. Default is 1e-5.
     gyro_axes_skew : float | tuple[float, float, float] | Iterable[float]
         Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
     gyro_noise_std : tuple[float, float, float]
@@ -59,18 +60,21 @@ class IMUOptions(RigidSensorOptionsBase, AnalogSensorOptionsBase):
         The additive bias for each axis of the gyroscope.
     gyro_bias_drift_std : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the gyroscope.
-    delay : float
+    delay : float, optional
         The delay in seconds before the sensor data is read.
-    jitter : float
+    jitter : float, optional
         The time jitter standard deviation in seconds before the sensor data is read.
-    interpolate_for_delay : bool
+    interpolate_for_delay : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used.
+        Otherwise, the sensor data at the closest time step will be used. Default is False.
+    update_ground_truth_only : bool, optional
+        If True, the sensor will only update the ground truth cache, and not the measured cache.
     """
 
+    acc_resolution: float = 1e-6
+    gyro_resolution: float = 1e-5
     acc_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
     gyro_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
-
     acc_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
     gyro_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
     acc_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -92,7 +96,7 @@ class IMUOptions(RigidSensorOptionsBase, AnalogSensorOptionsBase):
 
 
 @dataclass
-class IMUSharedMetadata(RigidSensorMetadataBase, AnalogSensorMetadataBase):
+class IMUSharedMetadata(AnalogSensorMetadataBase):
     """
     Shared metadata between all IMU sensors.
     """
@@ -106,7 +110,7 @@ class IMUSharedMetadata(RigidSensorMetadataBase, AnalogSensorMetadataBase):
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMUSensor(RigidSensorBase, AnalogSensorBase):
+class IMUSensor(AnalogSensorBase):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -149,11 +153,12 @@ class IMUSensor(RigidSensorBase, AnalogSensorBase):
         """
         Initialize all shared metadata needed to update all IMU sensors.
         """
-        self._options.noise_std = tuple(self._options.acc_noise_std) + tuple(self._options.gyro_noise_std)
+        self._options.resolution = (self._options.acc_resolution, self._options.gyro_resolution)
         self._options.bias = tuple(self._options.acc_bias) + tuple(self._options.gyro_bias)
         self._options.bias_drift_std = tuple(self._options.acc_bias_drift_std) + tuple(
             self._options.gyro_bias_drift_std
         )
+        self._options.noise_std = tuple(self._options.acc_noise_std) + tuple(self._options.gyro_noise_std)
         super().build()  # set all shared metadata from RigidSensorBase and AnalogSensorBase
 
         self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
@@ -240,7 +245,7 @@ class IMUSensor(RigidSensorBase, AnalogSensorBase):
         )
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata, shared_cache)
+        cls._quantize_to_resolution(shared_metadata, shared_cache_xyz_view.permute(0, 2, 1))
 
     @classmethod
     def get_cache_dtype(cls) -> torch.dtype:
@@ -252,7 +257,7 @@ class IMUSensor(RigidSensorBase, AnalogSensorBase):
         """
         Get views of the metadata tensor (B, n_imus * 6) as a tuple of acc and gyro metadata tensors (B, n_imus * 3).
         """
-        batch_size, n_data = metadata_tensor.shape
+        batch_size, n_data = metadata_tensor.shape if metadata_tensor.ndim == 2 else (1, metadata_tensor.shape[-1])
         n_imus = n_data // 6
         reshaped_tensor = metadata_tensor.reshape(batch_size, n_imus, 2, 3)
         return (
