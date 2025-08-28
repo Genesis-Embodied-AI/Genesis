@@ -293,7 +293,18 @@ class Sensor(RBC):
 
 class RigidSensorOptionsBase(SensorOptions):
     """
-    Utility base class for sensors that are attached to a RigidEntity.
+    Utility base options class for sensors that are attached to a RigidEntity.
+
+    Parameters
+    ----------
+    entity_idx : int
+        The global entity index of the RigidEntity to which this sensor is attached.
+    link_idx_local : int, optional
+        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+    pos_offset : tuple[float, float, float]
+        The positional offset of the sensor from the RigidLink.
+    euler_offset : tuple[float, float, float]
+        The rotational offset of the sensor from the RigidLink in degrees.
     """
 
     entity_idx: int
@@ -314,18 +325,18 @@ class RigidSensorOptionsBase(SensorOptions):
 @dataclass
 class RigidSensorMetadataBase(SharedSensorMetadata):
     """
-    Utility base class for sensors that are attached to a RigidEntity.
+    Utility base shared metadata class for sensors that are attached to a RigidEntity.
     """
 
     solver: RigidSolver | None = None
     links_idx: list[int] = field(default_factory=list)
-    offsets_pos: torch.Tensor = torch.tensor([])
-    offsets_quat: torch.Tensor = torch.tensor([])
+    offsets_pos: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    offsets_quat: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
 
 
 class RigidSensorBase(Sensor):
     """
-    Utility base class for sensors that are attached to a RigidEntity.
+    Utility base sensor class for sensors that are attached to a RigidEntity.
     """
 
     def build(self):
@@ -335,42 +346,46 @@ class RigidSensorBase(Sensor):
         self._shared_metadata.links_idx.append(self._options.link_idx_local + self._options.entity_idx)
         self._shared_metadata.offsets_pos = torch.cat(
             [
-                self._shared_metadata.offsets_pos.to(gs.device),
+                self._shared_metadata.offsets_pos,
                 torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
             ]
         )
         quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
         if self._shared_metadata.solver.n_envs > 0:
             quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
-        self._shared_metadata.offsets_quat = torch.cat(
-            [self._shared_metadata.offsets_quat.to(gs.device), quat_tensor], dim=-2
-        )
+        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
 
 
-class AnalogSensorOptionsBase(SensorOptions):
+class AnalogSensorOptionsBase(RigidSensorOptionsBase):
     """
-    Base class for noisy sensor options.
+    Utility base options class for analog sensors that are attached to a RigidEntity.
 
     Parameters
     ----------
-    resolution : tuple[float, ...]
+    entity_idx : int
+        The global entity index of the RigidEntity to which this sensor is attached.
+    link_idx_local : int, optional
+        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+    pos_offset : tuple[float, float, float], optional
+        The positional offset of the sensor from the RigidLink.
+    euler_offset : tuple[float, float, float], optional
+        The rotational offset of the sensor from the RigidLink in degrees.
+    resolution : tuple[float, ...], optional
         The measurement resolution of the sensor (smallest increment of change in the sensor reading). Default is 1e-6.
-    bias : tuple[float, ...]
+    bias : tuple[float, ...], optional
         The bias of the sensor.
-    bias_drift_std : tuple[float, ...]
+    bias_drift_std : tuple[float, ...], optional
         The standard deviation of the bias drift.
-    noise_std : tuple[float, ...]
+    noise_std : tuple[float, ...], optional
         The standard deviation of the noise.
-    delay : float
+    delay : float, optional
         The delay in seconds before the sensor data is read.
-    jitter : float
+    jitter : float, optional
         The time jitter standard deviation in seconds before the sensor data is read.
-    interpolate_for_delay : bool
+    interpolate_for_delay : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used.
-    delay : float
-        The read delay time in seconds. Data read will be outdated by this amount.
-    update_ground_truth_only : bool
+        Otherwise, the sensor data at the closest time step will be used. Default is False.
+    update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth cache, and not the measured cache.
     """
 
@@ -387,24 +402,27 @@ class AnalogSensorOptionsBase(SensorOptions):
 
 
 @dataclass
-class AnalogSensorMetadataBase(SharedSensorMetadata):
+class AnalogSensorMetadataBase(RigidSensorMetadataBase):
     """
-    Base class for all common sensor metadata.
+    Utility base shared metadata class for analog sensors that are attached to a RigidEntity.
     """
 
-    bias: torch.Tensor = torch.tensor([])
-    bias_drift: torch.Tensor = torch.tensor([])
-    bias_drift_std: torch.Tensor = torch.tensor([])
-    noise_std: torch.Tensor = torch.tensor([])
-    jitter_std_in_steps: torch.Tensor = torch.tensor([])
-    jitter_in_steps: torch.Tensor = torch.tensor([])
-    delay_in_steps: torch.Tensor = torch.tensor([])
+    resolution: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    bias_drift: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    bias_drift_std: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    noise_std: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    jitter_std_in_steps: torch.Tensor = field(
+        default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
+    )
+    jitter_in_steps: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    delay_in_steps: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     interpolate_for_delay: list[bool] = field(default_factory=list)
 
 
-class AnalogSensorBase(Sensor):
+class AnalogSensorBase(RigidSensorBase):
     """
-    Base class for sensors with noise, bias, drift, and jitter.
+    Utility base sensor class for analog sensors that are attached to a RigidEntity.
     """
 
     @gs.assert_built
@@ -455,18 +473,27 @@ class AnalogSensorBase(Sensor):
         """
         Initialize all shared metadata needed to update all noisy sensors.
         """
+        super().build()
+
         batch_size = self._manager._sim._B
 
+        self._shared_metadata.resolution = torch.cat(
+            [
+                self._shared_metadata.resolution,
+                torch.tensor([self._options.resolution], dtype=gs.tc_float, device=gs.device),
+            ],
+            dim=-1,
+        )
         self._shared_metadata.bias = torch.cat(
             [
-                self._shared_metadata.bias.to(gs.device),
+                self._shared_metadata.bias,
                 torch.tensor([self._options.bias], dtype=gs.tc_float, device=gs.device).expand(batch_size, -1),
             ],
             dim=-1,
         )
         self._shared_metadata.bias_drift_std = torch.cat(
             [
-                self._shared_metadata.bias_drift_std.to(gs.device),
+                self._shared_metadata.bias_drift_std,
                 torch.tensor([self._options.bias_drift_std], dtype=gs.tc_float, device=gs.device).expand(
                     batch_size, -1
                 ),
@@ -476,14 +503,14 @@ class AnalogSensorBase(Sensor):
         self._shared_metadata.bias_drift = torch.zeros_like(self._shared_metadata.bias_drift_std)
         self._shared_metadata.noise_std = torch.cat(
             [
-                self._shared_metadata.noise_std.to(gs.device),
+                self._shared_metadata.noise_std,
                 torch.tensor([self._options.noise_std], dtype=gs.tc_float, device=gs.device).expand(batch_size, -1),
             ],
             dim=-1,
         )
         self._shared_metadata.jitter_std_in_steps = torch.cat(
             [
-                self._shared_metadata.jitter_std_in_steps.to(gs.device),
+                self._shared_metadata.jitter_std_in_steps,
                 torch.tensor(
                     [self._options.jitter / self._manager._sim.dt], dtype=gs.tc_float, device=gs.device
                 ).expand(batch_size, -1),
