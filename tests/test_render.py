@@ -740,3 +740,45 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
     # Make sure that the result is valid
     with open(IMAGE_FILENAME, "rb") as f:
         assert f.read() == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+@pytest.mark.parametrize("size", [(1.0, 1.0), (1.5, 1.8), (2.0, 3.0), (3.0, 7.0)])
+@pytest.mark.parametrize("n_tiles", [(0.5, 0.75), (2.0, 2.0), (5.0, 3.0), None])
+def test_render_planes(tmp_path, size, n_tiles, png_snapshot, renderer):
+    print(f"\nTemporary test directory: {tmp_path}")
+    CAM_RES = (512, 512)
+    NUM_STEPS = 5
+    scene = gs.Scene(
+        renderer=renderer,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(size=size, n_tiles=n_tiles),
+    )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(1.5, 0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        GUI=False,
+    )
+    scene.build()
+
+    # Create image exporter
+    exporter = FrameImageExporter(tmp_path)
+
+    # Simulate
+    for i in range(NUM_STEPS):
+        # Move forward step forward in time
+        scene.step()
+        rgba, depth, _, _ = camera.render(rgb=True, depth=True)
+        exporter.export_frame_single_camera(i, camera.idx, rgb=rgba, depth=depth)
+
+    # Verify that the output is correct pixel-wise over multiple simulation steps
+    for image_file in sorted(tmp_path.rglob("*.png")):
+        with open(image_file, "rb") as f:
+            assert f.read() == png_snapshot

@@ -438,7 +438,7 @@ class Plane(Primitive):
     fixed: bool = True
     normal: tuple = (0, 0, 1)
     size: tuple = (1e3, 1e3)
-    n_tiles: tuple = None
+    n_tiles: tuple | None = None
 
     def __init__(self, **data):
         super().__init__(**data)
