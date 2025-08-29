@@ -2915,13 +2915,11 @@ def test_mesh_primitive_COM(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_batched_aabb(show_viewer, tol):
-    """Test the batched AABB functionality."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, -10.0)),
         show_viewer=show_viewer,
     )
 
-    # Add entities
     plane = scene.add_entity(
         gs.morphs.Plane(normal=(0, 0, 1), pos=(0, 0, 0)),
         material=gs.materials.Rigid(),
@@ -2935,25 +2933,19 @@ def test_batched_aabb(show_viewer, tol):
         material=gs.materials.Rigid(),
     )
 
-    # Build the scene
     scene.build()
 
-    # Test batched AABB from solver
     all_aabbs = scene.sim.rigid_solver.get_aabb()
     assert_allclose(torch.tensor(all_aabbs.shape), torch.tensor([3, 2, 3]), atol=tol)
 
-    # Test individual entity AABB
     plane_aabb = plane.get_aabb()
     box_aabb = box.get_aabb()
     sphere_aabb = sphere.get_aabb()
 
-    # Verify individual AABBs have correct shape (may have extra dimension)
     assert_allclose(torch.tensor(plane_aabb.shape[-1]), torch.tensor(3), atol=tol)
     assert_allclose(torch.tensor(box_aabb.shape[-1]), torch.tensor(3), atol=tol)
     assert_allclose(torch.tensor(sphere_aabb.shape[-1]), torch.tensor(3), atol=tol)
 
-    # Verify individual AABBs match batched AABB values
-    # Squeeze extra dimensions if present
     plane_aabb_squeezed = plane_aabb.squeeze() if plane_aabb.ndim == 3 else plane_aabb
     box_aabb_squeezed = box_aabb.squeeze() if box_aabb.ndim == 3 else box_aabb
     sphere_aabb_squeezed = sphere_aabb.squeeze() if sphere_aabb.ndim == 3 else sphere_aabb
