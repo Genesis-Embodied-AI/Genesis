@@ -272,13 +272,9 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
-        acc = self.constraint_state.qacc.to_numpy()[-6:-3, 0]
-        vel = self._solver.dofs_state.vel.to_numpy()[-6:-3, 0]
-        print("diff---------------", acc, vel)
         # timer.stamp("_func_update_qacc")
         func_update_contact_force(
             links_state=self._solver.links_state,
-            dofs_state=self._solver.dofs_state,
             collider_state=self._collider._collider_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
@@ -550,7 +546,7 @@ def add_collision_constraints(
 
                 diag = invweight + contact_data_friction * contact_data_friction * invweight
                 diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
-                diag = ti.max(diag, gs.EPS) / 2.0
+                diag = ti.max(diag, gs.EPS)
 
                 constraint_state.diag[n_con, i_b] = diag
                 constraint_state.aref[n_con, i_b] = aref
@@ -1323,7 +1319,6 @@ def func_nt_chol_solve(
 @ti.kernel
 def func_update_contact_force(
     links_state: array_class.LinksState,
-    dofs_state: array_class.DofsState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
@@ -1362,20 +1357,6 @@ def func_update_contact_force(
             links_state.contact_force[contact_data_link_b, i_b] = (
                 links_state.contact_force[contact_data_link_b, i_b] + force
             )
-
-            print(contact_data_link_a, contact_data_link_b, links_state.contact_force[contact_data_link_a, i_b], -force)
-            n_dofs = dofs_state.acc.shape[0]
-            for i_dir in range(4):
-                d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
-                n = d * contact_data_friction - contact_data_normal
-                force += n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
-                i_constraint = i_c * 4 + i_dir + const_start
-                a_free = 0.0
-                a_actual = 0.0
-                for i_d in range(n_dofs):
-                    a_free += constraint_state.jac[i_constraint, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
-                    a_actual += constraint_state.jac[i_constraint, i_d, i_b] * dofs_state.acc[i_d, i_b]
-                print("i_c, a_free, aref", i_c, a_free, constraint_state.aref[i_constraint, i_b], a_actual, d)
 
 
 @gs.maybe_pure
