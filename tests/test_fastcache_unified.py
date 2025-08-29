@@ -37,8 +37,7 @@ def gs_static_child(args: list[str]):
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
 
     assert (
-        func_narrow_phase_convex_vs_convex._primal.fe_ll_cache_observations.cache_hit
-        == args.expected_fe_ll_cache_hit
+        func_narrow_phase_convex_vs_convex._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
     )
     assert (
         func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_key_generated
@@ -54,17 +53,17 @@ def gs_static_child(args: list[str]):
 # note that using `backend` instead of `test_backend`, breaks genesis pytest...
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
 @pytest.mark.parametrize("use_ndarray", [False, True])
-def test_gs_num_envs(
-    use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path
-) -> None:
+def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
     # change num_env each time, and check effect on reading from cache
     for it, num_env in enumerate([3, 5, 7]):
         cmd_line = [
             sys.executable,
             __file__,
             gs_static_child.__name__,
-            "--test-backend", test_backend,
-            "--it", str(it),
+            "--test-backend",
+            test_backend,
+            "--it",
+            str(it),
         ]
         env = dict(os.environ)
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
