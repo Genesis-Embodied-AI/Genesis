@@ -94,3 +94,92 @@ def test_gs_static(
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
         assert proc.returncode == 0
+
+
+def test_change_scene(args: list[str]):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n_obj", type=int, required=True)
+    parser.add_argument("--n_env", type=int, required=True)
+    parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
+    parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
+    args = parser.parse_args(args)
+
+    gs.init(backend=getattr(gs, args.test_backend), precision="32")
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1, 1, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+
+    for i_obj in range(args.n_obj):
+        cube = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.4, 0.4, 0.4),
+                pos=(0.0, 0.5 * i_obj, 0.18),
+            )
+        )
+    scene.build(n_envs=args.n_env)
+
+    # ti_field_to_torch does not work with ndarray now
+    # qpos = scene.sim.rigid_solver.get_qpos()
+    qpos = scene.sim.rigid_solver.qpos.to_numpy()
+    print("qpos.shape", qpos.shape)
+
+    assert qpos.shape[0] == args.n_obj * 7
+    assert qpos.shape[1] == args.n_env
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
+
+    assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
+    assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "list_n_objs_n_envs",
+    [[(1, 1), (2, 2)]],
+)
+@pytest.mark.parametrize("enable_pure", [True])  # should not affect result
+# note that using `backend` instead of `test_backend`, breaks genesis pytest...
+@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
+def test_ndarray_no_compile(
+    enable_pure: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
+) -> None:
+    print("len(list_n_objs_n_envs)", len(list_n_objs_n_envs), list_n_objs_n_envs)
+    for it in range(len(list_n_objs_n_envs)):
+        # we iterate to make sure stuff is really being read from cache
+        print("list_n_objs_n_envs[it]", list_n_objs_n_envs[it])
+        n_objs, n_envs = list_n_objs_n_envs[it]
+        cmd_line = [
+            sys.executable,
+            __file__,
+            test_change_scene.__name__,
+            "--n_obj",
+            str(n_objs),
+            "--n_env",
+            str(n_envs),
+            "--expected-src-ll-cache-hit",
+            "1" if enable_pure and it > 0 else "0",
+            "--test-backend",
+            test_backend,
+        ]
+        env = dict(os.environ)
+        env["GS_BETA_PURE"] = "1" if enable_pure else "0"
+        env["GS_USE_NDARRAY"] = "1"  # test ndarray
+        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
+        assert proc.returncode == 0
+
+
+# The following lines are critical for the test to work. If they are missing, the test will
+# incorrectly pass, without doing anything.
+if __name__ == "__main__":
+    print("__main__")
+    globals()[sys.argv[1]](sys.argv[2:])
