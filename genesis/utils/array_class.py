@@ -1,10 +1,11 @@
-from typing import Callable
 import dataclasses
-import os
 import inspect
-from typing import Any, Type, cast
+import os
+from functools import partial
+from typing import Any, Callable, Type, cast
 
 import gstaichi as ti
+from gstaichi.lang._fast_caching import FIELD_METADATA_CACHE_VALUE, args_hasher
 
 import genesis as gs
 import numpy as np
@@ -2002,6 +2003,47 @@ def get_entities_state(solver):
                     setattr(self, k, v)
 
         return ClassEntitiesState()
+
+
+# =========================================== StaticRigidSimConfig ===========================================
+
+cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: True})
+
+
+@dataclasses.dataclass
+class StaticRigidSimCacheKey:
+    para_level: int = cache_value()
+    use_hibernation: bool = cache_value()
+    batch_links_info: bool = cache_value()
+    batch_dofs_info: bool = cache_value()
+    batch_joints_info: bool = cache_value()
+    enable_mujoco_compatibility: bool = cache_value()
+    enable_multi_contact: bool = cache_value()
+    enable_adjacent_collision: bool = cache_value()
+    enable_collision: bool = cache_value()
+    box_box_detection: bool = cache_value()
+    integrator: int = cache_value()
+    sparse_solve: bool = cache_value()
+    solver_type: int = cache_value()
+
+
+def get_static_rigid_sim_cache_key(solver):
+    kwargs = {
+        "para_level": solver.sim._para_level,
+        "use_hibernation": getattr(solver, "_use_hibernation", False),
+        "batch_links_info": getattr(solver._options, "batch_links_info", False),
+        "batch_dofs_info": getattr(solver._options, "batch_dofs_info", False),
+        "batch_joints_info": getattr(solver._options, "batch_joints_info", False),
+        "enable_mujoco_compatibility": getattr(solver, "_enable_mujoco_compatibility", False),
+        "enable_multi_contact": getattr(solver, "_enable_multi_contact", True),
+        "enable_adjacent_collision": getattr(solver, "_enable_adjacent_collision", False),
+        "enable_collision": getattr(solver, "_enable_collision", False),
+        "box_box_detection": getattr(solver, "_box_box_detection", False),
+        "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
+        "sparse_solve": getattr(solver._options, "sparse_solve", False),
+        "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
+    }
+    return StaticRigidSimCacheKey(**kwargs)
 
 
 # =========================================== DataManager ===========================================
