@@ -808,8 +808,6 @@ def test_render_planes(tmp_path, png_snapshot, renderer):
         scene.build()
 
         exporter = FrameImageExporter(tmp_path)
-
-        scene.step()
         rgba, depth, _, _ = camera.render(rgb=True, depth=False)
         exporter.export_frame_single_camera(test_idx, camera.idx, rgb=rgba, depth=depth)
 
