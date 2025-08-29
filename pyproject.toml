@@ -72,7 +72,8 @@ dev = [
     "pytest-forked",
     "pytest-random-order",
     "pytest-print",
-    "pytest-rerunfailures",
+    # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
+    "pytest-rerunfailures<16.0",
     "syrupy",
     "huggingface_hub",
     "wandb",
@@ -131,6 +132,7 @@ force-exclude = '''
 
 [tool.pytest.ini_options]
 addopts = [
+    "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
     # "--exitfirst",
