@@ -101,6 +101,9 @@ jobs:
           pip install black
           black --line-length 120 --check .
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
       - name: Install Genesis
         run: |
           pip install -e '.[dev]'
