@@ -258,11 +258,26 @@ class Sensor(RBC):
 
         return_format = self._get_return_format()
         return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
+        cache_length = self._get_cache_length()
         return_values = []
+
+        if cache_length == 1:
+            work_tensor = tensor[envs_idx]
+        else:
+            total_data_per_item = sum(np.prod(shape) for shape in return_shapes)
+            work_tensor = tensor[envs_idx].reshape(len(envs_idx), cache_length, total_data_per_item)
 
         for i, shape in enumerate(return_shapes):
             start_idx, end_idx = self._shape_indices[i]
-            value = tensor[envs_idx, start_idx:end_idx].reshape(len(envs_idx), *shape).squeeze()
+
+            if cache_length == 1:
+                field_data = work_tensor[:, start_idx:end_idx]
+                final_shape = (len(envs_idx), *shape)
+            else:
+                field_data = work_tensor[:, :, start_idx:end_idx]
+                final_shape = (len(envs_idx), cache_length, *shape)
+
+            value = field_data.reshape(final_shape).squeeze()
             if self._manager._sim.n_envs == 0:
                 value = value.squeeze(0)
             return_values.append(value)
@@ -280,16 +295,19 @@ class RigidSensorOptionsMixin:
     """
     Base options class for sensors that are attached to a RigidEntity.
 
-    Parameters
-    ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
-    pos_offset : tuple[float, float, float]
-        The positional offset of the sensor from the RigidLink.
-    euler_offset : tuple[float, float, float]
-        The rotational offset of the sensor from the RigidLink in degrees.
+        Parameters
+        ----------
+        entity_idx : int
+            The global entity index of the RigidEntity to which this sensor is attached.
+        link_idx_local : int, optional
+            The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+        pos_offset : tuple[float, float, float]
+            The positional offset of the sensor from the RigidLink.
+        euler_offset : tuple[float, float, float]
+            The rotational offset of the sensor from the RigidLink in degrees.
+    =======
+        Utility base class for sensors that are attached to a RigidEntity.
+    >>>>>>> a99bdb0 (add lidar wip)
     """
 
     entity_idx: int
