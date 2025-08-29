@@ -889,21 +889,21 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(normal=(0.0, 0.0, 1.0), size=(1e3, 1e3), n_tiles=(1e3, 1e3), color=None):
+def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), n_tiles=(1e3, 1e3), color=None):
     thickness = 1e-2  # for safety
-    mesh = trimesh.creation.box(extents=[size[0], size[1], thickness])
+    mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    half = (size[0] * 0.5, size[1] * 0.5)
+    half_x, half_y = (plane_size[0] * 0.5, plane_size[1] * 0.5)
     verts = np.array(
         [
-            [-half[0], -half[1], 0.0],
-            [half[0], -half[1], 0.0],
-            [half[0], half[1], 0.0],
-            [-half[0], -half[1], 0.0],
-            [half[0], half[1], 0.0],
-            [-half[0], half[1], 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, half_y, 0.0],
         ],
         dtype=np.float32,
     )
@@ -912,15 +912,16 @@ def create_plane(normal=(0.0, 0.0, 1.0), size=(1e3, 1e3), n_tiles=(1e3, 1e3), co
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
+        n_tile_x, n_tile_y = n_tiles
         vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
                     [0, 0],
-                    [n_tiles[0], 0],
-                    [n_tiles[0], n_tiles[1]],
+                    [n_tile_x, 0],
+                    [n_tile_x, n_tile_y],
                     [0, 0],
-                    [n_tiles[0], n_tiles[1]],
-                    [0, n_tiles[1]],
+                    [n_tile_x, n_tile_y],
+                    [0, n_tile_y],
                 ],
                 dtype=np.float32,
             ),

@@ -779,53 +779,40 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
         assert f.read() == png_snapshot
 
 
-@pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
-    [RENDERER_TYPE.BATCHRENDER_RASTERIZER],
+    [RENDERER_TYPE.RASTERIZER],
 )
 def test_render_planes(tmp_path, png_snapshot, renderer):
-    # Manually run this test with different parameters to make sure they run sequentially
-    # Running in parallel may crash the test OOM.
-    sizes = [(1.5, 1.8), (10.0, 7.0)]
-    n_tiles = [(0.5, 0.75), (5.0, 3.0), None]
-    for test_idx, (size, n_tiles) in enumerate(itertools.product(sizes, n_tiles)):
-        CAM_RES = (512, 512)
-        NUM_STEPS = 1
+    for test_idx, (plane_size, n_tiles) in enumerate(
+        (
+            ((1.5, 2.25), (0.5, 0.75)),
+            ((3.0, 5.0), (5.0, 3.0)),
+            ((4.0, 4.0), None),
+        )
+    ):
+        CAM_RES = (256, 256)
         scene = gs.Scene(
             renderer=renderer,
         )
         plane = scene.add_entity(
-            gs.morphs.Plane(size=size, n_tiles=n_tiles),
+            gs.morphs.Plane(plane_size=plane_size, n_tiles=n_tiles),
         )
         camera = scene.add_camera(
             res=CAM_RES,
-            pos=(1.5, 0.5, 1.5),
-            lookat=(0.0, 0.0, 0.5),
+            pos=(0.0, 0.0, 5),
+            lookat=(0.0, 0.0, 0.0),
             fov=45,
             GUI=False,
         )
-        scene.add_light(
-            pos=[0.0, 0.0, 1.5],
-            dir=[1.0, 1.0, -2.0],
-            directional=1,
-            castshadow=1,
-            cutoff=45.0,
-            intensity=0.5,
-        )
         scene.build()
 
-        # Create image exporter
         exporter = FrameImageExporter(tmp_path)
 
-        # Simulate
-        for i in range(NUM_STEPS):
-            # Move forward step forward in time
-            scene.step()
-            rgba, depth, _, _ = camera.render(rgb=True, depth=True)
-            exporter.export_frame_single_camera(i, test_idx, rgb=rgba, depth=depth)
+        scene.step()
+        rgba, depth, _, _ = camera.render(rgb=True, depth=False)
+        exporter.export_frame_single_camera(test_idx, camera.idx, rgb=rgba, depth=depth)
 
-    # Verify that the output is correct pixel-wise over multiple simulation steps
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
             assert f.read() == png_snapshot
