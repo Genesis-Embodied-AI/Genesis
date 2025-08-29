@@ -784,7 +784,7 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
     [RENDERER_TYPE.RASTERIZER],
 )
 def test_render_planes(tmp_path, png_snapshot, renderer):
-    for test_idx, (plane_size, n_tiles) in enumerate(
+    for test_idx, (plane_size, texrepeat) in enumerate(
         (
             ((1.5, 2.25), (0.5, 0.75)),
             ((3.0, 5.0), (5.0, 3.0)),
@@ -796,7 +796,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer):
             renderer=renderer,
         )
         plane = scene.add_entity(
-            gs.morphs.Plane(plane_size=plane_size, n_tiles=n_tiles),
+            gs.morphs.Plane(plane_size=plane_size, texrepeat=texrepeat),
         )
         camera = scene.add_camera(
             res=CAM_RES,

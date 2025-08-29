@@ -889,7 +889,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), n_tiles=(1e3, 1e3), color=None):
+def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), texrepeat=(1e3, 1e3), color=None):
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
@@ -912,7 +912,7 @@ def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), n_tiles=(1e3, 1e
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
-        n_tile_x, n_tile_y = n_tiles
+        n_tile_x, n_tile_y = texrepeat
         vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
