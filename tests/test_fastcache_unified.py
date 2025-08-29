@@ -49,6 +49,7 @@ def gs_static_child(args: list[str]):
     )
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
 # note that using `backend` instead of `test_backend`, breaks genesis pytest...
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
