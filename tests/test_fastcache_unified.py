@@ -96,7 +96,7 @@ def test_gs_static(
         assert proc.returncode == 0
 
 
-def test_change_scene(args: list[str]):
+def change_scene(args: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_obj", type=int, required=True)
     parser.add_argument("--n_env", type=int, required=True)
@@ -173,7 +173,7 @@ def test_ndarray_no_compile(
         cmd_line = [
             sys.executable,
             __file__,
-            test_change_scene.__name__,
+            change_scene.__name__,
             "--n_obj",
             str(n_objs),
             "--n_env",
