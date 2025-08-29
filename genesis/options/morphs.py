@@ -429,10 +429,16 @@ class Plane(Primitive):
     conaffinity : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
         the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    size: tuple, optional
+        The size of the plane in meters. Defaults to (1e3, 1e3).
+    n_tiles: tuple, optional
+        The number of tiles in the plane. If not specified, it will be set to be the same as `size`.
     """
 
     fixed: bool = True
     normal: tuple = (0, 0, 1)
+    size: tuple = (1e3, 1e3)
+    n_tiles: tuple | None = None
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -447,6 +453,9 @@ class Plane(Primitive):
             gs.raise_exception("`requires_jac_and_IK` must be False for `Plane`.")
 
         self.normal = tuple(np.array(self.normal) / np.linalg.norm(self.normal))
+
+        if self.n_tiles is None:
+            self.n_tiles = self.size
 
 
 ############################ Mesh ############################
