@@ -123,7 +123,7 @@ def test_change_scene(args: list[str]):
         cube = scene.add_entity(
             gs.morphs.Box(
                 size=(0.4, 0.4, 0.4),
-                pos=(0.0, 0.5 * i_obj, 0.18),
+                pos=(0.0, 0.5 * i_obj, 0.8),
             )
         )
     if args.n_env > 0:
@@ -131,9 +131,22 @@ def test_change_scene(args: list[str]):
     else:
         scene.build()
 
+    for i in range(500):
+        scene.step()
     # ti_field_to_torch does not work with ndarray now
     # qpos = scene.sim.rigid_solver.get_qpos()
     qpos = scene.sim.rigid_solver.qpos.to_numpy()
+
+    z = qpos.reshape(args.n_obj, 7, max(1, args.n_env))[:, 2, :]
+
+    # workaround to get current file's path, and import from .utils
+    current_file_path = pathlib.Path(__file__)
+    sys.path.append(current_file_path.parent)
+    from utils import assert_allclose
+
+    sys.path.remove(current_file_path.parent)
+
+    assert_allclose(z, 0.2, atol=1e-2, err_msg=f"zs {z} is not close to 0.2.")
 
     assert qpos.shape[0] == args.n_obj * 7
     assert qpos.shape[1] == max(args.n_env, 1)
