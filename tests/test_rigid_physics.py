@@ -1131,16 +1131,16 @@ def test_set_root_pose(relative, show_viewer, tol):
             (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO),
             (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO),
         ):
-            pos_zero = torch.tensor(pos_zero, device="cpu", dtype=gs.tc_float)
+            pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
 
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
             assert_allclose(euler, euler_zero, tol=5e-4)
 
-            pos_delta = torch.rand(3, device="cpu", dtype=gs.tc_float)
+            pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device)
             entity.set_pos(pos_delta, relative=relative)
-            quat_delta = torch.rand(4, device="cpu", dtype=gs.tc_float)
+            quat_delta = torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device)
             quat_delta /= torch.linalg.norm(quat_delta)
             entity.set_quat(quat_delta, relative=relative)
 

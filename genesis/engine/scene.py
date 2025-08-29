@@ -1125,7 +1125,7 @@ class Scene(RBC):
 
         Returns:
             A tuple of tensors of shape (n_envs, H, W, 3) if rgb is not None,
-            otherwise a list of tensors of shape (n_envs, H, W, 1) if depth is not None.
+            otherwise a list of tensors of shape (n_envs, H, W) if depth is not None.
             If n_envs == 0, the first dimension of the tensor is squeezed.
         """
         if self._visualizer.batch_renderer is None:
