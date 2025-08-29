@@ -126,15 +126,17 @@ def test_change_scene(args: list[str]):
                 pos=(0.0, 0.5 * i_obj, 0.18),
             )
         )
-    scene.build(n_envs=args.n_env)
+    if args.n_env > 0:
+        scene.build(n_envs=args.n_env)
+    else:
+        scene.build()
 
     # ti_field_to_torch does not work with ndarray now
     # qpos = scene.sim.rigid_solver.get_qpos()
     qpos = scene.sim.rigid_solver.qpos.to_numpy()
-    print("qpos.shape", qpos.shape)
 
     assert qpos.shape[0] == args.n_obj * 7
-    assert qpos.shape[1] == args.n_env
+    assert qpos.shape[1] == max(args.n_env, 1)
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
@@ -144,7 +146,7 @@ def test_change_scene(args: list[str]):
 @pytest.mark.required
 @pytest.mark.parametrize(
     "list_n_objs_n_envs",
-    [[(1, 1), (2, 2)]],
+    [[(3, 0), (1, 1), (2, 2)]],
 )
 @pytest.mark.parametrize("enable_pure", [True])  # should not affect result
 # note that using `backend` instead of `test_backend`, breaks genesis pytest...
@@ -152,10 +154,8 @@ def test_change_scene(args: list[str]):
 def test_ndarray_no_compile(
     enable_pure: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
-    print("len(list_n_objs_n_envs)", len(list_n_objs_n_envs), list_n_objs_n_envs)
     for it in range(len(list_n_objs_n_envs)):
         # we iterate to make sure stuff is really being read from cache
-        print("list_n_objs_n_envs[it]", list_n_objs_n_envs[it])
         n_objs, n_envs = list_n_objs_n_envs[it]
         cmd_line = [
             sys.executable,
