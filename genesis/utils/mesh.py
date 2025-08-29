@@ -889,21 +889,21 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
+def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color=None):
     thickness = 1e-2  # for safety
-    mesh = trimesh.creation.box(extents=[size, size, thickness])
+    mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    half = size * 0.5
+    half_x, half_y = (plane_size[0] * 0.5, plane_size[1] * 0.5)
     verts = np.array(
         [
-            [-half, -half, 0.0],
-            [half, -half, 0.0],
-            [half, half, 0.0],
-            [-half, -half, 0.0],
-            [half, half, 0.0],
-            [-half, half, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, half_y, 0.0],
         ],
         dtype=np.float32,
     )
@@ -912,15 +912,16 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
+        n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
         vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
                     [0, 0],
-                    [size, 0],
-                    [size, size],
+                    [n_tile_x, 0],
+                    [n_tile_x, n_tile_y],
                     [0, 0],
-                    [size, size],
-                    [0, size],
+                    [n_tile_x, n_tile_y],
+                    [0, n_tile_y],
                 ],
                 dtype=np.float32,
             ),
