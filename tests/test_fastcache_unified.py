@@ -167,3 +167,8 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
             cmd_line += ["--expected-src-ll-cache-hit"]
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
         assert proc.returncode == 0
+
+
+if __name__ == "__main__":
+    print("__main__")
+    globals()[sys.argv[1]](sys.argv[2:])
