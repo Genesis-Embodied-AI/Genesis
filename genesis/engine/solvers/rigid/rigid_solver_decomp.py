@@ -2284,6 +2284,55 @@ class RigidSolver(Solver):
     def get_geoms_friction(self, geoms_idx=None, *, unsafe=False):
         return ti_field_to_torch(self.geoms_info.friction, geoms_idx, None, unsafe=unsafe)
 
+    def get_aabb(self, entities_idx=None, envs_idx=None, *, unsafe=False):
+        """
+        Get AABBs for all entities in the scene.
+
+        Parameters
+        ----------
+        entities_idx : None | array_like, optional
+            The indices of the entities. Defaults to None (all entities).
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        unsafe : bool, optional
+            Whether to skip input validation. Defaults to False.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (n_entities, 2, 3) or (n_envs, n_entities, 2, 3)
+            The AABBs for all entities, where [:, :, 0, :] = min_corner (x_min, y_min, z_min)
+            and [:, :, 1, :] = max_corner (x_max, y_max, z_max).
+        """
+        # Get AABB min and max for all geometries
+        aabb_min = ti_field_to_torch(self.geoms_state.aabb_min, envs_idx, None, transpose=True, unsafe=unsafe)
+        aabb_max = ti_field_to_torch(self.geoms_state.aabb_max, envs_idx, None, transpose=True, unsafe=unsafe)
+
+        # Combine min and max into a single tensor with shape [..., 2, 3]
+        aabb = torch.stack([aabb_min, aabb_max], dim=-2)
+
+        # If entities_idx is specified, filter for those entities
+        if entities_idx is not None:
+            # Get the geometry indices for the specified entities
+            entity_geom_starts = []
+            entity_geom_ends = []
+            for entity_idx in entities_idx:
+                entity = self._entities[entity_idx]
+                entity_geom_starts.append(entity._geom_start)
+                entity_geom_ends.append(entity._geom_start + entity.n_geoms)
+
+            # Compute entity-level AABBs by taking min/max across all geometries per entity
+            entity_aabbs = []
+            for start, end in zip(entity_geom_starts, entity_geom_ends):
+                entity_geoms_aabb = aabb[..., start:end, :, :]
+                entity_min = entity_geoms_aabb[..., :, 0, :].min(dim=-2)[0]  # Min across geometries
+                entity_max = entity_geoms_aabb[..., :, 1, :].max(dim=-2)[0]  # Max across geometries
+                entity_aabb = torch.stack([entity_min, entity_max], dim=-2)
+                entity_aabbs.append(entity_aabb)
+
+            aabb = torch.stack(entity_aabbs, dim=-2)
+
+        return aabb.squeeze(0) if self.n_envs == 0 else aabb
+
     def set_geom_friction(self, friction, geoms_idx):
         kernel_set_geom_friction(geoms_idx, friction, self.geoms_info)
 
