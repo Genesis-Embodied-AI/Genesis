@@ -169,6 +169,8 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
         assert proc.returncode == 0
 
 
+# The following lines are critical for the test to work. If they are missing, the test will
+# incorrectly pass, without doing anything.
 if __name__ == "__main__":
     print("__main__")
     globals()[sys.argv[1]](sys.argv[2:])
