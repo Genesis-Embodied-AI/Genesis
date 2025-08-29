@@ -431,14 +431,14 @@ class Plane(Primitive):
         the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     plane_size: tuple, optional
         The size of the plane in meters. Defaults to (1e3, 1e3).
-    texrepeat: tuple, optional
-        The texture repeat factor. If not specified, it will be set to be the same as `plane_size`.
+    tile_size: tuple, optional
+        The size of each texture tile. Defaults to (1, 1).
     """
 
     fixed: bool = True
     normal: tuple = (0, 0, 1)
     plane_size: tuple = (1e3, 1e3)
-    texrepeat: tuple | None = None
+    tile_size: tuple = (1, 1)
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -453,9 +453,6 @@ class Plane(Primitive):
             gs.raise_exception("`requires_jac_and_IK` must be False for `Plane`.")
 
         self.normal = tuple(np.array(self.normal) / np.linalg.norm(self.normal))
-
-        if self.texrepeat is None:
-            self.texrepeat = self.plane_size
 
 
 ############################ Mesh ############################
