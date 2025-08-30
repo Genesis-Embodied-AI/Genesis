@@ -120,19 +120,11 @@ def gs_num_envs_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     gs.ti.sync()
 
-    from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
-    assert (
-        func_narrow_phase_convex_vs_convex._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
-    )
-    assert (
-        func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_key_generated
-        == args.expected_use_src_ll_cache
-    )
-    assert (
-        func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_loaded
-        == args.expected_src_ll_cache_hit
-    )
+    assert kernel_step_1._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
+    assert kernel_step_1._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
+    assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
 
 @pytest.mark.required
