@@ -94,7 +94,7 @@ def test_gs_static(
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
 
-def test_gs_num_envs_child(args: list[str]):
+def gs_num_envs_child(args: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--expected-use-src-ll-cache", action="store_true")
@@ -146,11 +146,11 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
         cmd_line = [
             sys.executable,
             __file__,
-            test_gs_num_envs_child.__name__,
+            gs_num_envs_child.__name__,
             "--test-backend",
             test_backend,
-            "--it",
-            str(it),
+            "--num-env",
+            str(num_env),
         ]
         env = dict(os.environ)
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
