@@ -129,7 +129,7 @@ class IMU(Sensor):
         """
         Update the current ground truth values for all IMU sensors.
         """
-        gravity = shared_metadata.solver.get_gravity()
+        gravity = shared_metadata.solver.sim.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
         ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)

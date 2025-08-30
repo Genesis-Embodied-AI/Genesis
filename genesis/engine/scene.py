@@ -1306,7 +1306,7 @@ class Scene(RBC):
     @property
     def gravity(self):
         """The gravity in the scene."""
-        return self._sim.gravity
+        return self._sim.get_gravity(unsafe=True)
 
     @property
     def viewer(self):
