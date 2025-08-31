@@ -8,8 +8,8 @@ import types
 import shutil
 import sys
 import os
-from dataclasses import dataclass
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Type, NoReturn, Optional
 
 import numpy as np
@@ -19,9 +19,9 @@ import torch
 
 import gstaichi as ti
 from gstaichi.lang.util import to_pytorch_type
-from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
+from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr, ndarray_to_ext_arr, ndarray_matrix_to_ext_arr
 from gstaichi.lang import impl
-from gstaichi.types import primitive_types
+from gstaichi.types import primitive_types, ndarray_type
 from gstaichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
@@ -357,11 +357,11 @@ def _ensure_compiled(self, *args):
         extracted = []
         for arg, kernel_arg in zip(args, self.mapper.arguments):
             anno = kernel_arg.annotation
-            if isinstance(anno, ti.template):
+            if anno == ti.template or isinstance(anno, ti.template):
                 subkey = arg
             else:
                 needs_grad = getattr(arg, "requires_grad", False) if anno.needs_grad is None else anno.needs_grad
-                subkey = (arg.dtype, arg.ndim, needs_grad, anno.boundary)
+                subkey = (arg.dtype, len(arg.shape), needs_grad, anno.boundary)
             extracted.append(subkey)
         key = tuple(extracted)
         field_meta.mapping_key = key
@@ -380,10 +380,23 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
     template_num = 0
     for i, v in enumerate(args):
         needed = self.arg_metas[i].annotation
-        if isinstance(needed, ti.template):
+
+        # template
+        if needed == ti.template or isinstance(needed, ti.template):
             template_num += 1
             continue
 
+        # ti.ndarray
+        if isinstance(v, ti.Ndarray):
+            v_primal = v.arr
+            v_grad = v.grad.arr if v.grad else None
+            if v_grad is None:
+                launch_ctx.set_arg_ndarray((i - template_num,), v_primal)
+            else:
+                launch_ctx.set_arg_ndarray_with_grad((i - template_num,), v_primal, v_grad)
+            continue
+
+        # ti.field
         array_shape = v.shape
         if needed.dtype is None or id(needed.dtype) in primitive_types.type_ids:
             element_dim = 0
@@ -401,7 +414,8 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
                 )
             if not v.grad.is_contiguous():
                 raise ValueError(
-                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() before passing it into taichi kernel."
+                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() "
+                    "before passing it into taichi kernel."
                 )
 
         launch_ctx.set_arg_external_array_with_shape(
@@ -426,16 +440,23 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
 
 
 _to_pytorch_type_fast = functools.lru_cache(maxsize=None)(to_pytorch_type)
-_tensor_to_ext_arr_fast = ti.kernel(tensor_to_ext_arr._primal.func)
-_tensor_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _tensor_to_ext_arr_fast._primal)
-_tensor_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _tensor_to_ext_arr_fast._primal)
-_matrix_to_ext_arr_fast = ti.kernel(matrix_to_ext_arr._primal.func)
-_matrix_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _matrix_to_ext_arr_fast._primal)
-_matrix_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _matrix_to_ext_arr_fast._primal)
+TO_EXT_ARR_FAST_MAP = {}
+for data_type, func in (
+    (ti.lang.ScalarField, tensor_to_ext_arr),
+    (ti.lang.MatrixField, matrix_to_ext_arr),
+    (ti.lang.ScalarNdarray, ndarray_to_ext_arr),
+    (ti.lang.MatrixNdarray, ndarray_matrix_to_ext_arr),
+):
+    func = ti.kernel(func._primal.func)
+    func._primal.launch_kernel = types.MethodType(_launch_kernel, func._primal)
+    func._primal.ensure_compiled = types.MethodType(_ensure_compiled, func._primal)
+    if data_type is ti.lang.MatrixNdarray:
+        func = lambda ndarray, arr, as_vector, *, func=func: func(ndarray, arr, 1, as_vector)
+    TO_EXT_ARR_FAST_MAP[data_type] = func
 
 
-def ti_field_to_torch(
-    field,
+def ti_to_torch(
+    value,
     row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
     col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
     keepdim=True,
@@ -443,25 +464,25 @@ def ti_field_to_torch(
     *,
     unsafe=False,
 ) -> torch.Tensor:
-    """Converts a Taichi field instance to a PyTorch tensor.
+    """Converts a GsTaichi field or ndarray instance to a PyTorch tensor.
 
     Args:
-        field (ti.Field): Field to convert to Pytorch tensor.
+        value (ti.Field | ti.Ndarray): Field or Ndarray to convert to Pytorch tensor.
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
-        col_mask (optional): Columns to extract from batch dimension field after transpose if requested.
+        col_mask (optional): Columns to extract from batch dimension after transpose if requested.
         keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
-        transpose (bool, optional): Whether move to front the first field dimension.
+        transpose (bool, optional): Whether move to front the first non-batch dimension.
         unsafe (bool, optional): Whether to skip validity check of the masks.
 
     Returns:
         torch.tensor: The result torch tensor.
     """
-    # Get field metadata
-    field_id = id(field)
+    # Get metadata
+    field_id = id(value)
     field_meta = FIELD_CACHE.get(field_id)
     if field_meta is None:
         field_meta = FieldMetadata(
-            field.ndim if isinstance(field, ti.lang.MatrixField) else 0, field.shape, field.dtype, None
+            value.ndim if isinstance(value, ti.lang.MatrixField) else 0, value.shape, value.dtype, None
         )
         if len(FIELD_CACHE) == MAX_CACHE_SIZE:
             FIELD_CACHE.popitem(last=False)
@@ -514,19 +535,26 @@ def ti_field_to_torch(
     if must_allocate:
         gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
-    # Extract field as a whole.
+    # Extract value as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.
     # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
     is_metal = gs.device.type == "mps"
     tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
-    if isinstance(field, ti.lang.ScalarField):
+    data_type = type(value)
+    if issubclass(data_type, (ti.lang.ScalarField, ti.lang.ScalarNdarray)):
         out = torch.zeros(size=field_shape, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
-        _tensor_to_ext_arr_fast(field, out)
-    else:
-        as_vector = field.m == 1
-        shape_ext = (field.n,) if as_vector else (field.n, field.m)
+        TO_EXT_ARR_FAST_MAP[data_type](value, out)
+    elif issubclass(data_type, (ti.lang.MatrixField, ti.lang.MatrixNdarray)):
+        as_vector = value.m == 1
+        shape_ext = (value.n,) if as_vector else (value.n, value.m)
         out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
-        _matrix_to_ext_arr_fast(field, out, as_vector)
+        TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
+    elif issubclass(data_type, ti.lang.VectorNdarray):
+        shape_ext = (value.n,)
+        out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
+        TO_EXT_ARR_FAST_MAP[ti.lang.MatrixNdarray](value, out, True)
+    else:
+        gs.raise_exception(f"Unsupported type '{type(value)}'.")
     if is_metal:
         out = out.to(gs.device)
     ti.sync()
