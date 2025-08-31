@@ -217,6 +217,11 @@ def change_scene(args: list[str]):
     else:
         scene.build()
 
+    scene.step()
+
+    assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
+    assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+
     for i in range(500):
         scene.step()
     # ti_field_to_torch does not work with ndarray now
@@ -237,9 +242,6 @@ def change_scene(args: list[str]):
     assert qpos.shape[0] == args.n_obj * 7
     assert qpos.shape[1] == max(args.n_env, 1)
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
-
-    assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
-    assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
 
 @pytest.mark.required
