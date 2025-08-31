@@ -149,10 +149,13 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
         env["GS_USE_NDARRAY"] = "1" if use_ndarray else "0"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         print("env", env)
-        # if we use pure, we won't get as far as fe-ll-cache
-        # ndarray and pure therefore wont ever use fe-ll-cache (first time, nothing in cache; after that hit src-ll cache)
-        # not use ndarray will always try using the fe-ll-cache, but cache will be empty on first it
-        expected_fe_ll_cache_hit = (not use_ndarray and it > 0) or (not enable_pure and use_ndarray and it > 0)
+        # notes:
+        # - if we use pure, we won't get as far as fe-ll-cache
+        # - ndarray and pure therefore wont ever use fe-ll-cache (first time, nothing in cache; after that hit src-ll cache)
+        # - not use ndarray will always try using the fe-ll-cache, but cache will be empty on first it
+        #   but since we are changing num envs each time, using fields will never get a cache hit either
+        # soooo we are left only with (not pure) and (ndarray) and (it > 0)
+        expected_fe_ll_cache_hit = not enable_pure and use_ndarray and it > 0
         # fields are not supported by src-ll-cache currently
         expected_use_src_ll_cache = enable_pure and use_ndarray
         expected_src_ll_cache_hit = enable_pure and use_ndarray and it > 0
