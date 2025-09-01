@@ -9,6 +9,7 @@
     - [BUG FIX] for non-breaking changes which fix an issue
     - [FEATURE] for non-breaking changes which add functionality
     - [MISC] for minor changes such as improved inline documentation or fixing typos
+    - [CHANGING] for changes that will change simulation's behaviour
     - [BREAKING] **in addition to the above** for breaking changes, i.e., a fix or feature that would cause existing APIs or functionality to change
 -->
 

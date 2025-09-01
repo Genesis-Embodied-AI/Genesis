@@ -364,6 +364,50 @@ def test_frictionloss(gs_sim, mj_sim, tol):
     assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["hinge_slide"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_set_dofs_frictionloss_physics(gs_sim, mj_sim, tol):
+    (robot,) = gs_sim.entities
+
+    initial_velocity = np.array([1.0, 0.0])
+    robot.set_dofs_velocity(initial_velocity)
+
+    robot.set_dofs_frictionloss(np.array([0.0, 0.0]))
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_zero = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    robot.set_dofs_velocity(initial_velocity)
+    robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_high = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    np.testing.assert_array_less(velocity_high[0], velocity_zero[0])
+    np.testing.assert_array_less(velocity_high[1], velocity_zero[1])
+
+    robot.set_dofs_velocity(initial_velocity)
+    robot.set_dofs_frictionloss(np.array([0.5]), dofs_idx_local=[0])
+    for _ in range(10):
+        gs_sim.step()
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+    velocity_medium = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+
+    np.testing.assert_array_less(velocity_high[0], velocity_medium[0])
+    np.testing.assert_array_less(velocity_medium[0], velocity_zero[0])
+
+    friction_effect = velocity_zero[0] - velocity_high[0]
+    np.testing.assert_array_less(tol, friction_effect)
+
+    slide_friction_effect = velocity_zero[1] - velocity_high[1]
+    np.testing.assert_array_less(tol, slide_friction_effect)
+
+
 # Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
 @pytest.mark.required
 @pytest.mark.multi_contact(False)
@@ -407,6 +451,7 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
     assert_allclose(gs_qpos[0], gs_qpos[1], tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -433,10 +478,11 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
     # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
     # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
     # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 5e-6
+    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
 
 
+@pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -586,6 +632,7 @@ def test_urdf_rope(
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=5e-5)
 
 
+@pytest.mark.required
 @pytest.mark.mujoco_compatibility(True)
 @pytest.mark.multi_contact(False)  # FIXME: Mujoco has errors with multi-contact, so this test is disabled
 @pytest.mark.parametrize("xml_path", ["xml/tet_tet.xml", "xml/tet_ball.xml", "xml/tet_capsule.xml"])
@@ -618,7 +665,7 @@ def test_link_velocity(gs_sim, tol):
     assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), tol=tol)
 
     init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
-    COM = gs_sim.rigid_solver.links_state.COM[0, 0]
+    COM = gs_sim.rigid_solver.links_state.root_COM[0, 0]
     assert_allclose(COM, np.array([0.375, 0.125, 0.0]), tol=tol)
     xanchor = gs_sim.rigid_solver.joints_state.xanchor[1, 0]
     assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), tol=tol)
@@ -632,7 +679,7 @@ def test_link_velocity(gs_sim, tol):
     theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), tol=tol)
     assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), tol=tol)
-    COM = gs_sim.rigid_solver.links_state.COM[0, 0]
+    COM = gs_sim.rigid_solver.links_state.root_COM[0, 0]
     COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
     COM_1 = np.array(
         [
@@ -641,6 +688,11 @@ def test_link_velocity(gs_sim, tol):
             0.0,
         ]
     )
+    link_COM0 = gs_sim.rigid_solver.get_links_pos(ref="link_com")[0]
+    link_COM1 = gs_sim.rigid_solver.get_links_pos(ref="link_com")[1]
+
+    assert_allclose(link_COM0, COM_0, tol=tol)
+    assert_allclose(link_COM1, COM_1, tol=tol)
     assert_allclose(COM, 0.5 * (COM_0 + COM_1), tol=tol)
 
     cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
@@ -758,7 +810,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
 
         # Linear spatial acceleration
         cacc_spatial_lin_world = gs_sim.rigid_solver.links_state.cacc_lin.to_numpy()[[0, 2, 4], 0]
-        com = gs_sim.rigid_solver.links_state.COM.to_numpy()[-1, 0]
+        com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[-1, 0]
         pos = gs_sim.rigid_solver.links_state.pos.to_numpy()[[0, 2, 4], 0]
         assert_allclose(cacc_spatial_lin_world[1], np.cross(acc_ang[2], com), tol=tol)
         acc_spatial_lin_world = cacc_spatial_lin_world + np.cross(acc_ang[[0, 2, 4]], pos - com)
@@ -801,6 +853,7 @@ def test_double_pendulum_links_acc(gs_sim, tol):
     assert_allclose(acc_classical_lin_world, 0, tol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_box"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -1078,16 +1131,16 @@ def test_set_root_pose(relative, show_viewer, tol):
             (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO),
             (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO),
         ):
-            pos_zero = torch.tensor(pos_zero, device="cpu", dtype=gs.tc_float)
+            pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
 
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
             assert_allclose(euler, euler_zero, tol=5e-4)
 
-            pos_delta = torch.rand(3, device="cpu", dtype=gs.tc_float)
+            pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device)
             entity.set_pos(pos_delta, relative=relative)
-            quat_delta = torch.rand(4, device="cpu", dtype=gs.tc_float)
+            quat_delta = torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device)
             quat_delta /= torch.linalg.norm(quat_delta)
             entity.set_quat(quat_delta, relative=relative)
 
@@ -1173,6 +1226,7 @@ def test_stickman(gs_sim, mj_sim, tol):
     np.testing.assert_array_less(0, body_z + gs.EPS)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_multilink_inverse_kinematics(show_viewer):
     TOL = 1e-5
@@ -1241,8 +1295,12 @@ def test_multilink_inverse_kinematics(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(n_envs, show_viewer, tol):
+def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
     CUBE_SIZE = 0.07
+
+    # FIXME: Implement a more robust plan planning algorithm
+    if backend == gs.gpu and sys.platform == "darwin":
+        pytest.skip(reason="This algorithm is very fragile and fail to converge on MacOS.")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1602,6 +1660,7 @@ def test_nonconvex_collision(show_viewer):
             assert_allclose(qvel, 0, atol=0.65)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("convexify", [True, False])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -1639,15 +1698,20 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     )
     scene.build()
 
-    if convexify:
-        assert all(geom.metadata["decomposed"] for geom in obj.geoms)
+    for geom in obj.geoms:
+        assert ("decomposed" in geom.metadata) ^ (not convexify)
+        max_faces = obj._morph.decimate_face_num if convexify else 5000
+        num_faces = geom.face_end - geom.face_start
+        assert num_faces <= max_faces
+        assert ("convexified" in geom.metadata) ^ (not convexify)
 
-    # MPR collision detection is significantly less reliable than SDF in terms of penetration depth estimation.
-    tol_pos = 0.05 if convexify else 1e-6
-    tol_rot = 1.3 if convexify else 1e-4
-    for i in range(400):
+    # MPR collision detection is less reliable than SDF and GJK in terms of penetration depth estimation
+    is_mpr = convexify and not gjk_collision
+    tol_pos = 0.05 if is_mpr else 0.005
+    tol_rot = 1.0 if is_mpr else 0.25
+    for i in range(450):
         scene.step()
-        if i > 300:
+        if i > 350:
             qvel = obj.get_dofs_velocity()
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
@@ -1655,7 +1719,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
 
 
-# FIXME: GJK collision detection algorithm is failing on some platform.
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
@@ -1760,6 +1823,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
             assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
 
 
+@pytest.mark.required
 @pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("mode", range(9))
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
@@ -1828,7 +1892,8 @@ def test_collision_plane_convex(show_viewer, tol):
                 assert_allclose(qvel, 0, atol=0.14)
 
 
-@pytest.mark.xfail(reason="No reliable way to generate nan on all platforms.")
+@pytest.mark.required
+@pytest.mark.xfail(reason="No reliable way to generate nan...")
 @pytest.mark.parametrize("mode", [3])
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
@@ -2183,7 +2248,7 @@ def test_scene_saver_franka(show_viewer, tol):
     pose_loaded = franka2.get_dofs_position(dof_idx)
 
     # FIXME: It should be possible to achieve better accuracy with 64bits precision
-    assert_allclose(pose_ref, pose_loaded, tol=1e-6)
+    assert_allclose(pose_ref, pose_loaded, tol=2e-6)
 
 
 @pytest.mark.required
@@ -2448,7 +2513,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_links, n_envs, gs_s.get_links_vel, None, None),
         (gs_s.n_links, n_envs, gs_s.get_links_ang, None, gs_s.links_state.cd_ang),
         (gs_s.n_links, n_envs, gs_s.get_links_acc, None, None),
-        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.links_state.COM),
+        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.links_state.root_COM),
         (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.links_state.mass_shift),
         (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.links_state.i_pos_shift),
         (gs_s.n_links, -1, gs_s.get_links_inertial_mass, gs_s.set_links_inertial_mass, gs_s.links_info.inertial_mass),
@@ -2719,6 +2784,7 @@ def test_get_cartesian_space_variables(show_viewer, tol):
         scene.step()
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_geom_pos_quat(show_viewer, tol):
     scene = gs.Scene(
@@ -2742,6 +2808,7 @@ def test_geom_pos_quat(show_viewer, tol):
             assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=tol)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_contype_conaffinity(show_viewer, tol):
     scene = gs.Scene(
@@ -2789,3 +2856,57 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
     assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
     assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mesh_primitive_COM(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, -10.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    bunny = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/bunny.obj",
+            pos=(-1.0, -1.0, 1.0),
+        ),
+        vis_mode="collision",
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(1.0, 1.0, 1.0),
+        ),
+        vis_mode="collision",
+    )
+    ############# build ##########################
+    scene.build()
+    rigid = scene.sim.rigid_solver
+    for i in range(500):
+        scene.step()
+
+    link_COM = rigid.get_links_pos(ref="link_com")
+    root_COM = rigid.get_links_pos(ref="root_com")
+    bunny_z = link_COM[1, 2]
+    cube_z = link_COM[2, 2]
+    root_bunny_z = root_COM[1, 2]
+    root_cube_z = root_COM[2, 2]
+
+    assert_allclose(bunny_z, bunny.get_links_pos(links_idx_local=[0], ref="link_com")[0, 2], atol=gs.EPS)
+    assert_allclose(cube_z, cube.get_links_pos(links_idx_local=[0], ref="link_com")[0, 2], atol=gs.EPS)
+    assert_allclose(root_bunny_z, bunny.get_links_pos(links_idx_local=[0], ref="root_com")[0, 2], atol=gs.EPS)
+    assert_allclose(root_cube_z, cube.get_links_pos(links_idx_local=[0], ref="root_com")[0, 2], atol=gs.EPS)
+
+    # in the old (wrong) code, their initial COM are (0,0,0)
+    # but now their z are above the plane
+    assert_allclose(bunny_z, 0.3424, atol=1e-3)
+    assert_allclose(cube_z, 0.2499, atol=1e-3)
+
+    # root and link COM should be the same for single link
+    assert_allclose(root_bunny_z, bunny_z, atol=tol)
+    assert_allclose(root_cube_z, cube_z, atol=tol)

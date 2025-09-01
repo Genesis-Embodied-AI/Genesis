@@ -377,7 +377,7 @@ class MetallicRoughnessMaterial(Material):
         roughnessFactor=1.0,
         metallicRoughnessTexture=None,
     ):
-        super(MetallicRoughnessMaterial, self).__init__(
+        super().__init__(
             name=name,
             normalTexture=normalTexture,
             occlusionTexture=occlusionTexture,
@@ -586,7 +586,7 @@ class SpecularGlossinessMaterial(Material):
         glossinessFactor=1.0,
         specularGlossinessTexture=None,
     ):
-        super(SpecularGlossinessMaterial, self).__init__(
+        super().__init__(
             name=name,
             normalTexture=normalTexture,
             occlusionTexture=occlusionTexture,

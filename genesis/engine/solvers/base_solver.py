@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import gstaichi as ti
 import torch
-from genesis.utils.misc import ti_field_to_torch
+from genesis.utils.misc import ti_to_torch
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -64,7 +64,7 @@ class Solver(RBC):
                 self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
 
     def get_gravity(self, envs_idx=None, *, unsafe=False):
-        tensor = ti_field_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
+        tensor = ti_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:

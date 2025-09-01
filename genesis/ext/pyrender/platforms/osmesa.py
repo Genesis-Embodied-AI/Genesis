@@ -10,7 +10,7 @@ class OSMesaPlatform(Platform):
     """
 
     def __init__(self, viewport_width, viewport_height):
-        super(OSMesaPlatform, self).__init__(viewport_width, viewport_height)
+        super().__init__(viewport_width, viewport_height)
         self._context = None
         self._buffer = None
 
