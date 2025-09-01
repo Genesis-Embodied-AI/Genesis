@@ -1,15 +1,16 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import gstaichi as ti
 import torch
 
 import genesis as gs
-from genesis.options.solvers import MPMOptions
 import genesis.utils.geom as gu
+import genesis.utils.sdf_decomp as sdf_decomp
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
-import genesis.utils.sdf_decomp as sdf_decomp
+from genesis.options.solvers import MPMOptions
 
 from .base_solver import Solver
 
@@ -146,8 +147,8 @@ class MPMSolver(Solver):
 
     def init_grid_fields(self):
         grid_cell_state = ti.types.struct(
-            vel_in=gs.ti_vec3,  # input momentum/velocity
             mass=gs.ti_float,  # mass
+            vel_in=gs.ti_vec3,  # input momentum/velocity
             vel_out=gs.ti_vec3,  # output momentum/velocity
         )
 
