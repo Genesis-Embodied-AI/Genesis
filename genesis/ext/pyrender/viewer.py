@@ -22,12 +22,12 @@ root = None
 if sys.platform.startswith("darwin"):
     try:
         from tkinter import Tk
-    except ImportError:
-        # Some minimal Python install may not provide tkinter interface even if it is a standard library
-        pass
 
-    root = Tk()
-    root.withdraw()
+        root = Tk()
+        root.withdraw()
+    except Exception:
+        # Some minimal Python install may not provide a working tkinter interface even if it is a standard library
+        pass
 
 import pyglet
 
