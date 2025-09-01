@@ -169,7 +169,6 @@ def kernel_noslip(
                     cost_change = func_cost_change(i_b, Ac, constraint_state.efc_force, j_efc, old_force, res, 2)
 
                     improvement -= cost_change
-            # start solve
             improvement *= scale
 
             if improvement < static_rigid_sim_config.noslip_tolerance:
@@ -212,13 +211,10 @@ def kernel_dual_finish(
 
         for i_d in range(n_dofs):
             constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
-            # print("qacc", constraint_state.qacc[i_d, i_b] - dofs_state.acc[i_d, i_b], dofs_state.acc[i_d, i_b])
             dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-            # constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
             dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
             dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-            # constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
 @ti.func
@@ -233,10 +229,10 @@ def func_extract_block(
     for j in range(n):
         for k in range(n):
             Ac[j * n + k] = constraint_state.efc_AR[start + j, start + k, i_b]
-    if flg_subR:
-        for j in range(n):
-            Ac[j * (n + 1)] -= 1.0 / constraint_state.efc_D[start + j, i_b]
-            Ac[j * (n + 1)] = ti.max(1e-10, Ac[j * (n + 1)])
+    # if flg_subR: # we don't need this term if we only use PGS for noslip
+    #     for j in range(n):
+    #         Ac[j * (n + 1)] -= 1.0 / constraint_state.efc_D[start + j, i_b]
+    #         Ac[j * (n + 1)] = ti.max(1e-10, Ac[j * (n + 1)])
     return Ac
 
 
@@ -253,7 +249,7 @@ def func_residual(
         res[j] = constraint_state.efc_b[i_efc + j, i_b]
         for k in range(constraint_state.n_constraints[i_b]):
             res[j] += constraint_state.efc_AR[i_efc + j, k, i_b] * constraint_state.efc_force[k, i_b]
-    # if flg_subR:
+    # if flg_subR: # we don't need this term if we only use PGS for noslip
     #     for j in range(dim):
     #         res[j] -= 1.0 / constraint_state.efc_D[i_efc + j, i_b] * constraint_state.efc_force[i_efc + j, i_b]
     return res
@@ -262,7 +258,7 @@ def func_residual(
 @ti.func
 def func_cost_change(
     i_b: int,
-    A,
+    Ac,
     force,
     force_start: int,
     old_force,
@@ -272,15 +268,14 @@ def func_cost_change(
     change = gs.ti_float(0.0)
     if dim == 1:
         delta = force[force_start + 0, i_b] - old_force[0]
-        change = 0.5 * A[0] * delta * delta + delta * res[0]
+        change = 0.5 * Ac[0] * delta * delta + delta * res[0]
     else:
         delta = ti.Vector.zero(gs.ti_float, 2)
         for i in range(dim):
             delta[i] = force[force_start + i, i_b] - old_force[i]
-        # change = 0.5*mju_mulVecMatVec(delta, A, delta, dim) + mju_dot(delta, res, dim);
         for i in range(dim):
             for j in range(dim):
-                change += 0.5 * A[i * dim + j] * delta[i] * delta[j]
+                change += 0.5 * Ac[i * dim + j] * delta[i] * delta[j]
             change += delta[i] * res[i]
     if change > 1e-10:
         for i in range(dim):
