@@ -275,7 +275,8 @@ class ConstraintSolver:
         )
         # timer.stamp("_func_update_qacc")
 
-        self.noslip()
+        if self._solver._static_rigid_sim_config.noslip_iterations > 0:
+            self.noslip()
 
         func_update_contact_force(
             links_state=self._solver.links_state,

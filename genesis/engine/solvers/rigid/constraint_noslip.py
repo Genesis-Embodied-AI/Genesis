@@ -50,9 +50,9 @@ def kernel_build_efc_AR_b(
                     s += constraint_state.jac[c, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
                 constraint_state.efc_AR[r, c, i_b] = s
 
-        # add R to diagonal: AR[ii] += R[i]
-        for r in range(nefc):
-            constraint_state.efc_AR[r, r, i_b] += 1.0 / constraint_state.efc_D[r, i_b]
+        # we don't need this term if we only use PGS for noslip
+        # for r in range(nefc):
+        #     constraint_state.efc_AR[r, r, i_b] += 1.0 / constraint_state.efc_D[r, i_b]
 
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
@@ -100,20 +100,24 @@ def kernel_noslip(
                         * constraint_state.efc_force[i_c, i_b]
                         / constraint_state.efc_D[i_c, i_b]
                     )
-                # print("iter 0", improvement)
 
-            # Residual-stepped dry joint friction-loss with diagonal A
-            # TODO: friction loss
-            # for i_c in range(ne, ne + nf):
-            #     res = constraint_state.efc_resid[i_c, i_b]
-            #     adiag = ti.max(constraint_state.efc_A_diag[i_c, i_b], gs.EPS)
-            #     f = constraint_state.efc_force[i_c, i_b] - res / adiag
-            #     floss = constraint_state.efc_frictionloss[i_c, i_b]
-            #     if f > floss:
-            #         f = floss
-            #     elif f < -floss:
-            #         f = -floss
-            #     constraint_state.efc_force[i_c, i_b] = f
+            for i_c in range(ne, ne + nf):
+                res = func_residual(
+                    res=res,
+                    i_b=i_b,
+                    i_efc=i_c,
+                    dim=1,
+                    flg_subR=True,
+                    constraint_state=constraint_state,
+                )
+                old_force[0] = constraint_state.efc_force[i_c, i_b]
+                constraint_state.efc_force[i_c, i_b] -= res[0] / constraint_state.efc_AR[i_c, i_c, i_b]
+                if constraint_state.efc_force[i_c, i_b] < -constraint_state.efc_frictionloss[i_c, i_b]:
+                    constraint_state.efc_force[i_c, i_b] = -constraint_state.efc_frictionloss[i_c, i_b]
+                elif constraint_state.efc_force[i_c, i_b] > constraint_state.efc_frictionloss[i_c, i_b]:
+                    constraint_state.efc_force[i_c, i_b] = constraint_state.efc_frictionloss[i_c, i_b]
+                delta = constraint_state.efc_force[i_c, i_b] - old_force[0]
+                improvement -= 0.5 * delta * delta / constraint_state.efc_AR[i_c, i_c, i_b] + delta * res[0]
 
             # Project contact friction (pyramidal 4-edge) with normal fixed
             for i_col in range(n_con):
@@ -163,36 +167,12 @@ def kernel_noslip(
                             constraint_state.efc_force[j_efc + 0, i_b] = mid + y
                             constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                     cost_change = func_cost_change(i_b, Ac, constraint_state.efc_force, j_efc, old_force, res, 2)
-                    # print("cost_change", cost_change)
+
                     improvement -= cost_change
             # start solve
-
-            # TODO: efc_state
-            # // process state
-            # mju_copyInt(oldstate, d->efc_state, nefc);
-            # int nactive = dualState(m, d, d->efc_state);
-            # int nchange = 0;
-            # for (int i=0; i < nefc; i++) {
-            # nchange += (oldstate[i] != d->efc_state[i]);
-            # }
-
-            # // scale improvement, save stats
-            # improvement *= scale;
-
-            # // save noslip stats after all the entries from regular solver
-            # int stats_iter = iter + d->solver_niter[island];
-            # saveStats(m, d, island, stats_iter, improvement, 0, 0, nactive, nchange, 0, 0);
-
-            # // increment iteration count
-            # iter++;
-
-            # // terminate
-            # if (improvement < m->opt.noslip_tolerance) {
-            #     break;
-            # }
             improvement *= scale
-            # print("iter", i_iter, "improvement", improvement, scale, static_rigid_sim_config.tolerance)
-            if improvement < static_rigid_sim_config.tolerance:
+
+            if improvement < static_rigid_sim_config.noslip_tolerance:
                 break
 
 
@@ -273,9 +253,9 @@ def func_residual(
         res[j] = constraint_state.efc_b[i_efc + j, i_b]
         for k in range(constraint_state.n_constraints[i_b]):
             res[j] += constraint_state.efc_AR[i_efc + j, k, i_b] * constraint_state.efc_force[k, i_b]
-    if flg_subR:
-        for j in range(dim):
-            res[j] -= 1.0 / constraint_state.efc_D[i_efc + j, i_b] * constraint_state.efc_force[i_efc + j, i_b]
+    # if flg_subR:
+    #     for j in range(dim):
+    #         res[j] -= 1.0 / constraint_state.efc_D[i_efc + j, i_b] * constraint_state.efc_force[i_efc + j, i_b]
     return res
 
 
