@@ -309,7 +309,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
             "--usd_material_paths",
             *map(str, baked_materials.values()),
             "--device",
-            str(device.index),
+            str(device.index if device.index is not None else 0),
             "--log_level",
             logging.getLevelName(gs.logger.level).lower(),
         ]

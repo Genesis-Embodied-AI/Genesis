@@ -316,7 +316,7 @@ class Renderer(object):
             for p in mesh.primitives:
                 try:
                     p.delete()
-                except OpenGL.error.GLError:
+                except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                     pass
         self._meshes.clear()
 
@@ -324,14 +324,14 @@ class Renderer(object):
         for mesh_texture in self._mesh_textures:
             try:
                 mesh_texture.delete()
-            except OpenGL.error.GLError:
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                 pass
         self._mesh_textures.clear()
 
         for shadow_texture in self._shadow_textures:
             try:
                 shadow_texture.delete()
-            except OpenGL.error.GLError:
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                 pass
         self._shadow_textures.clear()
 
@@ -704,13 +704,12 @@ class Renderer(object):
     def _get_light_cam_matrices(self, scene, light_node, flags):
         light = light_node.light
         pose = scene.get_pose(light_node).copy()
-        s = scene.scale
-        camera = light._get_shadow_camera(s)
+        camera = light._get_shadow_camera(scene.scale)
         P = camera.get_projection_matrix()
         if isinstance(light, DirectionalLight):
             direction = -pose[:3, 2]
             c = scene.centroid
-            loc = c - direction * s
+            loc = c - direction * scene.scale
             pose[:3, 3] = loc
         V = np.linalg.inv(pose)  # V maps from world to camera
         return V, P

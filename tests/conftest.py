@@ -1,16 +1,29 @@
+import base64
+import ctypes
 import gc
 import os
 import re
 import sys
 from enum import Enum
+from io import BytesIO
+from pathlib import Path
 
+import psutil
+import pyglet
 import pytest
 from _pytest.mark import Expression, MarkMatcher
+from PIL import Image
+from syrupy.extensions.image import PNGImageSnapshotExtension
+from syrupy.location import PyTestLocation
 
-# Mock tkinter module for backward compatibility because old Genesis versions require it
+has_display = True
 try:
-    import tkinter
-except ImportError:
+    from tkinter import Tk
+
+    root = Tk()
+    root.destroy()
+except Exception:  # ImportError, TclError
+    # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
     tkinter = type(sys)("tkinter")
     tkinter.Tk = type(sys)("Tk")
     tkinter.filedialog = type(sys)("filedialog")
@@ -18,9 +31,26 @@ except ImportError:
     sys.modules["tkinter.Tk"] = tkinter.Tk
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
+    # Assuming headless server if tkinder is not installed
+    has_display = False
+
+has_egl = True
+try:
+    pyglet.lib.load_library("EGL")
+except ImportError:
+    has_egl = False
+
+if not has_display and has_egl:
+    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis
+    pyglet.options["headless"] = True
+    os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
+
+IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
 TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
+IMG_STD_ERR_THR = 1.0
+IMG_NUM_ERR_THR = 0.001
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -87,8 +117,50 @@ def _get_gpu_indices():
     return (0,)
 
 
+def _get_egl_index(gpu_index):
+    from OpenGL import EGL
+    from OpenGL.EGL.NV.device_cuda import EGL_CUDA_DEVICE_NV
+
+    # Get the list of Nvidia GPU that are visible
+    nvidia_gpu_indices = _get_gpu_indices()
+
+    # Define some ctypes for convenience
+    EGLDeviceEXT = ctypes.c_void_p
+    EGLAttrib = ctypes.c_ssize_t
+    EGLint = ctypes.c_int
+    EGLuint = ctypes.c_uint
+
+    # Load EGL extension functions dynamically
+    EGLuint = ctypes.c_uint
+    eglQueryDevicesEXT_addr = EGL.eglGetProcAddress(b"eglQueryDevicesEXT")
+    if not eglQueryDevicesEXT_addr:
+        raise RuntimeError("eglQueryDevicesEXT not available")
+    eglQueryDevicesEXT = ctypes.CFUNCTYPE(EGLuint, EGLint, ctypes.POINTER(EGLDeviceEXT), ctypes.POINTER(EGLint))(
+        eglQueryDevicesEXT_addr
+    )
+    eglQueryDeviceAttribEXT_addr = EGL.eglGetProcAddress(b"eglQueryDeviceAttribEXT")
+    if not eglQueryDeviceAttribEXT_addr:
+        raise RuntimeError("eglQueryDeviceAttribEXT not available")
+    eglQueryDeviceAttribEXT = ctypes.CFUNCTYPE(EGLuint, EGLDeviceEXT, EGLint, ctypes.POINTER(EGLAttrib))(
+        eglQueryDeviceAttribEXT_addr
+    )
+
+    # Query EGL devices
+    num_devices = EGLint()
+    eglQueryDevicesEXT(0, None, ctypes.byref(num_devices))
+    devices = (EGLDeviceEXT * num_devices.value)()
+    eglQueryDevicesEXT(num_devices, devices, ctypes.byref(num_devices))
+    egl_map = {}
+    for i in range(num_devices.value):
+        dev = devices[i]
+        cuda_id = EGLAttrib()
+        if eglQueryDeviceAttribEXT(dev, EGL_CUDA_DEVICE_NV, ctypes.byref(cuda_id)):
+            egl_map[nvidia_gpu_indices[cuda_id.value]] = i
+
+    return egl_map[gpu_index]
+
+
 def pytest_xdist_auto_num_workers(config):
-    import psutil
     import genesis as gs
 
     # Get available memory (RAM & VRAM) and number of cores
@@ -134,14 +206,18 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_runtest_setup(item):
-    # Enforce GPU affinity that distributed framework is enabled
+    # Enforce GPU affinity if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
         worker_num = int(worker_id[2:])
         gpu_indices = _get_gpu_indices()
-        gpu_num = worker_num % len(gpu_indices)
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_indices[gpu_num])
-        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_indices[gpu_num])
+        gpu_index = gpu_indices[worker_num % len(gpu_indices)]
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+        try:
+            os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
+        except Exception:
+            pass
 
 
 def pytest_addoption(parser):
@@ -155,7 +231,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
-    return pytestconfig.getoption("--vis")
+    return pytestconfig.getoption("--vis") and IS_INTERACTIVE_VIEWER_AVAILABLE
 
 
 @pytest.fixture(scope="session")
@@ -289,10 +365,7 @@ def taichi_offline_cache(request):
 
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, backend, precision, taichi_offline_cache):
-    import pyglet
-    import gstaichi as ti
     import genesis as gs
-    from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 
     logging_level = request.config.getoption("--log-cli-level")
     debug = request.config.getoption("--dev")
@@ -307,18 +380,25 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
 
+        if gs.backend != gs.cpu:
+            device_index = gs.device.index
+            if device_index is not None and device_index not in _get_gpu_indices():
+                assert RuntimeError("Wrong CUDA GPU device.")
+
+        import gstaichi as ti
+
         ti_runtime = ti.lang.impl.get_runtime()
-        ti_arch = ti_runtime.prog.config().arch
-        if ti_arch == ti.metal and precision == "64":
+        ti_config = ti.lang.impl.current_cfg()
+        if ti_config.arch == ti.metal and precision == "64":
             gs.destroy()
             pytest.skip("Apple Metal GPU does not support 64bits precision.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             gs.destroy()
             pytest.skip("No GPU available on this machine")
+
         yield
     finally:
-        pyglet.app.exit()
         gs.destroy()
         gc.collect()
 
@@ -413,3 +493,49 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
             f.write(f"f {a} {b} {c} {d}\n")
 
     return filename
+
+
+class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
+    def matches(self, *, serialized_data, snapshot_data) -> bool:
+        import numpy as np
+
+        img_arrays = []
+        for data in (serialized_data, snapshot_data):
+            buffer = BytesIO()
+            buffer.write(data)
+            buffer.seek(0)
+            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
+        img_delta = np.abs(img_arrays[1].astype(np.float32) - img_arrays[0].astype(np.float32)).astype(np.uint8)
+        if (
+            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR
+            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > IMG_NUM_ERR_THR * img_delta.size
+        ):
+            raw_bytes = BytesIO()
+            img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
+            img_obj.save(raw_bytes, "PNG")
+            raw_bytes.seek(0)
+            print(base64.b64encode(raw_bytes.read()))
+            return False
+        return True
+
+
+@pytest.fixture
+def png_snapshot(request, snapshot):
+    snapshot_obj = snapshot.use_extension(PixelMatchSnapshotExtension)
+    snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
+    snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
+
+    must_update_snapshop = request.config.getoption("--snapshot-update")
+    if must_update_snapshop:
+        for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
+            assert path.is_file()
+            path.unlink()
+    else:
+        from .utils import get_hf_dataset
+
+        snapshot_name_ = "".join(f"[{char}]" if char in ("[", "]") else char for char in snapshot_name)
+        get_hf_dataset(
+            pattern=f"{snapshot_dir.name}/{snapshot_name_}*", repo_name="snapshots", local_dir=snapshot_dir.parent
+        )
+
+    return snapshot_obj

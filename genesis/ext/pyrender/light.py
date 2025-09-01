@@ -135,11 +135,7 @@ class DirectionalLight(Light):
     """
 
     def __init__(self, color=None, intensity=None, name=None):
-        super(DirectionalLight, self).__init__(
-            color=color,
-            intensity=intensity,
-            name=name,
-        )
+        super().__init__(color=color, intensity=intensity, name=name)
 
     def _generate_shadow_texture(self, size=None):
         """Generate a shadow texture for this light.
@@ -191,11 +187,7 @@ class PointLight(Light):
     """
 
     def __init__(self, color=None, intensity=None, range=None, name=None):
-        super(PointLight, self).__init__(
-            color=color,
-            intensity=intensity,
-            name=name,
-        )
+        super().__init__(color=color, intensity=intensity, name=name)
         self.range = range
 
     @property
@@ -306,11 +298,7 @@ class SpotLight(Light):
     def __init__(
         self, color=None, intensity=None, range=None, innerConeAngle=0.0, outerConeAngle=(np.pi / 4.0), name=None
     ):
-        super(SpotLight, self).__init__(
-            name=name,
-            color=color,
-            intensity=intensity,
-        )
+        super().__init__(name=name, color=color, intensity=intensity)
         self.outerConeAngle = outerConeAngle
         self.innerConeAngle = innerConeAngle
         self.range = range
