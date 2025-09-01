@@ -642,6 +642,8 @@ class Scene(RBC):
 
         if surface.vis_mode is None:
             surface.vis_mode = "particle"
+        if surface.vis_mode == "visual":
+            gs.raise_exception("surface.vis_mode='visual' is not supported for fluid emitters.")
 
         emitter = Emitter(max_particles)
         entity = self.add_entity(

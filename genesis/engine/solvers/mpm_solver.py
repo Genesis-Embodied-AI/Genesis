@@ -60,6 +60,11 @@ class MPMSolver(Solver):
 
             if sim.requires_grad:
                 gs.raise_exception("Sparse grid is not supported in differentiable mode.")
+        if np.prod(self._grid_res) > 1e9:
+            gs.raise_exception(
+                "Grid size larger than 1e9 not supported by MPM solver. Please reduce 'grid_density', or set tighter "
+                "boundaries via 'lower_bound' / 'upper_bound'."
+            )
 
         # materials
         self._mats = list()
