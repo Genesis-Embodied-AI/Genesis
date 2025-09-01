@@ -169,7 +169,12 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        constraint_solver_kernel_clear(envs_idx, self._solver._static_rigid_sim_config, self.constraint_state)
+        constraint_solver_kernel_clear(
+            envs_idx,
+            self._solver._static_rigid_sim_config,
+            self._solver._static_rigid_sim_cache_key,
+            self.constraint_state,
+        )
 
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()
@@ -179,6 +184,7 @@ class ConstraintSolver:
             envs_idx=envs_idx,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
     def add_equality_constraints(self):
@@ -193,6 +199,7 @@ class ConstraintSolver:
             collider_state=self._collider._collider_state,
             rigid_global_info=self._solver._rigid_global_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
     def add_frictionloss_constraints(self):
@@ -204,6 +211,7 @@ class ConstraintSolver:
             rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
     def add_collision_constraints(self):
@@ -214,6 +222,7 @@ class ConstraintSolver:
             constraint_state=self.constraint_state,
             collider_state=self._collider._collider_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
     def add_joint_limit_constraints(self):
@@ -225,6 +234,7 @@ class ConstraintSolver:
             rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
     def resolve(self):
@@ -243,6 +253,7 @@ class ConstraintSolver:
             constraint_state=self.constraint_state,
             rigid_global_info=self._solver._rigid_global_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("_func_init_solver")
         func_solve(
@@ -251,6 +262,7 @@ class ConstraintSolver:
             constraint_state=self.constraint_state,
             rigid_global_info=self._solver._rigid_global_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("_func_solve")
         func_update_qacc(
@@ -258,6 +270,7 @@ class ConstraintSolver:
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("_func_update_qacc")
         func_update_contact_force(
@@ -265,6 +278,7 @@ class ConstraintSolver:
             collider_state=self._collider._collider_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("compute force")
 
@@ -298,6 +312,7 @@ class ConstraintSolver:
                 self.constraint_state,
                 self._solver.equalities_info,
                 self._solver._static_rigid_sim_config,
+                self._solver._static_rigid_sim_cache_key,
             )
 
         if as_tensor:
@@ -379,6 +394,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.links_state,
             self._solver._static_rigid_sim_config,
+            self._solver._static_rigid_sim_cache_key,
         )
         if overflow:
             gs.logger.warning(
@@ -397,6 +413,7 @@ class ConstraintSolver:
             self._solver.equalities_info,
             self.constraint_state,
             self._solver._static_rigid_sim_config,
+            self._solver._static_rigid_sim_cache_key,
         )
 
 
@@ -405,6 +422,7 @@ class ConstraintSolver:
 def constraint_solver_kernel_clear(
     envs_idx: ti.types.ndarray(),
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     constraint_state: array_class.ConstraintState,
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -421,6 +439,7 @@ def constraint_solver_kernel_reset(
     envs_idx: ti.types.ndarray(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = constraint_state.qacc_ws.shape[0]
     len_constraints = constraint_state.jac.shape[0]
@@ -444,6 +463,7 @@ def add_collision_constraints(
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -504,7 +524,7 @@ def add_collision_constraints(
                             cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data_pos - links_state.COM[link, i_b]
+                            t_pos = contact_data_pos - links_state.root_COM[link, i_b]
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
@@ -613,7 +633,7 @@ def func_equality_connect(
                     cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = pos - links_state.COM[link, i_b]
+                    t_pos = pos - links_state.root_COM[link, i_b]
                     ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                     diff = sign * vel
@@ -733,6 +753,7 @@ def add_equality_constraints(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = dofs_state.ctrl_mode.shape[1]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -887,7 +908,7 @@ def func_equality_weld(
                     cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = pos_anchor - links_state.COM[link, i_b]
+                    t_pos = pos_anchor - links_state.root_COM[link, i_b]
                     ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                     diff = sign * vel
                     jac = diff[i]
@@ -975,6 +996,7 @@ def add_joint_limit_constraints(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
     n_links = links_info.root_idx.shape[0]
@@ -1033,6 +1055,7 @@ def add_frictionloss_constraints(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
     n_links = links_info.root_idx.shape[0]
@@ -1299,6 +1322,7 @@ def func_update_contact_force(
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_links = links_state.contact_force.shape[0]
     _B = links_state.contact_force.shape[1]
@@ -1342,6 +1366,7 @@ def func_update_qacc(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
@@ -1363,6 +1388,7 @@ def func_solve(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
@@ -1999,6 +2025,7 @@ def func_init_solver(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
@@ -2110,6 +2137,7 @@ def kernel_add_weld_constraint(
     constraint_state: array_class.ConstraintState,
     links_state: array_class.LinksState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ) -> ti.i32:
     overflow = gs.ti_bool(False)
 
@@ -2161,6 +2189,7 @@ def kernel_delete_weld_constraint(
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
@@ -2187,6 +2216,7 @@ def kernel_get_equality_constraints(
     constraint_state: array_class.ConstraintState,
     equalities_info: array_class.EqualitiesInfo,
     static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.ti_n_equalities.shape[0]
     n_eqs_max = gs.ti_int(0)

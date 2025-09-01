@@ -31,7 +31,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "0c0bb46db0978a59524381194478cf390b3ff996"
-HUGGINGFACE_SNAPSHOT_REVISION = "0b8ffa18f9cab79cfa213aa7867d9aaa0772dc57"
+HUGGINGFACE_SNAPSHOT_REVISION = "b91f34811d7488b951e35a6d0176e94d24f24a88"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -190,8 +190,7 @@ def get_hf_dataset(
     else:
         raise ValueError(f"Unsupported repository '{repo_name}'")
 
-    for _ in range(num_retry):
-        num_trials = 0
+    for i in range(num_retry):
         try:
             # Try downloading the assets
             asset_path = snapshot_download(
@@ -236,8 +235,7 @@ def get_hf_dataset(
             if not has_files:
                 raise HTTPError("No file downloaded.")
         except (HTTPError, FileNotFoundError) as e:
-            num_trials += 1
-            if num_trials == num_retry:
+            if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
             time.sleep(retry_delay)
@@ -930,7 +928,7 @@ def check_mujoco_data_consistency(
 
     # ------------------------------------------------------------------------
 
-    gs_com = gs_sim.rigid_solver.links_state.COM.to_numpy()[:, 0]
+    gs_com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[:, 0]
     gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
     mj_com = mj_sim.data.subtree_com
     mj_root_idx = np.unique(mj_sim.model.body_rootid[mj_bodies_idx])

@@ -488,7 +488,9 @@ def random(solver, n_envs, gjk):
     is_recording = False
     time_start = time.time()
     while True:
-        robot.control_dofs_position(torch.rand((n_envs, 12), device=gs.device) * 0.1 - 0.05, dofs)
+        robot.control_dofs_position(
+            torch.as_tensor(np.random.rand(n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, dofs
+        )
         scene.step()
         time_elapsed = time.time() - time_start
         if is_recording:

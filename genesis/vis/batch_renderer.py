@@ -394,6 +394,10 @@ class BatchRenderer(RBC):
             dtype=np.uint32,
         )
 
+        # Post-processing:
+        # * Remove alpha channel from RGBA
+        # * Squeeze env and channel dims if necessary
+        # * Split along camera dim
         rendered = self._renderer.render(cameras_pos, cameras_quat, render_flags)
         rendered = [
             tensor_to_array(rendered[t][..., :3].flip(-1).squeeze(-1).swapaxes(0, 1)) if need[t] else None

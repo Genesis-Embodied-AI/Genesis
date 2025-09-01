@@ -151,6 +151,7 @@ class FrameImageExporter:
             normal: Normal image array of shape (n_envs, H, W, 3).
         """
         component_frames = [rgb, depth, segmentation, normal]
+        component_frames = [frame.copy() if any(e < 0 for e in frame.strides) else frame for frame in component_frames]
 
         for t in range(IMAGE_TYPE.NUM_TYPES):
             frames = component_frames[t]

@@ -448,20 +448,28 @@ def postprocess_collision_geoms(
     for g_info in g_infos:
         mesh = g_info["mesh"]
         tmesh = mesh.trimesh
-        num_vertices = len(tmesh.vertices)
-        if not decimate and num_vertices > 5000:
+
+        num_faces = len(tmesh.faces)
+        if not decimate and num_faces > 5000:
             gs.logger.warning(
-                f"At least one of the meshes contain many vertices ({num_vertices}). Consider setting "
+                f"At least one of the meshes contain many faces ({num_faces}). Consider setting "
                 "'morph.decimate=True' to speed up collision detection and improve numerical stability."
             )
         if decimate and decimate_face_num < 100:
             gs.logger.warning(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
+
+        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
+        if not must_decimate:
+            gs.logger.debug(
+                "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
+            )
+
         mesh = gs.Mesh.from_trimesh(
             mesh=tmesh,
             convexify=convexify,
-            decimate=decimate,
+            decimate=decimate and must_decimate,
             decimate_face_num=decimate_face_num,
             decimate_aggressiveness=decimate_aggressiveness,
             surface=gs.surfaces.Collision(),
@@ -881,21 +889,21 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
+def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color=None):
     thickness = 1e-2  # for safety
-    mesh = trimesh.creation.box(extents=[size, size, thickness])
+    mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    half = size * 0.5
+    half_x, half_y = (plane_size[0] * 0.5, plane_size[1] * 0.5)
     verts = np.array(
         [
-            [-half, -half, 0.0],
-            [half, -half, 0.0],
-            [half, half, 0.0],
-            [-half, -half, 0.0],
-            [half, half, 0.0],
-            [-half, half, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, half_y, 0.0],
         ],
         dtype=np.float32,
     )
@@ -904,15 +912,16 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
+        n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
         vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
                     [0, 0],
-                    [size, 0],
-                    [size, size],
+                    [n_tile_x, 0],
+                    [n_tile_x, n_tile_y],
                     [0, 0],
-                    [size, size],
-                    [0, size],
+                    [n_tile_x, n_tile_y],
+                    [0, n_tile_y],
                 ],
                 dtype=np.float32,
             ),
