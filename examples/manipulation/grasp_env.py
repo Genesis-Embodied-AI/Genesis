@@ -83,6 +83,15 @@ class GraspEnv:
                 ),
             ),
         )
+        if self.env_cfg["visualize_camera"]:
+            self.vis_cam = self.scene.add_camera(
+                res=(1280, 720),
+                pos=(1.5, 0.0, 0.2),
+                lookat=(0.0, 0.0, 0.2),
+                fov=60,
+                GUI=self.env_cfg["visualize_camera"],
+                debug=True,
+            )
 
         # == add stero camera ==
         self.left_cam = self.scene.add_camera(

@@ -5,8 +5,6 @@ from importlib import metadata
 from pathlib import Path
 
 import torch
-import cv2
-import numpy as np
 
 try:
     try:
@@ -16,9 +14,7 @@ try:
         if metadata.version("rsl-rl-lib") != "2.2.4":
             raise ImportError
 except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError(
-        "Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'."
-    ) from e
+    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -32,9 +28,7 @@ def load_rl_policy(env, train_cfg, log_dir):
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
     # Find the latest checkpoint
-    checkpoint_files = [
-        f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)
-    ]
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
@@ -54,9 +48,7 @@ def load_bc_policy(env, bc_cfg, log_dir):
     bc_runner = BehaviorCloning(env, bc_cfg, None, device=gs.device)
 
     # Find the latest checkpoint
-    checkpoint_files = [
-        f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)
-    ]
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
@@ -68,60 +60,6 @@ def load_bc_policy(env, bc_cfg, log_dir):
     bc_runner.load(last_ckpt)
 
     return bc_runner._policy
-
-
-def get_stereo_frame(env, step_count):
-    """Get stereo frame as numpy array."""
-    # Get stacked stereo rgb image (B, 6, H, W)
-    stacked_stereo_rgb = env.get_stereo_rgb_images(normalize=False).cpu().numpy()[0]
-    stacked_stereo_rgb = stacked_stereo_rgb.transpose(1, 2, 0)
-
-    # Split stacked stereo rgb image into left and right images
-    left_img, right_img = np.split(stacked_stereo_rgb, 2, axis=2)
-    # Convert RGB to BGR for OpenCV display
-    left_img_bgr = cv2.cvtColor(left_img, cv2.COLOR_RGB2BGR)
-    right_img_bgr = cv2.cvtColor(right_img, cv2.COLOR_RGB2BGR)
-    stereo_rgb_img = np.concatenate([left_img_bgr, right_img_bgr], axis=1)
-
-    # Add a vertical line separator between the two images
-    separator_x = left_img.shape[1]
-    cv2.line(
-        img=stereo_rgb_img,
-        pt1=(separator_x, 0),
-        pt2=(separator_x, stereo_rgb_img.shape[0]),
-        color=(255, 255, 255),
-        thickness=2,
-    )
-    return stereo_rgb_img
-
-
-def save_frames_as_video(frames, video_path, fps=60):
-    """Save a list of frames as a video."""
-    if not frames:
-        print("No frames to save!")
-        return
-
-    # Get frame dimensions from the first frame
-    height, width = frames[0].shape[:2]
-
-    # Create video writer
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
-
-    if not video_writer.isOpened():
-        print(f"Error: Could not open video writer for {video_path}")
-        return
-
-    # Write frames to video
-    print(f"Saving {len(frames)} frames to {video_path}...")
-    for i, frame in enumerate(frames):
-        video_writer.write(frame)
-        if i % 30 == 0:  # Progress indicator every 30 frames
-            print(f"Progress: {i + 1}/{len(frames)} frames")
-
-    # Release video writer
-    video_writer.release()
-    print(f"Video saved successfully: {video_path}")
 
 
 def main():
@@ -157,16 +95,11 @@ def main():
     # Load configurations
     if args.stage == "rl":
         # For RL, load the standard configs
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(
-            open(log_dir / "cfgs.pkl", "rb")
-        )
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
     else:
         # For BC, we need to load the configs and create BC config
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(
-            open(log_dir / "cfgs.pkl", "rb")
-        )
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
 
-    env_cfg["visualize_camera"] = True
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
     # set the box collision
@@ -175,6 +108,8 @@ def main():
     env_cfg["box_fixed"] = False
     # set the number of envs for evaluation
     env_cfg["num_envs"] = 10
+    # for video recording
+    env_cfg["visualize_camera"] = args.record
 
     env = GraspEnv(
         env_cfg=env_cfg,
@@ -189,16 +124,17 @@ def main():
     else:
         policy = load_bc_policy(env, bc_train_cfg, log_dir)
         policy.eval()
-        # Verify policy is float32
-        print(f"Policy dtype: {next(policy.parameters()).dtype}")
 
     obs, _ = env.reset()
 
-    # Initialize frame list for recording
-    frames = []
     max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
 
     with torch.no_grad():
+        if args.record:
+            print("Recording video...")
+            env.vis_cam.start_recording()
+            env.left_cam.start_recording()
+            env.right_cam.start_recording()
         for step in range(max_sim_step):
             if args.stage == "rl":
                 actions = policy(obs)
@@ -211,22 +147,15 @@ def main():
 
                 # Collect frame for video recording
                 if args.record:
-                    frame = get_stereo_frame(env, step)
-                    frames.append(frame)
+                    env.vis_cam.render()  # render the visualization camera
 
             obs, rews, dones, infos = env.step(actions)
         env.grasp_and_lift_demo()
-
-        # Save video if recording was enabled
-        if args.record and frames:
-            video_path = log_dir / "stereo_evaluation.mp4"
-            # Save frames as video
-            fps = env_cfg["max_visualize_FPS"]
-            save_frames_as_video(frames, video_path, fps)
-
-        # Close OpenCV windows if BC evaluation
-        if args.stage == "bc":
-            cv2.destroyAllWindows()
+        if args.record:
+            print("Stopping video recording...")
+            env.vis_cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.left_cam.stop_recording(save_to_filename="left_cam.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.right_cam.stop_recording(save_to_filename="right_cam.mp4", fps=env_cfg["max_visualize_FPS"])
 
 
 if __name__ == "__main__":
@@ -235,11 +164,11 @@ if __name__ == "__main__":
 """
 # evaluation
 # For reinforcement learning model:
-python examples/manipulation/grasp_eval.py --stage rl
+python examples/manipulation/grasp_eval.py --stage=rl
 
 # For behavior cloning model:
-python examples/manipulation/grasp_eval.py --stage bc
+python examples/manipulation/grasp_eval.py --stage=bc
 
 # With video recording:
-python examples/manipulation/grasp_eval.py --stage bc --record
+python examples/manipulation/grasp_eval.py --stage=bc --record
 """
