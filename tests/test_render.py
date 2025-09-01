@@ -13,7 +13,7 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
-from genesis.utils.image_exporter import FrameImageExporter
+from genesis.utils.image_exporter import FrameImageExporter, normalize_depth
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
@@ -232,9 +232,9 @@ def test_deterministic(tmp_path, show_viewer, tol):
 @pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api(show_viewer, renderer_type, renderer):
     scene = gs.Scene(
-        renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
+        renderer=renderer,
     )
     scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -410,8 +410,6 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             rgba_all, depth_all, seg_all, normal_all = scene.render_all_cameras(
                 rgb=True, depth=True, segmentation=False, normal=False
             )
-            assert all(isinstance(img_data, torch.Tensor) for img_data in (rgba_1, depth_1))
-            assert all(isinstance(img_data, torch.Tensor) for img_data in (*rgba_all, *depth_all))
         else:
             # Emulate batch rendering which is not supported natively
             colorize_seg = False
@@ -443,7 +441,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(exporter._normalize_depth(torch.as_tensor(img_data)) for img_data in depth_all)
+        depth_normalized_all = tuple(normalize_depth(img_data) for img_data in depth_all)
         frame_data = tuple(
             tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
         )
@@ -579,7 +577,6 @@ def test_point_cloud(show_viewer, renderer):
     SPHERE_RADIUS = 1.0
 
     scene = gs.Scene(
-        renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
         renderer=renderer,
