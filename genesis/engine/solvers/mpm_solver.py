@@ -1,15 +1,16 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import gstaichi as ti
 import torch
 
 import genesis as gs
-from genesis.options.solvers import MPMOptions
 import genesis.utils.geom as gu
+import genesis.utils.sdf_decomp as sdf_decomp
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
-import genesis.utils.sdf_decomp as sdf_decomp
+from genesis.options.solvers import MPMOptions
 
 from .base_solver import Solver
 
@@ -59,6 +60,11 @@ class MPMSolver(Solver):
 
             if sim.requires_grad:
                 gs.raise_exception("Sparse grid is not supported in differentiable mode.")
+        if np.prod(self._grid_res) > 1e9:
+            gs.raise_exception(
+                "Grid size larger than 1e9 not supported by MPM solver. Please reduce 'grid_density', or set tighter "
+                "boundaries via 'lower_bound' / 'upper_bound'."
+            )
 
         # materials
         self._mats = list()
@@ -146,8 +152,8 @@ class MPMSolver(Solver):
 
     def init_grid_fields(self):
         grid_cell_state = ti.types.struct(
-            vel_in=gs.ti_vec3,  # input momentum/velocity
             mass=gs.ti_float,  # mass
+            vel_in=gs.ti_vec3,  # input momentum/velocity
             vel_out=gs.ti_vec3,  # output momentum/velocity
         )
 
