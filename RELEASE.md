@@ -1,5 +1,20 @@
 # Genesis Release Note
 
+## 0.3.3
+
+This minor release fixes a few non-blocking rendering issues for the Rasterizer backend.
+
+### Bug Fixes
+
+* [BUG FIX] Fix shadow map not properly rendered for objects far away from floor plane. (@duburcqa) (#1664)
+* [BUG FIX] Fix genesis import failure if tkinter is failing at init on MacOS. (@duburcqa) (#1666)
+* [BUG FIX] Fix default visualization mode for emitter surface. (@duburcqa) (#1665)
+
+### Miscellaneous
+
+* [MISC] Expose parameters for ground plane tiling. (@yuhongyi) (#1657)
+* [MISC] Add support of 'ti.ndarray' to 'ti_field_to_torch' and rename in 'ti_to_torch'. (@duburcqa) (#1661)
+
 ## 0.3.2
 
 This minor release fixes a few additional regressions and initiates migration to our own open-source fork of Taichi, [GsTaichi](https://github.com/Genesis-Embodied-AI/gstaichi) (contributions are welcome!).
