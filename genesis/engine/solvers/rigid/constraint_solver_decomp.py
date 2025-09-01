@@ -265,15 +265,18 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
+
         # timer.stamp("_func_solve")
         func_update_qacc(
-            qacc_ws=self.qacc_ws,
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("_func_update_qacc")
+
+        self.noslip()
+
         func_update_contact_force(
             links_state=self._solver.links_state,
             collider_state=self._collider._collider_state,
@@ -283,18 +286,29 @@ class ConstraintSolver:
         )
         # timer.stamp("compute force")
 
-        self.noslip()
-
     def noslip(self):
-
-        constraint_noslip.kernel_noslip(
-            collider_state=self._collider._collider_state,
+        # return
+        constraint_noslip.kernel_build_efc_AR_b(
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
+        constraint_noslip.kernel_noslip(
+            collider_state=self._collider._collider_state,
+            constraint_state=self.constraint_state,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
+        )
+
         constraint_noslip.kernel_dual_finish(
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
@@ -1380,7 +1394,6 @@ def func_update_contact_force(
 @gs.maybe_pure
 @ti.kernel
 def func_update_qacc(
-    qacc_ws: array_class.V_ANNOTATION,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
@@ -1392,10 +1405,8 @@ def func_update_qacc(
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] += constraint_state.qfrc_constraint[i_d, i_b]
-
-    for i_d, i_b in ti.ndrange(n_dofs, _B):
-        qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
 @gs.maybe_pure

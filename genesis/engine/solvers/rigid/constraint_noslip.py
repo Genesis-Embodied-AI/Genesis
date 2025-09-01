@@ -8,7 +8,8 @@ import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 
 @gs.maybe_pure
 @ti.kernel
-def kernel_build_efc_AR(
+def kernel_build_efc_AR_b(
+    dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
@@ -51,17 +52,26 @@ def kernel_build_efc_AR(
 
         # add R to diagonal: AR[ii] += R[i]
         for r in range(nefc):
-            constraint_state.efc_AR[r, r, i_b] += constraint_state.efc_R[r, i_b]
+            constraint_state.efc_AR[r, r, i_b] += 1.0 / constraint_state.efc_D[r, i_b]
+
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            v = -constraint_state.aref[i_c, i_b]
+            for i_d in range(n_dofs):
+                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            constraint_state.efc_b[i_c, i_b] = v
 
 
+@gs.maybe_pure
+@ti.kernel
 def kernel_noslip(
-    entities_info: array_class.EntitiesInfo,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -72,15 +82,29 @@ def kernel_noslip(
         bc = ti.Vector.zero(gs.ti_float, 5)
         Ac = ti.Vector.zero(gs.ti_float, 9)
 
-        const_start = nef
         n_con = collider_state.n_contacts[i_b]
         ne = constraint_state.n_constraints_equality[i_b]
-        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        nf = constraint_state.n_constraints_frictionloss[i_b]
+        const_start = ne + nf
+
+        scale = 1.0 / (rigid_global_info.meaninertia[i_b] * ti.max(1.0, n_dofs))
 
         for i_iter in range(static_rigid_sim_config.noslip_iterations):
+
+            improvement = gs.ti_float(0.0)
+            if i_iter == 0:
+                for i_c in range(constraint_state.n_constraints[i_b]):
+                    improvement += (
+                        0.5
+                        * constraint_state.efc_force[i_c, i_b]
+                        * constraint_state.efc_force[i_c, i_b]
+                        / constraint_state.efc_D[i_c, i_b]
+                    )
+                # print("iter 0", improvement)
+
             # Residual-stepped dry joint friction-loss with diagonal A
             # TODO: friction loss
-            # for i_c in range(ne, nef):
+            # for i_c in range(ne, ne + nf):
             #     res = constraint_state.efc_resid[i_c, i_b]
             #     adiag = ti.max(constraint_state.efc_A_diag[i_c, i_b], gs.EPS)
             #     f = constraint_state.efc_force[i_c, i_b] - res / adiag
@@ -95,9 +119,9 @@ def kernel_noslip(
             for i_col in range(n_con):
                 base = const_start + i_col * 4
                 mu = collider_state.contact_data.friction[i_col, i_b]
-
-                for j_efc in range(base, base + 4, 2):
-                    func_residual(
+                for j2 in range(2):
+                    j_efc = base + j2 * 2
+                    res = func_residual(
                         res=res,
                         i_b=i_b,
                         i_efc=j_efc,
@@ -107,12 +131,13 @@ def kernel_noslip(
                     )
                     for i2 in range(2):
                         old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
-                    func_extract_block(
+                    Ac = func_extract_block(
                         Ac=Ac,
                         i_b=i_b,
                         start=j_efc,
                         n=2,
                         flg_subR=True,
+                        constraint_state=constraint_state,
                     )
                     for i2 in range(2):
                         bc[i2] = res[i2]
@@ -137,9 +162,9 @@ def kernel_noslip(
                         else:
                             constraint_state.efc_force[j_efc + 0, i_b] = mid + y
                             constraint_state.efc_force[j_efc + 1, i_b] = mid - y
-                    improvement -= func_cost_change(
-                        Ac, constraint_state.efc_force[j_efc : j_efc + 2, i_b], j_efc, old_force, res, 2
-                    )
+                    cost_change = func_cost_change(i_b, Ac, constraint_state.efc_force, j_efc, old_force, res, 2)
+                    # print("cost_change", cost_change)
+                    improvement -= cost_change
             # start solve
 
             # TODO: efc_state
@@ -166,6 +191,7 @@ def kernel_noslip(
             #     break;
             # }
             improvement *= scale
+            # print("iter", i_iter, "improvement", improvement, scale, static_rigid_sim_config.tolerance)
             if improvement < static_rigid_sim_config.tolerance:
                 break
 
@@ -173,6 +199,9 @@ def kernel_noslip(
 @gs.maybe_pure
 @ti.kernel
 def kernel_dual_finish(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
@@ -187,46 +216,29 @@ def kernel_dual_finish(
             constraint_state.qfrc_constraint[i_d, i_b] = gs.ti_float(0.0)
 
             for i_c in range(constraint_state.n_constraints[i_b]):
-                for i_d in range(n_dofs):
-                    constraint_state.qfrc_constraint[i_d, i_b] = (
-                        constraint_state.qfrc_constraint[i_d, i_b]
-                        + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                    )
+                constraint_state.qfrc_constraint[i_d, i_b] = (
+                    constraint_state.qfrc_constraint[i_d, i_b]
+                    + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                )
 
-    rigid_solver.func_solve_mass(
-        vec=constraint_state.qfrc_constraint,
-        out=constraint_state.qacc,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
+        rigid_solver.func_solve_mass_batched(
+            vec=constraint_state.qfrc_constraint,
+            out=constraint_state.qacc,
+            i_b=i_b,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
         for i_d in range(n_dofs):
-            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
+            constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
+            # print("qacc", constraint_state.qacc[i_d, i_b] - dofs_state.acc[i_d, i_b], dofs_state.acc[i_d, i_b])
+            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            # constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
-
-@ti.func
-def compute_efc_b(
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
-):
-    _B = dofs_state.acc_smooth.shape[1]
-    n_dofs = dofs_state.acc_smooth.shape[0]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            v = -constraint_state.aref[i_c, i_b]
-            if ti.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
-            constraint_state.efc_b[i_c, i_b] = v
+            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+            # constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
 @ti.func
@@ -236,14 +248,16 @@ def func_extract_block(
     start: int,
     n: int,
     flg_subR: bool,
+    constraint_state: array_class.ConstraintState,
 ):
     for j in range(n):
         for k in range(n):
             Ac[j * n + k] = constraint_state.efc_AR[start + j, start + k, i_b]
     if flg_subR:
         for j in range(n):
-            Ac[j * (n + 1)] -= constraint_state.efc_R[start + j, i_b]
+            Ac[j * (n + 1)] -= 1.0 / constraint_state.efc_D[start + j, i_b]
             Ac[j * (n + 1)] = ti.max(1e-10, Ac[j * (n + 1)])
+    return Ac
 
 
 @ti.func
@@ -261,11 +275,13 @@ def func_residual(
             res[j] += constraint_state.efc_AR[i_efc + j, k, i_b] * constraint_state.efc_force[k, i_b]
     if flg_subR:
         for j in range(dim):
-            res[j] -= constraint_state.efc_R[i_efc + j, i_b] * constraint_state.efc_force[i_efc + j, i_b]
+            res[j] -= 1.0 / constraint_state.efc_D[i_efc + j, i_b] * constraint_state.efc_force[i_efc + j, i_b]
+    return res
 
 
 @ti.func
 def func_cost_change(
+    i_b: int,
     A,
     force,
     force_start: int,
@@ -273,22 +289,22 @@ def func_cost_change(
     res,
     dim: int,
 ):
+    change = gs.ti_float(0.0)
     if dim == 1:
-        delta = force[force_start + 0] - old_force[0]
+        delta = force[force_start + 0, i_b] - old_force[0]
         change = 0.5 * A[0] * delta * delta + delta * res[0]
     else:
-        delta = ti.Vector.zero(gs.ti_float, 6)
+        delta = ti.Vector.zero(gs.ti_float, 2)
         for i in range(dim):
-            delta[i] = force[force_start + i] - old_force[i]
-        change = gs.ti_float(0.0)
+            delta[i] = force[force_start + i, i_b] - old_force[i]
         # change = 0.5*mju_mulVecMatVec(delta, A, delta, dim) + mju_dot(delta, res, dim);
         for i in range(dim):
             for j in range(dim):
-                change += A[i * dim + j] * delta[i] * delta[j]
+                change += 0.5 * A[i * dim + j] * delta[i] * delta[j]
             change += delta[i] * res[i]
     if change > 1e-10:
         for i in range(dim):
-            force[force_start + i] = old_force[i]
+            force[force_start + i, i_b] = old_force[i]
         change = 0.0
     return change
 
@@ -296,7 +312,6 @@ def func_cost_change(
 @gs.maybe_pure
 @ti.kernel
 def compute_A_diag(
-    entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),

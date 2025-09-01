@@ -261,6 +261,7 @@ class RigidSolver(Solver):
             tolerance=getattr(self._options, "tolerance", 1e-6),
             ls_iterations=getattr(self._options, "ls_iterations", 10),
             ls_tolerance=getattr(self._options, "ls_tolerance", 1e-6),
+            noslip_iterations=getattr(self._options, "noslip_iterations", 5),
             n_equalities=self._n_equalities,
             n_equalities_candidate=self.n_equalities_candidate,
             hibernation_thresh_acc=getattr(self, "_hibernation_thresh_acc", 0.0),

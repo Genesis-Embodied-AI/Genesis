@@ -129,6 +129,11 @@ class StructConstraintState:
     efc_D: V_ANNOTATION
     efc_frictionloss: V_ANNOTATION
     efc_force: V_ANNOTATION
+    efc_b: V_ANNOTATION
+    efc_state: V_ANNOTATION
+    efc_A_diag: V_ANNOTATION
+    efc_R: V_ANNOTATION
+    efc_AR: V_ANNOTATION
     active: V_ANNOTATION
     prev_active: V_ANNOTATION
     qfrc_constraint: V_ANNOTATION
@@ -189,6 +194,11 @@ def get_constraint_state(constraint_solver, solver):
         "efc_D": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_frictionloss": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_force": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "efc_b": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "efc_state": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
+        "efc_A_diag": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "efc_R": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
+        "efc_AR": V(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, len_constraints_))),
         "active": V(dtype=gs.ti_bool, shape=solver._batch_shape(len_constraints_)),
         "prev_active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
         "qfrc_constraint": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
