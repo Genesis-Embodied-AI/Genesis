@@ -9,6 +9,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 
 if TYPE_CHECKING:
@@ -281,6 +282,23 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("compute force")
+
+        self.noslip()
+
+    def noslip(self):
+
+        constraint_noslip.kernel_noslip(
+            collider_state=self._collider._collider_state,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
+        )
+
+        constraint_noslip.kernel_dual_finish(
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
+        )
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
