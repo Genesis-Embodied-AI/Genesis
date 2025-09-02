@@ -13,7 +13,8 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
-from genesis.utils.image_exporter import FrameImageExporter, normalize_depth
+from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
+from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
@@ -439,8 +440,10 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(normalize_depth(img_data[..., None]) for img_data in depth_all)
-        frame_data = tuple(img_data.astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all))
+        depth_normalized_all = tuple(as_grayscale_image(img_data) for img_data in depth_all)
+        frame_data = tuple(
+            tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
+        )
         for img_data in frame_data:
             for img_data_i in img_data if n_envs else (img_data,):
                 assert np.max(np.std(img_data_i.reshape((-1, img_data_i.shape[-1])), axis=0)) > 10.0

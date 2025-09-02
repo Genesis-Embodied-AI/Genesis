@@ -22,12 +22,12 @@ root = None
 if sys.platform.startswith("darwin"):
     try:
         from tkinter import Tk
-    except ImportError:
-        # Some minimal Python install may not provide tkinter interface even if it is a standard library
-        pass
 
-    root = Tk()
-    root.withdraw()
+        root = Tk()
+        root.withdraw()
+    except Exception:
+        # Some minimal Python install may not provide a working tkinter interface even if it is a standard library
+        pass
 
 import pyglet
 
@@ -343,8 +343,8 @@ class Viewer(pyglet.window.Window):
         # Set defaults as needed
         if zfar is None:
             zfar = max(self.scene.scale * 10.0, DEFAULT_Z_FAR)
-        if znear is None or znear == 0:
-            if self.scene.scale == 0:
+        if znear is None or znear < 1e-6:
+            if self.scene.scale < 1e-6:
                 znear = DEFAULT_Z_NEAR
             else:
                 znear = min(self.scene.scale / 10.0, DEFAULT_Z_NEAR)
@@ -353,7 +353,7 @@ class Viewer(pyglet.window.Window):
             self._default_persp_cam = PerspectiveCamera(yfov=np.pi / 3.0, znear=znear, zfar=zfar)
         if self._default_orth_cam is None:
             xmag = ymag = self.scene.scale
-            if self.scene.scale == 0:
+            if self.scene.scale < 1e-6:
                 xmag = ymag = 1.0
             self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
         if self._default_camera_pose is None:

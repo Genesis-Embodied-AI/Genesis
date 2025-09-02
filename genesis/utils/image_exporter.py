@@ -1,176 +1,227 @@
 import os
-from PIL import Image
-import numpy as np
-
+from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor, Executor
 from functools import partial
-from concurrent.futures import ThreadPoolExecutor
+
+import cv2
+import numpy as np
 
 import genesis as gs
 from genesis.constants import IMAGE_TYPE
 
 
-class ImageComponent:
-    def __init__(self, name, channel, normalize_func):
-        self.name = name
-        self.channel = channel
-        self.normalize_func = normalize_func
+def as_grayscale_image(
+    data: np.ndarray, clip_max: float | None = None, enable_log_scale: bool = False, black_to_white: bool = False
+) -> np.ndarray:
+    """Convert a batched 2D array of numeric dtype as 8 bits single channel (grayscale) image array for visualization.
 
-    def export_frame_camera(self, i_env, export_dir, i_step, i_cam, frame):
-        frame = frame[i_env]
-        frame_img = Image.fromarray(frame.squeeze(-1) if self.channel == 1 else frame)
-        frame_path = os.path.join(export_dir, f"{self.name}_cam{i_cam:03d}_env{i_env:03d}_{i_step:03d}.png")
-        frame_img.save(frame_path)
+    Internally, this method clips non-finite values, optionally applies log scaling (i.e. `log(1.0 + data)`), then
+    normalizes values between 0.0 and 1.0, to finally convert to grayscale.
 
-    def check_frame_shape(self, frame):
-        if frame.ndim == 3:
-            if frame.shape[-1] == self.channel:
-                frame = frame[None, ...]
-            else:
-                frame = frame[..., None]
-        elif frame.ndim == 2:
-            frame = frame.reshape((1, *frame.shape, 1))
-        if frame.ndim != 4 or frame.shape[-1] != self.channel:
-            gs.raise_exception(f"'{self.name}' must be an array of shape (n_envs, H, W, {self.channel})")
-        return frame
-
-
-def normalize_depth(depth, depth_clip_max=100, depth_scale="linear"):
-    """Normalize depth values for visualization.
-
-    Args:
-        depth: Float ndarray of depth values.
-        depth_clip_max: Maximum valid depth value (float).
-        depth_scale: Storage of depth image, "linear" or "log".
-
-    Returns:
-        Normalized depth ndarray as uint8.
+    Parameters
+    ----------
+    data : ndarray [(N x) H x W]
+        The data to normalize as a batched 2D array with any numeric dtype.
+    clip_max : float, optional
+        The maximum valid value if any. Default to None.
+    enable_log_scale: bool, optional
+        Wether to apply log scaling before normalization. Default to False.
+    black_to_white: bool, optional
+        Whether the color is transitioning from black to white as value increases or conversely. Default to False.
     """
-    # Masks for infinities
-    pinf_mask = np.isposinf(depth)
-    ninf_mask = np.isneginf(depth)
-    depth_min = np.where(ninf_mask, np.inf, depth).min(axis=(-3, -2), keepdims=True)
-    depth_max = np.where(pinf_mask, -np.inf, depth).max(axis=(-3, -2), keepdims=True)
-    depth_min = np.maximum(depth_min, 0.0)
-    depth_max = np.minimum(depth_max, depth_clip_max)
-    depth = np.clip(depth, 0.0, depth_clip_max)
-    depth = np.where(ninf_mask, depth_min, depth)
-    depth = np.where(pinf_mask, depth_max, depth)
+    # Cast data to float32
+    data_float = data.astype(np.float32)
 
-    # Optional log scaling
-    if depth_scale == "log":
-        depth = np.log(depth + 1.0)
+    # Clip data, with special handling for non-finite values only if necessary for efficiency
+    valid_mask = np.isfinite(data_float)
+    if np.all(valid_mask):
+        data_min = np.min(data_float, axis=(-2, -1), keepdims=True)
+        data_max = np.max(data_float, axis=(-2, -1), keepdims=True)
+    else:
+        data_min = np.min(data_float, axis=(-2, -1), keepdims=True, initial=float("+inf"), where=valid_mask)
+        data_max = np.max(data_float, axis=(-2, -1), keepdims=True, initial=float("-inf"), where=valid_mask)
+    data_min = np.maximum(data_min, 0.0)
+    if clip_max is not None:
+        data_max = np.minimum(data_max, clip_max)
+    data_float = np.clip(data_float, data_min, data_max)
 
-    # Normalize to 0–255
-    denom = depth_max - depth_min
-    out = np.zeros_like(depth, dtype=np.float32)
-    np.divide(depth_max - depth, denom, out=out, where=denom > gs.EPS)  # safe masked divide
-    return (out * 255.0).astype(np.uint8)
+    # Apply log scaling if requested
+    if enable_log_scale:
+        data_float = np.log(1.0 + data_float)
 
+    # Normalize values between 0.0 and 1.0
+    data_delta = data_max - data_min
+    data_rel = data_float - data_min if black_to_white else data_max - data_float
+    data_normalized = np.divide(data_max - data_float, data_delta, where=data_delta > gs.EPS)
 
-def normalize_segmentation(segmentation):
-    """Normalize segmentation values for visualization.
-
-    Args:
-        segmentation: Int ndarray of labels.
-
-    Returns:
-        Normalized segmentation ndarray as uint8.
-    """
-    seg_min = segmentation.min(axis=(-3, -2), keepdims=True)
-    seg_max = segmentation.max(axis=(-3, -2), keepdims=True)
-    denom = seg_max - seg_min
-    out = np.zeros_like(segmentation, dtype=np.float32)
-    # using np.where will evaluate values in advance.
-    np.divide(segmentation - seg_min, denom, out=out, where=denom > 0)
-    return (out * 255.0).astype(np.uint8)
+    # Discretize as unsigned int8
+    return (data_normalized * 255.0).astype(np.uint8)
 
 
 class FrameImageExporter:
     """
-    This class enables exporting images from all cameras and all environments in batch and in parallel, unlike
+    This class enables exporting images from multiple cameras and environments in batch and in parallel, unlike
     `Camera.(start|stop)_recording` API, which only allows for exporting images from a single camera and environment.
     """
 
-    def __init__(self, export_dir, depth_clip_max=100, depth_scale="linear"):
-        self.image_components = [
-            ImageComponent(str(IMAGE_TYPE.RGB), 3, None),
-            ImageComponent(
-                str(IMAGE_TYPE.DEPTH),
-                1,
-                partial(normalize_depth, depth_clip_max=depth_clip_max, depth_scale=depth_scale),
-            ),
-            ImageComponent(str(IMAGE_TYPE.SEGMENTATION), 1, partial(normalize_segmentation)),
-            ImageComponent(str(IMAGE_TYPE.NORMAL), 3, None),
-        ]
+    def __init__(self, export_dir: str, depth_clip_max: float = 100.0, enable_depth_log_scale: bool = False):
+        self.depth_clip_max = depth_clip_max
+        self.enable_depth_log_scale = enable_depth_log_scale
         self.export_dir = export_dir
-        if not os.path.exists(export_dir):
-            os.makedirs(export_dir)
+        os.makedirs(export_dir, exist_ok=True)
 
-    def export_frame_all_cameras(self, i_step, camera_idx=None, rgb=None, depth=None, segmentation=None, normal=None):
+    def export_frame_all_cameras(
+        self,
+        i_step: int,
+        cameras_idx: Iterable | None = None,
+        rgb: Sequence[np.ndarray] | None = None,
+        depth: Sequence[np.ndarray] | None = None,
+        segmentation: Sequence[np.ndarray] | None = None,
+        normal: Sequence[np.ndarray] | None = None,
+    ):
         """
-        Export frames for all cameras.
+        Export multiple frames from different cameras and environments in parrallel as PNG files.
+
+        Note
+        ----
+        All specified sequences of images must have the same length.
+
+        Parameters
+        ----------
+        i_step : int
+            The current step index.
+        cameras_idx: Iterable, optional
+            Sequence of indices of cameras to export. If None, all cameras are exported.
+        rgb: Sequence[ndarray[np.floating]], optional
+            RGB image is a sequence of arrays of shape (n_envs, H, W, 3).
+        depth: Sequence[ndarray[np.floating]], optional
+            Depth image is a sequence of arrays of shape (n_envs, H, W).
+        segmentation: Sequence[ndarray[np.integer]], optional
+            Segmentation image is a sequence of arrays of shape (n_envs, H, W).
+        normal: Sequence[ndarray[np.floating]], optional
+            Normal image is a sequence of arrays of shape (n_envs, H, W, 3).
+        """
+        # Pack frames data for convenience
+        frames_data = (rgb, depth, segmentation, normal)
+
+        # Early return if nothing to do
+        if all(e is None for e in frames_data):
+            gs.logger.debug("No images to export.")
+            return
+
+        # Make sure that all image sequences are valid
+        try:
+            (num_cameras,) = set(map(len, (e for e in frames_data if e is not None)))
+        except ValueError as e:
+            for img_type, imgs_data in zip(IMAGE_TYPE, frames_data):
+                if imgs_data is not None and len(imgs_data) == 0:
+                    gs.raise_exception_from(f"'{img_type}' must be a non-empty sequence of arrays.", e)
+            gs.raise_exception_from("Specified image sequences have inconsistent length.", e)
+
+        # Set default camera indices if undefined
+        if cameras_idx is None:
+            cameras_idx = range(num_cameras)
+        if num_cameras != len(cameras_idx):
+            gs.raise_exception("Camera indices and image sequences have inconsistent length.")
+
+        # Loop over single camera data asynchronously
+        with ThreadPoolExecutor() as executor:
+            for i_cam, frame_data in zip(
+                cameras_idx, zip(*(e if e is not None else (None,) * num_cameras for e in frames_data))
+            ):
+                self.export_frame_single_camera(i_step, i_cam, *frame_data, executor=executor)
+
+    def export_frame_single_camera(
+        self,
+        i_step,
+        i_cam,
+        rgb=None,
+        depth=None,
+        segmentation=None,
+        normal=None,
+        *,
+        compress_level: int | None = None,
+        executor: Executor | None = None,
+    ):
+        """
+        Export multiple frames from a single camera but different environments in parrallel as PNG files.
 
         Args:
-            i_step: The current step index.
-            camera_idx: array of indices of cameras to export. If None, all cameras are exported.
-            rgb: RGB image is a sequence of arrays of shape (n_envs, H, W, 3).
-            depth: Depth image is a sequence of arrays of shape (n_envs, H, W).
-            segmentation: Segmentation image is a sequence of arrays of shape (n_envs, H, W).
-            normal: Normal image is a sequence of arrays of shape (n_envs, H, W, 3).
+            i_step:
+                The current step index.
+            i_cam:
+                The index of the camera.
+            rgb: ndarray[np.floating], optional
+                RGB image array of shape (n_envs, H, W, 3).
+            depth: ndarray[np.floating], optional
+                Depth image array of shape (n_envs, H, W).
+            segmentation: ndarray[np.integer], optional
+                Segmentation image array of shape (n_envs, H, W).
+            normal: ndarray[np.floating], optional
+                Normal image array of shape (n_envs, H, W, 3).
+            compress_level: int, optional
+                Compression level when exporting images as PNG. Default to 3.
+            executor: Executor, optional
+                Executor to which I/O bounded jobs (saving to PNG) will be submitted. A local executor will be
+                instantiated if none is provided.
         """
-        component_frames = [rgb, depth, segmentation, normal]
-        ref_component = next((c for c in component_frames if c is not None), None)
-        if ref_component is None:
-            gs.raise_exception("No images to export")
+        # Pack frames data for convenience
+        frame_data = (rgb, depth, segmentation, normal)
 
-        # Choose reference sequence for default camera indices
-        if camera_idx is None:
-            camera_idx = range(len(ref_component))
+        # Early return if nothing to do
+        if all(e is None for e in frame_data):
+            gs.logger.debug("No images to export.")
+            return
 
-        for t in range(IMAGE_TYPE.NUM_TYPES):
-            frames = component_frames[t]
-            if frames is not None and (not isinstance(frames, (tuple, list)) or len(frames) == 0):
-                gs.raise_exception(f"'{str(IMAGE_TYPE(t))}' must be a non-empty sequence of arrays.")
+        # Instantiate a new executor if none is provided
+        is_local_executor = False
+        if executor is None:
+            is_local_executor = True
+            executor = ThreadPoolExecutor()
 
-        for i_cam in camera_idx:
-            frame_args = {}
-            for t in range(IMAGE_TYPE.NUM_TYPES):
-                frames = component_frames[t]
-                frame_args[str(IMAGE_TYPE(t))] = None if frames is None else frames[i_cam]
-            self.export_frame_single_camera(i_step, i_cam, **frame_args)
-
-    def export_frame_single_camera(self, i_step, i_cam, rgb=None, depth=None, segmentation=None, normal=None):
-        """
-        Export frames for a single camera.
-
-        Args:
-            i_step: The current step index.
-            i_cam: The index of the camera.
-            rgb: RGB image array of shape (n_envs, H, W, 3).
-            depth: Depth image array of shape (n_envs, H, W).
-            segmentation: Segmentation image array of shape (n_envs, H, W).
-            normal: Normal image array of shape (n_envs, H, W, 3).
-        """
-        component_frames = [rgb, depth, segmentation, normal]
-        component_frames = [
-            frame.copy() if frame is not None and any(e < 0 for e in frame.strides) else frame
-            for frame in component_frames
-        ]
-
-        for t in range(IMAGE_TYPE.NUM_TYPES):
-            frames = component_frames[t]
-            if frames is None:
+        # Loop over each image type
+        for img_type, imgs_data in zip(IMAGE_TYPE, frame_data):
+            if imgs_data is None:
                 continue
-            component = self.image_components[t]
-            frames = component.check_frame_shape(frames)
-            if component.normalize_func is not None:
-                frames = component.normalize_func(frames)
-            frame_job = partial(
-                component.export_frame_camera,
-                export_dir=self.export_dir,
-                i_step=i_step,
-                i_cam=i_cam,
-                frame=frames,
-            )
-            with ThreadPoolExecutor() as executor:
-                executor.map(frame_job, np.arange(len(frames)))
+
+            # Convert data to numpy
+            # Torch does not support negative strides for now
+            if isinstance(imgs_data, np.ndarray) and any(e < 0 for e in imgs_data.strides):
+                imgs_data = imgs_data.copy()
+            imgs_data = np.asarray(imgs_data)
+
+            # Make sure that image data has shape `(n_env, H, W [, C>1])``
+            is_single_channel = img_type in (IMAGE_TYPE.DEPTH, IMAGE_TYPE.SEGMENTATION)
+            if imgs_data.ndim == (2 if is_single_channel else 3):
+                imgs_data = imgs_data[None]
+            if imgs_data.ndim == 4 and is_single_channel:
+                imgs_data = imgs_data[..., 0]
+            if is_single_channel and imgs_data.ndim != 3:
+                gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W)")
+            elif not is_single_channel and (imgs_data.ndim != 4 or imgs_data.shape[-1] != 3):
+                gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W, 3)")
+
+            # Convert image data to grayscale array if necessary
+            if img_type == IMAGE_TYPE.DEPTH:
+                imgs_data = as_grayscale_image(
+                    imgs_data, self.depth_clip_max, self.enable_depth_log_scale, black_to_white=False
+                )
+            elif img_type == IMAGE_TYPE.SEGMENTATION:
+                imgs_data = as_grayscale_image(imgs_data, None, enable_log_scale=False, black_to_white=True)
+            imgs_data = imgs_data.astype(np.uint8)
+
+            # Flip channel order if necessary
+            if not is_single_channel:
+                imgs_data = np.flip(imgs_data, axis=-1)
+
+            # Export image array as (compressed) PNG file.
+            # Note that 'pillow>=11' is now consistently faster than 'cv2' when compression level is explicitly
+            # specified, yet slower for (implicit) default compression level, namely 3.
+            cv2_params = [cv2.IMWRITE_PNG_COMPRESSION, compress_level] if compress_level is not None else None
+            for i_env, img_data in enumerate(imgs_data):
+                frame_path = os.path.join(self.export_dir, f"{img_type}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
+                executor.submit(partial(cv2.imwrite, params=cv2_params), frame_path, img_data)
+
+        # Shutdown executor if necessary
+        if is_local_executor:
+            executor.shutdown(wait=True)

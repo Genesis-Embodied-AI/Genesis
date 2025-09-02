@@ -49,7 +49,7 @@ class Visualizer(RBC):
             if pyglet.version < "2.0":
                 display = pyglet.canvas.Display()
                 screen = display.get_default_screen()
-                scale = 1.0
+                screen_scale = 1.0
             else:
                 display = pyglet.display.get_display()
                 screen = display.get_default_screen()
@@ -58,7 +58,7 @@ class Visualizer(RBC):
                 except NotImplementedError:
                     # Probably some headless screen
                     screen_scale = 1.0
-                screen_height, screen_width = screen.height, screen.width
+            screen_height, screen_width = screen.height, screen.width
             self._has_display = True
         except Exception as e:
             if show_viewer:

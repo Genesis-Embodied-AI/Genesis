@@ -90,10 +90,9 @@ class IMAGE_TYPE(IntEnum):
     DEPTH = 1
     SEGMENTATION = 2
     NORMAL = 3
-    NUM_TYPES = 4
 
-    def __str__(self):
-        return self.name.lower()
+    def __format__(self, format_spec):
+        return self.name
 
 
 GS_ARCH = {
