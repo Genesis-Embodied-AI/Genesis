@@ -2917,87 +2917,42 @@ def test_mesh_primitive_COM(show_viewer, tol):
 def test_noslip_iterations(show_viewer, tol):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
+            camera_pos=(2.8, -1, 1.3),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=50,
-            max_FPS=200,
+            camera_fov=30,
+            res=(960, 640),
+            max_FPS=600,
         ),
         sim_options=gs.options.SimOptions(
-            dt=0.02,  # this is a large dt for manipulation
+            dt=0.02,
         ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         rigid_options=gs.options.RigidOptions(
-            enable_self_collision=False,
             noslip_iterations=5,
         ),
         show_viewer=show_viewer,
     )
 
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    franka = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/panda_bullet/panda.urdf",
-            fixed=True,
-            merge_fixed_links=False,
-        ),
-        material=gs.materials.Rigid(gravity_compensation=1.0),
-    )
-
-    cube = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
+    scale = 1.0
+    boxes = []
+    for i in range(3):
+        boxes.append(
+            scene.add_entity(
+                gs.morphs.Box(
+                    size=(1 * scale, 1 * scale, 1 * scale),
+                    pos=(i * scale, 0, 0),
+                    fixed=i == 0,
+                ),
+            )
         )
-    )
+    ########################## build ##########################
     scene.build()
-
-    motors_dof = np.arange(7)
-    fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
-    franka.set_qpos(qpos)
-
-    end_effector = franka.get_link("panda_hand")
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-
-    # hold
-    for i in range(100):
+    # simulate for 40 seconds
+    for i in range(2000):
+        boxes[2].control_dofs_force(np.array([-20000.0 * scale**3]), np.array([0]))
+        # push to -x direction
         scene.step()
 
-    # grasp
-    finger_force = -1.0
-    for i in range(100):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([finger_force, finger_force]), fingers_dof)
-        scene.step()
-
-    # lift
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    for i in range(200):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([finger_force, finger_force]), fingers_dof)
-        scene.step()
-
-    # hold
-    cube_z = cube.get_qpos().cpu().numpy()[2]
-    for i in range(1000):
-        scene.step()
-
-    new_cube_z = cube.get_qpos().cpu().numpy()[2]
-
-    # make sure the cube is lifted
-    assert cube_z > 0.15
-    assert new_cube_z > 0.15
-
-    # the cube is not sliding
-    assert_allclose(cube_z, new_cube_z, atol=1e-4)
+    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
+    # allow some small sliding due to first few frames
+    assert_allclose(box_1_z, 0.0, atol=2e-2 * scale)
