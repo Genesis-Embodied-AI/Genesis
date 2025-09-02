@@ -479,10 +479,14 @@ class Scene(RBC):
             The cutoff angle of the light in degrees. Range: [0.0, 180.0].
         """
         if not isinstance(self.renderer_options, gs.renderers.RayTracer):
-            gs.raise_exception(
-                "add_mesh_light() is only supported when using RayTracer. "
-                "If you are using BatchRenderer, please use add_light()."
-            )
+            if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+                gs.raise_exception(
+                    "This method is only supported by RayTracer. Please use 'add_light' when using BatchRenderer."
+                )
+            else:
+                gs.raise_exception(
+                    "This method is only supported by RayTracer. Impossible to add light when using Rasterizer."
+                )
 
         if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
             gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
@@ -525,10 +529,14 @@ class Scene(RBC):
             Light intensity will attenuate by distance with (1 / (1 + attenuation * distance ^ 2))
         """
         if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-            gs.raise_exception(
-                "add_light() is only supported when using BatchRenderer. "
-                "If you are using Raytracer, please use add_mesh_light()."
-            )
+            if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+                gs.raise_exception(
+                    "This method is only supported by BatchRenderer. Please use 'add_mesh_light' when using RayTracer."
+                )
+            else:
+                gs.raise_exception(
+                    "This method is only supported by BatchRenderer. Impossible to add light when using Rasterizer."
+                )
 
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 

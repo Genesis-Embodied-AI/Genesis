@@ -146,24 +146,25 @@ class FrameImageExporter:
         """
         Export multiple frames from a single camera but different environments in parrallel as PNG files.
 
-        Args:
-            i_step:
-                The current step index.
-            i_cam:
-                The index of the camera.
-            rgb: ndarray[np.floating], optional
-                RGB image array of shape (n_envs, H, W, 3).
-            depth: ndarray[np.floating], optional
-                Depth image array of shape (n_envs, H, W).
-            segmentation: ndarray[np.integer], optional
-                Segmentation image array of shape (n_envs, H, W).
-            normal: ndarray[np.floating], optional
-                Normal image array of shape (n_envs, H, W, 3).
-            compress_level: int, optional
-                Compression level when exporting images as PNG. Default to 3.
-            executor: Executor, optional
-                Executor to which I/O bounded jobs (saving to PNG) will be submitted. A local executor will be
-                instantiated if none is provided.
+        Parameters
+        ----------
+        i_step: int
+            The current step index.
+        i_cam: int
+            The index of the camera.
+        rgb: ndarray[np.floating], optional
+            RGB image array of shape (n_envs, H, W, 3).
+        depth: ndarray[np.floating], optional
+            Depth image array of shape (n_envs, H, W).
+        segmentation: ndarray[np.integer], optional
+            Segmentation image array of shape (n_envs, H, W).
+        normal: ndarray[np.floating], optional
+            Normal image array of shape (n_envs, H, W, 3).
+        compress_level: int, optional
+            Compression level when exporting images as PNG. Default to 3.
+        executor: Executor, optional
+            Executor to which I/O bounded jobs (saving to PNG) will be submitted. A local executor will be instantiated
+            if none is provided.
         """
         # Pack frames data for convenience
         frame_data = (rgb, depth, segmentation, normal)

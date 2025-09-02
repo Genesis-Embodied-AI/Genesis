@@ -1,14 +1,13 @@
 import math
 
 import numpy as np
-from PIL import Image
 import torch
+from PIL import Image
 from trimesh.visual.texture import TextureVisuals
 from trimesh.visual.color import ColorVisuals
 
 import genesis as gs
 from genesis.repr_base import RBC
-from genesis.utils.misc import tensor_to_array
 from genesis.constants import IMAGE_TYPE
 
 from .rasterizer_context import SegmentationColorMap
@@ -19,10 +18,14 @@ except ImportError as e:
     gs.raise_exception_from("Madrona batch renderer is only supported on Linux x86-64.", e)
 
 
-def transform_camera_quat(quat):
+def _transform_camera_quat(quat):
     # quat for Madrona needs to be transformed to y-forward
     w, x, y, z = torch.unbind(quat, dim=-1)
     return torch.stack([x + w, x - w, y - z, y + z], dim=-1) / math.sqrt(2.0)
+
+
+def _make_tensor(data, *, dtype: torch.dtype = torch.float32):
+    return torch.tensor(data, dtype=dtype, device=gs.device)
 
 
 class GenesisGeomRetriever(GeomRetriever):
@@ -112,7 +115,7 @@ class GenesisGeomRetriever(GeomRetriever):
                 geom_mat_ids.append(num_materials)
                 geom_uv_sizes.append(uv_size)
                 geom_uv_offsets.append(total_uv_size)
-                geom_rgbas.append(np.empty((4,), dtype=np.float32))
+                geom_rgbas.append(np.zeros((4,), dtype=np.float32))
 
                 texture_width = visual.material.image.width
                 texture_height = visual.material.image.height
@@ -144,7 +147,7 @@ class GenesisGeomRetriever(GeomRetriever):
                 if isinstance(visual, ColorVisuals):
                     geom_rgbas.append(visual.main_color.astype(np.float32) / 255.0)
                 else:
-                    geom_rgbas.append(np.empty((4,), dtype=np.float32))
+                    geom_rgbas.append(np.zeros((4,), dtype=np.float32))
 
         args["geom_mat_ids"] = np.array(geom_mat_ids, np.int32)
         args["mesh_texcoord_num"] = np.array(geom_uv_sizes, np.int32)
@@ -258,76 +261,49 @@ class BatchRenderer(RBC):
         """
         Build all cameras in the batch and initialize Moderona renderer
         """
-        if len(self._visualizer._cameras) == 0:
-            raise ValueError("No cameras to render")
-
         if gs.backend != gs.cuda:
             gs.raise_exception("BatchRenderer requires CUDA backend.")
-
-        self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
-        self._geom_retriever.build()
-        n_envs = max(self._visualizer.scene.n_envs, 1)
-        res = self._cameras[0].res  # Madrona uses resolution of first (non-debug) camera
         gpu_id = gs.device.index if gs.device.index is not None else 0
 
-        # Cameras
-        n_cameras = len(self._cameras)
-        cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
-        cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
-        cameras_quat = transform_camera_quat(cameras_quat)
-        cameras_fov = torch.tensor([camera.fov for camera in self._cameras], dtype=torch.float32, device=gs.device)
-        cameras_near = torch.tensor([camera.near for camera in self._cameras], dtype=torch.float32, device=gs.device)
-        cameras_far = torch.tensor([camera.far for camera in self.cameras], dtype=torch.float32, device=gs.device)
+        # Extract the complete list of non-debug cameras
+        self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
+        if not self._cameras:
+            gs.raise_exception("Please add at least one camera when using BatchRender.")
 
-        # Build taichi arrays to store light properties once. If later we need to support dynamic lights, we should
-        # consider storing light properties as taichi fields in Genesis.
-        n_lights = len(self._lights)
-        if n_lights:
-            light_pos = torch.tensor([light.pos for light in self._lights], dtype=torch.float32, device=gs.device)
-            light_dir = torch.tensor([light.dir for light in self._lights], dtype=torch.float32, device=gs.device)
-            light_rgb = torch.tensor([light.color for light in self._lights], dtype=torch.float32, device=gs.device)
-        else:
-            light_pos = torch.empty((0, 3), dtype=torch.float32, device=gs.device)
-            light_dir = torch.empty((0, 3), dtype=torch.float32, device=gs.device)
-            light_rgb = torch.empty((0, 3), dtype=torch.float32, device=gs.device)
-        light_directional = torch.tensor(
-            [light.directional for light in self._lights], dtype=torch.bool, device=gs.device
-        )
-        light_castshadow = torch.tensor(
-            [light.castshadow for light in self._lights], dtype=torch.bool, device=gs.device
-        )
-        light_cutoff = torch.tensor([light.cutoffRad for light in self._lights], dtype=torch.float32, device=gs.device)
-        light_attenuation = torch.tensor(
-            [light.attenuation for light in self._lights], dtype=torch.float32, device=gs.device
-        )
-        light_intensity = torch.tensor(
-            [light.intensity for light in self._lights], dtype=torch.float32, device=gs.device
-        )
+        # Build the geometry retriever
+        self._geom_retriever.build()
+
+        # Make sure that all cameras have identical resolution
+        try:
+            ((camera_width, camera_height),) = set(camera.res for camera in self._cameras)
+        except ValueError as e:
+            gs.raise_exception_from("All cameras must have the exact same resolution when using BatchRender.", e)
 
         self._renderer = MadronaBatchRendererAdapter(
-            self._geom_retriever,
-            gpu_id,
-            n_envs,
-            n_cameras,
-            n_lights,
-            cameras_fov,
-            cameras_near,
-            cameras_far,
-            *res,
-            False,
-            self._use_rasterizer,
+            geom_retriever=self._geom_retriever,
+            gpu_id=gs.device.index if gs.device.index is not None else 0,
+            num_worlds=max(self._visualizer.scene.n_envs, 1),
+            num_cameras=len(self._cameras),
+            num_lights=len(self._lights),
+            cam_fovs_tensor=_make_tensor([camera.fov for camera in self._cameras]),
+            cam_znears_tensor=_make_tensor([camera.near for camera in self._cameras]),
+            cam_zfars_tensor=_make_tensor([camera.far for camera in self.cameras]),
+            batch_render_view_width=camera_width,
+            batch_render_view_height=camera_height,
+            add_cam_debug_geo=False,
+            use_rasterizer=self._use_rasterizer,
         )
         self._renderer.init(
-            cameras_pos,
-            cameras_quat,
-            light_pos,
-            light_dir,
-            light_rgb,
-            light_directional,
-            light_castshadow,
-            light_cutoff,
-            light_attenuation,
-            light_intensity,
+            cam_pos_tensor=torch.stack([camera.get_pos() for camera in self._cameras], dim=1),
+            cam_rot_tensor=_transform_camera_quat(torch.stack([camera.get_quat() for camera in self._cameras], dim=1)),
+            lights_pos_tensor=_make_tensor([light.pos for light in self._lights]).reshape((-1, 3)),
+            lights_dir_tensor=_make_tensor([light.dir for light in self._lights]).reshape((-1, 3)),
+            lights_rgb_tensor=_make_tensor([light.color for light in self._lights]).reshape((-1, 3)),
+            lights_directional_tensor=_make_tensor([light.directional for light in self._lights], dtype=torch.bool),
+            lights_castshadow_tensor=_make_tensor([light.castshadow for light in self._lights], dtype=torch.bool),
+            lights_cutoff_tensor=_make_tensor([light.cutoffRad for light in self._lights]),
+            lights_attenuation_tensor=_make_tensor([light.attenuation for light in self._lights]),
+            lights_intensity_tensor=_make_tensor([light.intensity for light in self._lights]),
         )
 
     def update_scene(self):
@@ -386,7 +362,7 @@ class BatchRenderer(RBC):
         # Render only what’s needed (flags still passed to renderer)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
-        cameras_quat = transform_camera_quat(cameras_quat)
+        cameras_quat = _transform_camera_quat(cameras_quat)
         render_flags = np.array(
             (
                 *(
