@@ -1,7 +1,6 @@
 import hashlib
 import numbers
 import os
-import tempfile
 import time
 from enum import Enum
 from pathlib import Path
@@ -489,7 +488,9 @@ def random(solver, n_envs, gjk):
     is_recording = False
     time_start = time.time()
     while True:
-        robot.control_dofs_position(torch.rand((n_envs, 12), device=gs.device) * 0.1 - 0.05, dofs)
+        robot.control_dofs_position(
+            torch.as_tensor(np.random.rand(n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, dofs
+        )
         scene.step()
         time_elapsed = time.time() - time_start
         if is_recording:
@@ -638,7 +639,10 @@ def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
 
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_cubes", [10])
-@pytest.mark.parametrize("enable_island", [False, True])
+# Will skipt constraint_solver_decomp_island.py and migrate this file later.
+# Right now, island is kind of outdated, including those equality constraints.
+# @pytest.mark.parametrize("enable_island", [False, True])
+@pytest.mark.parametrize("enable_island", [False])
 @pytest.mark.parametrize("n_envs", [8192])
 @pytest.mark.parametrize("gjk", [False, True])
 def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, gjk):

@@ -135,8 +135,11 @@ class ShaderProgram(object):
 
     def _remove_from_context(self):
         if self._program_id is not None:
-            glDeleteProgram(self._program_id)
-            glDeleteVertexArrays(1, [self._vao_id])
+            try:
+                glDeleteProgram(self._program_id)
+                glDeleteVertexArrays(1, [self._vao_id])
+            except OpenGL.error.Error:
+                pass
             self._program_id = None
             self._vao_id = None
 
@@ -208,18 +211,17 @@ class ShaderProgram(object):
             # self._unif_map[name] = value.size, value.shape
             if value.ndim == 1:
                 if np.issubdtype(value.dtype, np.unsignedinteger) or unsigned:
-                    dtype = "u"
-                    value = value.astype(np.uint32)
+                    value = value.astype(np.uint32, copy=False)
                 elif np.issubdtype(value.dtype, np.integer):
-                    dtype = "i"
-                    value = value.astype(np.int32)
+                    value = value.astype(np.int32, copy=False)
                 else:
-                    dtype = "f"
-                    value = value.astype(np.float32)
-                self._FUNC_MAP[(value.shape[0], dtype)](loc, 1, value)
+                    value = value.astype(np.float32, copy=False)
+                func = self._FUNC_MAP[(len(value), value.dtype.kind)]
+                func(loc, 1, value)
             else:
-                func1 = self._FUNC_MAP[(value.shape[0], value.shape[1])]
-                func1(loc, 1, GL_TRUE, value)
+                value = value.astype(np.float32, copy=False)
+                func = self._FUNC_MAP[tuple(value.shape[:2])]
+                func(loc, 1, GL_TRUE, value)
 
         # Call correct uniform function
         elif isinstance(value, (numbers.Real, np.floating)):

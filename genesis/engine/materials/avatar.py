@@ -1,4 +1,4 @@
-import taichi as ti
+import gstaichi as ti
 
 from .rigid import Rigid
 

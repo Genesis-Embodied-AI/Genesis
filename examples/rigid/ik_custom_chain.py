@@ -20,12 +20,12 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             gravity=(0, 0, 0),
             enable_collision=False,
             enable_joint_limit=False,
         ),
+        show_viewer=args.vis,
     )
 
     target_1 = scene.add_entity(

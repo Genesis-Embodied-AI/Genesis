@@ -6,24 +6,23 @@ import platform
 import random
 import types
 import shutil
-import subprocess
 import sys
 import os
-from dataclasses import dataclass
 from collections import OrderedDict
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Type, NoReturn, Optional
 
 import numpy as np
 import cpuinfo
 import psutil
 import torch
 
-import taichi as ti
-from taichi.lang.util import to_pytorch_type
-from taichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr
-from taichi.lang import impl
-from taichi.types import primitive_types
-from taichi.lang.exception import handle_exception_from_cpp
+import gstaichi as ti
+from gstaichi.lang.util import to_pytorch_type
+from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr, ndarray_to_ext_arr, ndarray_matrix_to_ext_arr
+from gstaichi.lang import impl
+from gstaichi.types import primitive_types, ndarray_type
+from gstaichi.lang.exception import handle_exception_from_cpp
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
@@ -36,11 +35,11 @@ class DeprecationError(Exception):
     pass
 
 
-def raise_exception(msg="Something went wrong."):
+def raise_exception(msg="Something went wrong.") -> NoReturn:
     raise gs.GenesisException(msg)
 
 
-def raise_exception_from(msg="Something went wrong.", cause=None):
+def raise_exception_from(msg="Something went wrong.", cause=None) -> NoReturn:
     raise gs.GenesisException(msg) from cause
 
 
@@ -57,6 +56,9 @@ class redirect_libc_stderr:
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
+    # --------------------------------------------------
+    # Enter: duplicate stderr → tmp, dup2(target) → stderr
+    # --------------------------------------------------
     def __enter__(self):
         self.stderr_fileno = sys.stderr.fileno()
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
@@ -117,6 +119,7 @@ class redirect_libc_stderr:
 def assert_initialized(cls):
     original_init = cls.__init__
 
+    @functools.wraps(original_init)
     def new_init(self, *args, **kwargs):
         if not gs._initialized:
             raise RuntimeError("Genesis hasn't been initialized. Did you call `gs.init()`?")
@@ -140,17 +143,19 @@ def assert_built(method):
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         if not self.is_built:
-            gs.raise_exception("Scene is not built yet.")
+            gs.raise_exception(f"{type(self).__name__} is not built yet.")
         return method(self, *args, **kwargs)
 
     return wrapper
 
 
 def set_random_seed(seed):
-    # Note: we don't set seed for taichi, since taichi doesn't support stochastic operations in gradient computation. Therefore, we only allow deterministic taichi operations.
+    # Note: we don't set seed for taichi, since taichi doesn't support stochastic operations in gradient computation.
+    # Therefore, we only allow deterministic taichi operations.
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
 
@@ -173,12 +178,11 @@ def get_platform():
     assert False, f"Unknown platform name {name}"
 
 
-def get_device(backend: gs_backend):
+def get_device(backend: gs_backend, device_idx: Optional[int] = None):
     if backend == gs_backend.cuda:
         if not torch.cuda.is_available():
             gs.raise_exception("torch cuda not available")
 
-        device_idx = torch.cuda.current_device()
         device = torch.device("cuda", device_idx)
         device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
@@ -190,22 +194,22 @@ def get_device(backend: gs_backend):
 
         # on mac, cpu and gpu are in the same device
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps", 0)
+        device = torch.device("mps", device_idx)
 
     elif backend == gs_backend.vulkan:
         if torch.cuda.is_available():
             device, device_name, total_mem, _ = get_device(gs_backend.cuda)
         elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
-            device_idx = torch.xpu.current_device()
+            if device_idx is None:
+                device_idx = torch.xpu.current_device()
             device = torch.device("xpu", device_idx)
             device_property = torch.xpu.get_device_properties(device_idx)
             device_name = device_property.name
             total_mem = device_property.total_memory / 1024**3
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
-            getattr(gs, "logger", LOGGER).warning(
-                "No Intel XPU device available. Falling back to CPU for torch device."
-            )
+            logger = getattr(gs, "logger", None) or LOGGER
+            logger.warning("No Intel XPU device available. Falling back to CPU for torch device.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     elif backend == gs_backend.gpu:
@@ -219,7 +223,7 @@ def get_device(backend: gs_backend):
     else:
         device_name = cpuinfo.get_cpu_info()["brand_raw"]
         total_mem = psutil.virtual_memory().total / 1024**3
-        device = torch.device("cpu")
+        device = torch.device("cpu", device_idx)
 
     return device, device_name, total_mem, backend
 
@@ -269,6 +273,14 @@ def get_remesh_cache_dir():
     return os.path.join(get_cache_dir(), "rm")
 
 
+def get_exr_cache_dir():
+    return os.path.join(get_cache_dir(), "exr")
+
+
+def get_usd_cache_dir():
+    return os.path.join(get_cache_dir(), "usd")
+
+
 def clean_cache_files():
     folder = gs.utils.misc.get_cache_dir()
     try:
@@ -302,12 +314,12 @@ def to_gs_tensor(x):
 
 def tensor_to_cpu(x):
     if isinstance(x, torch.Tensor):
-        x = x.cpu()
+        x = x.detach().cpu()
     return x
 
 
-def tensor_to_array(x):
-    return np.asarray(tensor_to_cpu(x))
+def tensor_to_array(x: torch.Tensor, dtype: Type[np.generic] | None = None) -> np.ndarray:
+    return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 
 def is_approx_multiple(a, b, tol=1e-7):
@@ -329,7 +341,10 @@ MAX_CACHE_SIZE = 1000
 class FieldMetadata:
     ndim: int
     shape: tuple[int, ...]
-    dtype: ti._lib.core.DataType
+    try:
+        dtype: ti._lib.core.DataType
+    except:
+        dtype: ti._lib.core.DataTypeCxx
     mapping_key: Any
 
 
@@ -342,11 +357,11 @@ def _ensure_compiled(self, *args):
         extracted = []
         for arg, kernel_arg in zip(args, self.mapper.arguments):
             anno = kernel_arg.annotation
-            if isinstance(anno, ti.template):
+            if anno == ti.template or isinstance(anno, ti.template):
                 subkey = arg
             else:
                 needs_grad = getattr(arg, "requires_grad", False) if anno.needs_grad is None else anno.needs_grad
-                subkey = (arg.dtype, arg.ndim, needs_grad, anno.boundary)
+                subkey = (arg.dtype, len(arg.shape), needs_grad, anno.boundary)
             extracted.append(subkey)
         key = tuple(extracted)
         field_meta.mapping_key = key
@@ -359,16 +374,29 @@ def _ensure_compiled(self, *args):
     return key
 
 
-def _launch_kernel(self, t_kernel, *args):
+def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
     launch_ctx = t_kernel.make_launch_context()
 
     template_num = 0
     for i, v in enumerate(args):
-        needed = self.arguments[i].annotation
-        if isinstance(needed, ti.template):
+        needed = self.arg_metas[i].annotation
+
+        # template
+        if needed == ti.template or isinstance(needed, ti.template):
             template_num += 1
             continue
 
+        # ti.ndarray
+        if isinstance(v, ti.Ndarray):
+            v_primal = v.arr
+            v_grad = v.grad.arr if v.grad else None
+            if v_grad is None:
+                launch_ctx.set_arg_ndarray((i - template_num,), v_primal)
+            else:
+                launch_ctx.set_arg_ndarray_with_grad((i - template_num,), v_primal, v_grad)
+            continue
+
+        # ti.field
         array_shape = v.shape
         if needed.dtype is None or id(needed.dtype) in primitive_types.type_ids:
             element_dim = 0
@@ -386,7 +414,8 @@ def _launch_kernel(self, t_kernel, *args):
                 )
             if not v.grad.is_contiguous():
                 raise ValueError(
-                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() before passing it into taichi kernel."
+                    "Non contiguous gradient tensors are not supported, please call tensor.grad.contiguous() "
+                    "before passing it into taichi kernel."
                 )
 
         launch_ctx.set_arg_external_array_with_shape(
@@ -399,7 +428,8 @@ def _launch_kernel(self, t_kernel, *args):
 
     try:
         prog = impl.get_runtime().prog
-        compiled_kernel_data = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
+        if compiled_kernel_data is None:
+            compiled_kernel_data = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
         prog.launch_kernel(compiled_kernel_data, launch_ctx)
     except Exception as e:
         e = handle_exception_from_cpp(e)
@@ -409,16 +439,23 @@ def _launch_kernel(self, t_kernel, *args):
 
 
 _to_pytorch_type_fast = functools.lru_cache(maxsize=None)(to_pytorch_type)
-_tensor_to_ext_arr_fast = ti.kernel(tensor_to_ext_arr._primal.func)
-_tensor_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _tensor_to_ext_arr_fast._primal)
-_tensor_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _tensor_to_ext_arr_fast._primal)
-_matrix_to_ext_arr_fast = ti.kernel(matrix_to_ext_arr._primal.func)
-_matrix_to_ext_arr_fast._primal.launch_kernel = types.MethodType(_launch_kernel, _matrix_to_ext_arr_fast._primal)
-_matrix_to_ext_arr_fast._primal.ensure_compiled = types.MethodType(_ensure_compiled, _matrix_to_ext_arr_fast._primal)
+TO_EXT_ARR_FAST_MAP = {}
+for data_type, func in (
+    (ti.lang.ScalarField, tensor_to_ext_arr),
+    (ti.lang.MatrixField, matrix_to_ext_arr),
+    (ti.lang.ScalarNdarray, ndarray_to_ext_arr),
+    (ti.lang.MatrixNdarray, ndarray_matrix_to_ext_arr),
+):
+    func = ti.kernel(func._primal.func)
+    func._primal.launch_kernel = types.MethodType(_launch_kernel, func._primal)
+    func._primal.ensure_compiled = types.MethodType(_ensure_compiled, func._primal)
+    if data_type is ti.lang.MatrixNdarray:
+        func = lambda ndarray, arr, as_vector, *, func=func: func(ndarray, arr, 1, as_vector)
+    TO_EXT_ARR_FAST_MAP[data_type] = func
 
 
-def ti_field_to_torch(
-    field,
+def ti_to_torch(
+    value,
     row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
     col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
     keepdim=True,
@@ -426,25 +463,25 @@ def ti_field_to_torch(
     *,
     unsafe=False,
 ) -> torch.Tensor:
-    """Converts a Taichi field instance to a PyTorch tensor.
+    """Converts a GsTaichi field or ndarray instance to a PyTorch tensor.
 
     Args:
-        field (ti.Field): Field to convert to Pytorch tensor.
+        value (ti.Field | ti.Ndarray): Field or Ndarray to convert to Pytorch tensor.
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
-        col_mask (optional): Columns to extract from batch dimension field after transpose if requested.
+        col_mask (optional): Columns to extract from batch dimension after transpose if requested.
         keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
-        transpose (bool, optional): Whether move to front the first field dimension.
+        transpose (bool, optional): Whether move to front the first non-batch dimension.
         unsafe (bool, optional): Whether to skip validity check of the masks.
 
     Returns:
         torch.tensor: The result torch tensor.
     """
-    # Get field metadata
-    field_id = id(field)
+    # Get metadata
+    field_id = id(value)
     field_meta = FIELD_CACHE.get(field_id)
     if field_meta is None:
         field_meta = FieldMetadata(
-            field.ndim if isinstance(field, ti.lang.MatrixField) else 0, field.shape, field.dtype, None
+            value.ndim if isinstance(value, ti.lang.MatrixField) else 0, value.shape, value.dtype, None
         )
         if len(FIELD_CACHE) == MAX_CACHE_SIZE:
             FIELD_CACHE.popitem(last=False)
@@ -464,7 +501,7 @@ def ti_field_to_torch(
             if mask is None or isinstance(mask, slice):
                 # Slices are always valid by default. Nothing to check.
                 is_out_of_bounds = False
-            elif isinstance(mask, int):
+            elif isinstance(mask, (int, np.integer)):
                 # Do not allow negative indexing for consistency with Taichi
                 is_out_of_bounds = not (0 <= mask < _field_shape[i])
             elif isinstance(mask, torch.Tensor):
@@ -484,12 +521,12 @@ def ti_field_to_torch(
     # Must convert masks to torch if not slice or int since torch will do it anyway.
     # Note that being contiguous is not required and does not affect performance.
     must_allocate = False
-    is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int)))
+    is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int, np.integer)))
     if is_row_mask_tensor:
         _row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
         must_allocate = _row_mask is not row_mask
         row_mask = _row_mask
-    is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int)))
+    is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int, np.integer)))
     if is_col_mask_tensor:
         _col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
         must_allocate = _col_mask is not col_mask
@@ -497,25 +534,26 @@ def ti_field_to_torch(
     if must_allocate:
         gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
-    # Extract field as a whole.
+    # Extract value as a whole.
     # Note that this is usually much faster than using a custom kernel to extract a slice.
     # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
     is_metal = gs.device.type == "mps"
     tc_dtype = _to_pytorch_type_fast(field_meta.dtype)
-    if isinstance(field, ti.lang.ScalarField):
-        if is_metal:
-            out = torch.zeros(size=field_shape, dtype=tc_dtype, device="cpu")
-        else:
-            out = torch.zeros(size=field_shape, dtype=tc_dtype, device=gs.device)
-        _tensor_to_ext_arr_fast(field, out)
+    data_type = type(value)
+    if issubclass(data_type, (ti.lang.ScalarField, ti.lang.ScalarNdarray)):
+        out = torch.zeros(size=field_shape, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
+        TO_EXT_ARR_FAST_MAP[data_type](value, out)
+    elif issubclass(data_type, (ti.lang.MatrixField, ti.lang.MatrixNdarray)):
+        as_vector = value.m == 1
+        shape_ext = (value.n,) if as_vector else (value.n, value.m)
+        out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
+        TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
+    elif issubclass(data_type, ti.lang.VectorNdarray):
+        shape_ext = (value.n,)
+        out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu" if is_metal else gs.device)
+        TO_EXT_ARR_FAST_MAP[ti.lang.MatrixNdarray](value, out, True)
     else:
-        as_vector = field.m == 1
-        shape_ext = (field.n,) if as_vector else (field.n, field.m)
-        if is_metal:
-            out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device="cpu")
-        else:
-            out = torch.empty(field_shape + shape_ext, dtype=tc_dtype, device=gs.device)
-        _matrix_to_ext_arr_fast(field, out, as_vector)
+        gs.raise_exception(f"Unsupported type '{type(value)}'.")
     if is_metal:
         out = out.to(gs.device)
     ti.sync()
@@ -529,8 +567,8 @@ def ti_field_to_torch(
     # Extract slice if necessary.
     # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions,
     # because this required allocating GPU data.
-    is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, int)
-    is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, int)
+    is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, (int, np.integer))
+    is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, (int, np.integer))
     try:
         if is_col_mask_tensor and is_row_mask_tensor:
             if not is_single_col and not is_single_row:

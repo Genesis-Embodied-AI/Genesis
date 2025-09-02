@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -77,7 +77,7 @@ class SPHSolver(Solver):
         # dynamic particle state without gradient
         struct_particle_state_ng = ti.types.struct(
             reordered_idx=gs.ti_int,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # static particle info
@@ -94,7 +94,7 @@ class SPHSolver(Solver):
         struct_particle_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             vel=gs.ti_vec3,
-            active=gs.ti_int,
+            active=gs.ti_bool,
         )
 
         # construct fields
@@ -180,7 +180,7 @@ class SPHSolver(Solver):
         )
 
         # copy to reordered
-        self.particles_ng_reordered.active.fill(0)
+        self.particles_ng_reordered.active.fill(False)
 
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[i_p, i_b].active:
@@ -628,7 +628,7 @@ class SPHSolver(Solver):
 
     @ti.func
     def cubic_kernel(self, r_norm):
-        res = ti.cast(0.0, gs.ti_float)
+        res = gs.ti_float(0.0)
         h = self._support_radius
         # value of cubic spline smoothing kernel
         k = 1.0
@@ -742,7 +742,7 @@ class SPHSolver(Solver):
     ):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
-            self.particles_ng[i_global, i_b].active = active
+            self.particles_ng[i_global, i_b].active = ti.cast(active, gs.ti_bool)
             for j in ti.static(range(3)):
                 self.particles[i_global, i_b].pos[j] = pos[i_p, j]
             self.particles[i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)

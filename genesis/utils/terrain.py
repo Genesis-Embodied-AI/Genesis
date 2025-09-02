@@ -2,11 +2,11 @@ import os
 import math
 import pickle
 
+import fast_simplification
 import numpy as np
 import trimesh
 
 import genesis as gs
-from genesis.ext import fast_simplification
 from genesis.ext.isaacgym import terrain_utils as isaacgym_terrain_utils
 from genesis.options.morphs import Terrain
 
@@ -155,6 +155,7 @@ def parse_terrain(morph: Terrain, surface):
             heightfield,
             horizontal_scale=morph.horizontal_scale,
             vertical_scale=morph.vertical_scale,
+            surface=surface,
             uv_scale=morph.uv_scale if need_uvs else None,
         )
 
@@ -209,12 +210,17 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
                 height[y, x] = mean + scale * variation
 
     height /= terrain.vertical_scale
-    terrain.height_field_raw = height.astype(gs.np_float)
+    terrain.height_field_raw = height
     return terrain
 
 
 def convert_heightfield_to_watertight_trimesh(
-    height_field_raw, horizontal_scale, vertical_scale, slope_threshold=None, uv_scale=None
+    height_field_raw,
+    horizontal_scale,
+    vertical_scale,
+    surface,
+    slope_threshold=None,
+    uv_scale=None,
 ):
     """
     Adapted from Issac Gym's `convert_heightfield_to_trimesh` function.
@@ -269,7 +275,7 @@ def convert_heightfield_to_watertight_trimesh(
     vertices_top = np.zeros((num_rows * num_cols, 3), dtype=np.float32)
     vertices_top[:, 0] = xx.flat
     vertices_top[:, 1] = yy.flat
-    vertices_top[:, 2] = hf.flatten() * vertical_scale
+    vertices_top[:, 2] = (hf * vertical_scale).flat
     triangles_top = -np.ones((2 * (num_rows - 1) * (num_cols - 1), 3), dtype=np.uint32)
     for i in range(num_rows - 1):
         ind0 = np.arange(0, num_cols - 1) + i * num_cols
@@ -284,6 +290,20 @@ def convert_heightfield_to_watertight_trimesh(
         triangles_top[start + 1 : stop : 2, 0] = ind0
         triangles_top[start + 1 : stop : 2, 1] = ind2
         triangles_top[start + 1 : stop : 2, 2] = ind3
+
+    if not surface.double_sided:
+        if uv_scale is not None:
+            uv_top = np.column_stack(
+                (
+                    (xx.flat - xx.min()) / (xx.max() - xx.min()) * uv_scale,
+                    (yy.flat - yy.min()) / (yy.max() - yy.min()) * uv_scale,
+                )
+            )
+            visual = trimesh.visual.TextureVisuals(uv=uv_top)
+        else:
+            visual = None
+
+        vmesh_single = trimesh.Trimesh(vertices_top, triangles_top, visual=visual, process=False)
 
     # bottom plane
     z_min = np.min(vertices_top[:, 2]) - 1.0
@@ -366,7 +386,6 @@ def convert_heightfield_to_watertight_trimesh(
 
     # This is the mesh used for non-sdf purposes.
     # It's losslessly simplified from the full mesh, to save memory cost for storing verts and faces.
-
     v_simp, f_simp = fast_simplification.simplify(
         sdf_mesh.vertices,
         sdf_mesh.faces,
@@ -382,15 +401,16 @@ def convert_heightfield_to_watertight_trimesh(
 
         uv_simp = uvs[idx_map]
 
-        mesh = trimesh.Trimesh(
+        vmesh_full = trimesh.Trimesh(
             v_simp,
             f_simp,
             visual=trimesh.visual.TextureVisuals(uv=uv_simp),
         )
     else:
-        mesh = trimesh.Trimesh(v_simp, f_simp)
+        vmesh_full = trimesh.Trimesh(v_simp, f_simp)
 
-    return mesh, sdf_mesh
+    vmesh_out = vmesh_single if not surface.double_sided else vmesh_full
+    return vmesh_out, sdf_mesh
 
 
 def mesh_to_heightfield(

@@ -3,29 +3,28 @@ requires = ["setuptools", "wheel", "cython>=3.0.0", "numpy>=1.26.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# name = "genesis-world-nightly"
-# version = "0.0.3"
 name = "genesis-world"
-version = "0.2.1"
+version = "0.3.3"
 description = "A universal and generative physics engine"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "taichi >= 1.7.2",
-    "pydantic >= 2.7.1",
-    "numpy >= 1.26.4",
+    "gstaichi==2.1.1",
+    "pydantic>=2.7.1",
+    "numpy>=1.26.4",
     "trimesh",
-    "scipy >= 1.14",
+    "scipy>=1.14",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
     # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
-    "mujoco >= 3.3.0, < 3.4.0",
-    "moviepy >= 2.0.0",
+    "mujoco>=3.3.0,<3.4.0",
+    "moviepy>=2.0.0",
     # Used by `pyrender` to manage onscreen graphical windows
-    "pyglet>=1.5",
+    # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
+    "pyglet>=1.5,!=2.1.8",
     # Used by `pyrender` to load fonts
     "freetype-py",
     # Used by `pyrender` to write low-level OpenGL rendering pipeline
@@ -37,11 +36,11 @@ dependencies = [
     # Optional `trimesh` dependency for loading `.dae` mesh files
     "pycollada",
     # Used for parsing `.glb` mesh files
-    "pygltflib == 1.16.0",
+    "pygltflib==1.16.0",
     # Used for parsing `.usd` mesh files
     "usd-core",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
-    "tetgen >= 0.6.4",
+    "tetgen>=0.6.4",
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
     # Use to display camera images
@@ -57,11 +56,59 @@ dependencies = [
     "z3-solver",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
-    # Motion Planning library
-    # * 1.7.0: First version distributed on PyPI (no pre-compiled binaries for Windows OS).
-    #          Fix OMPL DLL search directory.
-    "ompl>=1.7.0; platform_system != 'Windows'"
+    # Native batch renderer specifically designed for Genesis
+    "gs-madrona==0.0.3; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
+    # Used for mesh simplification
+    "fast_simplification>=0.1.12",
+    # Surface reconstruction library for particle data from SPH simulations
+    "pysplashsurf",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pytest",
+    "pytest-xdist",
+    "pytest-forked",
+    "pytest-random-order",
+    "pytest-print",
+    # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
+    "pytest-rerunfailures<16.0",
+    "syrupy",
+    "huggingface_hub",
+    "wandb",
+    "ipython",
+]
+docs = [
+    # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
+    # See https://github.com/kivy/kivy/issues/8230 which tracks this issue.
+    "sphinx==6.2.1",
+    "sphinx-autobuild",
+    "pydata_sphinx_theme",
+    # For spelling
+    "sphinxcontrib.spelling",
+    # Type hints support
+    "sphinx-autodoc-typehints",
+    # Copy button for code snippets
+    "sphinx_copybutton",
+    # Markdown parser
+    "myst-parser",
+    "sphinx-subfigure",
+    "sphinxcontrib-video",
+    "sphinx-togglebutton",
+    "sphinx_design",
+]
+render = [
+    "pybind11[global]",
+    "open3d",
+]
+usd = [
+    # Used for parsing `.usd` mesh files
+    "usd-core",
+]
+
+[project.scripts]
+gs = "genesis._main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -85,6 +132,7 @@ force-exclude = '''
 
 [tool.pytest.ini_options]
 addopts = [
+    "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
     # "--exitfirst",
@@ -92,7 +140,7 @@ addopts = [
     "--dist=worksteal",
     "--random-order-bucket=global",
     "--random-order-seed=0",
-    "--max-worker-restart=0",
+    # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=40.0",
     "-m not benchmarks",
@@ -106,40 +154,3 @@ markers = [
     "required: marks minimal test set that must pass systematically on any environment before merging.",
 ]
 log_cli_level = "WARNING"
-
-[project.scripts]
-gs = "genesis._main:main"
-
-[project.optional-dependencies]
-dev = [
-    "black",
-    "pytest",
-    "pytest-xdist",
-    "pytest-forked",
-    "pytest-random-order",
-    "pytest-print",
-    "huggingface_hub",
-    "wandb",
-]
-docs = [
-    # Note that currently sphinx 7 does not work, so we must use v6.2.1. See https://github.com/kivy/kivy/issues/8230 which tracks this issue. Once fixed we can use a later version
-    "sphinx==6.2.1",
-    "sphinx-autobuild",
-    "pydata_sphinx_theme",
-    # For spelling
-    "sphinxcontrib.spelling",
-    # Type hints support
-    "sphinx-autodoc-typehints",
-    # Copy button for code snippets
-    "sphinx_copybutton",
-    # Markdown parser
-    "myst-parser",
-    "sphinx-subfigure",
-    "sphinxcontrib-video",
-    "sphinx-togglebutton",
-    "sphinx_design",
-]
-render = [
-    "pybind11[global]",
-    "open3d",
-]

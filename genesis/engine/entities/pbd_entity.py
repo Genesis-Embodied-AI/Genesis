@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 from scipy.spatial import KDTree
 
 import genesis as gs
@@ -70,9 +70,9 @@ class PBDTetEntity(ParticleEntity):
         and performs remeshing based on the particle size.
         """
         # We don't use ParticleEntity.sample() because we need to maintain the remeshed self._mesh as well
-        self._vmesh.apply_transform(gu.trans_quat_to_T(np.array(self._morph.pos), np.array(self._morph.quat)))
-        self._vverts = np.array(self._vmesh.verts)
-        self._vfaces = np.array(self._vmesh.faces)
+        self._vmesh.apply_transform(gu.trans_quat_to_T(np.asarray(self._morph.pos), np.asarray(self._morph.quat)))
+        self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
+        self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
 
         self._mesh = self._vmesh.copy()
         self._mesh.remesh(edge_len_abs=self.particle_size, fix=isinstance(self, PBD3DEntity))
@@ -80,9 +80,9 @@ class PBDTetEntity(ParticleEntity):
     def _add_to_solver_(self):
         self._kernel_add_particles_edges_to_solver(
             f=self._scene.sim.cur_substep_local,
-            particles=self._particles.astype(gs.np_float),
-            edges=self._edges.astype(gs.np_int),
-            edges_len_rest=self._edges_len_rest.astype(gs.np_float),
+            particles=self._particles,
+            edges=self._edges,
+            edges_len_rest=self._edges_len_rest,
             mat_type=self._mat_type,
             active=True,
         )
@@ -114,7 +114,7 @@ class PBDTetEntity(ParticleEntity):
             self.solver.particles[i_p, i_b].dpos = ti.Vector.zero(gs.ti_float, 3)
             self.solver.particles[i_p, i_b].free = True
 
-            self.solver.particles_ng[i_p, i_b].active = active
+            self.solver.particles_ng[i_p, i_b].active = ti.cast(active, gs.ti_bool)
 
         for i_e_ in range(self.n_edges):
             i_e = i_e_ + self._edge_start
@@ -331,8 +331,8 @@ class PBD2DEntity(PBDTetEntity):
             gs.raise_exception("Input mesh has zero surface area.")
         self._mass = self._vmesh.area * self.material.rho
 
-        self._particles = np.array(self._mesh.verts)
-        self._edges = np.array(self._mesh.get_unique_edges())
+        self._particles = np.asarray(self._mesh.verts, dtype=gs.np_float)
+        self._edges = np.asarray(self._mesh.get_unique_edges(), dtype=gs.np_int)
 
         self._particle_mass = self._mass / len(self._particles)
 
@@ -340,7 +340,7 @@ class PBD2DEntity(PBDTetEntity):
         adjacency, inner_edges = trimesh.graph.face_adjacency(mesh=self._mesh.trimesh, return_edges=True)
         v3 = np.sum(self._mesh.faces[adjacency[:, 0]], axis=1) - inner_edges[:, 0] - inner_edges[:, 1]
         v4 = np.sum(self._mesh.faces[adjacency[:, 1]], axis=1) - inner_edges[:, 0] - inner_edges[:, 1]
-        self._inner_edges = np.stack([inner_edges[:, 0], inner_edges[:, 1], v3, v4], axis=1)
+        self._inner_edges = np.stack([inner_edges[:, 0], inner_edges[:, 1], v3, v4], axis=1, dtype=gs.np_int)
 
         self._edges_len_rest = np.linalg.norm(
             self._particles[self._edges[:, 0]] - self._particles[self._edges[:, 1]], axis=1
@@ -359,8 +359,8 @@ class PBD2DEntity(PBDTetEntity):
 
         self._kernel_add_inner_edges_to_solver(
             f=self._scene.sim.cur_substep_local,
-            inner_edges=self._inner_edges.astype(gs.np_int),
-            inner_edges_len_rest=self._inner_edges_len_rest.astype(gs.np_float),
+            inner_edges=self._inner_edges,
+            inner_edges_len_rest=self._inner_edges_len_rest,
         )
 
     @ti.kernel
@@ -469,16 +469,19 @@ class PBD3DEntity(PBDTetEntity):
         self._mass = self._vmesh.volume * self.material.rho
 
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
-        self._particles, self._elems = self._mesh.tetrahedralize(tet_cfg)
+        particles, elems = self._mesh.tetrahedralize(tet_cfg)
+        self._particles = particles.astype(gs.np_float, copy=False)
+        self._elems = elems.astype(gs.np_int, copy=False)
         self._edges = np.array(
             list(
                 set(
-                    tuple(sorted([self._elems[i, j], self._elems[i, k]]))
-                    for i in range(self._elems.shape[0])
+                    tuple(sorted((self._elems[i, j], self._elems[i, k])))
+                    for i in range(len(self._elems))
                     for j in range(4)
                     for k in range(j + 1, 4)
                 )
-            )
+            ),
+            dtype=gs.np_int,
         )
         self._particle_mass = self._mass / len(self._particles)
 
@@ -486,17 +489,13 @@ class PBD3DEntity(PBDTetEntity):
             self._particles[self._edges[:, 0]] - self._particles[self._edges[:, 1]], axis=1
         )
         self._elems_vol_rest = (
-            np.linalg.det(self._particles[self._elems[:, 1:]] - self._particles[self._elems[:, 0:1]]) / 6.0
+            np.linalg.det(self._particles[self._elems[:, 1:]] - self._particles[self._elems[:, :1]]) / 6.0
         )
         self._n_particles = len(self._particles)
 
     def _add_to_solver_(self):
         super()._add_to_solver_()
-
-        self._kernel_add_elems_to_solver(
-            elems=self._elems.astype(gs.np_int),
-            elems_vol_rest=self._elems_vol_rest.astype(gs.np_float),
-        )
+        self._kernel_add_elems_to_solver(elems=self._elems, elems_vol_rest=self._elems_vol_rest)
 
     @ti.kernel
     def _kernel_add_elems_to_solver(

@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -16,20 +16,20 @@ class ForceField(RBC):
     """
 
     def __init__(self):
-        self._active = ti.field(ti.i32, shape=())
-        self._active[None] = 0
+        self._active = ti.field(gs.ti_bool, shape=())
+        self._active[None] = False
 
     def activate(self):
         """
         Activate the force field.
         """
-        self._active[None] = 1
+        self._active[None] = True
 
     def deactivate(self):
         """
         Deactivate the force field.
         """
-        self._active[None] = 0
+        self._active[None] = False
 
     @ti.func
     def get_acc(self, pos, vel, t, i):

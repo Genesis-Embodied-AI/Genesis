@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -22,14 +22,20 @@ class Mesh:
         self.raw_file = morph.file
 
         self.load_file()
-        self.init_transform()
+        self.init_fields()
 
     def load_file(self):
-        # mesh
         self.process_mesh()
-        self.raw_vertices = np.asarray(self.mesh.vertices, dtype=np.float32, order="C")
-        self.raw_vertex_normals_np = np.asarray(self.mesh.vertex_normals, dtype=np.float32, order="C")
-        self.faces_np = np.asarray(self.mesh.faces, dtype=np.int32, order="C").reshape((-1))
+        self.raw_vertices = np.asarray(self.mesh.vertices, dtype=gs.np_float, order="C")
+        self.raw_vertex_normals = np.asarray(self.mesh.vertex_normals, dtype=gs.np_float, order="C")
+        self.faces_np = np.asarray(self.mesh.faces, dtype=gs.np_int, order="C").reshape((-1))
+
+        # apply initial transforms (scale then quat then pos)
+        scale = np.array(self.scale, dtype=gs.np_float)
+        T_init = gu.scale_to_T(scale)
+        self.raw_vertices = gu.transform_by_T(self.raw_vertices, T_init)
+        if self.collision:
+            self.T_mesh_to_sdf_np = self.T_mesh_to_sdf_np @ gu.inv_T(T_init)
 
         self.n_vertices = len(self.raw_vertices)
         self.n_faces = len(self.faces_np)
@@ -42,33 +48,23 @@ class Mesh:
 
         # generate sdf
         if self.collision:
-            raw_mesh = load_mesh(self.raw_file)
-            sdf_data = compute_sdf_data(cleanup_mesh(normalize_mesh(raw_mesh)), self.sdf_res)
+            sdf_data = compute_sdf_data(self.mesh, self.sdf_res)
             self.friction = self.material.friction
             self.sdf_voxels_np = sdf_data["voxels"].astype(gs.np_float, order="C", copy=False)
             self.sdf_res = self.sdf_voxels_np.shape[0]
             self.T_mesh_to_sdf_np = sdf_data["T_mesh_to_sdf"].astype(gs.np_float, order="C", copy=False)
 
-    def init_transform(self):
-        scale = np.array(self.scale, dtype=gs.np_float)
-
-        # apply initial transforms (scale then quat then pos)
-        T_init = gu.scale_to_T(scale)
-        self.init_vertices_np = gu.transform_by_T(self.raw_vertices, T_init).astype(np.float32, order="C", copy=False)
-
-        self.init_vertex_normals_np = self.raw_vertex_normals_np.astype(np.float32, order="C", copy=False)
-
+    def init_fields(self):
         # init ti fields
         self.init_vertices = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
         self.init_vertex_normals = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
         self.faces = ti.field(dtype=gs.ti_int, shape=(self.n_faces))
 
-        self.init_vertices.from_numpy(self.init_vertices_np)
-        self.init_vertex_normals.from_numpy(self.init_vertex_normals_np)
+        self.init_vertices.from_numpy(self.raw_vertices)
+        self.init_vertex_normals.from_numpy(self.raw_vertex_normals)
         self.faces.from_numpy(self.faces_np)
 
         if self.collision:
-            self.T_mesh_to_sdf_np = self.T_mesh_to_sdf_np @ np.linalg.inv(T_init)
             self.sdf_voxels = ti.field(dtype=gs.ti_float, shape=self.sdf_voxels_np.shape)
             self.T_mesh_to_sdf = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=())
 
@@ -90,7 +86,7 @@ class Mesh:
     def sdf_(self, pos_voxels):
         # sdf value from voxels coordinate
         base = ti.floor(pos_voxels, gs.ti_int)
-        signed_dist = ti.cast(0.0, gs.ti_float)
+        signed_dist = gs.ti_float(0.0)
         if (base >= self.sdf_res - 1).any() or (base < 0).any():
             signed_dist = 1.0
         else:
@@ -121,7 +117,7 @@ class Mesh:
     @ti.func
     def normal_(self, pos_voxels):
         # since we are in voxels frame, delta can be a relatively big value
-        delta = ti.cast(1e-2, gs.ti_float)
+        delta = gs.ti_float(1e-2)
         normal_vec = ti.Vector([0, 0, 0], dt=gs.ti_float)
 
         for i in ti.static(range(3)):
@@ -150,7 +146,7 @@ class Mesh:
             signed_dist = self.sdf(f, pos_world, i_b)
             # bigger coup_softness implies that the coupling influence extends further away from the object.
             influence = ti.min(ti.exp(-signed_dist / max(gs.EPS, self.material.coup_softness)), 1)
-            if signed_dist <= 0 or influence > 0.1:
+            if signed_dist <= 0.0 or influence > 0.1:
                 vel_collider = self.vel_collider(f, pos_world, i_b)
 
                 # v w.r.t collider
@@ -158,7 +154,7 @@ class Mesh:
                 normal_vec = self.normal(f, pos_world, i_b)
                 normal_component = rel_v.dot(normal_vec)
 
-                if normal_component < 0:
+                if normal_component < 0.0:
                     # remove inward velocity
                     rel_v_t = rel_v - normal_component * normal_vec
                     rel_v_t_norm = rel_v_t.norm(gs.EPS)
@@ -169,9 +165,10 @@ class Mesh:
                     )
 
                     # tangential component after friction
-                    flag = ti.cast(normal_component < 0, gs.ti_float)
-                    rel_v_t = rel_v_t_friction * flag + rel_v_t * (1 - flag)
-                    vel_mat = vel_collider + rel_v_t * influence + rel_v * (1 - influence)
+                    # FIXME: This formula could be simplified since flag = 1.0 systematically.
+                    flag = ti.cast(normal_component < 0.0, gs.ti_float)
+                    rel_v_t = rel_v_t_friction * flag + rel_v_t * (1.0 - flag)
+                    vel_mat = vel_collider + rel_v_t * influence + rel_v * (1.0 - influence)
 
         return vel_mat
 

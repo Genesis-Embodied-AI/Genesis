@@ -1,13 +1,12 @@
 from typing import TYPE_CHECKING
-import taichi as ti
+import gstaichi as ti
 
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.states.solvers import ToolSolverState
+from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
 from genesis.utils.misc import *
 
 from .base_solver import Solver
-
-from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
 
 
 @ti.data_oriented

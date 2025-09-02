@@ -1,12 +1,25 @@
 from dataclasses import dataclass
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import NDArray, ArrayLike
+
+from genesis.utils.misc import tensor_to_array
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 
 # If not needing runtime checks, we can just use annotated types:
 # Vec3 = Annotated[npt.NDArray[np.float32], (3,)]
 # Aabb = Annotated[npt.NDArray[np.float32], (2, 3)]
+
+
+def _ensure_torch_imported() -> None:
+    global gs
+    import genesis as gs
+    global torch
+    import torch
 
 
 class Vec3:
@@ -35,6 +48,9 @@ class Vec3:
     def __rmul__(self, other: float) -> 'Vec3':
         return Vec3(self.v * np.float32(other))
 
+    def __neg__(self) -> 'Vec3':
+        return Vec3(-self.v)
+
     def dot(self, other: 'Vec3') -> float:
         return np.dot(self.v, other.v).item()
 
@@ -44,11 +60,21 @@ class Vec3:
     def normalized(self) -> 'Vec3':
         return Vec3(self.v / (np.linalg.norm(self.v) + 1e-24))
 
+    def magnitude(self) -> float:
+        return np.linalg.norm(self.v)
+
+    def sqr_magnitude(self) -> float:
+        return np.dot(self.v, self.v)
+
     def copy(self) -> 'Vec3':
         return Vec3(self.v.copy())
 
     def __repr__(self) -> str:
         return f"Vec3({self.v[0]}, {self.v[1]}, {self.v[2]})"
+
+    def as_tensor(self) -> 'torch.Tensor':
+        _ensure_torch_imported()
+        return torch.tensor(self.v, dtype=gs.tc_float) 
 
     @property
     def x(self) -> float:
@@ -67,36 +93,41 @@ class Vec3:
         return cls(np.array([x, y, z], dtype=np.float32))
 
     @classmethod
-    def from_int32(cls, v: NDArray[np.int32]) -> 'Vec3':
+    def from_array(cls, v: np.ndarray) -> 'Vec3':
         assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.int32, f"from_int32 must be initialized with a int32 array, got {v.dtype}"
+        assert v.dtype == np.int32 or v.dtype == np.int64 or v.dtype == np.float32 or v.dtype == np.float64, \
+            f"from_array must be initialized with a array of ints/floats 32/64-bit, got {v.dtype}"
         return cls.from_xyz(*v)
 
     @classmethod
-    def from_int64(cls, v: NDArray[np.int64]) -> 'Vec3':
-        assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.int64, f"from_int64 must be initialized with a int64 array, got {v.dtype}"
-        return cls.from_xyz(*v)
+    def from_tensor(cls, v: 'torch.Tensor') -> 'Vec3':
+        _ensure_torch_imported()
+        array: np.ndarray = tensor_to_array(v)
+        return cls.from_array(array)
 
     @classmethod
-    def from_float64(cls, v: NDArray[np.float64]) -> 'Vec3':
-        assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.float64, f"from_float64 must be initialized with a float64 array, got {v.dtype}"
-        return cls.from_xyz(*v)
+    def from_arraylike(cls, v: ArrayLike) -> 'Vec3':
+        if isinstance(v, np.ndarray):
+            return cls.from_array(v)
+        elif isinstance(v, torch.Tensor):
+            return cls.from_tensor(v)
+        elif isinstance(v, ArrayLike):
+            assert len(v) == 3, f"Vec3 must be initialized with a 3-element ArrayLike, got {len(v)}"
+            return cls.from_xyz(*v)
+        assert False
+
 
     @classmethod
-    def from_any_array(cls, v: np.ndarray) -> 'Vec3':
-        assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        return cls.from_xyz(*v)
-
-
-    @classmethod
-    def zero(cls):
+    def zero(cls) -> 'Vec3':
         return cls(np.array([0, 0, 0], dtype=np.float32))
 
     @classmethod
-    def one(cls):
+    def one(cls) -> 'Vec3':
         return cls(np.array([1, 1, 1], dtype=np.float32))
+
+    @classmethod
+    def full(cls, fill_value: float) -> 'Vec3':
+        return cls(np.full((3,), fill_value, dtype=np.float32))
 
 
 class Quat:
@@ -136,6 +167,10 @@ class Quat:
     def __repr__(self) -> str:
         return f"Quat({self.v[0]}, {self.v[1]}, {self.v[2]}, {self.v[3]})"
 
+    def as_tensor(self) -> 'torch.Tensor':
+        _ensure_torch_imported()
+        return torch.tensor(self.v, dtype=gs.tc_float) 
+
     @property
     def w(self) -> float:
         return self.v[0]
@@ -152,15 +187,31 @@ class Quat:
     def z(self) -> float:
         return self.v[3]
 
-
     @classmethod
     def from_wxyz(cls, w: float, x: float, y: float, z: float) -> 'Quat':
         return cls(np.array([w, x, y, z], dtype=np.float32))
 
     @classmethod
-    def from_any_array(cls, v: np.ndarray) -> 'Quat':
+    def from_array(cls, v: np.ndarray) -> 'Quat':
         assert v.shape == (4,), f"Quat must be initialized with a 4-element array, got {v.shape}"
         return cls.from_wxyz(*v)
+
+    @classmethod
+    def from_tensor(cls, v: 'torch.Tensor') -> 'Quat':
+        _ensure_torch_imported()
+        array: np.ndarray = tensor_to_array(v)
+        return cls.from_array(array)
+
+    @classmethod
+    def from_arraylike(cls, v: ArrayLike) -> 'Quat':
+        if isinstance(v, np.ndarray):
+            return cls.from_array(v)
+        elif isinstance(v, torch.Tensor):
+            return cls.from_tensor(v)
+        elif isinstance(v, ArrayLike):
+            assert len(v) == 4, f"Quat must be initialized with a 4-element ArrayLike, got {len(v)}"
+            return cls.from_wxyz(*v)
+        assert False
 
 
 @dataclass
@@ -190,6 +241,33 @@ class Pose:
         inv_pos = inv_rot * pos_quat * self.rot
         inv_pos = Vec3(-inv_pos.v[1:])
         return Pose(inv_pos, inv_rot)
+
+    def __mul__(self, other: Union['Pose', Vec3]) -> Union['Pose', Vec3]:
+        if isinstance(other, Pose):
+            return Pose(self.pos + self.rot * other.pos, self.rot * other.rot)
+        elif isinstance(other, Vec3):
+            return self.pos + self.rot * other
+        else:
+            return NotImplemented        
+
+    def __repr__(self) -> str:
+        return f"Pose(pos={self.pos}, rot={self.rot})"
+
+    @classmethod
+    def from_geom(cls, geom: 'RigidGeom') -> 'Pose':
+        assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
+        # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
+        pos = Vec3.from_tensor(geom.get_pos())
+        quat = Quat.from_tensor(geom.get_quat())
+        return Pose(pos, quat)
+
+    @classmethod
+    def from_link(cls, link: 'RigidLink') -> 'Pose':
+        assert link._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
+        # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
+        pos = Vec3.from_tensor(link.get_pos())
+        quat = Quat.from_tensor(link.get_quat())
+        return Pose(pos, quat)
 
 
 @dataclass

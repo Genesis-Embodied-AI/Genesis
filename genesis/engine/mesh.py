@@ -1,21 +1,16 @@
 import os
 import pickle as pkl
-from contextlib import redirect_stdout
 
+import fast_simplification
 import numpy as np
 import numpy.typing as npt
-import pyvista as pv
-import tetgen
 import trimesh
-import pymeshlab
 
 import genesis as gs
 from genesis.options.surfaces import Surface
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
-import genesis.utils.usda as usda_utils
 import genesis.utils.particle as pu
-from genesis.ext import fast_simplification
 from genesis.repr_base import RBC
 
 
@@ -61,6 +56,7 @@ class Mesh(RBC):
         self._surface = surface
         self._uvs = uvs
         self._metadata = metadata or {}
+        self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
 
         if self._surface.requires_uv():  # check uvs here
             if self._uvs is None:
@@ -85,13 +81,14 @@ class Mesh(RBC):
         """
         if self._mesh.vertices.shape[0] > 3:
             self._mesh = trimesh.convex.convex_hull(self._mesh)
+            self._metadata["convexified"] = True
         self.clear_visuals()
 
     def decimate(self, decimate_face_num, decimate_aggressiveness, convexify):
         """
         Decimate the mesh.
         """
-        if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > decimate_face_num:
+        if self._mesh.vertices.shape[0] > 3 and len(self._mesh.faces) > decimate_face_num:
             self._mesh.process(validate=True)
             self._mesh = trimesh.Trimesh(
                 *fast_simplification.simplify(
@@ -100,8 +97,9 @@ class Mesh(RBC):
                     target_count=decimate_face_num,
                     agg=decimate_aggressiveness,
                     lossless=(decimate_aggressiveness == 0),
-                )
+                ),
             )
+            self._metadata["decimated"] = True
 
             # need to run convexify again after decimation, because sometimes decimating a convex-mesh can make it non-convex...
             if convexify:
@@ -126,6 +124,9 @@ class Mesh(RBC):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
+            # Importing pymeshlab is very slow and not used very often. Let's delay import.
+            import pymeshlab
+
             gs.logger.info("Remeshing for tetrahedralization...")
             ms = pymeshlab.MeshSet()
             ms.add_mesh(pymeshlab.Mesh(vertex_matrix=self.verts, face_matrix=self.faces))
@@ -152,6 +153,10 @@ class Mesh(RBC):
         """
         Tetrahedralize the mesh.
         """
+        # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+        import pyvista as pv
+        import tetgen
+
         pv_obj = pv.PolyData(
             self.verts, np.concatenate([np.full((self.faces.shape[0], 1), self.faces.shape[1]), self.faces], axis=1)
         )
@@ -229,6 +234,7 @@ class Mesh(RBC):
         """
         if surface is None:
             surface = gs.surfaces.Default()
+            surface.update_texture()
         else:
             surface = surface.copy()
         mesh = mesh.copy(include_cache=True)
@@ -341,22 +347,20 @@ class Mesh(RBC):
         If the morph is a Mesh morph (morphs.Mesh), it could contain multiple submeshes, so we return a list.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
-            if morph.file.endswith(("obj", "ply", "stl")):
+            if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
-
-            elif morph.file.endswith(("glb", "gltf")):
+            elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+            elif morph.is_format(gs.options.morphs.USD_FORMATS):
+                import genesis.utils.usda as usda_utils
 
-            elif morph.file.endswith(("usd", "usda", "usdc", "usdz")):
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
-
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
-
             else:
                 gs.raise_exception(
                     f"File type not supported (yet). Submit a feature request if you need this: {morph.file}."
@@ -384,6 +388,7 @@ class Mesh(RBC):
         """
         Set the mesh's color.
         """
+        self._color = color
         color_texture = gs.textures.ColorTexture(color=tuple(color))
         opacity_texture = color_texture.check_dim(3)
         self._surface.update_texture(color_texture=color_texture, opacity_texture=opacity_texture, force=True)
@@ -422,7 +427,7 @@ class Mesh(RBC):
         return self._mesh
 
     @property
-    def is_convex(self):
+    def is_convex(self) -> bool:
         """
         Whether the mesh is convex.
         """

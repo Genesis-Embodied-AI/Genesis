@@ -68,7 +68,15 @@ class SimOptions(Options):
             self._steps_local = None
 
 
-class CouplerOptions(Options):
+class BaseCouplerOptions(Options):
+    """
+    Base class for all coupler options.
+    """
+
+    pass
+
+
+class LegacyCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the inter-solver coupling.
 
@@ -90,8 +98,6 @@ class CouplerOptions(Options):
         Whether to enable coupling between FEM and MPM solvers. Defaults to True.
     fem_sph : bool, optional
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
-    hydroelastic_contact : bool, optional
-        Whether to enable hydroelastic contact. Defaults to False. Experimental
     """
 
     rigid_mpm: bool = True
@@ -104,9 +110,14 @@ class CouplerOptions(Options):
     fem_sph: bool = True
 
 
-class SAPCouplerOptions(CouplerOptions):
+class SAPCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the inter-solver coupling for the Semi-Analytic Primal (SAP) contact solver used in Drake.
+
+    Note
+    ----
+    Paper reference: https://arxiv.org/abs/2110.10107
+    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
 
     Parameters
     ----------
@@ -115,29 +126,56 @@ class SAPCouplerOptions(CouplerOptions):
     n_pcg_iterations : int, optional
         Number of iterations for the Preconditioned Conjugate Gradient solver. Defaults to 100.
     n_linesearch_iterations : int, optional
-        Number of iterations for the line search solver. Defaults to 10.
-    sap_threshold : float, optional
-        Threshold for the SAP solver. Defaults to 1e-6.
+        Max number of iterations for the line search solver. Defaults to 10.
+    sap_convergence_atol : float, optional
+        Absolute tolerance for SAP convergence. Defaults to 1e-6.
+    sap_convergence_rtol : float, optional
+        Relative tolerance for SAP convergence. Defaults to 1e-5.
+    sap_taud : float, optional
+        Dissipation time scale for SAP. Defaults to 0.1.
+    sap_beta : float, optional
+        Normal regularization parameter for SAP. Defaults to 1.0.
+    sap_sigma : float, optional
+        Friction regularization parameter for SAP. Defaults to 1e-3.
     pcg_threshold : float, optional
         Threshold for the Preconditioned Conjugate Gradient solver. Defaults to 1e-6.
-    linesearch_c : float, optional
-        Line search sufficient decrease parameter. Defaults to 1e-4.
-    linesearch_tau : float, optional
-        Line search step size reduction factor. Defaults to 0.8.
-
-    Note
-    ----
-    Paper reference: https://arxiv.org/abs/2110.10107
-    Drake reference: https://drake.mit.edu/release_notes/v1.5.0.html
+    linesearch_ftol : float, optional
+        Line search sufficient value close to zero for exact linesearch. Defaults to 1e-6.
+    linesearch_max_step_size : float, optional
+        Maximum step size for exact linesearch. Defaults to 1.5.
+    hydroelastic_stiffness : float, optional
+        Stiffness for hydroelastic contact. Defaults to 1e8.
+    point_contact_stiffness : float, optional
+        Stiffness for point contact. Defaults to 1e8.
+    fem_floor_contact_type : str, optional
+        Type of contact against the floor. Defaults to "tet". Can be "tet", "vert", or "none".
+        TET would be the default choice for most cases.
+        VERT would be preferable when the mesh is very coarse, such as a single cube or a tetrahedron.
+    enable_fem_self_tet_contact : bool, optional
+        Whether to use tetrahedral based self-contact. Defaults to True.
+    rigid_floor_contact_type : str, optional
+        Type of contact against the floor for rigid bodies. Defaults to "vert". Can be "vert" or "none".
+    enable_rigid_fem_contact : bool, optional
+        Whether to enable coupling between rigid and FEM solvers. Defaults to True.
     """
 
     n_sap_iterations: int = 5
     n_pcg_iterations: int = 100
     n_linesearch_iterations: int = 10
-    sap_threshold: float = 1e-6
+    sap_convergence_atol: float = 1e-6
+    sap_convergence_rtol: float = 1e-5
+    sap_taud: float = 0.1
+    sap_beta: float = 1.0
+    sap_sigma: float = 1e-3
     pcg_threshold: float = 1e-6
-    linesearch_c: float = 1e-4
-    linesearch_tau: float = 0.8
+    linesearch_ftol: float = 1e-6
+    linesearch_max_step_size: float = 1.5
+    hydroelastic_stiffness: float = 1e8
+    point_contact_stiffness: float = 1e8
+    fem_floor_contact_type: str = "tet"
+    enable_fem_self_tet_contact: bool = True
+    rigid_floor_contact_type: str = "vert"
+    enable_rigid_fem_contact: bool = True
 
 
 ############################ Solvers inside simulator ############################
@@ -213,11 +251,12 @@ class RigidOptions(Options):
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
     contact_resolve_time : float, optional
-        Please note that this option will be deprecated in a future version. Use 'constraint_timeconst' instead.
-    constraint_timeconst : float, optional
-        Time to resolve a constraint. The smaller the value, the more stiff the constraint. This parameter is called
-        'timeconst' in Mujoco (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). None to
-        disable. Defaults to None.
+        Please note that this option will be deprecated in a future version. Use 'constraint_timeconst'
+        instead.
+    constraint_timeconst : float
+        Lower-bound of the default time to resolve the constraint (2*dt). The smaller the value, the more stiff the
+        constraint. This parameter is called 'timeconst' in Mujoco
+        (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
         Whether to use contact island to speed up contact resolving. Defaults to False.
     use_hibernation : bool, optional
@@ -229,8 +268,7 @@ class RigidOptions(Options):
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     use_gjk_collision: bool, optional
-        Whether to use GJK for collision detection. Defaults to False, because it requires more compilation time
-        than MPR or MPR++. Also, it requires more stress testing before being fully supported.
+        Whether to use GJK for collision detection instead of MPR. Defaults to True.
 
     Warning
     -------
@@ -261,11 +299,9 @@ class RigidOptions(Options):
     ls_tolerance: float = 1e-2
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
-    constraint_timeconst: Optional[float] = None
+    constraint_timeconst: float = 0.01
     use_contact_island: bool = False
-    box_box_detection: bool = (
-        False  # collision detection branch for box-box pair, slower but more stable. (Follows mujoco's implementation: https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c)
-    )
+    box_box_detection: bool = True
 
     # hibernation threshold
     use_hibernation: bool = False
@@ -280,7 +316,7 @@ class RigidOptions(Options):
     enable_mujoco_compatibility: bool = False
 
     # GJK collision detection
-    use_gjk_collision: bool = False
+    use_gjk_collision: bool = True
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -446,11 +482,11 @@ class SPHOptions(Options):
         if self.hash_grid_res is None:
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
-            ).astype(int)
-            default_hash_grid_res = np.array([150, 150, 150])
+            ).astype(gs.np_int)
+            default_hash_grid_res = np.array([150, 150, 150], dtype=gs.np_int)
             self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
         else:
-            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(int)
+            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
         # check pressure solver
         pressure_solver_available = ["WCSPH", "DFSPH"]
@@ -535,16 +571,23 @@ class PBDOptions(Options):
             # Otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
-            ).astype(int)
-            default_hash_grid_res = np.array([150, 150, 150])
+            ).astype(gs.np_int)
+            default_hash_grid_res = np.array([150, 150, 150], dtype=gs.np_int)
             self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
         else:
-            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(int)
+            self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
 
 class FEMOptions(Options):
     """
     Options configuring the FEMSolver.
+
+    Note
+    ----
+    - Damping coefficients are used to control the damping effect in the simulation.
+    They are used in the Rayleigh Damping model, which is a common damping model in FEM simulations.
+    Reference: https://doc.comsol.com/5.5/doc/com.comsol.help.sme/sme_ug_modeling.05.083.html
+    - TODO Move it to material parameters in the future instead of solver options.
 
     Parameters
     ----------
@@ -560,11 +603,11 @@ class FEMOptions(Options):
         Whether to use the implicit solver. Defaults to False.
         Implicit solver is a more stable solver for FEM. It can be used with a large time step.
     n_newton_iterations : int, optional
-        Maximum number of Newton iterations. Defaults to 5. Only used when `use_implicit_solver` is True.
+        Maximum number of Newton iterations. Defaults to 1. Only used when `use_implicit_solver` is True.
     n_pcg_iterations : int, optional
-        Maximum number of PCG iterations. Defaults to 100. Only used when `use_implicit_solver` is True.
+        Maximum number of PCG iterations. Defaults to 500. Only used when `use_implicit_solver` is True.
     n_linesearch_iterations : int, optional
-        Maximum number of line search iterations. Defaults to 10. Only used when `use_implicit_solver` is True.
+        Maximum number of line search iterations. Defaults to 0. Only used when `use_implicit_solver` is True.
     newton_dx_threshold : float, optional
         Threshold for the Newton solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
     pcg_threshold : float, optional
@@ -576,14 +619,9 @@ class FEMOptions(Options):
     damping_alpha : float, optional
         Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
     damping_beta : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
-
-    Note
-    ----
-    - Damping coefficients are used to control the damping effect in the simulation.
-    They are used in the Rayleigh Damping model, which is a common damping model in FEM simulations.
-    Reference: https://doc.comsol.com/5.5/doc/com.comsol.help.sme/sme_ug_modeling.05.083.html
-    - TODO Move it to material parameters in the future instead of solver options.
+        Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is True.
+    enable_vertex_constraints : bool, optional
+        Whether to enable vertex constraints. Defaults to False.
     """
 
     dt: Optional[float] = None
@@ -591,15 +629,16 @@ class FEMOptions(Options):
     damping: Optional[float] = 0.0
     floor_height: float = None
     use_implicit_solver: bool = False
-    n_newton_iterations: int = 5
-    n_pcg_iterations: int = 100
-    n_linesearch_iterations: int = 10
+    n_newton_iterations: int = 1
+    n_pcg_iterations: int = 500
+    n_linesearch_iterations: int = 0
     newton_dx_threshold: float = 1e-6
     pcg_threshold: float = 1e-6
     linesearch_c: float = 1e-4
     linesearch_tau: float = 0.5
     damping_alpha: float = 0.5
-    damping_beta: float = 1e-4
+    damping_beta: float = 5e-4
+    enable_vertex_constraints: bool = False
 
 
 class SFOptions(Options):

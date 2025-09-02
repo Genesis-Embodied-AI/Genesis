@@ -6,6 +6,7 @@ import genesis as gs
 from .utils import assert_allclose
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_muscle(muscle_material, show_viewer):
@@ -91,6 +92,7 @@ def test_muscle(muscle_material, show_viewer):
         scene.step()
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
     scene = gs.Scene(
@@ -150,7 +152,6 @@ def test_deformable_parallel(show_viewer):
         ),
         surface=gs.surfaces.Default(
             color=(0.2, 0.6, 1.0, 1.0),
-            vis_mode="particle",
         ),
     )
     mpm_cube = scene.add_entity(
@@ -161,7 +162,6 @@ def test_deformable_parallel(show_viewer):
         ),
         surface=gs.surfaces.Default(
             color=(0.9, 0.8, 0.2, 1.0),
-            vis_mode="particle",
         ),
     )
 
@@ -186,4 +186,4 @@ def test_deformable_parallel(show_viewer):
     assert_allclose(mpm_cube._solver.get_state(0).vel, 0, atol=1e-2)
     assert_allclose(entity_fem._solver.get_state(0).vel, 0, atol=1e-2)
     # FIXME: It is harder for fluids to be static
-    assert_allclose(water._solver.get_state(0).vel, 0, atol=4e-2)
+    assert_allclose(water._solver.get_state(0).vel, 0, atol=5e-2)

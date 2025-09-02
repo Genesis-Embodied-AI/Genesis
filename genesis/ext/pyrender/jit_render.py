@@ -1,19 +1,21 @@
+import os
+
 import numpy as np
-from numba import *
-from numba.extending import intrinsic
+import numba as nb
+
 import OpenGL.GL as GL
 import OpenGL.constant as GL_constant
 from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
+
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
 from .light import DirectionalLight, PointLight
 from .constants import RenderFlags, MAX_N_LIGHTS
-from time import time
 from .numba_gl_wrapper import GLWrapper
 
-import os
 import genesis as gs
 
-os.environ["NUMBA_CACHE_DIR"] = os.path.join(gs.utils.misc.get_cache_dir(), "numba")
+
+_DISABLE_OFFSCREEN_MARKERS = "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ
 
 
 def load_const(const_name):
@@ -60,11 +62,12 @@ RenderFlags_SKIP_CULL_FACES = RenderFlags.SKIP_CULL_FACES
 RenderFlags_SHADOWS_DIRECTIONAL = RenderFlags.SHADOWS_DIRECTIONAL
 RenderFlags_SHADOWS_POINT = RenderFlags.SHADOWS_POINT
 RenderFlags_SKIP_FLOOR = RenderFlags.SKIP_FLOOR
+RenderFlags_OFFSCREEN = RenderFlags.OFFSCREEN
 RenderFlags_REFLECTIVE_FLOOR = RenderFlags.REFLECTIVE_FLOOR
 RenderFlags_FLAT = RenderFlags.FLAT
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def get_uniform_location(pid, name, gl):
     n = len(name)
     arr = np.zeros(n + 1, np.uint8)
@@ -73,7 +76,7 @@ def get_uniform_location(pid, name, gl):
     return gl.glGetUniformLocation(pid, arr.ctypes.data)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_matrix_4fv(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -82,7 +85,7 @@ def set_uniform_matrix_4fv(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_1i(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -91,7 +94,7 @@ def set_uniform_1i(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_1f(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -100,7 +103,7 @@ def set_uniform_1f(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_2f(pid, name, value1, value2, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -109,7 +112,7 @@ def set_uniform_2f(pid, name, value1, value2, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_3fv(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -118,7 +121,7 @@ def set_uniform_3fv(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def set_uniform_4fv(pid, name, value, gl):
     loc = get_uniform_location(pid, name, gl)
     if loc >= 0:
@@ -127,7 +130,7 @@ def set_uniform_4fv(pid, name, value, gl):
         print("uniform not found:", name)
 
 
-@njit
+@nb.jit(nopython=True, cache=True)
 def bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl):
     n = len(light)
     set_uniform_3fv(pid, "ambient_light", ambient_light, gl)
@@ -181,15 +184,13 @@ def bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl
     return active_texture
 
 
-@intrinsic
+@nb.extending.intrinsic
 def address_to_ptr(typingctx, src):
     """returns a void pointer from a given memory address"""
-    from numba.core import types, cgutils
-
-    sig = types.voidptr(src)
+    sig = nb.core.types.voidptr(src)
 
     def codegen(cgctx, builder, sig, args):
-        return builder.inttoptr(args[0], cgutils.voidptr_t)
+        return builder.inttoptr(args[0], nb.core.cgutils.voidptr_t)
 
     return sig, codegen
 
@@ -294,8 +295,8 @@ class JITRenderer:
         self.pbr_mat = np.zeros((n, 9), np.float32)  # base_color <- 4, metallic <- 1, roughness <- 1, emissive <- 3
         self.spec_mat = np.zeros((n, 11), np.float32)  # diffuse <- 4, specular <- 3, glossiness <- 1, emissive <- 3
         self.render_flags = np.zeros(
-            (n, 7), np.int8
-        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent, env shared)
+            (n, 8), np.int8
+        )  # (blend, wireframe, double sided, pbr texture, reflective floor, transparent, marker, env shared)
         self.mode = np.zeros(n, np.int32)
         self.n_instances = np.zeros(n, np.int32)
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
@@ -341,7 +342,8 @@ class JITRenderer:
             self.render_flags[i, 3] = isinstance(material, MetallicRoughnessMaterial)
             self.render_flags[i, 4] = primitive.is_floor and not floor_existed
             self.render_flags[i, 5] = node_list[i].mesh.is_transparent
-            self.render_flags[i, 6] = primitive.env_shared
+            self.render_flags[i, 6] = node_list[i].mesh.is_marker
+            self.render_flags[i, 7] = primitive.env_shared
 
             if primitive.is_floor:
                 floor_existed = True
@@ -364,31 +366,31 @@ class JITRenderer:
         IS_OPENGL_42_AVAILABLE = hasattr(self.gl.wrapper_instance, "glDrawElementsInstancedBaseInstance")
         OPENGL_42_ERROR_MSG = "Seperated env rendering not supported because OpenGL 4.2 not available on this machine."
 
-        @njit(
-            none(
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                int32[:, :],
-                float32[:, :],
-                float32[:, :],
-                int8[:, :],
-                int32[:],
-                int32[:],
-                int32[:],
-                float32[:, :],
-                int32[:],
-                float32[:, :, :, :],
-                float32[:],
-                float32[:, :],
-                float32[:, :],
-                float32[:],
-                int32,
-                float32[:, :],
-                float32[:, :],
-                int32,
-                float32[:],
-                int32,
+        @nb.jit(
+            nb.none(
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.int32[:, :],
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.int8[:, :],
+                nb.int32[:],
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :],
+                nb.int32[:],
+                nb.float32[:, :, :, :],
+                nb.float32[:],
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.float32[:],
+                nb.int32,
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.int32,
+                nb.float32[:],
+                nb.int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -419,6 +421,8 @@ class JITRenderer:
             env_idx,
             gl,
         ):
+            is_rgba = not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG)
+
             det_reflection = np.linalg.det(reflection_mat)
             last_pid = -1
             lighting_texture = 0
@@ -426,12 +430,17 @@ class JITRenderer:
             trans_idx = [i for i in range(len(vao_id)) if render_flags[i, 5]]
             idx = solid_idx + trans_idx
             for id in idx:
-                if render_flags[id, 4] and (flags & RenderFlags_SKIP_FLOOR):
+                # Only render markers on the main graphical window, while skipping plane-reflection
+                if ((render_flags[id, 4] or render_flags[id, 6]) and flags & RenderFlags_SKIP_FLOOR) or (
+                    render_flags[id, 6]
+                    and (not is_rgba or (flags & RenderFlags_OFFSCREEN and _DISABLE_OFFSCREEN_MARKERS))
+                ):
                     continue
+
                 pid = program_id[id]
                 if pid != last_pid:
                     gl.glUseProgram(pid)
-                    if not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG or flags & RenderFlags_FLAT):
+                    if is_rgba and not flags & RenderFlags_FLAT:
                         lighting_texture = bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl)
                         set_uniform_3fv(pid, "cam_pos", cam_pos, gl)
                         set_uniform_matrix_4fv(pid, "reflection_mat", reflection_mat, gl)
@@ -443,21 +452,22 @@ class JITRenderer:
 
                 active_texture = lighting_texture
 
-                if render_flags[id, 4] and (flags & RenderFlags_REFLECTIVE_FLOOR):
-                    gl.glActiveTexture(GL_TEXTURE0 + active_texture)
-                    gl.glBindTexture(GL_TEXTURE_2D, floor_tex)
-                    set_uniform_1i(pid, "floor_tex", active_texture, gl)
-                    set_uniform_1i(pid, "floor_flag", 1, gl)
-                    set_uniform_2f(pid, "screen_size", screen_size[0], screen_size[1], gl)
-                    active_texture += 1
-                elif flags & RenderFlags_REFLECTIVE_FLOOR:
-                    set_uniform_1i(pid, "floor_tex", 0, gl)
-                    set_uniform_1i(pid, "floor_flag", 0, gl)
+                if flags & RenderFlags_REFLECTIVE_FLOOR:
+                    if render_flags[id, 4]:
+                        gl.glActiveTexture(GL_TEXTURE0 + active_texture)
+                        gl.glBindTexture(GL_TEXTURE_2D, floor_tex)
+                        set_uniform_1i(pid, "floor_tex", active_texture, gl)
+                        set_uniform_1i(pid, "floor_flag", 1, gl)
+                        set_uniform_2f(pid, "screen_size", screen_size[0], screen_size[1], gl)
+                        active_texture += 1
+                    else:
+                        set_uniform_1i(pid, "floor_tex", 0, gl)
+                        set_uniform_1i(pid, "floor_flag", 0, gl)
 
                 set_uniform_matrix_4fv(pid, "M", pose[id], gl)
                 gl.glBindVertexArray(vao_id[id])
 
-                if not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG or flags & RenderFlags_FLAT):
+                if is_rgba and not flags & RenderFlags_FLAT:
                     tf = textures[id, 0]
                     texture_list = [
                         "normal_texture",
@@ -497,7 +507,7 @@ class JITRenderer:
                     wf = render_flags[id, 1]
                     if flags & RenderFlags_FLIP_WIREFRAME:
                         wf = not wf
-                    if (flags & RenderFlags_ALL_WIREFRAME) or wf:
+                    if wf or flags & RenderFlags_ALL_WIREFRAME:
                         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
                     else:
                         gl.glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
@@ -521,7 +531,7 @@ class JITRenderer:
                         continue
                     set_uniform_3fv(pid, "color", color_list[id], gl)
 
-                if render_flags[id, 6] or env_idx == -1:
+                if render_flags[id, 7] or env_idx == -1:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstanced(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
@@ -542,18 +552,18 @@ class JITRenderer:
             gl.glUseProgram(0)
             gl.glFlush()
 
-        @njit(
-            none(
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                int32[:],
-                int32[:],
-                int32[:],
-                float32[:, :],
-                float32[:, :],
-                int8[:, :],
-                int32,
+        @nb.jit(
+            nb.none(
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.int32[:],
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :],
+                nb.float32[:, :],
+                nb.int8[:, :],
+                nb.int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -563,8 +573,10 @@ class JITRenderer:
         ):
             last_pid = -1
             for id in range(len(vao_id)):
-                if render_flags[id, 5]:
+                # Do not render shadows for markers and transparent objects
+                if render_flags[id, 5] or render_flags[id, 6]:
                     continue
+
                 pid = program_id[id]
                 if pid != last_pid:
                     gl.glUseProgram(pid)
@@ -584,7 +596,7 @@ class JITRenderer:
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
 
-                if render_flags[id, 6] or env_idx == -1:
+                if render_flags[id, 7] or env_idx == -1:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstanced(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
@@ -605,18 +617,18 @@ class JITRenderer:
             gl.glUseProgram(0)
             gl.glFlush()
 
-        @njit(
-            none(
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                int32[:],
-                int32[:],
-                int32[:],
-                float32[:, :, :],
-                float32[:],
-                int8[:, :],
-                int32,
+        @nb.jit(
+            nb.none(
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.int32[:],
+                nb.int32[:],
+                nb.int32[:],
+                nb.float32[:, :, :],
+                nb.float32[:],
+                nb.int8[:, :],
+                nb.int32,
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -626,8 +638,10 @@ class JITRenderer:
         ):
             last_pid = -1
             for id in range(len(vao_id)):
-                if render_flags[id, 5]:
+                # Do not render shadows for markers and transparent objects
+                if render_flags[id, 5] or render_flags[id, 6]:
                     continue
+
                 pid = program_id[id]
                 if pid != last_pid:
                     gl.glUseProgram(pid)
@@ -648,7 +662,7 @@ class JITRenderer:
 
                 gl.glDisable(GL_PROGRAM_POINT_SIZE)
 
-                if render_flags[id, 6] or env_idx == -1:
+                if render_flags[id, 7] or env_idx == -1:
                     if n_indices[id] > 0:
                         gl.glDrawElementsInstanced(
                             mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), n_instances[id]
@@ -669,7 +683,7 @@ class JITRenderer:
             gl.glUseProgram(0)
             gl.glFlush()
 
-        @njit(float32[:, :](int32, int32, float32, float32, self.gl.wrapper_type), cache=True)
+        @nb.jit(nb.float32[:, :](nb.int32, nb.int32, nb.float32, nb.float32, self.gl.wrapper_type), cache=True)
         def read_depth_buf(width, height, z_near, z_far, gl):
             buf = np.zeros((height, width), np.float32)
             gl.glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, address_to_ptr(buf.ctypes.data))
@@ -680,7 +694,7 @@ class JITRenderer:
                 depth_im = (z_near * z_far) / (z_far + z_near - depth_im * (z_far - z_near)) * 2
             return depth_im
 
-        @njit(uint8[:, :, :](int32, int32, int32, self.gl.wrapper_type), cache=True)
+        @nb.jit(nb.uint8[:, :, :](nb.int32, nb.int32, nb.int32, self.gl.wrapper_type), cache=True)
         def read_color_buf(width, height, rgba, gl):
             if rgba:
                 buf = np.zeros((height, width, 4), np.uint8)
@@ -690,7 +704,7 @@ class JITRenderer:
                 gl.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, address_to_ptr(buf.ctypes.data))
             return buf[::-1, :, :]
 
-        @njit(float32[:, :](float32[:, :, :]), cache=True)
+        @nb.jit(nb.float32[:, :](nb.float32[:, :, :]), cache=True)
         def update_normal_flat(p):
             face_normal = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
             vertex_normal = np.zeros((p.shape[0] * 3, 3), p.dtype)
@@ -702,7 +716,7 @@ class JITRenderer:
                 vertex_normal[f * 3 + 2] = n
             return vertex_normal
 
-        @njit(float32[:, :](float32[:, :], int32[:, :]), cache=True)
+        @nb.jit(nb.float32[:, :](nb.float32[:, :], nb.int32[:, :]), cache=True)
         def update_normal_smooth(p, idx):
             face_normal = np.cross(p[idx[:, 1]] - p[idx[:, 0]], p[idx[:, 2]] - p[idx[:, 0]])
             vertex_normal = np.zeros_like(p)
@@ -714,7 +728,7 @@ class JITRenderer:
                 vertex_normal[v] /= np.linalg.norm(vertex_normal[v])
             return vertex_normal
 
-        @njit(none(int64[:, :], self.gl.wrapper_type), cache=True)
+        @nb.jit(nb.none(nb.int64[:, :], self.gl.wrapper_type), cache=True)
         def update_buffer(updates, gl):
             for i in range(updates.shape[0]):
                 buffer_id = updates[i, 0]
@@ -769,9 +783,9 @@ class JITRenderer:
             self.shadow_map,
             self.light_matrix,
             self.ambient_light,
-            V.astype(np.float32),
-            P.astype(np.float32),
-            cam_pos.astype(np.float32),
+            V.astype(np.float32, copy=False),
+            P.astype(np.float32, copy=False),
+            cam_pos.astype(np.float32, copy=False),
             flags,
             color_list if flags & RenderFlags.SEG else self.pbr_mat,
             reflection_mat,
@@ -792,8 +806,8 @@ class JITRenderer:
             self.mode,
             self.n_instances,
             self.n_indices,
-            V.astype(np.float32),
-            P.astype(np.float32),
+            V.astype(np.float32, copy=False),
+            P.astype(np.float32, copy=False),
             self.render_flags,
             env_idx,
             self.gl.wrapper_instance,
@@ -810,8 +824,8 @@ class JITRenderer:
             self.mode,
             self.n_instances,
             self.n_indices,
-            light_matrix.astype(np.float32),
-            light_pos.astype(np.float32),
+            light_matrix.astype(np.float32, copy=False),
+            light_pos.astype(np.float32, copy=False),
             self.render_flags,
             env_idx,
             self.gl.wrapper_instance,
@@ -831,6 +845,10 @@ class JITRenderer:
             return self._update_normal_flat(vertices.reshape((-1, 3, 3)))
 
     def update_buffer(self, buffer_updates):
+        # Early return if nothing to do
+        if not buffer_updates:
+            return
+
         updates = np.zeros((len(buffer_updates), 3), dtype=np.int64)
         buffers = []
         for idx, (id, data) in enumerate(buffer_updates.items()):

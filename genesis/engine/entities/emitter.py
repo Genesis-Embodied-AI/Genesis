@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -101,6 +101,7 @@ class Emitter(RBC):
         else:
             gs.raise_exception(f"Unsupported nozzle shape: {droplet_shape}.")
 
+        direction = np.asarray(direction, dtype=gs.np_float)
         if np.linalg.norm(direction) < gs.EPS:
             gs.raise_exception("Zero-length direction.")
         else:
@@ -108,7 +109,6 @@ class Emitter(RBC):
 
         p_size = self._solver.particle_size if p_size is None else p_size
 
-        pos = np.array(pos)
         if droplet_length is None:
             # Use the speed to determine the length of the droplet in the emitting direction
             droplet_length = speed * self._solver.substep_dt * self._sim.substeps + self._acc_droplet_len
@@ -148,10 +148,10 @@ class Emitter(RBC):
                 gs.raise_exception()
 
             positions = gu.transform_by_trans_R(
-                positions,
-                pos,
+                positions.astype(gs.np_float, copy=False),
+                np.asarray(pos, dtype=gs.np_float),
                 gu.z_up_to_R(direction) @ gu.axis_angle_to_R(np.array([0.0, 0.0, 1.0], dtype=gs.np_float), theta),
-            ).astype(gs.np_float)
+            )
 
             positions = np.tile(positions[np.newaxis], (self._sim._B, 1, 1))
 
@@ -161,8 +161,8 @@ class Emitter(RBC):
             n_particles = positions.shape[1]
 
             # Expand vels with batch dimension
-            vels = np.tile(direction * speed, (n_particles, 1)).astype(gs.np_float)
-            vels = np.tile(vels[np.newaxis], (self._sim._B, 1, 1))
+            vels = speed * direction
+            vels = np.tile(vels.reshape((1, 1, -1)), (self._sim._B, n_particles, 1))
 
             if n_particles > self._entity.n_particles:
                 gs.logger.warning(

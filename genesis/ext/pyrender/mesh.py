@@ -29,11 +29,12 @@ class Mesh(object):
         If False, the mesh will not be rendered.
     """
 
-    def __init__(self, primitives, name=None, weights=None, is_visible=True):
+    def __init__(self, primitives, name=None, weights=None, is_visible=True, is_marker=False):
         self.primitives = primitives
         self.name = name
         self.weights = weights
         self.is_visible = is_visible
+        self.is_marker = is_marker
 
         self._bounds = None
 
@@ -49,43 +50,19 @@ class Mesh(object):
         self._name = value
 
     @property
-    def primitives(self):
-        """list of :class:`Primitive` : The primitives associated
-        with this mesh.
-        """
-        return self._primitives
-
-    @primitives.setter
-    def primitives(self, value):
-        self._primitives = value
-
-    @property
-    def weights(self):
-        """(k,) float : Weights to be applied to morph targets."""
-        return self._weights
-
-    @weights.setter
-    def weights(self, value):
-        self._weights = value
-
-    @property
-    def is_visible(self):
-        """bool : Whether the mesh is visible."""
-        return self._is_visible
-
-    @is_visible.setter
-    def is_visible(self, value):
-        self._is_visible = value
-
-    @property
     def bounds(self):
         """(2,3) float : The axis-aligned bounds of the mesh."""
         if self._bounds is None:
-            bounds = np.array([[np.inf, np.inf, np.inf], [-np.inf, -np.inf, -np.inf]])
-            for p in self.primitives:
-                bounds[0] = np.minimum(bounds[0], p.bounds[0])
-                bounds[1] = np.maximum(bounds[1], p.bounds[1])
-            self._bounds = bounds
+            if self.primitives:
+                self._bounds = np.stack(
+                    (
+                        np.min([p.bounds[0] for p in self.primitives], axis=0),
+                        np.max([p.bounds[1] for p in self.primitives], axis=0),
+                    ),
+                    axis=0,
+                )
+            else:
+                self._bounds = np.zeros((2, 3))
         return self._bounds
 
     @property
@@ -98,12 +75,12 @@ class Mesh(object):
     @property
     def extents(self):
         """(3,) float : The lengths of the axes of the mesh's AABB."""
-        return np.diff(self.bounds, axis=0).reshape(-1)
+        return self.bounds[1] - self.bounds[0]
 
     @property
     def scale(self):
         """(3,) float : The length of the diagonal of the mesh's AABB."""
-        return np.linalg.norm(self.extents)
+        return max(np.linalg.norm(self.extents), 1e-7)
 
     @property
     def is_transparent(self):
@@ -114,7 +91,7 @@ class Mesh(object):
         return False
 
     @staticmethod
-    def from_points(points, name=None, colors=None, normals=None, is_visible=True, poses=None):
+    def from_points(points, name=None, colors=None, normals=None, is_visible=True, poses=None, is_marker=False):
         """Create a Mesh from a set of points.
 
         Parameters
@@ -138,7 +115,7 @@ class Mesh(object):
             The created mesh.
         """
         primitive = Primitive(positions=points, normals=normals, color_0=colors, mode=GLTF.POINTS, poses=poses)
-        mesh = Mesh(primitives=[primitive], name=name, is_visible=is_visible)
+        mesh = Mesh(primitives=[primitive], name=name, is_visible=is_visible, is_marker=is_marker)
         return mesh
 
     @staticmethod
@@ -147,6 +124,7 @@ class Mesh(object):
         name=None,
         material=None,
         is_visible=True,
+        is_marker=False,
         poses=None,
         wireframe=False,
         smooth=False,
@@ -240,7 +218,7 @@ class Mesh(object):
                 )
             )
 
-        return Mesh(primitives=primitives, name=name, is_visible=is_visible)
+        return Mesh(primitives=primitives, name=name, is_visible=is_visible, is_marker=is_marker)
 
     @staticmethod
     def _get_trimesh_props(mesh, smooth=False, material=None):
@@ -266,7 +244,7 @@ class Mesh(object):
                     else:
                         colors = vc[mesh.faces].reshape((3 * len(mesh.faces), vc.shape[1]))
                 material = MetallicRoughnessMaterial(
-                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    alphaMode="OPAQUE" if colors.shape[-1] < 4 or (colors[..., 3] == 255).all() else "BLEND",
                     baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                     metallicFactor=0.2,
                     roughnessFactor=0.8,
@@ -277,9 +255,8 @@ class Mesh(object):
                     raise ValueError("Cannot use face colors with a smooth mesh")
                 else:
                     colors = np.repeat(mesh.visual.face_colors, 3, axis=0)
-
                 material = MetallicRoughnessMaterial(
-                    alphaMode="OPAQUE" if (colors[..., 3] == 255).all() else "BLEND",
+                    alphaMode="OPAQUE" if colors.shape[-1] < 4 or (colors[..., 3] == 255).all() else "BLEND",
                     baseColorFactor=[1.0, 1.0, 1.0, 1.0],
                     metallicFactor=0.2,
                     roughnessFactor=0.8,

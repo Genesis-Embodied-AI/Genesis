@@ -77,7 +77,7 @@ def get_glb_data_from_accessor(glb, accessor_index):
             data_slice = buffer_data[start:end]
             array[i] = np.frombuffer(data_slice, dtype=dtype, count=num_components)
 
-    return array.reshape([count, *type_to_count[data_type][1]])
+    return array.reshape((count, *type_to_count[data_type][1]))
 
 
 def get_glb_image(glb, image_index, image_type=None):
@@ -219,8 +219,9 @@ def parse_glb_material(glb, material_index, surface):
         if material.emissiveFactor is not None:
             emissive_factor = np.array(material.emissiveFactor, dtype=np.float32)
 
-        if emissive_factor is not None and np.any(emissive_factor > 0.0):  # Make sure to check emissive
-            emissive_texture = mu.create_texture(emissive_image, emissive_factor, "srgb")
+        emissive_texture = mu.create_texture(emissive_image, emissive_factor, "srgb")
+        if emissive_texture.is_black():  # Make sure to check emissive
+            emissive_texture = None
 
     # TODO: Parse them!
     for extension_name, extension_material in material.extensions.items():
@@ -317,7 +318,7 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
                         primitive.material, parse_glb_material(glb, primitive.material, surface)
                     )
             else:
-                material, uv_used, material_name = None, 0, ""
+                material, uv_used, material_name = surface.copy(), 0, ""
 
             uvs = None
             if "KHR_draco_mesh_compression" in primitive.extensions:

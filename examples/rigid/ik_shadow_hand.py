@@ -20,12 +20,12 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             gravity=(0, 0, 0),
             enable_collision=False,
             enable_joint_limit=False,
         ),
+        show_viewer=args.vis,
     )
 
     target_1 = scene.add_entity(
@@ -66,24 +66,24 @@ def main():
     target_quat = np.array([1, 0, 0, 0])
     index_finger_distal = robot.get_link("index_finger_distal")
     middle_finger_distal = robot.get_link("middle_finger_distal")
-    forearm = robot.get_link("forearm")
+    wrist = robot.get_link("wrist")
 
     center = np.array([0.5, 0.5, 0.2])
     r1 = 0.1
     r2 = 0.13
 
-    for i in range(2000):
+    for i in range(100):
         index_finger_pos = center + np.array([np.cos(i / 90 * np.pi), np.sin(i / 90 * np.pi), 0]) * r1
         middle_finger_pos = center + np.array([np.cos(i / 90 * np.pi), np.sin(i / 90 * np.pi), 0]) * r2
-        forearm_pos = index_finger_pos - np.array([0, 0, 0.40])
+        wrist_pos = index_finger_pos - np.array([0, 0, 0.20])
 
         target_1.set_qpos(np.concatenate([index_finger_pos, target_quat]))
         target_2.set_qpos(np.concatenate([middle_finger_pos, target_quat]))
-        target_3.set_qpos(np.concatenate([forearm_pos, target_quat]))
+        target_3.set_qpos(np.concatenate([wrist_pos, target_quat]))
 
         qpos = robot.inverse_kinematics_multilink(
-            links=[index_finger_distal, middle_finger_distal, forearm],
-            poss=[index_finger_pos, middle_finger_pos, forearm_pos],
+            links=[index_finger_distal, middle_finger_distal, wrist],
+            poss=[index_finger_pos, middle_finger_pos, wrist_pos],
         )
 
         robot.set_qpos(qpos)

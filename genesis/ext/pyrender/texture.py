@@ -163,6 +163,7 @@ class Texture(object):
     ##################
     # OpenGL code
     ##################
+
     def _add_to_context(self):
         if self._texid is not None:
             return
@@ -213,9 +214,9 @@ class Texture(object):
 
         glTexParameteri(self.tex_type, GL_TEXTURE_WRAP_S, self.sampler.wrapS)
         glTexParameteri(self.tex_type, GL_TEXTURE_WRAP_T, self.sampler.wrapT)
-        border_color = 255 * np.ones(4).astype(np.uint8)
+        border_color = np.full((4,), fill_value=255, dtype=np.uint8)
         if self.data_format == GL_FLOAT:
-            border_color = np.ones(4).astype(np.float32)
+            border_color = np.ones((4,), dtype=np.float32)
         glTexParameterfv(self.tex_type, GL_TEXTURE_BORDER_COLOR, border_color)
 
         if texture_filter_anisotropic.glInitTextureFilterAnisotropicEXT():
@@ -229,9 +230,12 @@ class Texture(object):
 
     def _remove_from_context(self):
         if self._texid is not None:
-            # TODO OPENGL BUG?
-            # glDeleteTextures(1, [self._texid])
-            glDeleteTextures([self._texid])
+            try:
+                # TODO OPENGL BUG?
+                # glDeleteTextures(1, [self._texid])
+                glDeleteTextures([self._texid])
+            except OpenGL.error.Error:
+                pass
             self._texid = None
 
     def _in_context(self):
@@ -320,9 +324,12 @@ class CubeMapTexture(object):
 
     def _remove_from_context(self):
         if self._texid is not None:
-            # TODO OPENGL BUG?
-            # glDeleteTextures(1, [self._texid])
-            glDeleteTextures([self._texid])
+            try:
+                # TODO OPENGL BUG?
+                # glDeleteTextures(1, [self._texid])
+                glDeleteTextures([self._texid])
+            except OpenGL.error.Error:
+                pass
             self._texid = None
 
     def _in_context(self):

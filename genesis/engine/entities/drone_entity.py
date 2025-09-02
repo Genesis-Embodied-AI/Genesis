@@ -2,7 +2,7 @@ import os
 import xml.etree.ElementTree as ET
 
 import torch
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.misc as mu
@@ -75,7 +75,7 @@ class DroneEntity(RigidEntity):
             gs.raise_exception("`propellels_rpm` cannot be negative.")
         self._propellers_revs = (self._propellers_revs + propellels_rpm) % (60 / self.solver.dt)
 
-        self.solver._kernel_set_drone_rpm(
+        self.solver.set_drone_rpm(
             self._n_propellers,
             self._propellers_link_idxs,
             propellels_rpm,
@@ -92,7 +92,7 @@ class DroneEntity(RigidEntity):
         This method is a no-op if animation is disabled due to missing visual geometry.
         """
         if self._animate_propellers:
-            self.solver._update_drone_propeller_vgeoms(
+            self.solver.update_drone_propeller_vgeoms(
                 self._n_propellers, self._propellers_vgeom_idxs, self._propellers_revs, self._propellers_spin
             )
 

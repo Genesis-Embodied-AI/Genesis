@@ -1,18 +1,19 @@
 import hashlib
+import json
 import math
 import os
 import pickle as pkl
 from functools import lru_cache
-
+from pathlib import Path
 
 import numpy as np
 import trimesh
 from PIL import Image
+import OpenEXR
+import Imath
 
 import coacd
 import igl
-import pyvista as pv
-import tetgen
 
 import genesis as gs
 
@@ -20,10 +21,12 @@ from . import geom as gu
 from .misc import (
     get_assets_dir,
     get_cvx_cache_dir,
+    get_exr_cache_dir,
     get_gsd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
+    get_usd_cache_dir,
     get_tet_cache_dir,
 )
 
@@ -130,6 +133,26 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
 
 
+def get_exr_path(file_path):
+    hashkey = get_file_hashkey(file_path)
+    return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
+
+
+def get_usd_zip_path(file_path):
+    hashkey = get_file_hashkey(file_path)
+    return os.path.join(get_usd_cache_dir(), "zip", hashkey)
+
+
+def get_usd_bake_path(file_path):
+    hashkey = get_file_hashkey(file_path)
+    return os.path.join(get_usd_cache_dir(), "bake", hashkey)
+
+
+def get_file_hashkey(file):
+    file_obj = Path(file)
+    return get_hashkey(file_obj.resolve().as_posix().encode(), str(file_obj.stat().st_size).encode())
+
+
 def get_hashkey(*args):
     hasher = hashlib.sha256()
     for arg in args:
@@ -190,9 +213,9 @@ def compute_sdf_data(mesh, res):
     query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
     voxels, *_ = igl.signed_distance(query_points, mesh.vertices, mesh.faces)
-    voxels = voxels.reshape([res, res, res])
+    voxels = voxels.reshape((res, res, res)).astype(gs.np_float, copy=False)
 
-    T_mesh_to_sdf = np.eye(4)
+    T_mesh_to_sdf = np.eye(4, dtype=gs.np_float)
     T_mesh_to_sdf[:3, :3] *= (res - 1) / (voxels_radius * 2)
     T_mesh_to_sdf[:3, 3] = (res - 1) / 2
 
@@ -425,20 +448,28 @@ def postprocess_collision_geoms(
     for g_info in g_infos:
         mesh = g_info["mesh"]
         tmesh = mesh.trimesh
-        num_vertices = len(tmesh.vertices)
-        if not decimate and num_vertices > 5000:
+
+        num_faces = len(tmesh.faces)
+        if not decimate and num_faces > 5000:
             gs.logger.warning(
-                f"At least one of the meshes contain many vertices ({num_vertices}). Consider setting "
+                f"At least one of the meshes contain many faces ({num_faces}). Consider setting "
                 "'morph.decimate=True' to speed up collision detection and improve numerical stability."
             )
         if decimate and decimate_face_num < 100:
             gs.logger.warning(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
+
+        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
+        if not must_decimate:
+            gs.logger.debug(
+                "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
+            )
+
         mesh = gs.Mesh.from_trimesh(
             mesh=tmesh,
             convexify=convexify,
-            decimate=decimate,
+            decimate=decimate and must_decimate,
             decimate_face_num=decimate_face_num,
             decimate_aggressiveness=decimate_aggressiveness,
             surface=gs.surfaces.Collision(),
@@ -583,7 +614,7 @@ def create_camera_frustum(camera, color):
     # Create the frustum mesh
     frustum_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     frustum_mesh.visual = trimesh.visual.ColorVisuals(
-        vertex_colors=np.tile(color, [len(frustum_mesh.vertices), 1]).astype(float)
+        vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(frustum_mesh.vertices), 1))
     )
     return trimesh.util.concatenate([camera_mesh, frustum_mesh])
 
@@ -773,9 +804,9 @@ def create_arrow(
 
 
 def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=12):
-    vec = np.asarray(end) - np.asarray(start)
+    vec = end - start
     length = np.linalg.norm(vec)
-    mesh = create_cylinder(radius, length, sections)  # along z-axis
+    mesh = create_cylinder(radius, length, sections, color)  # along z-axis
     mesh._data["vertices"][:, -1] += length / 2.0
     mesh.vertices = gu.transform_by_trans_R(mesh._data["vertices"], start, gu.z_up_to_R(vec))
     return mesh
@@ -858,23 +889,39 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
+def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color=None):
     thickness = 1e-2  # for safety
-    mesh = trimesh.creation.box(extents=[size, size, thickness])
+    mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
+
+    half_x, half_y = (plane_size[0] * 0.5, plane_size[1] * 0.5)
+    verts = np.array(
+        [
+            [-half_x, -half_y, 0.0],
+            [half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, half_y, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+    vmesh = trimesh.Trimesh(verts, faces, process=False)
+    vmesh.vertices[:, 2] -= thickness / 2
+    vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
     if color is None:  # use checkerboard texture
-        mesh.visual = trimesh.visual.TextureVisuals(
+        n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
+        vmesh.visual = trimesh.visual.TextureVisuals(
             uv=np.array(
                 [
                     [0, 0],
+                    [n_tile_x, 0],
+                    [n_tile_x, n_tile_y],
                     [0, 0],
-                    [0, size],
-                    [0, size],
-                    [size, 0],
-                    [size, 0],
-                    [size, size],
-                    [size, size],
+                    [n_tile_x, n_tile_y],
+                    [0, n_tile_y],
                 ],
                 dtype=np.float32,
             ),
@@ -883,8 +930,11 @@ def create_plane(size=1e3, color=None, normal=(0.0, 0.0, 1.0)):
             ),
         )
     else:
-        mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(color, [len(mesh.vertices), 1]).astype(float))
-    return mesh
+        vmesh.visual = trimesh.visual.ColorVisuals(
+            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
+        )
+
+    return vmesh, mesh
 
 
 def generate_tetgen_config_from_morph(morph):
@@ -931,6 +981,10 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
+    # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+    import pyvista as pv
+    import tetgen
+
     pv_obj = pv.PolyData(
         mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
     )
@@ -951,11 +1005,10 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
     else:
         # get cell centroids
         cells = grid.cells.reshape(-1, 5)[:, 1:]
-        cell_center = grid.points[cells].mean(1)
+        cell_center = grid.points[cells].mean(axis=1)
 
         # extract cells below the 0 xy plane
-        mask = cell_center[:, 2] < 0
-        cell_ind = mask.nonzero()[0]
+        cell_ind = (cell_center[:, 2] < 0.0).nonzero(as_tuple=False)
         subgrid = grid.extract_cells(cell_ind)
 
         # advanced plotting
@@ -965,8 +1018,37 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
                 scalars=cell_qual, stitle="Quality", cmap="bwr", clim=[0, 1], flip_scalars=True, show_edges=True
             )
         else:
+            # Importing pyvista is very slow and not used very often. Let's delay import.
+            import pyvista as pv
+
             plotter = pv.Plotter()
             plotter.add_mesh(subgrid, "lightgrey", lighting=True, show_edges=True)
             plotter.add_mesh(pv_data, "r", "wireframe")
             plotter.add_legend([[" Input Mesh ", "r"], [" Tessellated Mesh ", "black"]])
             plotter.show()
+
+
+def check_exr_compression(exr_path):
+    exr_file = OpenEXR.InputFile(exr_path)
+    exr_header = exr_file.header()
+    if exr_header["compression"].v > Imath.Compression.PIZ_COMPRESSION:
+        new_exr_path = get_exr_path(exr_path)
+        if os.path.exists(new_exr_path):
+            gs.logger.info(f"Assets of fixed compression detected and used: {new_exr_path}.")
+        else:
+            gs.logger.warning(
+                f"EXR image {exr_path}'s compression type {exr_header['compression']} is not supported. "
+                f"Converting to compression type ZIP_COMPRESSION and saving to {new_exr_path}."
+            )
+
+            channel_data = {channel: exr_file.channel(channel) for channel in exr_header["channels"]}
+            exr_header["compression"] = Imath.Compression(Imath.Compression.ZIP_COMPRESSION)
+
+            os.makedirs(os.path.dirname(new_exr_path), exist_ok=True)
+            new_exr_file = OpenEXR.OutputFile(new_exr_path, exr_header)
+            new_exr_file.writePixels(channel_data)
+            new_exr_file.close()
+
+        exr_path = new_exr_path
+
+    exr_file.close()
