@@ -1,23 +1,30 @@
 import torch
 import math
 from typing import Literal
+
 import genesis as gs
-from genesis.utils.geom import xyz_to_quat, transform_quat_by_quat, transform_by_quat
+from genesis.utils.geom import (
+    xyz_to_quat,
+    transform_quat_by_quat,
+    transform_by_quat,
+)
 
 
 class GraspEnv:
     def __init__(
         self,
-        num_envs,
-        env_cfg,
-        reward_cfg,
-        robot_cfg,
-        show_viewer=False,
-    ):
-        self.num_envs = num_envs
+        env_cfg: dict,
+        reward_cfg: dict,
+        robot_cfg: dict,
+        show_viewer: bool = False,
+    ) -> None:
+        self.num_envs = env_cfg["num_envs"]
         self.num_obs = env_cfg["num_obs"]
         self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
+        self.image_width = env_cfg["image_resolution"][0]
+        self.image_height = env_cfg["image_resolution"][1]
+        self.rgb_image_shape = (3, self.image_height, self.image_width)
         self.device = gs.device
 
         self.ctrl_dt = env_cfg["ctrl_dt"]
@@ -31,20 +38,23 @@ class GraspEnv:
         # == setup scene ==
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=self.ctrl_dt, substeps=2),
-            viewer_options=gs.options.ViewerOptions(
-                max_FPS=int(0.5 / self.ctrl_dt),
-                camera_pos=(2.0, 0.0, 2.5),
-                camera_lookat=(0.0, 0.0, 0.5),
-                camera_fov=40,
-            ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
             rigid_options=gs.options.RigidOptions(
                 dt=self.ctrl_dt,
                 constraint_solver=gs.constraint_solver.Newton,
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
+            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
+            viewer_options=gs.options.ViewerOptions(
+                max_FPS=int(0.5 / self.ctrl_dt),
+                camera_pos=(2.0, 0.0, 2.5),
+                camera_lookat=(0.0, 0.0, 0.5),
+                camera_fov=40,
+            ),
             profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+            renderer=gs.options.renderers.BatchRenderer(
+                use_rasterizer=env_cfg["use_rasterizer"],
+            ),
             show_viewer=show_viewer,
         )
 
@@ -73,19 +83,34 @@ class GraspEnv:
                 ),
             ),
         )
-
-        # == add camera ==
         if self.env_cfg["visualize_camera"]:
-            self.cam = self.scene.add_camera(
+            self.vis_cam = self.scene.add_camera(
                 res=(1280, 720),
                 pos=(1.5, 0.0, 0.2),
-                lookat=(0, 0, 0.2),
-                fov=50,
-                GUI=True,
+                lookat=(0.0, 0.0, 0.2),
+                fov=60,
+                GUI=self.env_cfg["visualize_camera"],
+                debug=True,
             )
 
+        # == add stero camera ==
+        self.left_cam = self.scene.add_camera(
+            res=(self.image_width, self.image_height),
+            pos=(1.25, 0.3, 0.3),
+            lookat=(0.0, 0.0, 0.0),
+            fov=60,
+            GUI=self.env_cfg["visualize_camera"],
+        )
+        self.right_cam = self.scene.add_camera(
+            res=(self.image_width, self.image_height),
+            pos=(1.25, -0.3, 0.3),
+            lookat=(0.0, 0.0, 0.0),
+            fov=60,
+            GUI=self.env_cfg["visualize_camera"],
+        )
+
         # build
-        self.scene.build(n_envs=num_envs)
+        self.scene.build(n_envs=env_cfg["num_envs"])
         # set pd gains (must be called after scene.build)
         self.robot.set_pd_gains()
 
@@ -99,15 +124,16 @@ class GraspEnv:
         self.keypoints_offset = self.get_keypoint_offsets(batch_size=self.num_envs, device=self.device, unit_length=0.5)
         # == init buffers ==
         self._init_buffers()
+        self.reset()
 
-    def _init_buffers(self):
+    def _init_buffers(self) -> None:
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=gs.device)
         self.goal_pose = torch.zeros(self.num_envs, 7, device=gs.device)
         self.extras = dict()
         self.extras["observations"] = dict()
 
-    def reset_idx(self, envs_idx):
+    def reset_idx(self, envs_idx: torch.Tensor) -> None:
         if len(envs_idx) == 0:
             return
         self.episode_length_buf[envs_idx] = 0
@@ -122,10 +148,10 @@ class GraspEnv:
         random_z = torch.ones(num_reset, device=self.device) * 0.025  # 0.15 ~ 0.15
         random_pos = torch.stack([random_x, random_y, random_z], dim=-1)
 
-        # randomly yaw the object
+        # downward facing quaternion to align with the hand
         q_downward = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).repeat(num_reset, 1)
-        PI = 3.1415926
-        random_yaw = (torch.rand(num_reset, device=self.device) * 2 * PI - PI) * 0.25
+        # randomly yaw the object
+        random_yaw = (torch.rand(num_reset, device=self.device) * 2 * math.pi - math.pi) * 0.25
         q_yaw = torch.stack(
             [
                 torch.cos(random_yaw / 2),
@@ -149,14 +175,14 @@ class GraspEnv:
             )
             self.episode_sums[key][envs_idx] = 0.0
 
-    def reset(self):
+    def reset(self) -> tuple[torch.Tensor, dict]:
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=gs.device))
 
         obs, self.extras = self.get_observations()
-        return obs, None
+        return obs, self.extras
 
-    def step(self, actions):
+    def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         # update time
         self.episode_length_buf += 1
 
@@ -183,10 +209,10 @@ class GraspEnv:
 
         return obs, reward, self.reset_buf, self.extras
 
-    def get_privileged_observations(self):
+    def get_privileged_observations(self) -> None:
         return None
 
-    def is_episode_complete(self):
+    def is_episode_complete(self) -> torch.Tensor:
         time_out_buf = self.episode_length_buf > self.max_episode_length
 
         # check if the ee is in the valid position
@@ -198,18 +224,19 @@ class GraspEnv:
         self.extras["time_outs"][time_out_idx] = 1.0
         return self.reset_buf.nonzero(as_tuple=True)[0]
 
-    def get_observations(self):
+    def get_observations(self) -> tuple[torch.Tensor, dict]:
         # Current end-effector pose
         finger_pos, finger_quat = (
             self.robot.center_finger_pose[:, :3],
             self.robot.center_finger_pose[:, 3:7],
         )
         obj_pos, obj_quat = self.object.get_pos(), self.object.get_quat()
+        #
         obs_components = [
             finger_pos - obj_pos,  # 3D position difference
-            finger_quat,  # current orientation (4D quaternion)
-            obj_pos,  # goal pose (7D: pos + quat)
-            obj_quat,  # goal pose (7D: pos + quat)
+            finger_quat,  # current orientation (w, x, y, z)
+            obj_pos,  # goal position
+            obj_quat,  # goal orientation (w, x, y, z)
         ]
         obs_tensor = torch.cat(obs_components, dim=-1)
         self.extras["observations"]["critic"] = obs_tensor
@@ -219,8 +246,26 @@ class GraspEnv:
         rescaled_action = action * self.action_scales
         return rescaled_action
 
+    def get_stereo_rgb_images(self, normalize: bool = True) -> torch.Tensor:
+        rgb_left, _, _, _ = self.left_cam.render(rgb=True, depth=False, segmentation=False, normal=False)
+        rgb_right, _, _, _ = self.right_cam.render(rgb=True, depth=False, segmentation=False, normal=False)
+
+        # Convert to proper format
+        rgb_left = rgb_left.permute(0, 3, 1, 2)[:, :3]  # shape (B, 3, H, W)
+        rgb_right = rgb_right.permute(0, 3, 1, 2)[:, :3]  # shape (B, 3, H, W)
+
+        # Normalize if requested
+        if normalize:
+            rgb_left = torch.clamp(rgb_left, min=0.0, max=255.0) / 255.0
+            rgb_right = torch.clamp(rgb_right, min=0.0, max=255.0) / 255.0
+
+        # Concatenate left and right rgb images along channel dimension
+        # Result: [B, 6, H, W] where channel 0 is left rgb, channel 1 is right rgb
+        stereo_rgb = torch.cat([rgb_left, rgb_right], dim=1)
+        return stereo_rgb
+
     # ------------ begin reward functions----------------
-    def _reward_keypoints(self):
+    def _reward_keypoints(self) -> torch.Tensor:
         keypoints_offset = self.keypoints_offset
         # there is a offset between the finger tip and the finger base frame
         finger_tip_z_offset = torch.tensor(
@@ -237,23 +282,6 @@ class GraspEnv:
         dist = torch.norm(finger_pos_keypoints - object_pos_keypoints, p=2, dim=-1).sum(-1)
         return torch.exp(-dist)
 
-    def _reward_table_contact(self):
-        # Get current gripper DOF positions
-        gripper_dofs = self.robot._robot_entity.get_qpos()[:, self.robot._fingers_dof]
-
-        # Expected gripper positions when not in contact (open gripper)
-        expected_open_pos = torch.tensor([0.04, 0.04], device=self.device).repeat(self.num_envs, 1)
-
-        # Penalize when gripper DOFs are significantly different from expected open position
-        # This indicates contact with table or other obstacles
-        dof_error = torch.norm(gripper_dofs - expected_open_pos, dim=-1)
-
-        # Apply penalty when error is above threshold (indicating contact)
-        contact_threshold = 0.001  # 1cm tolerance
-        contact_penalty = torch.where(dof_error > contact_threshold, -dof_error, torch.zeros_like(dof_error))
-
-        return contact_penalty
-
     # ------------ end reward functions----------------
 
     def _to_world_frame(
@@ -268,7 +296,7 @@ class GraspEnv:
         return world
 
     @staticmethod
-    def get_keypoint_offsets(batch_size, device, unit_length=0.5):
+    def get_keypoint_offsets(batch_size: int, device: str, unit_length: float = 0.5) -> torch.Tensor:
         """
         Get uniformly-spaced keypoints along a line of unit length, centered at body center.
         """
@@ -290,22 +318,21 @@ class GraspEnv:
         )
         return keypoint_offsets.unsqueeze(0).repeat(batch_size, 1, 1)
 
-    def grasp_and_lift_demo(self, render: bool = False):
+    def grasp_and_lift_demo(self) -> None:
         total_steps = 500
         goal_pose = self.robot.ee_pose.clone()
-
+        # lift pose (above the object)
         lift_height = 0.3
         lift_pose = goal_pose.clone()
         lift_pose[:, 2] += lift_height
-
+        # final pose (above the table)
         final_pose = goal_pose.clone()
         final_pose[:, 0] = 0.3
         final_pose[:, 1] = 0.0
         final_pose[:, 2] = 0.4
+        # reset pose (home pose)
         reset_pose = torch.tensor([0.2, 0.0, 0.4, 0.0, 1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         for i in range(total_steps):
-            if render:
-                self.cam.render()
             if i < total_steps / 4:  # grasping
                 self.robot.go_to_goal(goal_pose, open_gripper=False)
             elif i < total_steps / 2:  # lifting
@@ -334,6 +361,9 @@ class Manipulator:
             quat=(1.0, 0.0, 0.0, 0.0),
         )
         self._robot_entity: gs.Entity = scene.add_entity(material=material, morph=morph)
+
+        self._gripper_open_dof = 0.04
+        self._gripper_close_dof = 0.00
 
         self._ik_method: Literal["rel_pose", "dls"] = args["ik_method"]
 
@@ -401,9 +431,9 @@ class Manipulator:
             raise ValueError(f"Invalid control mode: {self._ik_method}")
         # set gripper to open
         if open_gripper:
-            q_pos[:, self._fingers_dof] = +0.04
+            q_pos[:, self._fingers_dof] = self._gripper_open_dof
         else:
-            q_pos[:, self._fingers_dof] = +0.02
+            q_pos[:, self._fingers_dof] = self._gripper_close_dof
         self._robot_entity.control_dofs_position(position=q_pos)
 
     def _gs_ik(self, action: torch.Tensor) -> torch.Tensor:
@@ -447,20 +477,10 @@ class Manipulator:
             dofs_idx_local=self._arm_dof_idx,
         )
         if open_gripper:
-            q_pos[:, self._fingers_dof] = 0.04
+            q_pos[:, self._fingers_dof] = self._gripper_open_dof
         else:
-            q_pos[:, self._fingers_dof] = +0.00
+            q_pos[:, self._fingers_dof] = self._gripper_close_dof
         self._robot_entity.control_dofs_position(position=q_pos)
-
-    def open_gripper(self):
-        q_pos = self._robot_entity.get_qpos()
-        q_pos[:, self._fingers_dof] = 0.04
-        self._robot_entity.set_qpos(q_pos)
-
-    def close_gripper(self):
-        q_pos = self._robot_entity.get_qpos()
-        q_pos[:, self._fingers_dof] = +0.00
-        self._robot_entity.set_qpos(q_pos)
 
     @property
     def base_pos(self):

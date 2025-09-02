@@ -704,13 +704,12 @@ class Renderer(object):
     def _get_light_cam_matrices(self, scene, light_node, flags):
         light = light_node.light
         pose = scene.get_pose(light_node).copy()
-        s = scene.scale
-        camera = light._get_shadow_camera(s)
+        camera = light._get_shadow_camera(scene.scale)
         P = camera.get_projection_matrix()
         if isinstance(light, DirectionalLight):
             direction = -pose[:3, 2]
             c = scene.centroid
-            loc = c - direction * s
+            loc = c - direction * scene.scale
             pose[:3, 3] = loc
         V = np.linalg.inv(pose)  # V maps from world to camera
         return V, P
