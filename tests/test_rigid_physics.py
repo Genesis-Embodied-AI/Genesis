@@ -2953,3 +2953,13 @@ def test_batched_aabb(show_viewer, tol):
     assert_allclose(plane_aabb_squeezed, all_aabbs[0], atol=tol)
     assert_allclose(box_aabb_squeezed, all_aabbs[1], atol=tol)
     assert_allclose(sphere_aabb_squeezed, all_aabbs[2], atol=tol)
+
+    expected_box_min = torch.tensor([0.45, -0.05, 0.0])
+    expected_box_max = torch.tensor([0.55, 0.05, 0.1])
+    assert_allclose(box_aabb_squeezed[0], expected_box_min, atol=tol)
+    assert_allclose(box_aabb_squeezed[1], expected_box_max, atol=tol)
+
+    expected_sphere_min = torch.tensor([-0.55, -0.05, 0.0])
+    expected_sphere_max = torch.tensor([-0.45, 0.05, 0.1])
+    assert_allclose(sphere_aabb_squeezed[0], expected_sphere_min, atol=tol)
+    assert_allclose(sphere_aabb_squeezed[1], expected_sphere_max, atol=tol)
