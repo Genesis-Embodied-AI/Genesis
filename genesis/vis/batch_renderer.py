@@ -359,7 +359,7 @@ class BatchRenderer(RBC):
         # Update scene
         self.update_scene()
 
-        # Render only what’s needed (flags still passed to renderer)
+        # Render only what is needed (flags still passed to renderer)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
         cameras_quat = _transform_camera_quat(cameras_quat)

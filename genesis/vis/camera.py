@@ -11,7 +11,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.image_exporter import normalize_depth
+from genesis.utils.image_exporter import as_grayscale_image
 
 T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
 
@@ -140,29 +140,26 @@ class Camera(RBC):
         self._multi_env_transform_tensor = torch.empty((n_envs, 4, 4), dtype=gs.tc_float, device=gs.device)
         self._multi_env_quat_tensor = torch.empty((n_envs, 4), dtype=gs.tc_float, device=gs.device)
 
-        is_parallel = self._visualizer.scene.n_envs > 0
-        if is_parallel:
-            self._env_idx = self._visualizer._scene._sanitize_envs_idx(self._env_idx)
-        else:
-            self._env_idx = 0
         self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
 
         self._rasterizer = self._visualizer.rasterizer
         self._raytracer = self._visualizer.raytracer if not self._debug else None
         self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
 
+        is_batched = self._visualizer.scene.n_envs > 0
         if self._batch_renderer is not None:
-            self._rgb_stacked = is_parallel
-            self._other_stacked = is_parallel
+            self._img_stacked = is_batched
         else:
+            if self._env_idx is None:
+                self._env_idx = 0
+            elif not isinstance(self._env_idx, int) or self._env_idx >= max(self._visualizer.scene.n_envs, 1):
+                gs.raise_exception("Tracked environment index out-of-bounds")
             if self._raytracer is not None:
                 self._raytracer.add_camera(self)
-                self._rgb_stacked = False
-                self._other_stacked = False
+                self._img_stacked = False
             else:
                 self._rasterizer.add_camera(self)
-                self._rgb_stacked = is_parallel and self._visualizer._context.env_separate_rigid
-                self._other_stacked = is_parallel and self._visualizer._context.env_separate_rigid
+                self._img_stacked = is_batched and self._visualizer._context.env_separate_rigid
 
         self._is_built = True
         self.set_pose(
@@ -227,7 +224,7 @@ class Camera(RBC):
         link_quat = self._attached_link.get_quat(self._env_idx)
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = torch.matmul(link_T, self._attached_offset_T)
-        self.set_pose(transform=transform)
+        self.set_pose(transform=transform, env_idx=self._env_idx if self._visualizer.scene.n_envs > 0 else None)
 
     def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
         """
@@ -280,8 +277,8 @@ class Camera(RBC):
             camera_lookat = None
             camera_pos = camera_transform[..., :3, 3]
         else:
-            camera_pos = self.get_pos(self._env_idx, render=False).clone()
             camera_lookat = self.get_lookat(self._env_idx, render=False).clone()
+            camera_pos = self.get_pos(self._env_idx, render=False).clone()
 
         # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
         entity_pos = self._followed_entity.get_pos(self._env_idx)
@@ -425,30 +422,29 @@ class Camera(RBC):
 
             title = f"Genesis - Camera {self._idx}"
             if rgb:
-                # FIXME: Check whether it always render RGB or RGBA ?
                 rgb_img = np.flip(rgb_np, axis=-1)
                 rgb_env = ""
-                if self._rgb_stacked:
+                if self._img_stacked:
                     rgb_img = rgb_img[0]
                     rgb_env = " Environment 0"
                 cv2.imshow(f"{title + rgb_env} [RGB]", rgb_img)
 
-            other_env = " Environment 0" if self._other_stacked else ""
+            other_env = " Environment 0" if self._img_stacked else ""
             if depth:
-                depth_img = normalize_depth(depth_np[..., None], np.inf, "linear")
-                if self._other_stacked:
+                depth_img = as_grayscale_image(depth_np, black_to_white=False)
+                if self._img_stacked:
                     depth_img = depth_img[0]
                 cv2.imshow(f"{title + other_env} [Depth]", depth_img)
 
             if segmentation:
                 seg_img = np.flip(seg_color_np, axis=-1)
-                if self._other_stacked:
+                if self._img_stacked:
                     seg_img = seg_img[0]
                 cv2.imshow(f"{title + other_env} [Segmentation]", seg_img)
 
             if normal:
                 normal_img = np.flip(normal_np, axis=-1)
-                if self._other_stacked:
+                if self._img_stacked:
                     normal_img = normal_img[0]
                 cv2.imshow(f"{title + other_env} [Normal]", normal_img)
 
@@ -702,7 +698,7 @@ class Camera(RBC):
                 + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
             )
 
-        if self._rgb_stacked:
+        if self._img_stacked:
             for env_idx in self._visualizer._context.rendered_envs_idx:
                 env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
                 env_name, env_ext = os.path.splitext(save_to_filename)
