@@ -2283,8 +2283,12 @@ class RigidSolver(Solver):
         return ti_to_torch(self.geoms_info.friction, geoms_idx, None, unsafe=unsafe)
 
     def get_aabb(self, entities_idx=None, envs_idx=None, *, unsafe=False):
-        aabb_min = ti_field_to_torch(self.geoms_state.aabb_min, envs_idx, None, transpose=True, unsafe=unsafe)
-        aabb_max = ti_field_to_torch(self.geoms_state.aabb_max, envs_idx, None, transpose=True, unsafe=unsafe)
+        aabb_min = ti_to_torch(
+            self.geoms_state.aabb_min, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
+        )
+        aabb_max = ti_to_torch(
+            self.geoms_state.aabb_max, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
+        )
 
         aabb = torch.stack([aabb_min, aabb_max], dim=-2)
 
