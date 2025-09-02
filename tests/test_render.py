@@ -13,7 +13,7 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
-from genesis.utils.image_exporter import FrameImageExporter
+from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
@@ -443,7 +443,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(exporter._normalize_depth(torch.as_tensor(img_data)) for img_data in depth_all)
+        depth_normalized_all = tuple(as_grayscale_image(img_data) for img_data in depth_all)
         frame_data = tuple(
             tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
         )
