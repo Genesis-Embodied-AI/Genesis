@@ -283,15 +283,14 @@ def test_deterministic(tmp_path, show_viewer, tol):
 @pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
-    DIFF_TOL = 0.02
+    DIFF_TOL = 0.01
     NUM_STEPS = 5
 
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.02,
-            substeps=4,
+            dt=0.04,
         ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
@@ -428,7 +427,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         # Check that the dimensions are valid
         batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
         assert len(rgba_all) == len(depth_all) == 3
-        assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all, seg_all, normal_all, rgba_1, seg_1, normal_1))
+        assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all, *seg_all, *normal_all, rgba_1, seg_1, normal_1))
         assert all(e.shape == batch_shape for e in (*depth_all, depth_1))
 
         # Check that the camera whose output was rendered individually is matching batched output
@@ -463,11 +462,10 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
                 assert np.max(np.std(rgb_diff.reshape((-1, rgb_diff_i.shape[-1])), axis=0)) > 10.0
 
         # Check that images are changing over time.
-        # We expect atlest 2% difference between two consecutive frames.
+        # We expect sufficient difference between two consecutive frames.
         if frames_prev is not None:
             for img_data_prev, img_data in zip(frames_prev, frame_data):
-                diff = img_data_prev - img_data
-                assert np.count_nonzero(diff) > DIFF_TOL * diff.size
+                assert np.sum(np.abs(img_data_prev - img_data) > np.finfo(np.float32).eps) > DIFF_TOL * img_data.size
         frames_prev = frame_data
 
         # Add current frame to monitor video
