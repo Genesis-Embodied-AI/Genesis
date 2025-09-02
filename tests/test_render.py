@@ -60,6 +60,56 @@ def skip_if_not_installed(renderer_type):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
+def test_render_api(show_viewer, renderer_type, renderer):
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.0),
+            radius=1.0,
+            fixed=True,
+        ),
+    )
+    camera = scene.add_camera(
+        pos=(0.0, 0.0, 10.0),
+        lookat=(0.0, 0.0, 0.0),
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    rgb_arrs, depth_arrs, seg_arrs, normal_arrs = [], [], [], []
+    for rgb, depth, seg, normal in itertools.product((True, False), repeat=4):
+        rgb_arr, depth_arr, seg_arr, normal_arr = camera.render(rgb=rgb, depth=depth, segmentation=seg, normal=normal)
+        if rgb:
+            rgb_arrs.append(tensor_to_array(rgb_arr).astype(np.float32))
+        if depth:
+            depth_arrs.append(tensor_to_array(depth_arr).astype(np.float32))
+        if seg:
+            seg_arrs.append(tensor_to_array(seg_arr).astype(np.float32))
+        if normal:
+            normal_arrs.append(tensor_to_array(normal_arr).astype(np.float32))
+
+    if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
+        pytest.xfail(reason="'BATCHRENDER_RAYTRACER' is not working for some reason... it always returns empty data.")
+
+    assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
+    assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
+    assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
+
+    # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
+    msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
+    assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
+
+
+@pytest.mark.required
 @pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 @pytest.mark.parametrize(
     "renderer_type",
@@ -229,68 +279,13 @@ def test_deterministic(tmp_path, show_viewer, tol):
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
-def test_render_api(show_viewer, renderer_type, renderer):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-        renderer=renderer,
-    )
-    scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.0, 0.0, 0.0),
-            radius=1.0,
-            fixed=True,
-        ),
-    )
-    camera = scene.add_camera(
-        pos=(0.0, 0.0, 10.0),
-        lookat=(0.0, 0.0, 0.0),
-        GUI=show_viewer,
-    )
-    scene.build()
-
-    rgb_arrs, depth_arrs, seg_arrs, normal_arrs = [], [], [], []
-    for rgb, depth, seg, normal in itertools.product((True, False), repeat=4):
-        if (seg or normal) and renderer_type in (
-            RENDERER_TYPE.BATCHRENDER_RASTERIZER,
-            RENDERER_TYPE.BATCHRENDER_RAYTRACER,
-        ):
-            # Depth map and segmentation maps are not supported by Madrona for now.
-            continue
-        rgb_arr, depth_arr, seg_arr, normal_arr = camera.render(rgb=rgb, depth=depth, segmentation=seg, normal=normal)
-        if rgb:
-            rgb_arrs.append(rgb_arr.astype(np.float32))
-        if depth:
-            depth_arrs.append(depth_arr.astype(np.float32))
-        if seg:
-            seg_arrs.append(seg_arr.astype(np.float32))
-        if normal:
-            normal_arrs.append(normal_arr.astype(np.float32))
-
-    if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
-        pytest.xfail(reason="'BATCHRENDER_RAYTRACER' is not working for some reason... it always returns empty data.")
-
-    assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
-    assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
-    assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
-
-    # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
-    msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
-    assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize(
-    "renderer_type",
-    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
-)
 @pytest.mark.parametrize("n_envs", [0, 4])
 @pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
     DIFF_TOL = 0.02
     NUM_STEPS = 5
+
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     scene = gs.Scene(
@@ -326,7 +321,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     )
     cameras = []
     for i in range(max(1 if IS_BATCHRENDER else n_envs, 1)):
-        env_idx = None if n_envs == 0 else i
+        env_idx = None if i < 1 else i
         cam_0 = scene.add_camera(
             res=CAM_RES,
             pos=(1.5, 0.5, 1.5),
@@ -380,17 +375,16 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 
     # Initialize the simulation
     set_random_seed(0)
-    dof_bounds = scene.rigid_solver.dofs_info.limit.to_torch(gs.device)
     for i in range(max(n_envs, 1)):
-        qpos = torch.zeros(robot.n_dofs)
-        qpos[:2] = torch.rand(2) - 0.5
+        qpos = torch.zeros(robot.n_dofs, device=gs.device)
+        qpos[:2] = torch.as_tensor(np.random.rand(2), dtype=gs.tc_float, device=gs.device) - 0.5
         qpos[2] = 1.0
-        qpos[3:6] = 0.5 * (torch.rand(3) - 0.5)
-        qpos[6:] = torch.rand(robot.n_dofs - 6) - 0.5
+        qpos[3:6] = 0.5 * (torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device) - 0.5)
+        qpos[6:] = torch.as_tensor(np.random.rand(robot.n_dofs - 6), dtype=gs.tc_float, device=gs.device) - 0.5
         robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
 
-        qvel = torch.zeros(robot.n_dofs)
-        qvel[:6] = torch.rand(6) - 0.5
+        qvel = torch.zeros(robot.n_dofs, device=gs.device)
+        qvel[:6] = torch.as_tensor(np.random.rand(6), dtype=gs.tc_float, device=gs.device) - 0.5
         robot.set_dofs_velocity(qvel, envs_idx=([i] if n_envs else None))
 
     # Run a few simulation steps while monitoring the result
@@ -405,44 +399,52 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         if IS_BATCHRENDER:
             # Note that the individual cameras is rendered alone first on purpose to make sure it works
             rgba_1, depth_1, seg_1, normal_1 = cam_1.render(
-                rgb=True, depth=True, segmentation=False, colorize_seg=False, normal=False
+                rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
             )
             rgba_all, depth_all, seg_all, normal_all = scene.render_all_cameras(
-                rgb=True, depth=True, segmentation=False, normal=False
+                rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
+            )
+            assert all(isinstance(img_data, torch.Tensor) for img_data in (rgba_1, depth_1, seg_1, normal_1))
+            assert all(
+                isinstance(img_data, torch.Tensor) for img_data in (*rgba_all, *depth_all, *seg_all, *normal_all)
             )
         else:
             # Emulate batch rendering which is not supported natively
-            rgba_all, depth_all, _, _ = zip(
+            colorize_seg = False
+            rgba_all, depth_all, seg_all, normal_all = zip(
                 *(
-                    camera.render(rgb=True, depth=True, segmentation=False, normal=False)
+                    camera.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
                     for camera in scene._visualizer._cameras
                     if not camera.debug
                 )
             )
             if n_envs > 0:
-                rgba_all, depth_all = (
+                rgba_all, depth_all, seg_all, normal_all = (
                     tuple(np.swapaxes(np.stack(img_data, axis=0).reshape((n_envs, 3, *img_data[0].shape)), 0, 1))
                     for img_data in (rgba_all, depth_all)
                 )
-            rgba_1, depth_1 = rgba_all[1], depth_all[1]
+            rgba_1, depth_1, seg_1, normal_1 = rgba_all[1], depth_all[1], seg_all[1], normal_all[1]
 
         # Check that the dimensions are valid
         batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
         assert len(rgba_all) == len(depth_all) == 3
-        assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all, rgba_1))
+        assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all, seg_all, normal_all, rgba_1, seg_1, normal_1))
         assert all(e.shape == batch_shape for e in (*depth_all, depth_1))
 
         # Check that the camera whose output was rendered individually is matching batched output
         for img_data_1, img_data_2 in (
             (rgba_all[1], rgba_1),
             (depth_all[1], depth_1),
+            (seg_all[1], seg_1),
+            (normal_all[1], normal_1),
         ):
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(as_grayscale_image(img_data) for img_data in depth_all)
+        depth_normalized_all = tuple(as_grayscale_image(tensor_to_array(img_data)) for img_data in depth_all)
         frame_data = tuple(
-            tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
+            tensor_to_array(img_data).astype(np.float32)
+            for img_data in (*rgba_all, *depth_normalized_all, *seg_all, *normal_all)
         )
         for img_data in frame_data:
             for img_data_i in img_data if n_envs else (img_data,):
@@ -450,7 +452,10 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 
         # Export a few frames for later pixel-matching validation
         if i < 2:
-            exporter.export_frame_all_cameras(i, rgb=rgba_all, depth=depth_all)
+            exporter.export_frame_all_cameras(i, rgb=rgba_all, depth=depth_all, segmentation=seg_all, normal=normal_all)
+            exporter.export_frame_single_camera(
+                i, cam_1.idx, rgb=rgba_1, depth=depth_1, segmentation=seg_1, normal=normal_1
+            )
 
         # Check that cameras are recording different part of the scene
         for rgb_diff in np.diff(frame_data[:3], axis=0):
@@ -479,7 +484,6 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert f.read() == png_snapshot
 
 
-@pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
@@ -568,17 +572,34 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-def test_point_cloud(show_viewer, renderer):
+def test_point_cloud(renderer, show_viewer):
     CAMERA_DIST = 8.0
     OBJ_OFFSET = 10.0
     BOX_HALFSIZE = 1.0
     SPHERE_RADIUS = 1.0
 
     scene = gs.Scene(
+        renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
-        renderer=renderer,
     )
+    if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
     scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.0, OBJ_OFFSET, 0.0),

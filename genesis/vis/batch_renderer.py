@@ -19,9 +19,6 @@ except ImportError as e:
     gs.raise_exception_from("Madrona batch renderer is only supported on Linux x86-64.", e)
 
 
-TYPES = (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENTATION)  # order of RenderOption
-
-
 def transform_camera_quat(quat):
     # quat for Madrona needs to be transformed to y-forward
     w, x, y, z = torch.unbind(quat, dim=-1)
@@ -372,44 +369,39 @@ class BatchRenderer(RBC):
             self._data_cache.clear()
 
         # Fetch available cached data
-        req = [rgb, depth, segmentation, normal]
+        request = (rgb, depth, segmentation, normal)
         cache_key = (antialiasing,)
-        cached = [self._data_cache.get((t, cache_key), None) for t in range(IMAGE_TYPE.NUM_TYPES)]
-        need = [(req[t] and cached[t] is None) for t in range(IMAGE_TYPE.NUM_TYPES)]
+        cached = [self._data_cache.get((img_type, cache_key), None) for img_type in IMAGE_TYPE]
+
+        # Force disabling rendering whenever cached data is already available
+        needed = tuple(req and arr is None for req, arr in zip(request, cached))
 
         # Early return if everything requested is already cached
-        if not any(need):
-            return tuple(cached[t] if req[t] else None for t in range(IMAGE_TYPE.NUM_TYPES))
+        if not any(needed.values()):
+            return tuple(arr if req else None for req, arr in zip(request, cached))
 
-        # Update scene render only what’s needed (flags still passed to renderer)
+        # Update scene
         self.update_scene()
+
+        # Render only what’s needed (flags still passed to renderer)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
         cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
         cameras_quat = transform_camera_quat(cameras_quat)
         render_flags = np.array(
             (
-                *(need[t] for t in TYPES),
+                *(
+                    need[img_type]
+                    for img_type in (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENTATION)
+                ),
                 antialiasing,
             ),
             dtype=np.uint32,
         )
+        rendered = list(self._renderer.render(cameras_pos, cameras_quat, render_flags))
 
-        # Post-processing:
-        # * Remove alpha channel from RGBA
-        # * Squeeze env and channel dims if necessary
-        # * Split along camera dim
-        rendered = self._renderer.render(cameras_pos, cameras_quat, render_flags)
-        rendered = [
-            tensor_to_array(rendered[t][..., :3].squeeze(-1).swapaxes(0, 1)) if need[t] else None
-            for t in range(IMAGE_TYPE.NUM_TYPES)
-        ]
-
-        # convert center distance depth to plane distance
-        if not self._use_rasterizer:
-            if need[IMAGE_TYPE.DEPTH]:
-                depth_centers = rendered[IMAGE_TYPE.DEPTH]
-                for i, camera in enumerate(self._cameras):
-                    depth_centers[i] = camera.distance_center_to_plane(depth_centers[i])
+        # Convert center distance depth to plane distance
+        if not self._use_rasterizer and needed[IMAGE_TYPE.DEPTH]:
+            rendered[i] = camera.distance_center_to_plane(rendered[IMAGE_TYPE.DEPTH])
 
         # convert seg geom idx to seg_idxc
         if need[IMAGE_TYPE.SEGMENTATION]:
@@ -418,19 +410,25 @@ class BatchRenderer(RBC):
             seg_geoms[mask] = self._geom_retriever.geom_idxc[seg_geoms[mask]]
             seg_geoms[~mask] = 0
 
-        for t, data in enumerate(rendered):
-            if data is not None:
+        # Post-processing:
+        # * Remove alpha channel from RGBA
+        # * Squeeze env and channel dims if necessary
+        # * Split along camera dim
+        for img_type, data in enumerate(rendered):
+            if needed[img_type]:
+                data = data.swapaxes(0, 1)
                 if self._visualizer.scene.n_envs == 0:
                     data = data.squeeze(1)
-                rendered[t] = tuple(data)
+                rendered[i] = tuple(data[..., :3].squeeze(-1))
 
+        # Update cache
         self._t = self._visualizer.scene.t
-        for t in TYPES:
-            if need[t]:
-                self._data_cache[(t, cache_key)] = rendered[t]
+        for img_type, data in enumerate(rendered):
+            if needed[img_type]:
+                self._data_cache[(img_type, cache_key)] = rendered[img_type]
 
         # Return in the required order, or None if not requested
-        return tuple(rendered[t] if need[t] else cached[t] if req[t] else None for t in range(IMAGE_TYPE.NUM_TYPES))
+        return tuple(self._data_cache[(img_type, cache_key)] if needed[img_type] else None for img_type in IMAGE_TYPE)
 
     def colorize_seg_idxc_arr(self, seg_idxc_arr):
         return self._geom_retriever.seg_color_map.colorize_seg_idxc_arr(seg_idxc_arr)
