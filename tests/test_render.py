@@ -13,7 +13,7 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
-from genesis.utils.image_exporter import FrameImageExporter
+from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
@@ -443,7 +443,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(exporter._normalize_depth(torch.as_tensor(img_data)) for img_data in depth_all)
+        depth_normalized_all = tuple(as_grayscale_image(tensor_to_array(img_data)) for img_data in depth_all)
         frame_data = tuple(
             tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
         )
@@ -777,3 +777,40 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
     # Make sure that the result is valid
     with open(IMAGE_FILENAME, "rb") as f:
         assert f.read() == png_snapshot
+
+
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER],
+)
+def test_render_planes(tmp_path, png_snapshot, renderer):
+    for test_idx, (plane_size, tile_size) in enumerate(
+        (
+            ((3, 4.5), (0.5, 0.75)),
+            ((3.0, 5.0), (5.0, 3.0)),
+            ((4.0, 4.0), (1.0, 1.0)),
+        )
+    ):
+        CAM_RES = (256, 256)
+        scene = gs.Scene(
+            renderer=renderer,
+        )
+        plane = scene.add_entity(
+            gs.morphs.Plane(plane_size=plane_size, tile_size=tile_size),
+        )
+        camera = scene.add_camera(
+            res=CAM_RES,
+            pos=(0.0, 0.0, 8),
+            lookat=(0.0, 0.0, 0.0),
+            fov=45,
+            GUI=False,
+        )
+        scene.build()
+
+        exporter = FrameImageExporter(tmp_path)
+        rgba, depth, _, _ = camera.render(rgb=True, depth=False)
+        exporter.export_frame_single_camera(test_idx, camera.idx, rgb=rgba, depth=depth)
+
+    for image_file in sorted(tmp_path.rglob("*.png")):
+        with open(image_file, "rb") as f:
+            assert f.read() == png_snapshot

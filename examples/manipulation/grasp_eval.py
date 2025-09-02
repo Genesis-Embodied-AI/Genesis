@@ -1,7 +1,8 @@
 import argparse
-import os
+import re
 import pickle
 from importlib import metadata
+from pathlib import Path
 
 import torch
 
@@ -19,63 +20,142 @@ from rsl_rl.runners import OnPolicyRunner
 import genesis as gs
 
 from grasp_env import GraspEnv
+from behavior_cloning import BehaviorCloning
+
+
+def load_rl_policy(env, train_cfg, log_dir):
+    """Load reinforcement learning policy."""
+    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
+
+    # Find the latest checkpoint
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
+
+    try:
+        *_, last_ckpt = sorted(checkpoint_files)
+    except ValueError as e:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
+    runner.load(last_ckpt)
+    print(f"Loaded RL checkpoint from {last_ckpt}")
+
+    return runner.get_inference_policy(device=gs.device)
+
+
+def load_bc_policy(env, bc_cfg, log_dir):
+    """Load behavior cloning policy."""
+    # Create behavior cloning instance
+    bc_runner = BehaviorCloning(env, bc_cfg, None, device=gs.device)
+
+    # Find the latest checkpoint
+    checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)]
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
+
+    try:
+        *_, last_ckpt = sorted(checkpoint_files)
+    except ValueError as e:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
+    print(f"Loaded BC checkpoint from {last_ckpt}")
+    bc_runner.load(last_ckpt)
+
+    return bc_runner._policy
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
-    parser.add_argument("--record", action="store_true", default=False)
+    parser.add_argument(
+        "--stage",
+        type=str,
+        default="rl",
+        choices=["rl", "bc"],
+        help="Model type: 'rl' for reinforcement learning, 'bc' for behavior cloning",
+    )
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="Record stereo images as video during evaluation",
+    )
+    parser.add_argument(
+        "--video_path",
+        type=str,
+        default=None,
+        help="Path to save the video file (default: auto-generated)",
+    )
     args = parser.parse_args()
+
+    # Set PyTorch default dtype to float32 for better performance
+    torch.set_default_dtype(torch.float32)
 
     gs.init()
 
-    log_dir = f"logs/{args.exp_name}"
-    last_folder = sorted(os.listdir(log_dir))[-1]
-    env_cfg, reward_cfg, robot_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/{last_folder}/cfgs.pkl", "rb"))
+    log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
 
-    # visualize the target
-    env_cfg["visualize_target"] = True
-    # for video recording
-    env_cfg["visualize_camera"] = args.record
+    # Load configurations
+    if args.stage == "rl":
+        # For RL, load the standard configs
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
+    else:
+        # For BC, we need to load the configs and create BC config
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
+
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
     # set the box collision
     env_cfg["box_collision"] = True
     # set the box fixed
     env_cfg["box_fixed"] = False
+    # set the number of envs for evaluation
+    env_cfg["num_envs"] = 10
+    # for video recording
+    env_cfg["visualize_camera"] = args.record
 
     env = GraspEnv(
-        num_envs=10,
         env_cfg=env_cfg,
         reward_cfg=reward_cfg,
         robot_cfg=robot_cfg,
         show_viewer=True,
     )
 
-    runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
-    last_ckpt = sorted(os.listdir(os.path.join(log_dir, last_folder)))[-1]
-    resume_path = os.path.join(log_dir, last_folder, last_ckpt)
-    print(f"Loading from {resume_path}")
-    runner.load(resume_path)
-    policy = runner.get_inference_policy(device=gs.device)
+    # Load the appropriate policy based on model type
+    if args.stage == "rl":
+        policy = load_rl_policy(env, rl_train_cfg, log_dir)
+    else:
+        policy = load_bc_policy(env, bc_train_cfg, log_dir)
+        policy.eval()
 
     obs, _ = env.reset()
 
     max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
+
     with torch.no_grad():
         if args.record:
-            env.cam.start_recording()
-            for _ in range(max_sim_step):
+            print("Recording video...")
+            env.vis_cam.start_recording()
+            env.left_cam.start_recording()
+            env.right_cam.start_recording()
+        for step in range(max_sim_step):
+            if args.stage == "rl":
                 actions = policy(obs)
-                obs, rews, dones, infos = env.step(actions)
-                env.cam.render()
-            env.grasp_and_lift_demo(render=True)
-            env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
-        else:
-            for _ in range(max_sim_step):
-                actions = policy(obs)
-                obs, rews, dones, infos = env.step(actions)
-            env.grasp_and_lift_demo(render=False)
+            else:
+                # Get stereo grayscale images and ensure float32
+                rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
+                ee_pose = env.robot.ee_pose.float()
+
+                actions = policy(rgb_obs, ee_pose)
+
+                # Collect frame for video recording
+                if args.record:
+                    env.vis_cam.render()  # render the visualization camera
+
+            obs, rews, dones, infos = env.step(actions)
+        env.grasp_and_lift_demo()
+        if args.record:
+            print("Stopping video recording...")
+            env.vis_cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.left_cam.stop_recording(save_to_filename="left_cam.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.right_cam.stop_recording(save_to_filename="right_cam.mp4", fps=env_cfg["max_visualize_FPS"])
 
 
 if __name__ == "__main__":
@@ -83,9 +163,12 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/manipulation/grasp_eval.py
+# For reinforcement learning model:
+python examples/manipulation/grasp_eval.py --stage=rl
 
-# Note
-If you experience slow performance or encounter other issues
-during evaluation, try removing the --record option.
+# For behavior cloning model:
+python examples/manipulation/grasp_eval.py --stage=bc
+
+# With video recording:
+python examples/manipulation/grasp_eval.py --stage=bc --record
 """

@@ -110,11 +110,11 @@ def reduce_graph(G, straight_thresh=10):
         path = nx.shortest_path(
             G, source=ref_node, target=node
         )  # NOTE: if there is loop, we pick shortest path to the reference node
-        node_curr = ref_node
+        node_cur = ref_node
         for node_on_path in path:
             if node_on_path in G_reduced.nodes():
-                G_reduced.add_edge(node_curr, node_on_path)
-                node_curr = node_on_path
+                G_reduced.add_edge(node_cur, node_on_path)
+                node_cur = node_on_path
 
     return G_reduced
 

@@ -333,7 +333,7 @@ class Scene(RBC):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
-            if surface.vis_mode not in ["visual", "collision", "sdf"]:
+            if surface.vis_mode not in ("visual", "collision", "sdf"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'collision', 'sdf']."
                 )
@@ -352,7 +352,7 @@ class Scene(RBC):
             if surface.vis_mode is None:
                 surface.vis_mode = "particle"
 
-            if surface.vis_mode not in ["particle", "recon"]:
+            if surface.vis_mode not in ("particle", "recon"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'recon']."
                 )
@@ -370,7 +370,7 @@ class Scene(RBC):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
-            if surface.vis_mode not in ["visual", "particle", "recon"]:
+            if surface.vis_mode not in ("visual", "particle", "recon"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'particle', 'recon']."
                 )
@@ -612,11 +612,13 @@ class Scene(RBC):
         Parameters
         ----------
         material : gs.materials.Material
-            The material of the fluid to be emitted. Must be an instance of `gs.materials.MPM.Base` or `gs.materials.SPH.Base`.
+            The material of the fluid to be emitted. Must be an instance of `gs.materials.MPM.Base`,
+            `gs.materials.SPH.Base`, `gs.materials.PBD.Particle` or `gs.materials.PBD.Liquid`.
         max_particles : int
-            The maximum number of particles that can be emitted by the emitter. Particles will be recycled once this limit is reached.
+            The maximum number of particles that can be emitted by the emitter. Particles will be recycled once this
+            limit is reached.
         surface : gs.surfaces.Surface | None, optional
-            The surface of the emitter. If None, use ``gs.surfaces.Default(color=(0.6, 0.8, 1.0, 1.0))``.
+            The surface of the emitter. If None, use `gs.surfaces.Default(color=(0.6, 0.8, 1.0, 1.0))`.
 
         Returns
         -------
@@ -631,11 +633,17 @@ class Scene(RBC):
             material, (gs.materials.MPM.Base, gs.materials.SPH.Base, gs.materials.PBD.Particle, gs.materials.PBD.Liquid)
         ):
             gs.raise_exception(
-                "Non-supported material for emitter. Supported materials are: `gs.materials.MPM.Base`, `gs.materials.SPH.Base`, `gs.materials.PBD.Particle`, `gs.materials.PBD.Liquid`."
+                "Non-supported material for emitter. Supported materials are: `gs.materials.MPM.Base`, "
+                "`gs.materials.SPH.Base`, `gs.materials.PBD.Particle`, `gs.materials.PBD.Liquid`."
             )
 
         if surface is None:
             surface = gs.surfaces.Default(color=(0.6, 0.8, 1.0, 1.0))
+
+        if surface.vis_mode is None:
+            surface.vis_mode = "particle"
+        if surface.vis_mode == "visual":
+            gs.raise_exception("surface.vis_mode='visual' is not supported for fluid emitters.")
 
         emitter = Emitter(max_particles)
         entity = self.add_entity(

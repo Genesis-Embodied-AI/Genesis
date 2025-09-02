@@ -854,7 +854,7 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(n_particles, self._B):
             i_global = i_p + particle_start
             for k in ti.static(range(3)):
-                self.particles[i_global, i_b].vel[k] = vel[i_p, k]
+                self.particles[i_global, i_b].vel[k] = vel[i_b, i_p, k]
 
     @ti.kernel
     def _kernel_set_particles_active(

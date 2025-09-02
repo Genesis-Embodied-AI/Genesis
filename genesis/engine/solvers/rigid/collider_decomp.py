@@ -11,7 +11,6 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.styles import colors, formats
-from genesis.utils.misc import ti_field_to_torch
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.gjk_decomp as gjk
 import genesis.engine.solvers.rigid.mpr_decomp as mpr
