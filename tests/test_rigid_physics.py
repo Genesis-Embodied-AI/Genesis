@@ -2913,8 +2913,9 @@ def test_mesh_primitive_COM(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("scale", [0.1, 10.0])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(show_viewer, tol):
+def test_noslip_iterations(scale, show_viewer, tol):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.8, -1, 1.3),
@@ -2924,7 +2925,7 @@ def test_noslip_iterations(show_viewer, tol):
             max_FPS=600,
         ),
         sim_options=gs.options.SimOptions(
-            dt=0.02,
+            dt=0.01,
         ),
         profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         rigid_options=gs.options.RigidOptions(
@@ -2933,7 +2934,6 @@ def test_noslip_iterations(show_viewer, tol):
         show_viewer=show_viewer,
     )
 
-    scale = 1.0
     boxes = []
     for i in range(3):
         boxes.append(
@@ -2945,9 +2945,8 @@ def test_noslip_iterations(show_viewer, tol):
                 ),
             )
         )
-    ########################## build ##########################
     scene.build()
-    # simulate for 40 seconds
+    # simulate for 20 seconds
     for i in range(2000):
         boxes[2].control_dofs_force(np.array([-20000.0 * scale**3]), np.array([0]))
         # push to -x direction
@@ -2955,4 +2954,5 @@ def test_noslip_iterations(show_viewer, tol):
 
     box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
     # allow some small sliding due to first few frames
-    assert_allclose(box_1_z, 0.0, atol=2e-2 * scale)
+    # scale = 0.1 is less stable than bigger scale
+    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
