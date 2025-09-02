@@ -1,5 +1,5 @@
 import os
-import cv2
+from PIL import Image
 import numpy as np
 
 from functools import partial
@@ -17,8 +17,9 @@ class ImageComponent:
 
     def export_frame_camera(self, i_env, export_dir, i_step, i_cam, frame):
         frame = frame[i_env]
-        frame_path = os.path.join(export_dir, f"{self.name}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
-        cv2.imwrite(frame_path, frame)
+        frame_img = Image.fromarray(frame.squeeze(-1) if self.channel == 1 else frame)
+        frame_path = os.path.join(export_dir, f"{self.name}_cam{i_cam:03d}_env{i_env:03d}_{i_step:03d}.png")
+        frame_img.save(frame_path)
 
     def check_frame_shape(self, frame):
         if frame.ndim == 3:

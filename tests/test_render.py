@@ -14,7 +14,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter, normalize_depth
-from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
@@ -326,7 +325,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     )
     cameras = []
     for i in range(max(1 if IS_BATCHRENDER else n_envs, 1)):
-        env_idx = None if i < 1 else i
+        env_idx = None if n_envs == 0 else i
         cam_0 = scene.add_camera(
             res=CAM_RES,
             pos=(1.5, 0.5, 1.5),
@@ -412,7 +411,6 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             )
         else:
             # Emulate batch rendering which is not supported natively
-            colorize_seg = False
             rgba_all, depth_all, _, _ = zip(
                 *(
                     camera.render(rgb=True, depth=True, segmentation=False, normal=False)
@@ -441,10 +439,8 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
 
         # Check that there is something to see here
-        depth_normalized_all = tuple(normalize_depth(img_data) for img_data in depth_all)
-        frame_data = tuple(
-            tensor_to_array(img_data).astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all)
-        )
+        depth_normalized_all = tuple(normalize_depth(img_data[..., None]) for img_data in depth_all)
+        frame_data = tuple(img_data.astype(np.float32) for img_data in (*rgba_all, *depth_normalized_all))
         for img_data in frame_data:
             for img_data_i in img_data if n_envs else (img_data,):
                 assert np.max(np.std(img_data_i.reshape((-1, img_data_i.shape[-1])), axis=0)) > 10.0
@@ -452,7 +448,6 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         # Export a few frames for later pixel-matching validation
         if i < 2:
             exporter.export_frame_all_cameras(i, rgb=rgba_all, depth=depth_all)
-            exporter.export_frame_single_camera(i, cam_1.idx, rgb=rgba_1, depth=depth_1)
 
         # Check that cameras are recording different part of the scene
         for rgb_diff in np.diff(frame_data[:3], axis=0):
