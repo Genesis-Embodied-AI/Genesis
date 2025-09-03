@@ -2913,53 +2913,43 @@ def test_mesh_primitive_COM(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_batched_aabb(show_viewer, tol):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, -10.0)),
-        show_viewer=show_viewer,
-    )
-
+def test_batched_aabb(tol):
+    scene = gs.Scene()
     plane = scene.add_entity(
-        gs.morphs.Plane(normal=(0, 0, 1), pos=(0, 0, 0)),
-        material=gs.materials.Rigid(),
+        gs.morphs.Plane(
+            normal=(0, 0, 1),
+            pos=(0, 0, 0),
+        ),
     )
     box = scene.add_entity(
-        gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.5, 0, 0.05)),
-        material=gs.materials.Rigid(),
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.5, 0, 0.05),
+        ),
     )
     sphere = scene.add_entity(
-        gs.morphs.Sphere(radius=0.05, pos=(-0.5, 0, 0.05)),
-        material=gs.materials.Rigid(),
+        gs.morphs.Sphere(
+            radius=0.05,
+            pos=(-0.5, 0, 0.05),
+        ),
     )
-
     scene.build()
 
     all_aabbs = scene.sim.rigid_solver.get_aabb()
-    assert_allclose(torch.tensor(all_aabbs.shape), torch.tensor([3, 2, 3]), atol=tol)
-
     plane_aabb = plane.get_aabb()
     box_aabb = box.get_aabb()
     sphere_aabb = sphere.get_aabb()
 
-    assert_allclose(torch.tensor(plane_aabb.shape[-1]), torch.tensor(3), atol=tol)
-    assert_allclose(torch.tensor(box_aabb.shape[-1]), torch.tensor(3), atol=tol)
-    assert_allclose(torch.tensor(sphere_aabb.shape[-1]), torch.tensor(3), atol=tol)
+    assert_allclose(all_aabbs.shape, (3, 2, 3), atol=0)
+    assert_allclose(plane_aabb.shape[-1], 3, atol=0)
+    assert_allclose(box_aabb.shape[-1], 3, atol=0)
+    assert_allclose(sphere_aabb.shape[-1], 3, atol=0)
+    assert_allclose((plane_aabb, box_aabb, sphere_aabb), all_aabbs, atol=tol)
 
-    plane_aabb_squeezed = plane_aabb.squeeze() if plane_aabb.ndim == 3 else plane_aabb
-    box_aabb_squeezed = box_aabb.squeeze() if box_aabb.ndim == 3 else box_aabb
-    sphere_aabb_squeezed = sphere_aabb.squeeze() if sphere_aabb.ndim == 3 else sphere_aabb
+    box_aabb_min, box_aabb_max = box_aabb
+    assert_allclose(box_aabb_min, (0.45, -0.05, 0.0), atol=tol)
+    assert_allclose(box_aabb_max, (0.55, 0.05, 0.1), atol=tol)
 
-    assert_allclose(plane_aabb_squeezed, all_aabbs[0], atol=tol)
-    assert_allclose(box_aabb_squeezed, all_aabbs[1], atol=tol)
-    assert_allclose(sphere_aabb_squeezed, all_aabbs[2], atol=tol)
-
-    expected_box_min = torch.tensor([0.45, -0.05, 0.0])
-    expected_box_max = torch.tensor([0.55, 0.05, 0.1])
-    assert_allclose(box_aabb_squeezed[0], expected_box_min, atol=tol)
-    assert_allclose(box_aabb_squeezed[1], expected_box_max, atol=tol)
-
-    expected_sphere_min = torch.tensor([-0.55, -0.05, 0.0])
-    expected_sphere_max = torch.tensor([-0.45, 0.05, 0.1])
-    assert_allclose(sphere_aabb_squeezed[0], expected_sphere_min, atol=tol)
-    assert_allclose(sphere_aabb_squeezed[1], expected_sphere_max, atol=tol)
+    sphere_aabb_min, sphere_aabb_max = sphere_aabb
+    assert_allclose(sphere_aabb_min, (-0.55, -0.05, 0.0), atol=tol)
+    assert_allclose(sphere_aabb_max, (-0.45, 0.05, 0.1), atol=tol)
