@@ -246,6 +246,12 @@ class Collider:
             self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
     def _init_max_contact_pairs(self, n_possible_pairs):
+        if self._solver._max_collision_pairs < n_possible_pairs:
+            gs.logger.warning(
+                f"max_collision_pairs {self._solver._max_collision_pairs} is"
+                f" smaller than the theoretical maximal possible pairs {n_possible_pairs}, it uses less memory"
+                f" but might lead to missing some collision pairs if there are too many collision pairs"
+            )
         max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
         max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
         max_contact_pairs_broad = max_collision_pairs * self._collider_static_config.max_collision_pairs_broad_k
