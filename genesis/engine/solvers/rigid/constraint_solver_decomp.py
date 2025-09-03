@@ -2221,7 +2221,9 @@ def kernel_get_equality_constraints(
     _B = constraint_state.ti_n_equalities.shape[0]
     n_eqs_max = gs.ti_int(0)
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # this is a reduction operation (global max), we have to serialize it
+    # TODO: a good unittest and a better implementation from gstaichi for this kind of reduction
+    ti.loop_config(serialize=True)
     for i_b in range(_B):
         n_eqs = constraint_state.ti_n_equalities[i_b]
         if n_eqs > n_eqs_max:
