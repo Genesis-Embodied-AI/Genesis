@@ -155,7 +155,7 @@ class Simulator(RBC):
 
         # sensors
         self._sensor_manager = SensorManager(self)
-        self._data_recorder = RecorderManager(self.dt)
+        self._recorder_manager = RecorderManager(self.dt)
 
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
@@ -213,8 +213,9 @@ class Simulator(RBC):
             gs.raise_exception("Batching is not supported for SF solver as of now.")
 
         self._sensor_manager.build()
-        if self._data_recorder.has_recorders:
-            self._data_recorder.start()
+        if self._recorder_manager.has_recorders:
+            self._recorder_manager._stop()
+            self._recorder_manager._start()
 
         # hybrid
         for entity in self._entities:
@@ -286,7 +287,7 @@ class Simulator(RBC):
             self.rigid_solver.clear_external_force()
 
         self._sensor_manager.step()
-        self._data_recorder.step(self.cur_step_global)
+        self._recorder_manager.step(self.cur_step_global)
 
     def _step_grad(self):
         for _ in range(self._substeps - 1, -1, -1):
