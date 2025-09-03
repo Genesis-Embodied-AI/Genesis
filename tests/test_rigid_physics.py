@@ -2936,15 +2936,15 @@ def test_batched_aabb(show_viewer, tol):
     scene.build()
 
     all_aabbs = scene.sim.rigid_solver.get_aabb()
-    assert_allclose(torch.tensor(all_aabbs.shape), torch.tensor([3, 2, 3]), atol=tol)
+    assert_allclose(torch.tensor(all_aabbs.shape), torch.tensor([3, 2, 3]), atol=0)
 
     plane_aabb = plane.get_aabb()
     box_aabb = box.get_aabb()
     sphere_aabb = sphere.get_aabb()
 
-    assert_allclose(torch.tensor(plane_aabb.shape[-1]), torch.tensor(3), atol=tol)
-    assert_allclose(torch.tensor(box_aabb.shape[-1]), torch.tensor(3), atol=tol)
-    assert_allclose(torch.tensor(sphere_aabb.shape[-1]), torch.tensor(3), atol=tol)
+    assert_allclose(torch.tensor(plane_aabb.shape[-1]), torch.tensor(3), atol=0)
+    assert_allclose(torch.tensor(box_aabb.shape[-1]), torch.tensor(3), atol=0)
+    assert_allclose(torch.tensor(sphere_aabb.shape[-1]), torch.tensor(3), atol=0)
 
     plane_aabb_squeezed = plane_aabb.squeeze() if plane_aabb.ndim == 3 else plane_aabb
     box_aabb_squeezed = box_aabb.squeeze() if box_aabb.ndim == 3 else box_aabb
