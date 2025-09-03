@@ -109,10 +109,11 @@ xhost +local:root # 컨테이너가 디스플레이에 접근하도록 허용
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
+-e LOCAL_USER_ID="$(id -u)" \
 -v /dev/dri:/dev/dri \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
--v $PWD:/workspace \
-genesis
+-v $(pwd):/workspace \
+--name genesis genesis:latest
 ```
 
 ### AMD 사용자

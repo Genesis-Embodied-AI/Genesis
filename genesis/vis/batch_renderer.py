@@ -193,7 +193,7 @@ class GenesisGeomRetriever(GeomRetriever):
 class Light:
     def __init__(self, pos, dir, color, intensity, directional, castshadow, cutoff, attenuation):
         self._pos = pos
-        self._dir = tuple(dir / np.linalg.norm(dir))  # Converting list of arrays to tensor is inefficient.
+        self._dir = tuple(dir / np.linalg.norm(dir))
         self._color = color
         self._intensity = intensity
         self._directional = directional

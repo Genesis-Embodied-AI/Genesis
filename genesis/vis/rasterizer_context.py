@@ -266,7 +266,7 @@ class RasterizerContext:
                     pyrender.Mesh.from_trimesh(
                         mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)),
                         smooth=False,
-                    ),
+                    )
                 )
             self.camera_frustum_shown = True
 

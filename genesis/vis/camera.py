@@ -509,18 +509,16 @@ class Camera(RBC):
         mask_arr : np.ndarray
             The valid depth mask. boolean array of same shape as depth_arr
         """
-        # Compute the (denormalized) depth map using PyRender systematically.
+        # Compute the (denormalized) depth map
         if self._batch_renderer is not None:
             _, depth_arr, _, _ = self._batch_render(rgb=False, depth=True, segmentation=False, normal=False)
-            # FIXME: Converting to numpy for now
+            # FIXME: Avoid converting to numpy
             depth_arr = tensor_to_array(depth_arr)
-        elif self._rasterizer is not None:
+        else:
             self._rasterizer.update_scene()
             _, depth_arr, _, _ = self._rasterizer.render_camera(
                 self, rgb=False, depth=True, segmentation=False, normal=False
             )
-        else:
-            gs.raise_exception("Render point cloud not supported.")
 
         # Convert OpenGL projection matrix to camera intrinsics
         width, height = self.res

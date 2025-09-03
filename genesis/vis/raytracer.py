@@ -622,8 +622,6 @@ class Raytracer:
         camera_name = str(camera.uid)
         camera_model = camera.model
         camera_transform = camera.transform
-        if camera_transform.ndim == 3:
-            camera_transform = camera_transform[0]
 
         if camera_model == "pinhole":
             self._cameras[camera_name].update(pose=self.get_transform(camera_transform), fov=camera.fov)
