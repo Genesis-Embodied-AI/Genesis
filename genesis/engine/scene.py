@@ -562,7 +562,8 @@ class Scene(RBC):
         """
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
-    def add_recorder(self, data_func: Callable, rec_options: "RecorderOptions"):
+    @gs.assert_unbuilt
+    def start_recording(self, data_func: Callable, rec_options: "RecorderOptions"):
         """
         Automatically read and process data. See RecorderOptions for more details.
 

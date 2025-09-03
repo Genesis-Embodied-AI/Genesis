@@ -56,14 +56,14 @@ def main():
 
     labels = ["force_x", "force_y", "force_z"]
     if IS_PYQTGRAPH_AVAILABLE:
-        force_sensor.add_recorder(gs.recorders.PyQtPlot(title="Force Sensor Measured Data", labels=labels))
+        force_sensor.start_recording(gs.recorders.PyQtPlot(title="Force Sensor Measured Data", labels=labels))
     elif IS_MATPLOTLIB_AVAILABLE:
         print("pyqtgraph not found, falling back to matplotlib.")
-        force_sensor.add_recorder(gs.recorders.MPLPlot(title="Force Sensor Measured Data", labels=labels))
+        force_sensor.start_recording(gs.recorders.MPLPlot(title="Force Sensor Measured Data", labels=labels))
     else:
         print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
 
-    force_sensor.add_recorder(gs.recorders.NPZFile(filename="force_data.npz"))
+    force_sensor.start_recording(gs.recorders.NPZFile(filename="force_data.npz", save_on_reset=True))
 
     scene.build()
 
