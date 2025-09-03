@@ -221,10 +221,7 @@ class RasterizerContext:
 
     def update_camera_frustum(self, camera):
         if self.camera_frustum_shown:
-            self.set_node_pose(
-                self.frustum_nodes[camera.uid],
-                camera.transform[0] if self._context.scene.n_envs > 0 else camera.transform,
-            )
+            self.set_node_pose(self.frustum_nodes[camera.uid], camera.transform)
 
     def on_camera_frustum(self):
         if not self.camera_frustum_shown:

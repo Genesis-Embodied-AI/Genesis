@@ -343,7 +343,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             env_idx=env_idx,
             GUI=show_viewer,
         )
-        cameras += [cam_0, cam_1, cam_2]
+        cameras += (cam_0, cam_1, cam_2)
     if IS_BATCHRENDER:
         scene.add_light(
             pos=(0.0, 0.0, 1.5),
@@ -364,10 +364,12 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     scene.build(n_envs=n_envs, env_spacing=(4.0, 4.0))
 
     # Attach cameras
-    R = np.eye(3)
-    trans = np.array([0.1, 0.0, 0.1])
-    cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
-    cam_1.follow_entity(robot)
+    for i in range(0, len(cameras), 3):
+        cam_0, cam_1, cam_2 = cameras[i : (i + 3)]
+        R = np.eye(3)
+        trans = np.array([0.1, 0.0, 0.1])
+        cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
+        cam_1.follow_entity(robot)
 
     # Create image exporter
     exporter = FrameImageExporter(tmp_path)
@@ -420,7 +422,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             if n_envs > 0:
                 rgba_all, depth_all, seg_all, normal_all = (
                     tuple(np.swapaxes(np.stack(img_data, axis=0).reshape((n_envs, 3, *img_data[0].shape)), 0, 1))
-                    for img_data in (rgba_all, depth_all)
+                    for img_data in (rgba_all, depth_all, seg_all, normal_all)
                 )
             rgba_1, depth_1, seg_1, normal_1 = rgba_all[1], depth_all[1], seg_all[1], normal_all[1]
 

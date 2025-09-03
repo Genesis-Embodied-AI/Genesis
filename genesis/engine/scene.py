@@ -600,12 +600,18 @@ class Scene(RBC):
             Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
             to True on Linux, otherwise False. If OptiX denoiser is not available in your platform, consider enabling
             the OIDN denoiser option when building the RayTracer.
-        near: float
+        near : float
             Distance from camera center to near plane in meters.
-            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.05.
-        far: float
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.1.
+        far : float
             Distance from camera center to far plane in meters.
-            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 100.0.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 20.0.
+        env_idx : int, optional
+            The specific environment index to bind to the camera. This option must be specified if and only if a
+            non-batched renderer is being used. If provided, only this environment will be taken into account when
+            following a rigid entity via 'follow_entity' and when being attached to some rigid link via 'attach'. Note
+            that this option is unrelated to which environment is being rendering on the scene. Default to None for
+            batched renderers (ie BatchRender), 'rendered_envs_idx[0]' otherwise (ie Raytracer or Rasterizer).
         debug : bool
             Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
             simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer

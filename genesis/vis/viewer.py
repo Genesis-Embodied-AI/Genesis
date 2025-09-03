@@ -13,7 +13,7 @@ import genesis.utils.geom as gu
 from genesis.ext import pyrender
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
-from genesis.utils.misc import redirect_libc_stderr
+from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.options.vis import ViewerOptions
@@ -144,6 +144,7 @@ class Viewer(RBC):
 
     def update(self, auto_refresh=None):
         if self._followed_entity is not None:
+            breakpoint()
             self.update_following()
 
         self._pyrender_viewer.update_on_sim_step()
@@ -219,7 +220,7 @@ class Viewer(RBC):
         """
         Update the viewer position to follow the specified entity.
         """
-        entity_pos = self._followed_entity.get_pos().cpu().numpy()
+        entity_pos = tensor_to_array(self._followed_entity.get_pos())
         if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
         camera_transform = np.asarray(self._pyrender_viewer._trackball.pose, copy=True)

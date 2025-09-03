@@ -130,9 +130,7 @@ class GenesisGeomRetriever(GeomRetriever):
                 mat_texture_nchans.append(texture_nchans)
                 mat_texture_offsets.append(total_texture_size)
                 mat_texture_data.append(
-                    np.array(
-                        visual.material.image.transpose(Image.Transpose.FLIP_TOP_BOTTOM).getdata(), dtype=np.uint8
-                    ).flatten()
+                    np.asarray(visual.material.image.transpose(Image.Transpose.FLIP_TOP_BOTTOM), dtype=np.uint8).flat
                 )
                 mat_texture_ids.append(texture_ids)
                 mat_rgbas.append(visual.material.diffuse.astype(np.float32) / 255.0)
@@ -377,10 +375,12 @@ class BatchRenderer(RBC):
 
         # Convert center distance depth to plane distance
         if not self._use_rasterizer and needed[IMAGE_TYPE.DEPTH]:
+            breakpoint()
             rendered[i] = camera.distance_center_to_plane(rendered[IMAGE_TYPE.DEPTH])
 
         # convert seg geom idx to seg_idxc
         if need[IMAGE_TYPE.SEGMENTATION]:
+            breakpoint()
             seg_geoms = rendered[IMAGE_TYPE.SEGMENTATION]
             mask = seg_geoms != -1
             seg_geoms[mask] = self._geom_retriever.geom_idxc[seg_geoms[mask]]

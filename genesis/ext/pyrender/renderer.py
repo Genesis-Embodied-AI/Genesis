@@ -147,8 +147,9 @@ class Renderer(object):
             flags &= ~RenderFlags.REFLECTIVE_FLOOR
 
         if flags & RenderFlags.ENV_SEPARATE and flags & RenderFlags.OFFSCREEN:
+            breakpoint()
             n_envs = scene.n_envs
-            use_env_idx = True
+            use_env_idx = True and scene.n_envs > 0  # FIXME: disable batching if useless <- should be tested on the CI
         else:
             n_envs = 1
             use_env_idx = False
@@ -200,7 +201,7 @@ class Renderer(object):
         if use_env_idx:
             retval_list = tuple(np.stack(val_list, axis=0) for val_list in retval_list)
         else:
-            retval_list = tuple([val_list[0] for val_list in retval_list])
+            retval_list = tuple(val_list[0] for val_list in retval_list)
         return retval_list
 
     def render_text(
