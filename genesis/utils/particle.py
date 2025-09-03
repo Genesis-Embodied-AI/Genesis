@@ -360,7 +360,6 @@ def particles_to_mesh(positions, radius, backend):
             normals_smoothing_iters=10,
             mesh_cleanup=True,
             compute_normals=True,
-            enable_multi_threading=True,
         )
         normals = mesh_with_data.get_point_attribute("normals")
         vertices, triangles = mesh_with_data.take_mesh().take_vertices_and_triangles()
