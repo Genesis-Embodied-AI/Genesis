@@ -147,9 +147,8 @@ class Renderer(object):
             flags &= ~RenderFlags.REFLECTIVE_FLOOR
 
         if flags & RenderFlags.ENV_SEPARATE and flags & RenderFlags.OFFSCREEN:
-            breakpoint()
             n_envs = scene.n_envs
-            use_env_idx = True and scene.n_envs > 0  # FIXME: disable batching if useless <- should be tested on the CI
+            use_env_idx = True
         else:
             n_envs = 1
             use_env_idx = False

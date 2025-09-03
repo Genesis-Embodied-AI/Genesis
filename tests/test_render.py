@@ -565,6 +565,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     for i in range(2):
         scene.step()
         _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
+        seg = tensor_to_array(seg)
         assert_array_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
 
 

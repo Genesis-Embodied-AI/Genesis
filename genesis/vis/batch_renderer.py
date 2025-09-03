@@ -373,11 +373,6 @@ class BatchRenderer(RBC):
         )
         rendered = list(self._renderer.render(cameras_pos, cameras_quat, render_flags))
 
-        # Convert center distance depth to plane distance
-        if not self._use_rasterizer and needed[IMAGE_TYPE.DEPTH]:
-            breakpoint()
-            rendered[i] = camera.distance_center_to_plane(rendered[IMAGE_TYPE.DEPTH])
-
         # convert seg geom idx to seg_idxc
         if needed[IMAGE_TYPE.SEGMENTATION]:
             seg_geoms = rendered[IMAGE_TYPE.SEGMENTATION]
@@ -395,6 +390,13 @@ class BatchRenderer(RBC):
                 if self._visualizer.scene.n_envs == 0:
                     data = data.squeeze(1)
                 rendered[img_type] = tuple(data[..., :3].squeeze(-1))
+
+        # Convert center distance depth to plane distance
+        if not self._use_rasterizer and needed[IMAGE_TYPE.DEPTH]:
+            rendered[IMAGE_TYPE.DEPTH] = tuple(
+                camera.distance_center_to_plane(depth_data)
+                for camera, depth_data in zip(self._cameras, rendered[IMAGE_TYPE.DEPTH])
+            )
 
         # Update cache
         self._t = self._visualizer.scene.t

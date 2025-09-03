@@ -486,10 +486,21 @@ class Camera(RBC):
         cx = self.cx
         cy = self.cy
 
-        v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
-        xd = (u + 0.5 - cx) / fx
-        yd = (v + 0.5 - cy) / fy
-        return center_dis / np.sqrt(xd**2 + yd**2 + 1.0)
+        if isinstance(center_dis, np.ndarray):
+            v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+            xd = (u + 0.5 - cx) / fx
+            yd = (v + 0.5 - cy) / fy
+            scale_inv = 1.0 / np.sqrt(xd**2 + yd**2 + 1.0)
+        else:  # torch.Tensor
+            v, u = torch.meshgrid(
+                torch.arange(height, dtype=torch.int32, device=gs.device),
+                torch.arange(width, dtype=torch.int32, device=gs.device),
+                indexing="ij",
+            )
+            xd = (u + 0.5 - cx) / fx
+            yd = (v + 0.5 - cy) / fy
+            scale_inv = torch.rsqrt(xd**2 + yd**2 + 1.0)
+        return center_dis * scale_inv
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):

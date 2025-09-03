@@ -144,7 +144,6 @@ class Viewer(RBC):
 
     def update(self, auto_refresh=None):
         if self._followed_entity is not None:
-            breakpoint()
             self.update_following()
 
         self._pyrender_viewer.update_on_sim_step()

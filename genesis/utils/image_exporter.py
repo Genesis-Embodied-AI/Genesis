@@ -194,15 +194,12 @@ class FrameImageExporter:
                 imgs_data = np.asarray(imgs_data)
 
             # Make sure that image data has shape `(n_env, H, W [, C>1])``
-            is_single_channel = img_type in (IMAGE_TYPE.DEPTH, IMAGE_TYPE.SEGMENTATION)
-            if imgs_data.ndim == (2 if is_single_channel else 3):
+            if imgs_data.ndim < 4:
                 imgs_data = imgs_data[None]
-            if imgs_data.ndim == 4 and is_single_channel:
+            if imgs_data.ndim == 4 and imgs_data.shape[-1] == 1:
                 imgs_data = imgs_data[..., 0]
-            if is_single_channel and imgs_data.ndim != 3:
-                gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W)")
-            elif not is_single_channel and (imgs_data.ndim != 4 or imgs_data.shape[-1] != 3):
-                gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W, 3)")
+            if imgs_data.ndim not in (3, 4):
+                gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W [, C>1])")
 
             # Convert image data to grayscale array if necessary
             if img_type == IMAGE_TYPE.DEPTH:
@@ -214,7 +211,7 @@ class FrameImageExporter:
             imgs_data = imgs_data.astype(np.uint8)
 
             # Flip channel order if necessary
-            if not is_single_channel:
+            if imgs_data.ndim == 4:
                 imgs_data = np.flip(imgs_data, axis=-1)
 
             # Export image array as (compressed) PNG file.
