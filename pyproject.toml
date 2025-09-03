@@ -62,7 +62,9 @@ dependencies = [
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations
     # 0.13.0.0 changes removes enable_multi_threading argument an enable it by default
-    "pysplashsurf>=0.13.0.0", 
+    # and AttributeError: 'builtins.MeshWithData' object has no attribute 'get_point_attribute'. 
+    # Did you mean: 'add_point_attribute'?
+    "pysplashsurf<=0.12.0.2", 
 ]
 
 [project.optional-dependencies]
