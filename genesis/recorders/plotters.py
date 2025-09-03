@@ -18,7 +18,7 @@ try:
 
     IS_PYQTGRAPH_AVAILABLE = True
 except ImportError:
-    gs.logger.debug("pyqtgraph not found, PyQtPlotter will not be available")
+    pass
 
 IS_MATPLOTLIB_AVAILABLE = False
 try:
@@ -26,7 +26,7 @@ try:
 
     IS_MATPLOTLIB_AVAILABLE = True
 except ImportError:
-    gs.logger.debug("matplotlib not found, MPLPlotter will not be available")
+    pass
 
 
 COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y", "w"))
