@@ -26,7 +26,6 @@ from genesis.options import (
     MPMOptions,
     PBDOptions,
     ProfilingOptions,
-    RecordingOptions,
     RigidOptions,
     SFOptions,
     SimOptions,
@@ -45,7 +44,8 @@ from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
-    from genesis.sensors.base_sensor import SensorOptions
+    from genesis.recorders import RecorderOptions
+    from genesis.sensors import SensorOptions
 
 
 @gs.assert_initialized
@@ -208,6 +208,9 @@ class Scene(RBC):
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def __del__(self):
+        self._sim._data_recorder.destroy()
+        self._sim._data_recorder = None
+
         if self._visualizer is not None:
             self._visualizer.destroy()
             self._visualizer = None
@@ -555,23 +558,21 @@ class Scene(RBC):
         """
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
-    def add_recording(self, rec_options: RecordingOptions):
+    def add_recorder(self, data_func: Callable, rec_options: "RecorderOptions"):
         """
-        Add a recording to the scene. See RecordingOptions for more details.
+        Automatically read and process data. See RecorderOptions for more details.
 
-        Data from `rec_options.data_func` is automatically read and processed using `rec_options.handler` at the
+        Data from `data_func` is automatically read and processed using the recorder at the
         frequency `rec_options.hz` (or every step if not specified) as the scene is stepped.
 
         Parameters
         ----------
-        rec_options : RecordingOptions
+        data_func: Callable
+            A function with no arguments that returns the data to be recorded.
+        rec_options : RecorderOptions
             The options for the recording.
         """
-        return self._sim._data_recorder.add_recording(rec_options)
-
-    @gs.assert_built
-    def stop_recording(self):
-        self._sim._data_recorder.stop()
+        return self._sim._data_recorder.add_recorder(data_func, rec_options)
 
     @gs.assert_unbuilt
     def add_camera(
@@ -906,6 +907,9 @@ class Scene(RBC):
 
         if self.profiling_options.show_FPS:
             self.FPS_tracker.step()
+
+    def stop_recording(self):
+        self._sim._data_recorder.stop()
 
     def _step_grad(self):
         self._sim.collect_output_grads()

@@ -66,7 +66,7 @@ class TensorRingBuffer:
         """
         rel_idx = (self._idx_ptr.value - idx) % self.N
         if isinstance(idx, torch.Tensor):
-            batch_size = idx.shape[0]
+            batch_size = idx.shape[0] if len(idx.shape) > 0 else 1
             env_indices = torch.arange(batch_size, device=idx.device)
             return self.buffer[rel_idx, env_indices]
         else:
