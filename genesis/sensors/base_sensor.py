@@ -1,6 +1,6 @@
 import itertools
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Iterable, List
+from typing import TYPE_CHECKING, Any, Iterable
 
 import gstaichi as ti
 import numpy as np
@@ -12,11 +12,10 @@ from genesis.engine.solvers import RigidSolver
 from genesis.options import Options
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
-
-from .data_recorder import DataRecorder
+from genesis.utils.misc import concat_with_tensor
 
 if TYPE_CHECKING:
-    from genesis.options.recording import RecordingOptions
+    from genesis.recorders.base_recorder import RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
 
     from .sensor_manager import SensorManager
@@ -58,7 +57,7 @@ class SharedSensorMetadata:
     """
 
     cache_sizes: list[int] = field(default_factory=list)
-    delay_steps: list[int] = field(default_factory=list)
+    delays_ts: list[int] = field(default_factory=list)
 
 
 @ti.data_oriented
@@ -66,9 +65,11 @@ class Sensor(RBC):
     """
     Base class for all types of sensors.
 
-    Use scene.add_sensor(sensor_options) to instantiate a sensor.
+    To create a sensor, prefer using `scene.add_sensor(sensor_options)` instead of instantiating directly.
 
-    NOTE: The Sensor system is designed to be performant.  All sensors of the same type are updated at once and stored
+    Note
+    -----
+    The Sensor system is designed to be performant.  All sensors of the same type are updated at once and stored
     in a cache in SensorManager. Cache size is inferred from the return format and cache length of each sensor.
     `read()` and `read_ground_truth()`, the public-facing methods of every Sensor, automatically handles indexing into
     the shared cache to return the correct data.
@@ -79,10 +80,10 @@ class Sensor(RBC):
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
         self._shared_metadata: SharedSensorMetadata = sensor_manager._sensors_metadata[type(self)]
-        self._data_recorder: DataRecorder | None = None
 
-        self._delay_steps = round(self._options.delay / self._manager._sim.dt)
-        self._shared_metadata.delay_steps.append(self._delay_steps)
+        self._dt = self._manager._sim.dt
+        self._delays_ts = round(self._options.delay / self._dt)
+        self._shared_metadata.delays_ts.append(self._delays_ts)
 
         self._shape_indices: list[tuple[int, int]] = []
         return_format = self._get_return_format()
@@ -162,29 +163,33 @@ class Sensor(RBC):
     # =============================== public shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx: List[int] | None = None):
+    def read(self, envs_idx=None):
         """
         Read the sensor data (with noise applied if applicable).
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx: List[int] | None = None):
+    def read_ground_truth(self, envs_idx=None):
         """
         Read the ground truth sensor data (without noise).
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
     @gs.assert_unbuilt
-    def add_recording(self, recording_options: "RecordingOptions", read_ground_truth: bool = False):
+    def add_recorder(self, rec_options: "RecorderOptions"):
         """
-        Automatically process data from this sensor.
+        Automatically read and process sensor data. See RecorderOptions for more details.
 
-        When `recording_options.data_func` is not specified, the sensor's `read()` method is used.
+        Data from `sensor.read()` is used. If the sensor data needs to be preprocessed before passing to the recorder,
+        consider using `scene.add_recorder()` instead with a custom data function.
+
+        Parameters
+        ----------
+        rec_options : RecorderOptions
+            The options for the recording.
         """
-        if recording_options.data_func is None:
-            recording_options.data_func = self.read_ground_truth if read_ground_truth else self.read
-        self._manager._sim._data_recorder.add_recording(recording_options)
+        self._manager._sim._data_recorder.add_recorder(self.read, rec_options)
 
     @property
     def is_built(self) -> bool:
@@ -198,7 +203,7 @@ class Sensor(RBC):
         shared_metadata: SharedSensorMetadata,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
-        jitter_in_steps: torch.Tensor | None = None,
+        cur_jitter_ts: torch.Tensor | None = None,
         interpolate: list[bool] | None = None,
     ):
         """
@@ -214,42 +219,39 @@ class Sensor(RBC):
             The shared cache tensor.
         buffered_data : TensorRingBuffer
             The buffered data tensor.
-        jitter_in_steps : torch.Tensor | None
-            The jitter in steps before the sensor data is read.
+        cur_jitter_ts : torch.Tensor | None
+            The current jitter in timesteps (divided by simulation dt) before the sensor data is read.
         interpolate : list[bool] | None
             Whether to interpolate the sensor data for the read delay + jitter.
         """
         tensor_idx = 0
 
-        for sensor_idx, (tensor_size, delay_step, interpolate) in enumerate(
+        for sensor_idx, (tensor_size, delay_ts, interpolate) in enumerate(
             zip(
                 shared_metadata.cache_sizes,
-                shared_metadata.delay_steps,
+                shared_metadata.delays_ts,
                 interpolate or itertools.repeat(False),
             )
         ):
-            actual_delay_in_steps = torch.full_like(shared_cache[:, sensor_idx], delay_step, dtype=gs.tc_float)
-            if jitter_in_steps is not None:
-                actual_delay_in_steps = actual_delay_in_steps + jitter_in_steps[:, sensor_idx]
-            actual_delay_in_steps_int = actual_delay_in_steps.floor().int()
-            if interpolate:
-                lerp_weight = actual_delay_in_steps - actual_delay_in_steps_int
-                shared_cache[:, tensor_idx : tensor_idx + tensor_size] = torch.lerp(
-                    buffered_data.at(actual_delay_in_steps_int)[:, tensor_idx : tensor_idx + tensor_size],
-                    buffered_data.at(actual_delay_in_steps_int + 1)[:, tensor_idx : tensor_idx + tensor_size],
-                    lerp_weight.unsqueeze(-1).expand(-1, tensor_size),
-                )
+            if cur_jitter_ts is not None:
+                cur_delay_ts = delay_ts + cur_jitter_ts[:, sensor_idx]
             else:
-                shared_cache[:, tensor_idx : tensor_idx + tensor_size] = buffered_data.at(actual_delay_in_steps_int)[
-                    :, tensor_idx : tensor_idx + tensor_size
-                ]
+                cur_delay_ts = torch.tensor(delay_ts, dtype=gs.tc_float, device=gs.device)
+            # get int for indexing into ring buffer (0 = most recent, 1 = delayed by one timestep, etc.)
+            cur_delay_ts_int = cur_delay_ts.to(dtype=gs.tc_int)
+            idx_slices = (slice(None), slice(tensor_idx, tensor_idx + tensor_size))
+            if interpolate:
+                ratio = torch.frac(cur_delay_ts).unsqueeze(-1)
+                data_left = buffered_data.at(cur_delay_ts_int)[idx_slices]
+                data_right = buffered_data.at(cur_delay_ts_int + 1)[idx_slices]
+                shared_cache[idx_slices] = data_left + ratio * (data_right - data_left)
+            else:
+                shared_cache[idx_slices] = buffered_data.at(cur_delay_ts_int)[idx_slices]
             tensor_idx += tensor_size
 
-    def _get_formatted_data(
-        self, tensor: torch.Tensor, envs_idx: list[int] | None
-    ) -> torch.Tensor | dict[str, torch.Tensor]:
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor | dict[str, torch.Tensor]:
         """
-        Formats the flattened cache tensor into a dict of tensors using the format specified in `get_return_format()`.
+        Formats the given tensor into the format specified in `get_return_format()`.
 
         NOTE: This method does not clone the data tensor, it should have been cloned by the caller.
         """
@@ -262,25 +264,18 @@ class Sensor(RBC):
         return_values = []
 
         if cache_length == 1:
-            work_tensor = tensor[envs_idx]
+            tensor_chunk = tensor[envs_idx]
         else:
-            total_data_per_item = sum(np.prod(shape) for shape in return_shapes)
-            work_tensor = tensor[envs_idx].reshape(len(envs_idx), cache_length, total_data_per_item)
+            tensor_chunk = tensor[envs_idx].reshape((len(envs_idx), cache_length, -1))
 
         for i, shape in enumerate(return_shapes):
             start_idx, end_idx = self._shape_indices[i]
 
-            if cache_length == 1:
-                field_data = work_tensor[:, start_idx:end_idx]
-                final_shape = (len(envs_idx), *shape)
-            else:
-                field_data = work_tensor[:, :, start_idx:end_idx]
-                final_shape = (len(envs_idx), cache_length, *shape)
+            field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), cache_length, *shape)).squeeze()
 
-            value = field_data.reshape(final_shape).squeeze()
             if self._manager._sim.n_envs == 0:
-                value = value.squeeze(0)
-            return_values.append(value)
+                field_data = field_data.squeeze(0)
+            return_values.append(field_data)
 
         if isinstance(return_format, dict):
             return dict(zip(return_format.keys(), return_values))
@@ -295,19 +290,16 @@ class RigidSensorOptionsMixin:
     """
     Base options class for sensors that are attached to a RigidEntity.
 
-        Parameters
-        ----------
-        entity_idx : int
-            The global entity index of the RigidEntity to which this sensor is attached.
-        link_idx_local : int, optional
-            The local index of the RigidLink of the RigidEntity to which this sensor is attached.
-        pos_offset : tuple[float, float, float]
-            The positional offset of the sensor from the RigidLink.
-        euler_offset : tuple[float, float, float]
-            The rotational offset of the sensor from the RigidLink in degrees.
-    =======
-        Utility base class for sensors that are attached to a RigidEntity.
-    >>>>>>> a99bdb0 (add lidar wip)
+    Parameters
+    ----------
+    entity_idx : int
+        The global entity index of the RigidEntity to which this sensor is attached.
+    link_idx_local : int, optional
+        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+    pos_offset : tuple[float, float, float]
+        The positional offset of the sensor from the RigidLink.
+    euler_offset : tuple[float, float, float]
+        The rotational offset of the sensor from the RigidLink in degrees.
     """
 
     entity_idx: int
@@ -350,11 +342,8 @@ class RigidSensorMixin:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
         self._shared_metadata.links_idx.append(self._options.link_idx_local + self._options.entity_idx)
-        self._shared_metadata.offsets_pos = torch.cat(
-            [
-                self._shared_metadata.offsets_pos,
-                torch.tensor([self._options.pos_offset], dtype=gs.tc_float, device=gs.device),
-            ]
+        self._shared_metadata.offsets_pos = concat_with_tensor(
+            self._shared_metadata.offsets_pos, self._options.pos_offset
         )
         quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
         if self._shared_metadata.solver.n_envs > 0:
@@ -398,6 +387,8 @@ class NoisySensorOptionsMixin:
 
     def validate(self, scene):
         super().validate(scene)
+        if self.jitter > 0 and not self.interpolate:
+            gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
         if self.jitter > self.delay:
             gs.raise_exception(f"{type(self).__name__}: Jitter must be less than or equal to read delay.")
 
@@ -414,12 +405,8 @@ class NoisySensorMetadataMixin:
     random_walk_std: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     cur_noise: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     noise_std: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    jitter_std_in_steps: torch.Tensor = field(
-        default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
-    )
-    cur_jitter_in_steps: torch.Tensor = field(
-        default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
-    )
+    jitter_ts: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    cur_jitter_ts: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     delay_in_steps: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     interpolate: list[bool] = field(default_factory=list)
 
@@ -440,10 +427,9 @@ class NoisySensorMixin:
         if not isinstance(input, Iterable):
             input = [input]
         tensor_input = torch.tensor(input, dtype=dtype, device=gs.device)
-        if tensor_input.ndim < len(shape):
-            tensor_input = tensor_input.unsqueeze(0)  # add batch dim
-        if tensor_input.shape[0] == 1 and shape[0] > 1:
-            tensor_input = tensor_input.expand(shape[0], *tensor_input.shape[1:])  # repeat batch dim
+        if tensor_input.ndim == len(shape) - 1:
+            # Batch dimension is missing
+            tensor_input = tensor_input.unsqueeze(0).expand((shape[0], *tensor_input.shape))
         assert (
             tensor_input.shape == shape
         ), f"Input shape {tensor_input.shape} for setting sensor metadata does not match shape {shape}"
@@ -467,10 +453,8 @@ class NoisySensorMixin:
 
     @gs.assert_built
     def set_jitter(self, jitter, envs_idx=None):
-        jitter_in_steps = np.asarray(jitter, dtype=gs.np_float) / self._manager._sim.dt
-        self._set_metadata_field(
-            jitter_in_steps, self._shared_metadata.jitter_std_in_steps, field_size=1, envs_idx=envs_idx
-        )
+        jitter_ts = np.asarray(jitter, dtype=gs.np_float) / self._dt
+        self._set_metadata_field(jitter_ts, self._shared_metadata.jitter_ts, field_size=1, envs_idx=envs_idx)
 
     @gs.assert_built
     def set_delay(self, delay, envs_idx=None):
@@ -486,52 +470,24 @@ class NoisySensorMixin:
 
         if isinstance(self._options.resolution, tuple):
             self._options.resolution = tuple([-1 if r is None else r for r in self._options.resolution])
-        self._shared_metadata.resolution = torch.cat(
-            [
-                self._shared_metadata.resolution,
-                torch.tensor([self._options.resolution or -1], dtype=gs.tc_float, device=gs.device).expand(
-                    batch_size, -1
-                ),
-            ],
-            dim=-1,
+        self._shared_metadata.resolution = concat_with_tensor(
+            self._shared_metadata.resolution, self._options.resolution or -1, expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.bias = torch.cat(
-            [
-                self._shared_metadata.bias,
-                torch.tensor([self._options.bias], dtype=gs.tc_float, device=gs.device).expand(batch_size, -1),
-            ],
-            dim=-1,
+        self._shared_metadata.bias = concat_with_tensor(
+            self._shared_metadata.bias, self._options.bias, expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.random_walk_std = torch.cat(
-            [
-                self._shared_metadata.random_walk_std,
-                torch.tensor([self._options.random_walk_std], dtype=gs.tc_float, device=gs.device).expand(
-                    batch_size, -1
-                ),
-            ],
-            dim=-1,
+        self._shared_metadata.random_walk_std = concat_with_tensor(
+            self._shared_metadata.random_walk_std, self._options.random_walk_std, expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk_std)
-        self._shared_metadata.noise_std = torch.cat(
-            [
-                self._shared_metadata.noise_std,
-                torch.tensor([self._options.noise_std], dtype=gs.tc_float, device=gs.device).expand(batch_size, -1),
-            ],
-            dim=-1,
+        self._shared_metadata.noise_std = concat_with_tensor(
+            self._shared_metadata.noise_std, self._options.noise_std, expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_noise = torch.zeros_like(self._shared_metadata.noise_std)
-        self._shared_metadata.jitter_std_in_steps = torch.cat(
-            [
-                self._shared_metadata.jitter_std_in_steps,
-                torch.tensor(
-                    [self._options.jitter / self._manager._sim.dt], dtype=gs.tc_float, device=gs.device
-                ).expand(batch_size, -1),
-            ],
-            dim=-1,
+        self._shared_metadata.jitter_ts = concat_with_tensor(
+            self._shared_metadata.jitter_ts, self._options.jitter / self._dt, expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.cur_jitter_in_steps = torch.zeros_like(
-            self._shared_metadata.jitter_std_in_steps, device=gs.device
-        )
+        self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         self._shared_metadata.interpolate.append(self._options.interpolate)
 
     @classmethod
@@ -551,12 +507,12 @@ class NoisySensorMixin:
         sensor readout `shared_cache`, not the whole buffer.
         """
         buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.cur_jitter_in_steps)
+        torch.normal(0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_in_steps,
+            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
@@ -564,9 +520,13 @@ class NoisySensorMixin:
 
     @classmethod
     def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataMixin, output: torch.Tensor):
-        shared_metadata.cur_random_walk += torch.normal(0, shared_metadata.random_walk_std)
-        torch.normal(0, shared_metadata.noise_std, out=shared_metadata.cur_noise)
-        output += shared_metadata.bias + shared_metadata.cur_noise + shared_metadata.cur_random_walk
+        if torch.any(shared_metadata.random_walk_std > gs.EPS):
+            shared_metadata.cur_random_walk += torch.normal(0, shared_metadata.random_walk_std)
+            output += shared_metadata.cur_random_walk
+        if torch.any(shared_metadata.noise_std > gs.EPS):
+            torch.normal(0, shared_metadata.noise_std, out=shared_metadata.cur_noise)
+            output += shared_metadata.cur_noise
+        output += shared_metadata.bias
 
     @classmethod
     def _quantize_to_resolution(cls, resolution: torch.Tensor, output: torch.Tensor):

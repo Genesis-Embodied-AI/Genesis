@@ -7,9 +7,8 @@ import torch
 
 import genesis as gs
 from genesis.engine.solvers import RigidSolver
-from genesis.utils.geom import (
-    ti_inv_transform_by_quat,
-)
+from genesis.utils.geom import ti_inv_transform_by_quat
+from genesis.utils.misc import concat_with_tensor
 
 from .base_sensor import (
     NoisySensorMetadataMixin,
@@ -104,15 +103,10 @@ class ContactSensor(Sensor):
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
-        self._shared_metadata.expanded_links_idx = torch.cat(
-            [
-                self._shared_metadata.expanded_links_idx,
-                torch.tensor(
-                    [self._options.entity_idx + self._options.link_idx_local], dtype=gs.tc_int, device=gs.device
-                )
-                .unsqueeze(0)
-                .expand(self._manager._sim._B, -1, -1),
-            ],
+        self._shared_metadata.expanded_links_idx = concat_with_tensor(
+            self._shared_metadata.expanded_links_idx,
+            [self._options.entity_idx + self._options.link_idx_local],
+            expand=(self._manager._sim._B, -1, -1),
             dim=-1,
         )
 
@@ -291,12 +285,12 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         buffered_data: "TensorRingBuffer",
     ):
         buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.cur_jitter_in_steps)
+        torch.normal(0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_in_steps,
+            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)

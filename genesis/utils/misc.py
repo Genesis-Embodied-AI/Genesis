@@ -327,6 +327,16 @@ def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
 
 
+def concat_with_tensor(
+    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dtype: torch.dtype | None = None, dim: int = 0
+):
+    """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
+    value_tensor = torch.tensor([value], dtype=dtype or gs.tc_float, device=gs.device)
+    if expand is not None:
+        value_tensor = value_tensor.expand(*expand)
+    return torch.cat([tensor, value_tensor], dim=dim)
+
+
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
 
 ALLOCATE_TENSOR_WARNING = (

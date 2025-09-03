@@ -10,6 +10,7 @@ from genesis.utils.geom import (
     inv_transform_by_trans_quat,
     transform_quat_by_quat,
 )
+from genesis.utils.misc import tensor_to_array
 
 from .base_sensor import (
     NoisySensorMetadataMixin,
@@ -77,16 +78,16 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
-    acc_resolution: float = 1e-6
-    gyro_resolution: float = 1e-5
+    acc_resolution: float | tuple[float, float, float] = 1e-6
+    gyro_resolution: float | tuple[float, float, float] = 1e-5
     acc_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
     gyro_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
-    acc_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    gyro_noise_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    acc_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    gyro_bias: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    acc_random_walk_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    gyro_random_walk_std: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    acc_noise_std: float | tuple[float, float, float] = 0.0
+    gyro_noise_std: float | tuple[float, float, float] = 0.0
+    acc_bias: float | tuple[float, float, float] = 0.0
+    gyro_bias: float | tuple[float, float, float] = 0.0
+    acc_random_walk_std: float | tuple[float, float, float] = 0.0
+    gyro_random_walk_std: float | tuple[float, float, float] = 0.0
 
     def validate(self, scene):
         super().validate(scene)
@@ -163,12 +164,12 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         """
         Initialize all shared metadata needed to update all IMU sensors.
         """
-        self._options.resolution = tuple([self._options.acc_resolution] * 3 + [self._options.gyro_resolution] * 3)
-        self._options.bias = tuple(self._options.acc_bias) + tuple(self._options.gyro_bias)
-        self._options.random_walk_std = tuple(self._options.acc_random_walk_std) + tuple(
-            self._options.gyro_random_walk_std
+        self._options.resolution = self._to_full_tuple(self._options.acc_resolution, self._options.gyro_resolution)
+        self._options.bias = self._to_full_tuple(self._options.acc_bias, self._options.gyro_bias)
+        self._options.random_walk_std = self._to_full_tuple(
+            self._options.acc_random_walk_std, self._options.gyro_random_walk_std
         )
-        self._options.noise_std = tuple(self._options.acc_noise_std) + tuple(self._options.gyro_noise_std)
+        self._options.noise_std = self._to_full_tuple(self._options.acc_noise_std, self._options.gyro_noise_std)
         super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
 
         self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
@@ -240,12 +241,12 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         Update the current measured sensor data for all IMU sensors.
         """
         buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_std_in_steps, out=shared_metadata.cur_jitter_in_steps)
+        torch.normal(0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_in_steps,
+            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
         # apply rotation matrix to the shared cache
@@ -262,6 +263,16 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         return gs.tc_float
 
     # ================================ helper methods ================================
+
+    def _to_full_tuple(self, *values, length_per_value=3):
+        full_tuple = ()
+        for value in values:
+            if isinstance(value, (int, float)):
+                value = (value,) * length_per_value
+            elif isinstance(value, torch.Tensor):
+                value = tensor_to_array(value)
+            full_tuple += tuple(value)
+        return full_tuple
 
     def _view_metadata_as_acc_gyro(self, metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
