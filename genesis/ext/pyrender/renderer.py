@@ -200,7 +200,7 @@ class Renderer(object):
         if use_env_idx:
             retval_list = tuple(np.stack(val_list, axis=0) for val_list in retval_list)
         else:
-            retval_list = tuple([val_list[0] for val_list in retval_list])
+            retval_list = tuple(val_list[0] for val_list in retval_list)
         return retval_list
 
     def render_text(

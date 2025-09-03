@@ -67,7 +67,8 @@ class VisOptions(Options):
     plane_reflection : bool
         Whether to render plane reflection. Defaults to False.
     env_separate_rigid : bool
-        Whether to share rigid objects across environments. Disabled when shown by the viewer. Defaults to False.
+        Whether to render all the rigid objects in batched environments in isolation or as part of the same scene.
+        This is only an option for Rasterizer. This behavior is enforced for BatchRender. Defaults to False.
     background_color : tuple of float, shape (3,)
         The color of the scene background.
     ambient_light : tuple of float, shape (3,)
@@ -79,20 +80,24 @@ class VisOptions(Options):
     visualize_pbd_boundary : bool
         Whether to visualize the boundary of the PBD Solver.
     segmentation_level : str
-        The segmentation level used for segmentation mask rendering. Should be one of ['entity', 'link', 'geom']. Defaults to 'link'.
+        The segmentation level used for segmentation mask rendering. Should be one of ['entity', 'link', 'geom'].
+        Defaults to 'link'.
     render_particle_as : str
         How particles in the scene should be rendered. Should be one of ['sphere', 'tet']. Defaults to 'sphere'.
     particle_size_scale : float
         Scale applied to actual particle size for rendering. Defaults to 1.0.
     contact_force_scale : float = 0.02
-        Scale for contact arrow visualization, m/N. E.g. the force arrow representing 10N will be 0.2m long if scale is 0.02. Defaults to 0.02.
+        Scale for contact arrow visualization, m/N. E.g. the force arrow representing 10N will be 0.2m long if scale is
+        0.02. Defaults to 0.02.
     n_support_neighbors : int
-        Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies. Defaults to 12.
-    n_rendered_envs : int, optional
-        Number of environments with being rendered (from env 0 up to n). This cannot be used with `rendered_envs_idx`. Defaults to None.
+        Number of supporting neighbor particles used to compute vertex position of the visual mesh. Used for rendering
+        deformable bodies. Defaults to 12.
     rendered_envs_idx : list, optional
-        index of environments being rendered. If None, all environments will be rendered. Defaults to None.
-    lights  : list of dict.
+        Mask to filter the environments for which rigid objects will be rendering. If not provided, all the environments
+        will be considered. Defaults to None.
+    n_rendered_envs : int, optional
+        This option is deprecated. Please use `rendered_envs_idx` instead.
+    lights : list of dict.
         Lights added to the scene.
     """
 

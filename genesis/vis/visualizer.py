@@ -1,8 +1,4 @@
-import os
-
 import pyglet
-import numpy as np
-import torch
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -160,7 +156,7 @@ class Visualizer(RBC):
         if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
         else:
-            gs.raise_exception("`add_light` is specifically for batch renderer.")
+            gs.raise_exception("`add_light` is specific to batch renderer.")
 
     def reset(self):
         self._t = -1
