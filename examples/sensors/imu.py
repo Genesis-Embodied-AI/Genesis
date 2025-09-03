@@ -63,22 +63,22 @@ def main():
     labels = {"lin_acc": ["acc_x", "acc_y", "acc_z"], "ang_vel": ["gyro_x", "gyro_y", "gyro_z"]}
     if args.vis:
         if IS_PYQTGRAPH_AVAILABLE:
-            imu.add_recorder(gs.recorders.PyQtPlot(title="IMU Measured Data", labels=labels))
-            scene.add_recorder(
+            imu.start_recording(gs.recorders.PyQtPlot(title="IMU Measured Data", labels=labels))
+            scene.start_recording(
                 imu.read_ground_truth,
                 gs.recorders.PyQtPlot(title="IMU Ground Truth Data", labels=labels),
             )
         elif IS_MATPLOTLIB_AVAILABLE:
             gs.logger.info("pyqtgraph not found, falling back to matplotlib.")
-            imu.add_recorder(gs.recorders.MPLPlot(title="IMU Measured Data", labels=labels))
-            scene.add_recorder(
+            imu.start_recording(gs.recorders.MPLPlot(title="IMU Measured Data", labels=labels))
+            scene.start_recording(
                 imu.read_ground_truth,
                 gs.recorders.MPLPlot(title="IMU Ground Truth Data", labels=labels),
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
 
-    imu.add_recorder(gs.recorders.NPZFile(filename="imu_data.npz"))
+    imu.start_recording(gs.recorders.NPZFile(filename="imu_data.npz"))
 
     ########################## build ##########################
     scene.build()

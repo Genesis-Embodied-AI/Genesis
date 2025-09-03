@@ -80,6 +80,7 @@ class Sensor(RBC):
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
         self._shared_metadata: SharedSensorMetadata = sensor_manager._sensors_metadata[type(self)]
+        self._is_built = False
 
         self._dt = self._manager._sim.dt
         self._delays_ts = round(self._options.delay / self._dt)
@@ -177,12 +178,12 @@ class Sensor(RBC):
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
     @gs.assert_unbuilt
-    def add_recorder(self, rec_options: "RecorderOptions"):
+    def start_recording(self, rec_options: "RecorderOptions"):
         """
         Automatically read and process sensor data. See RecorderOptions for more details.
 
         Data from `sensor.read()` is used. If the sensor data needs to be preprocessed before passing to the recorder,
-        consider using `scene.add_recorder()` instead with a custom data function.
+        consider using `scene.start_recording()` instead with a custom data function.
 
         Parameters
         ----------
@@ -193,7 +194,7 @@ class Sensor(RBC):
 
     @property
     def is_built(self) -> bool:
-        return self._manager._sim._scene._is_built
+        return self._is_built
 
     # =============================== private shared methods ===============================
 

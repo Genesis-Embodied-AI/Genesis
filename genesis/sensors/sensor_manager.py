@@ -67,6 +67,7 @@ class SensorManager:
             dtype = sensor_cls._get_cache_dtype()
             for sensor in sensors:
                 sensor.build()
+                sensor._is_built = True
 
     def step(self):
         for sensor_cls in self._sensors_by_type.keys():
