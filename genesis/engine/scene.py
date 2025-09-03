@@ -37,6 +37,7 @@ from genesis.options import (
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
@@ -195,6 +196,9 @@ class Scene(RBC):
             renderer_options=renderer,
         )
 
+        # recorders
+        self._recorder_manager = RecorderManager(self._sim.dt)
+
         # emitters
         self._emitters = gs.List()
 
@@ -208,8 +212,8 @@ class Scene(RBC):
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def __del__(self):
-        self._sim._recorder_manager.destroy()
-        self._sim._recorder_manager = None
+        self._recorder_manager.destroy()
+        self._recorder_manager = None
 
         if self._visualizer is not None:
             self._visualizer.destroy()
@@ -572,7 +576,7 @@ class Scene(RBC):
         rec_options : RecorderOptions
             The options for the recording.
         """
-        return self._sim._recorder_manager.add_recorder(data_func, rec_options)
+        return self._recorder_manager.add_recorder(data_func, rec_options)
 
     @gs.assert_unbuilt
     def add_camera(
@@ -784,6 +788,10 @@ class Scene(RBC):
         if self.profiling_options.show_FPS:
             self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.profiling_options.FPS_tracker_alpha)
 
+        # recorders
+        if self._recorder_manager.has_recorders:
+            self._recorder_manager.start()
+
         gs.global_scene_list.add(self)
 
     def _parallelize(
@@ -848,6 +856,7 @@ class Scene(RBC):
         """
         gs.logger.debug(f"Resetting Scene ~~~<{self._uid}>~~~.")
         self._reset(state, envs_idx=envs_idx)
+        self._recorder_manager.reset(envs_idx)
 
     def _reset(self, state: SimState | None = None, *, envs_idx=None):
         if self._is_built:
@@ -908,8 +917,10 @@ class Scene(RBC):
         if self.profiling_options.show_FPS:
             self.FPS_tracker.step()
 
+        self._recorder_manager.step(self._sim.cur_step_global)
+
     def stop_recording(self):
-        self._sim._recorder_manager.stop()
+        self._recorder_manager.stop()
 
     def _step_grad(self):
         self._sim.collect_output_grads()

@@ -16,9 +16,43 @@ from .recorder_manager import register_recording
 
 
 class BaseFileWriterOptions(RecorderOptions):
-    """Base class for file writer options."""
+    """
+    Base class for file writer options.
+
+    Parameters
+    ----------
+    filename: str
+        The path of the output file.
+    save_on_reset: bool, optional
+        Whether to save the data on reset. Defaults to False.
+        If True, a counter will be added to the filename and incremented on each reset.
+    """
 
     filename: str
+    save_on_reset: bool = False
+
+
+class BaseFileWriter(Recorder):
+    def initialize(self):
+        self.counter = 0
+
+    def reset(self, envs_idx=None):
+        # envs_idx is ignored
+        if self._options.save_on_reset:
+            self.cleanup()
+            self.counter += 1
+
+    def _get_filename(self):
+        if self._options.save_on_reset:
+            path, ext = os.path.splitext(self._options.filename)
+            return f"{path}_{self.counter}{ext}"
+        return self._options.filename
+
+
+class BaseVideoFileWriter(BaseFileWriter):
+    def initialize(self):
+        super().initialize()
+        self.fps = 1.0 / (self._steps_per_sample * self._manager._step_dt)
 
 
 class VideoFileWriterOptions(BaseFileWriterOptions):
@@ -31,6 +65,9 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
         The path of the output video file ending in ".mp4".
     fps : float, optional
         Frames per second for the video. Defaults to the data collection Hz ("real-time").
+    save_on_reset: bool, optional
+        Whether to save the data on reset. Defaults to False.
+        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     fps: float | None = None
@@ -41,24 +78,20 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
             gs.raise_exception(f"[{type(self).__name__}] Video output should be an .mp4 file")
 
 
-class BaseVideoFileWriter(Recorder):
-    def initialize(self):
-        self.fps = 1.0 / (self._steps_per_sample * self._manager._step_dt)
-
-
 @register_recording(VideoFileWriterOptions)
 class VideoFileWriter(BaseVideoFileWriter):
 
     def initialize(self):
         super().initialize()
         self.frames: list[np.ndarray] = []
+        self.counter = 0
 
     def process(self, data, cur_time):
         self.frames.append(data)
 
     def cleanup(self):
         if self.frames:
-            animate(self.frames, filename=self._options.filename, fps=self.fps)
+            animate(self.frames, filename=self._get_filename(), fps=self.fps)
             self.frames.clear()
         else:
             gs.logger.warning(f"[{type(self).__name__}] No frames to write to video file.")
@@ -83,6 +116,9 @@ class Cv2VideoFileWriterOptions(VideoFileWriterOptions):
     fourcc : str, optional
         The codec to use for the video file. Defaults to "avc1" for .mp4 files.
         Supported encodings: .mp4 -> "avc1", "mp4v", "h264"; .avi -> "XVID", "MJPG"
+    save_on_reset: bool, optional
+        Whether to save the data on reset. Defaults to False.
+        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     fourcc: str = "avc1"
@@ -118,25 +154,29 @@ class Cv2VideoFileWriter(BaseVideoFileWriter):
 
         os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
 
-    def _lazy_initialize(self, data):
+    def _initialize_data(self, data):
         self.is_color = len(data[0].shape) == 3 and data[0].shape[-1] == 3
         if not self.is_color and len(data[0].shape) != 2:
             gs.raise_exception(f"[{type(self).__name__}] Data must be either grayscale [H, W] or color [H, W, RGB]")
         self.height, self.width = data[0].shape[:2]
 
+    def _initialize_writer(self):
+        filename = self._get_filename()
         video_writer = cv2.VideoWriter(
-            self._options.filename,
+            filename,
             cv2.VideoWriter_fourcc(*self._options.fourcc),
             self.fps,
             (self.width, self.height),
             self.is_color,
         )
         if not video_writer.isOpened():
-            gs.raise_exception(f'[{type(self).__name__}] Failed to open video writer for "{self._options.filename}"')
+            gs.raise_exception(f'[{type(self).__name__}] Failed to open video writer for "{filename}"')
 
     def process(self, data, cur_time):
         if self.is_color is None:
-            self._lazy_initialize(data)
+            self._initialize_data(data)
+        if self.video_writer is None:
+            self._initialize_writer()
 
         if self.is_color:
             data = cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
@@ -167,6 +207,9 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
         Column headers for the CSV file.
     flush_interval : int | None, optional
         Determines how often the data is saved to disk. None = only at cleanup, 0 = every write, >0 = every N writes.
+    save_on_reset: bool, optional
+        Whether to save the data on reset. Defaults to False.
+        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     header: list[str] | None = None
@@ -181,18 +224,20 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
 
 
 @register_recording(CSVFileWriterOptions)
-class CSVFileWriter(Recorder):
+class CSVFileWriter(BaseFileWriter):
 
     def initialize(self):
-        self.file_handle = None
-        self.csv_writer = None
-        self.wrote_header = False
-
+        super().initialize()
         if self._options.flush_interval is not None:
             self.flush_counter = 0
 
         os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
-        self.file_handle = open(self._options.filename, "w", encoding="utf-8", newline="")
+        self._initialize_writer()
+
+    def _initialize_writer(self):
+        self.wrote_header = False
+        self.wrote_data = False
+        self.file_handle = open(self._get_filename(), "w", encoding="utf-8", newline="")
         self.csv_writer = csv.writer(self.file_handle)
 
     def process(self, data, cur_time):
@@ -221,6 +266,7 @@ class CSVFileWriter(Recorder):
             self.wrote_header = True
 
         self.csv_writer.writerow(row_data)
+        self.wrote_data = True
         if self._options.flush_interval is not None:
             self.flush_counter += 1
             if self.flush_counter >= self._options.flush_interval:
@@ -229,9 +275,19 @@ class CSVFileWriter(Recorder):
 
     def cleanup(self):
         if self.file_handle:
-            gs.logger.info(f'Saving CSV file to ~<"{self._options.filename}">~...')
-            self.file_handle.close()
-            gs.logger.info("File saved.")
+            if self.wrote_data:
+                gs.logger.info(f'Saving CSV file to ~<"{self._get_filename()}">~...')
+                self.file_handle.close()
+                gs.logger.info("File saved.")
+            else:
+                self.file_handle.close()
+                os.remove(self._get_filename())  # delete empty file
+
+    def reset(self, envs_idx=None):
+        # envs_idx is ignored
+        super().reset(envs_idx)
+        if self._options.save_on_reset:
+            self._initialize_writer()
 
     @property
     def run_in_thread(self) -> bool:
@@ -248,6 +304,9 @@ class NPZFileWriterOptions(BaseFileWriterOptions):
     ----------
     filename : str
         The name of the .npz file to save the data.
+    save_on_reset: bool, optional
+        Whether to save the data on reset. Defaults to False.
+        If True, a counter will be added to the filename and incremented on each reset.
     """
 
     def validate(self):
@@ -257,9 +316,10 @@ class NPZFileWriterOptions(BaseFileWriterOptions):
 
 
 @register_recording(NPZFileWriterOptions)
-class NPZFileWriter(Recorder):
+class NPZFileWriter(BaseFileWriter):
 
     def initialize(self):
+        super().initialize()
         self.all_data: dict[str, list] = defaultdict(list)
 
     def process(self, data, cur_time):
@@ -273,15 +333,18 @@ class NPZFileWriter(Recorder):
             self.all_data["data"].append(tensor_to_array(data))
 
     def cleanup(self):
-        gs.logger.info(f'Saving data to "~<{self._options.filename}>~"...')
+        filename = self._get_filename()
         saved_data = self.all_data
-        try:
-            np.savez_compressed(self._options.filename, **saved_data)
-        except ValueError as error:
-            gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
-            saved_data = {k: np.array(v, dtype=object) for k, v in self.all_data.items()}
-            np.savez_compressed(self._options.filename, **saved_data)
-        gs.logger.info(f"NPZ data saved with keys {list(saved_data.keys())}.")
+        if any(len(v) > 0 for v in saved_data.values()):
+            gs.logger.info(f'Saving data to "~<{filename}>~"...')
+            try:
+                np.savez_compressed(filename, **saved_data)
+            except ValueError as error:
+                gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
+                saved_data = {k: np.array(v, dtype=object) for k, v in self.all_data.items()}
+                np.savez_compressed(filename, **saved_data)
+            gs.logger.info(f"NPZ data saved with keys {list(saved_data.keys())}.")
+            self.all_data.clear()
 
     @property
     def run_in_thread(self) -> bool:

@@ -52,18 +52,22 @@ class RecorderManager:
             self._start()
 
     def _start(self):
-        self._is_recording = True
+        for recorder in self._recorders:
+            recorder.initialize()
+            recorder._initialized = True
+        self._start_threads()
+
+    def _start_threads(self):
+        self._is_recording = True  # needed to enter loop in thread
 
         self._data_queues.clear()
         self._processor_threads.clear()
 
-        for recording_idx, recorder in enumerate(self._recorders):
-            recorder.initialize()
-
+        for rec_idx, recorder in enumerate(self._recorders):
             if recorder.run_in_thread:
                 data_queue = queue.Queue(maxsize=recorder._options.buffer_size)
                 self._data_queues.append(data_queue)
-                thread = threading.Thread(target=self._make_process_callback(recording_idx))
+                thread = threading.Thread(target=self._make_process_callback(rec_idx))
                 thread.start()
                 self._processor_threads.append(thread)
             else:
@@ -78,14 +82,23 @@ class RecorderManager:
             self._stop()
 
     def _stop(self):
-        self._is_recording = False
-
-        for thread, recorder in zip(self._processor_threads, self._recorders):
-            if recorder.run_in_thread and thread is not None:
-                thread.join()
+        self._join_threads()
+        for recorder in self._recorders:
             recorder.cleanup()
 
         self._clear()
+
+    def _join_threads(self):
+        self._is_recording = False  # needed to exit loop in thread
+        for thread, recorder in zip(self._processor_threads, self._recorders):
+            if recorder.run_in_thread and thread is not None:
+                thread.join()
+
+    def reset(self, envs_idx=None):
+        self._join_threads()  # finish processing data before the reset
+        for recorder in self._recorders:
+            recorder.reset(envs_idx)
+        self._start_threads()
 
     def _clear(self):
         self._data_funcs.clear()

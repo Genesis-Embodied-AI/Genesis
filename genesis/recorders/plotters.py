@@ -1,4 +1,5 @@
 import itertools
+from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
 
@@ -59,7 +60,7 @@ class BasePlotter(Recorder):
 
     def initialize(self):
         self.x_data: list[float] = []
-        self.y_data: dict[str, dict[str, list[float]]] = {}
+        self.y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
         # Note that these attributes will be set during first data processing or initialization
         self.is_dict_data: bool | None = None
@@ -68,7 +69,12 @@ class BasePlotter(Recorder):
         if self._options.labels is not None:
             self._setup_plot_structure(self._options.labels)
 
-    def _setup_plot_structure(self, labels_or_data: dict[str, Any] | Any, is_labels: bool = False):
+    def reset(self, envs_idx=None):
+        # envs_idx is ignored
+        self.x_data.clear()
+        self.y_data.clear()
+
+    def _setup_plot_structure(self, labels_or_data: dict[str, Any] | Any):
         """Set up the plot structure based on labels or first data sample."""
         if isinstance(labels_or_data, dict):
             self.is_dict_data = True
@@ -209,14 +215,12 @@ class PyQtPlotter(BasePlotter):
 
             self.plot_widgets.append(plot_widget)
 
-            # create curves for this subplot - reset color for each subplot
+            # create lines for this subplot
             subplot_curves = []
-            self.y_data[subplot_key] = {}
 
             for color, channel_label in zip(COLORS, channel_labels):
                 curve = plot_widget.plot(pen=pg.mkPen(color=color, width=2), name=channel_label)
                 subplot_curves.append(curve)
-                self.y_data[subplot_key][channel_label] = []
 
             self.curves[subplot_key] = subplot_curves
 
@@ -317,12 +321,10 @@ class MPLPlotter(BasePlotter):
 
             # create lines for this subplot
             subplot_lines = []
-            self.y_data[subplot_key] = {}
 
             for color, channel_label in zip(COLORS, channel_labels):
                 (line,) = ax.plot([], [], color=color, label=channel_label, linewidth=2)
                 subplot_lines.append(line)
-                self.y_data[subplot_key][channel_label] = []
 
             self.lines[subplot_key] = subplot_lines
 
