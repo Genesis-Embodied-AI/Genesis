@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 import trimesh
 
 import gstaichi as ti
@@ -14,8 +15,9 @@ from genesis.utils.misc import tensor_to_array
 
 
 class SegmentationColorMap:
-    def __init__(self, seed=42):
+    def __init__(self, seed: int = 0, to_torch: bool = False):
         self.seed = seed
+        self.to_torch = to_torch
         self.idxc_map = {0: -1}
         self.key_map = {-1: 0}
         self.idxc_to_color = None
@@ -35,10 +37,44 @@ class SegmentationColorMap:
         # seg_key: same as entity/link/geom's idx
         # seg_idxc: segmentation index of objects
         # seg_idxc_rgb: colorized seg_idxc internally used by renderer
+
+        # Evenly spaced hues
         num_keys = len(self.key_map)
+        hues = np.linspace(0.0, 1.0, num_keys, endpoint=False)
         rng = np.random.default_rng(seed=self.seed)
-        self.idxc_to_color = rng.integers(0, 255, size=(num_keys, 3), dtype=np.uint8)
-        self.idxc_to_color[0] = 0  # background uses black
+        rng.shuffle(hues)
+
+        # Fixed saturation/value
+        s, v = 0.8, 0.95
+
+        # HSV to RGB conversion
+        rgb = np.zeros((num_keys, 3), dtype=np.float32)
+        i = (hues * 6).astype(np.int32)
+        f = hues * 6 - i
+        p = v * (1 - s)
+        q = v * (1 - f * s)
+        t = v * (1 - (1 - f) * s)
+        for k in range(1, num_keys):  # Skip first color to enforce black background
+            match i[k] % 6:
+                case 0:
+                    rgb[k] = (v, t[k], p)
+                case 1:
+                    rgb[k] = (q[k], v, p)
+                case 2:
+                    rgb[k] = (p, v, t[k])
+                case 3:
+                    rgb[k] = (p, q[k], v)
+                case 4:
+                    rgb[k] = (t[k], p, v)
+                case 5:
+                    rgb[k] = (v, p, q[k])
+        rgb = np.round(rgb * 255.0).astype(np.uint8)
+
+        # Store the generated map
+        if self.to_torch:
+            self.idxc_to_color = torch.from_numpy(rgb).to(device=gs.device)
+        else:
+            self.idxc_to_color = rgb
 
 
 class RasterizerContext:

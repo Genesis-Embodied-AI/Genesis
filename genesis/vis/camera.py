@@ -353,7 +353,7 @@ class Camera(RBC):
         assert self._visualizer._batch_renderer is not None
 
         # Render all cameras at once no matter what
-        buffers = tuple(self._batch_renderer.render(rgb, depth, segmentation, normal, antialiasing, force_render))
+        buffers = list(self._batch_renderer.render(rgb, depth, segmentation, normal, antialiasing, force_render))
 
         # Only return current camera data
         for i, buffer in enumerate(buffers):

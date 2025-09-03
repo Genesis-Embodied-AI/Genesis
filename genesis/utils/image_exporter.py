@@ -4,10 +4,12 @@ from concurrent.futures import ThreadPoolExecutor, Executor
 from functools import partial
 
 import cv2
+import torch
 import numpy as np
 
 import genesis as gs
 from genesis.constants import IMAGE_TYPE
+from genesis.utils.misc import tensor_to_array
 
 
 def as_grayscale_image(
@@ -186,10 +188,10 @@ class FrameImageExporter:
                 continue
 
             # Convert data to numpy
-            # Torch does not support negative strides for now
-            if isinstance(imgs_data, np.ndarray) and any(e < 0 for e in imgs_data.strides):
-                imgs_data = imgs_data.copy()
-            imgs_data = np.asarray(imgs_data)
+            if isinstance(imgs_data, torch.Tensor):
+                imgs_data = tensor_to_array(imgs_data)
+            else:
+                imgs_data = np.asarray(imgs_data)
 
             # Make sure that image data has shape `(n_env, H, W [, C>1])``
             is_single_channel = img_type in (IMAGE_TYPE.DEPTH, IMAGE_TYPE.SEGMENTATION)

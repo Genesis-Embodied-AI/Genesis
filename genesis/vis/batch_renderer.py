@@ -31,7 +31,7 @@ def _make_tensor(data, *, dtype: torch.dtype = torch.float32):
 class GenesisGeomRetriever(GeomRetriever):
     def __init__(self, rigid_solver, seg_level):
         self.rigid_solver = rigid_solver
-        self.seg_color_map = SegmentationColorMap()
+        self.seg_color_map = SegmentationColorMap(to_torch=True)
         self.seg_level = seg_level
         self.geom_idxc = None
 
@@ -47,7 +47,7 @@ class GenesisGeomRetriever(GeomRetriever):
             seg_key = self.get_seg_key(vgeom)
             seg_idxc = self.seg_color_map.seg_key_to_idxc(seg_key)
             self.geom_idxc.append(seg_idxc)
-        self.geom_idxc = np.array(self.geom_idxc, dtype=np.uint32)
+        self.geom_idxc = torch.tensor(self.geom_idxc, dtype=torch.int32, device=gs.device)
         self.seg_color_map.generate_seg_colors()
 
     def get_seg_key(self, vgeom):
@@ -351,7 +351,7 @@ class BatchRenderer(RBC):
         needed = tuple(req and arr is None for req, arr in zip(request, cached))
 
         # Early return if everything requested is already cached
-        if not any(needed.values()):
+        if not any(needed):
             return tuple(arr if req else None for req, arr in zip(request, cached))
 
         # Update scene
@@ -364,7 +364,7 @@ class BatchRenderer(RBC):
         render_flags = np.array(
             (
                 *(
-                    need[img_type]
+                    needed[img_type]
                     for img_type in (IMAGE_TYPE.RGB, IMAGE_TYPE.DEPTH, IMAGE_TYPE.NORMAL, IMAGE_TYPE.SEGMENTATION)
                 ),
                 antialiasing,
@@ -379,8 +379,7 @@ class BatchRenderer(RBC):
             rendered[i] = camera.distance_center_to_plane(rendered[IMAGE_TYPE.DEPTH])
 
         # convert seg geom idx to seg_idxc
-        if need[IMAGE_TYPE.SEGMENTATION]:
-            breakpoint()
+        if needed[IMAGE_TYPE.SEGMENTATION]:
             seg_geoms = rendered[IMAGE_TYPE.SEGMENTATION]
             mask = seg_geoms != -1
             seg_geoms[mask] = self._geom_retriever.geom_idxc[seg_geoms[mask]]
@@ -395,7 +394,7 @@ class BatchRenderer(RBC):
                 data = data.swapaxes(0, 1)
                 if self._visualizer.scene.n_envs == 0:
                     data = data.squeeze(1)
-                rendered[i] = tuple(data[..., :3].squeeze(-1))
+                rendered[img_type] = tuple(data[..., :3].squeeze(-1))
 
         # Update cache
         self._t = self._visualizer.scene.t
