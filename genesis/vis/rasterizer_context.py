@@ -1,7 +1,7 @@
 import numpy as np
 import trimesh
 
-import taichi as ti
+import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -204,8 +204,7 @@ class RasterizerContext:
                     pyrender.Mesh.from_trimesh(
                         mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)),
                         smooth=False,
-                    ),
-                    pose=camera.transform,
+                    )
                 )
             self.camera_frustum_shown = True
 

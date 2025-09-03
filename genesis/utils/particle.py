@@ -362,11 +362,9 @@ def particles_to_mesh(positions, radius, backend):
             compute_normals=True,
             enable_multi_threading=True,
         )
-        mesh = trimesh.Trimesh(
-            vertices=mesh_with_data.mesh.vertices,
-            faces=mesh_with_data.mesh.triangles,
-            face_normals=mesh_with_data.get_point_attribute("normals"),
-        )
+        normals = mesh_with_data.get_point_attribute("normals")
+        vertices, triangles = mesh_with_data.take_mesh().take_vertices_and_triangles()
+        mesh = trimesh.Trimesh(vertices=vertices, faces=triangles, face_normals=normals)
         gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
         return mesh
 

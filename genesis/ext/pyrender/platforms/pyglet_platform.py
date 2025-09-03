@@ -13,7 +13,7 @@ class PygletPlatform(Platform):
     """
 
     def __init__(self, viewport_width, viewport_height):
-        super(PygletPlatform, self).__init__(viewport_width, viewport_height)
+        super().__init__(viewport_width, viewport_height)
         self._window = None
 
     def init_context(self):

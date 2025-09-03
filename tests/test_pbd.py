@@ -1,18 +1,16 @@
-import uuid
-
-import numpy as np
 import pytest
 
 import genesis as gs
 
 
-@pytest.fixture(scope="session")
+# Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
+@pytest.fixture(scope="function")
 def pbd_material():
     """Fixture for common FEM material properties"""
     return gs.materials.PBD.Elastic()
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.required
 def test_maxvolume(pbd_material, show_viewer, box_obj_path):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(

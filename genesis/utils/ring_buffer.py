@@ -6,6 +6,23 @@ import genesis as gs
 
 
 class TensorRingBuffer:
+    """
+    A helper class for storing a buffer of `torch.Tensor`s without allocating new tensors.
+
+    Parameters
+    ----------
+    N : int
+        The number of tensors to store.
+    shape : tuple[int, ...]
+        The shape of the tensors to store.
+    dtype : torch.dtype
+        The dtype of the tensors to store.
+    buffer : torch.Tensor | None, optional
+        The buffer tensor where all the data is stored. If not provided, a new tensor is allocated.
+    idx_ptr : int | ctypes.c_int, optional
+        The index pointer to the current position in the ring buffer. If not provided, it is initialized to 0.
+    """
+
     def __init__(
         self,
         N: int,
@@ -26,22 +43,40 @@ class TensorRingBuffer:
             self._idx_ptr = idx_ptr
 
     def append(self, tensor: torch.Tensor):
+        """
+        Copy the tensor into the next position of the ring buffer, and advance the index pointer.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            The tensor to copy into the ring buffer.
+        """
         self.buffer[self._idx_ptr.value].copy_(tensor)
         self._idx_ptr.value = (self._idx_ptr.value + 1) % self.N
 
-    def get(self, idx: int, clone: bool = True):
+    def at(self, idx: int) -> torch.Tensor:
         """
+        Get a view of the tensor at the given index.
+
         Parameters
         ----------
         idx : int
             Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
-        clone : bool
-            Whether to clone the tensor.
         """
-        tensor = self.buffer[(self._idx_ptr.value - idx) % self.N]
-        return tensor.clone() if clone else tensor
+        return self.buffer[(self._idx_ptr.value - idx) % self.N]
 
-    def clone(self):
+    def get(self, idx: int) -> torch.Tensor:
+        """
+        Get a clone of the tensor at the given index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
+        """
+        return self.at(idx).clone()
+
+    def clone(self) -> "TensorRingBuffer":
         return TensorRingBuffer(
             self.N,
             self.buffer.shape[1:],
@@ -50,7 +85,7 @@ class TensorRingBuffer:
             idx_ptr=self._idx_ptr,
         )
 
-    def __getitem__(self, key: int | slice | tuple):
+    def __getitem__(self, key: int | slice | tuple) -> "TensorRingBuffer":
         """
         Enable slicing of the tensor ring buffer.
 

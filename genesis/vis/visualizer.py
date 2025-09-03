@@ -1,6 +1,4 @@
 import pyglet
-import numpy as np
-import torch
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -51,11 +49,16 @@ class Visualizer(RBC):
             if pyglet.version < "2.0":
                 display = pyglet.canvas.Display()
                 screen = display.get_default_screen()
-                scale = 1.0
+                screen_scale = 1.0
             else:
                 display = pyglet.display.get_display()
                 screen = display.get_default_screen()
-                scale = screen.get_scale()
+                try:
+                    screen_scale = screen.get_scale()
+                except NotImplementedError:
+                    # Probably some headless screen
+                    screen_scale = 1.0
+            screen_height, screen_width = screen.height, screen.width
             self._has_display = True
         except Exception as e:
             if show_viewer:
@@ -66,11 +69,11 @@ class Visualizer(RBC):
             if gs.global_scene_list:
                 raise gs.raise_exception(
                     "Interactive viewer not supported when managing multiple scenes. Please set `show_viewer=False` "
-                    "or call `scene.destroy`."
+                    "or call `del scene`."
                 )
 
             if viewer_options.res is None:
-                viewer_height = (screen.height * scale) * VIEWER_DEFAULT_HEIGHT_RATIO
+                viewer_height = (screen_height * screen_scale) * VIEWER_DEFAULT_HEIGHT_RATIO
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
                 viewer_options.res = (int(viewer_width), int(viewer_height))
             if viewer_options.run_in_thread is None:
@@ -153,7 +156,7 @@ class Visualizer(RBC):
         if self._batch_renderer is not None:
             self._batch_renderer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
         else:
-            gs.raise_exception("`add_light` is specifically for batch renderer.")
+            gs.raise_exception("`add_light` is specific to batch renderer.")
 
     def reset(self):
         self._t = -1

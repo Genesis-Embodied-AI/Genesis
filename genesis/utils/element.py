@@ -3,7 +3,6 @@ import pickle as pkl
 
 import numpy as np
 import trimesh
-
 import igl
 
 import genesis as gs

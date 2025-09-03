@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import trimesh
 
 import genesis as gs
@@ -432,7 +432,7 @@ class HybridEntity(Entity):
                 mass_real = self._solver_soft.particles_info[i_global].mass / self._solver_soft._p_vol_scale
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
-                frc_ang = (x_pos - self._solver_rigid.links_state.COM[link_idx, i_b]).cross(frc_vel)
+                frc_ang = (x_pos - self._solver_rigid.links_state.root_COM[link_idx, i_b]).cross(frc_vel)
                 self._solver_rigid.links_state.cfrc_applied_vel[link_idx, i_b] += frc_vel
                 self._solver_rigid.links_state.cfrc_applied_ang[link_idx, i_b] += frc_ang
 

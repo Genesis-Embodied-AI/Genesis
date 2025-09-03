@@ -1,10 +1,11 @@
-from typing import Callable
 import dataclasses
-import os
 import inspect
-from typing import Any, Type, cast
+import os
+from functools import partial
+from typing import Any, Callable, Type, cast
 
-import taichi as ti
+import gstaichi as ti
+from gstaichi.lang._fast_caching import FIELD_METADATA_CACHE_VALUE, args_hasher
 
 import genesis as gs
 import numpy as np
@@ -25,6 +26,8 @@ class StructRigidGlobalInfo:
     awake_dofs: V_ANNOTATION
     n_awake_entities: V_ANNOTATION
     awake_entities: V_ANNOTATION
+    n_awake_links: V_ANNOTATION
+    awake_links: V_ANNOTATION
     qpos0: V_ANNOTATION
     qpos: V_ANNOTATION
     links_T: V_ANNOTATION
@@ -48,6 +51,8 @@ def get_rigid_global_info(solver):
         "awake_dofs": V(dtype=gs.ti_int, shape=f_batch(solver.n_dofs_)),
         "n_awake_entities": V(dtype=gs.ti_int, shape=f_batch()),
         "awake_entities": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
+        "n_awake_links": V(dtype=gs.ti_int, shape=f_batch()),
+        "awake_links": V(dtype=gs.ti_int, shape=f_batch(solver.n_links)),
         "qpos0": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
         "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
@@ -184,7 +189,7 @@ def get_constraint_state(constraint_solver, solver):
         "efc_D": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_frictionloss": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
         "efc_force": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
+        "active": V(dtype=gs.ti_bool, shape=solver._batch_shape(len_constraints_)),
         "prev_active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
         "qfrc_constraint": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "qacc": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
@@ -245,6 +250,7 @@ def get_constraint_state(constraint_solver, solver):
 
 @dataclasses.dataclass
 class StructContactData:
+    # WARNING: cannot add/remove fields here without also updating collider_decomp.py::kernel_collider_clear
     geom_a: V_ANNOTATION
     geom_b: V_ANNOTATION
     penetration: V_ANNOTATION
@@ -335,6 +341,91 @@ def get_contact_cache(solver):
                     setattr(self, k, v)
 
         return ClassContactCache()
+
+
+@dataclasses.dataclass
+class StructAggList:
+    curr: V_ANNOTATION
+    n: V_ANNOTATION
+    start: V_ANNOTATION
+
+
+def get_agg_list(solver):
+    f_batch = solver._batch_shape
+    n_entities = solver.n_entities
+    kwargs = {
+        "curr": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+        "n": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+        "start": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+    }
+
+    if use_ndarray:
+        return StructAggList(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassAggList:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassAggList()
+
+
+@dataclasses.dataclass
+class StructContactIslandState:
+    ci_edges: V_ANNOTATION
+    edge_id: V_ANNOTATION
+    constraint_list: V_ANNOTATION
+    constraint_id: V_ANNOTATION
+    entity_edge: StructAggList
+    island_col: StructAggList
+    island_hibernated: V_ANNOTATION
+    island_entity: StructAggList
+    entity_id: V_ANNOTATION
+    n_edges: V_ANNOTATION
+    n_islands: V_ANNOTATION
+    n_stack: V_ANNOTATION
+    entity_island: V_ANNOTATION
+    stack: V_ANNOTATION
+    entity_idx_to_next_entity_idx_in_hibernated_island: V_ANNOTATION
+
+
+def get_contact_island_state(solver, collider):
+    max_contact_pairs = collider._collider_info._max_contact_pairs[None]
+    max_contact_pairs = max(max_contact_pairs, 1)  # can't create 0-sized fields
+
+    kwargs = {
+        "ci_edges": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs, 2))),
+        "edge_id": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs * 2))),
+        "constraint_list": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs))),
+        "constraint_id": V(dtype=gs.ti_int, shape=solver._batch_shape((max_contact_pairs * 2))),
+        "entity_edge": get_agg_list(solver),
+        "island_col": get_agg_list(solver),
+        "island_hibernated": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)),
+        "island_entity": get_agg_list(solver),
+        "entity_id": V(dtype=gs.ti_int, shape=solver._batch_shape((solver.n_entities))),
+        "n_edges": V(dtype=gs.ti_int, shape=solver._B),
+        "n_islands": V(dtype=gs.ti_int, shape=solver._B),
+        "n_stack": V(dtype=gs.ti_int, shape=solver._B),
+        "entity_island": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)),
+        "stack": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)),
+        "entity_idx_to_next_entity_idx_in_hibernated_island": V(
+            dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities)
+        ),
+    }
+
+    if use_ndarray:
+        return StructContactIslandState(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactIslandState:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactIslandState()
 
 
 @dataclasses.dataclass
@@ -1121,6 +1212,7 @@ class StructDofsState:
     act_length: V_ANNOTATION
     pos: V_ANNOTATION
     vel: V_ANNOTATION
+    vel_prev: V_ANNOTATION
     acc: V_ANNOTATION
     acc_smooth: V_ANNOTATION
     qf_smooth: V_ANNOTATION
@@ -1151,6 +1243,7 @@ def get_dofs_state(solver):
         "act_length": V(dtype=gs.ti_float, shape=shape),
         "pos": V(dtype=gs.ti_float, shape=shape),
         "vel": V(dtype=gs.ti_float, shape=shape),
+        "vel_prev": V(dtype=gs.ti_float, shape=shape),
         "acc": V(dtype=gs.ti_float, shape=shape),
         "acc_smooth": V(dtype=gs.ti_float, shape=shape),
         "qf_smooth": V(dtype=gs.ti_float, shape=shape),
@@ -1209,7 +1302,7 @@ class StructLinksState:
     cd_ang: V_ANNOTATION
     cd_vel: V_ANNOTATION
     mass_sum: V_ANNOTATION
-    COM: V_ANNOTATION
+    root_COM: V_ANNOTATION  # COM of the kinematic tree
     mass_shift: V_ANNOTATION
     i_pos_shift: V_ANNOTATION
     cacc_ang: V_ANNOTATION
@@ -1246,7 +1339,7 @@ def get_links_state(solver):
         "cd_ang": V(dtype=gs.ti_vec3, shape=shape),
         "cd_vel": V(dtype=gs.ti_vec3, shape=shape),
         "mass_sum": V(dtype=gs.ti_float, shape=shape),
-        "COM": V(dtype=gs.ti_vec3, shape=shape),
+        "root_COM": V(dtype=gs.ti_vec3, shape=shape),
         "mass_shift": V(dtype=gs.ti_float, shape=shape),
         "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape),
         "cacc_ang": V(dtype=gs.ti_vec3, shape=shape),
@@ -1853,6 +1946,7 @@ class StructEntitiesInfo:
     geom_end: V_ANNOTATION
     n_geoms: V_ANNOTATION
     gravity_compensation: V_ANNOTATION
+    is_local_collision_mask: V_ANNOTATION
 
 
 def get_entities_info(solver):
@@ -1911,6 +2005,47 @@ def get_entities_state(solver):
         return ClassEntitiesState()
 
 
+# =========================================== StaticRigidSimConfig ===========================================
+
+cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: True})
+
+
+@dataclasses.dataclass
+class StaticRigidSimCacheKey:
+    para_level: int = cache_value()
+    use_hibernation: bool = cache_value()
+    batch_links_info: bool = cache_value()
+    batch_dofs_info: bool = cache_value()
+    batch_joints_info: bool = cache_value()
+    enable_mujoco_compatibility: bool = cache_value()
+    enable_multi_contact: bool = cache_value()
+    enable_adjacent_collision: bool = cache_value()
+    enable_collision: bool = cache_value()
+    box_box_detection: bool = cache_value()
+    integrator: int = cache_value()
+    sparse_solve: bool = cache_value()
+    solver_type: int = cache_value()
+
+
+def get_static_rigid_sim_cache_key(solver):
+    kwargs = {
+        "para_level": solver.sim._para_level,
+        "use_hibernation": getattr(solver, "_use_hibernation", False),
+        "batch_links_info": getattr(solver._options, "batch_links_info", False),
+        "batch_dofs_info": getattr(solver._options, "batch_dofs_info", False),
+        "batch_joints_info": getattr(solver._options, "batch_joints_info", False),
+        "enable_mujoco_compatibility": getattr(solver, "_enable_mujoco_compatibility", False),
+        "enable_multi_contact": getattr(solver, "_enable_multi_contact", True),
+        "enable_adjacent_collision": getattr(solver, "_enable_adjacent_collision", False),
+        "enable_collision": getattr(solver, "_enable_collision", False),
+        "box_box_detection": getattr(solver, "_box_box_detection", False),
+        "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
+        "sparse_solve": getattr(solver._options, "sparse_solve", False),
+        "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
+    }
+    return StaticRigidSimCacheKey(**kwargs)
+
+
 # =========================================== DataManager ===========================================
 
 
@@ -1947,7 +2082,7 @@ class DataManager:
         self.entities_state = get_entities_state(solver)
 
 
-# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to taichi
+# we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to gstaichi
 DofsState = ti.template() if not use_ndarray else StructDofsState
 DofsInfo = ti.template() if not use_ndarray else StructDofsInfo
 GeomsState = ti.template() if not use_ndarray else StructGeomsState
@@ -1977,3 +2112,4 @@ SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
 ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
+ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState

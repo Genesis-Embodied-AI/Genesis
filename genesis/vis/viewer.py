@@ -13,7 +13,7 @@ import genesis.utils.geom as gu
 from genesis.ext import pyrender
 from genesis.repr_base import RBC
 from genesis.utils.tools import Rate
-from genesis.utils.misc import redirect_libc_stderr
+from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.options.vis import ViewerOptions
@@ -116,10 +116,10 @@ class Viewer(RBC):
 
                 if i == len(all_opengl_platforms) - 1:
                     raise
-
-            # Select PyOpenGL backend compatible with `pyrender.OffscreenRenderer`
-            if platform not in ("osmesa", "pyglet", "egl"):
-                os.environ["PYOPENGL_PLATFORM"] = "pyglet"
+            finally:
+                del os.environ["PYOPENGL_PLATFORM"]
+                if opengl_platform_orig is not None:
+                    os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
@@ -219,7 +219,7 @@ class Viewer(RBC):
         """
         Update the viewer position to follow the specified entity.
         """
-        entity_pos = self._followed_entity.get_pos().cpu().numpy()
+        entity_pos = tensor_to_array(self._followed_entity.get_pos())
         if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
         camera_transform = np.asarray(self._pyrender_viewer._trackball.pose, copy=True)

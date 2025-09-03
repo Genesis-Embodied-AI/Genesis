@@ -86,12 +86,13 @@ pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
 ```
 Note that the package must still be updated manually to sync with main branch.
 
-Users seeking to edit the source code of Genesis are encourage to install Genesis in editable mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
+Users seeking to contribute are encouraged to install Genesis in editable mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
 pip install -e ".[dev]"
 ```
+It is recommended to systematically execute `pip install -e ".[dev]"` after moving HEAD to make sure that all dependencies and entrypoints are up-to-date.
 
 ## Docker
 
@@ -108,10 +109,11 @@ xhost +local:root # Allow the container to access the display
 
 docker run --gpus all --rm -it \
 -e DISPLAY=$DISPLAY \
+-e LOCAL_USER_ID="$(id -u)" \
 -v /dev/dri:/dev/dri \
 -v /tmp/.X11-unix/:/tmp/.X11-unix \
--v $PWD:/workspace \
-genesis
+-v $(pwd):/workspace \
+--name genesis genesis:latest
 ```
 
 ### AMD users

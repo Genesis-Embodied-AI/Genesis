@@ -1,5 +1,86 @@
 # Genesis Release Note
 
+## 0.3.3
+
+This minor release fixes a few non-blocking rendering issues for the Rasterizer backend.
+
+### Bug Fixes
+
+* [BUG FIX] Fix shadow map not properly rendered for objects far away from floor plane. (@duburcqa) (#1664)
+* [BUG FIX] Fix genesis import failure if tkinter is failing at init on MacOS. (@duburcqa) (#1666)
+* [BUG FIX] Fix default visualization mode for emitter surface. (@duburcqa) (#1665)
+
+### Miscellaneous
+
+* [MISC] Expose parameters for ground plane tiling. (@yuhongyi) (#1657)
+* [MISC] Add support of 'ti.ndarray' to 'ti_field_to_torch' and rename in 'ti_to_torch'. (@duburcqa) (#1661)
+
+## 0.3.2
+
+This minor release fixes a few additional regressions and initiates migration to our own open-source fork of Taichi, [GsTaichi](https://github.com/Genesis-Embodied-AI/gstaichi) (contributions are welcome!).
+
+### Behavior Changing
+
+* Disable decimation if deemed unnecessary and unreliable. Reduce default aggressiveness. (@duburcqa) (#1644)
+* Fix primitive and mesh's COM. (@YilingQiao) (#1638)
+
+### New Features
+
+* Add 'set_dofs_frictionloss' method for dynamic joint friction control. (@LeonLiu4) (#1614)
+* Add initial experimental support of gstaichi fast cache feature. (@hughperkins) (#1631)
+* Add 'ref' optional argument to 'get_links_pos'. (@YilingQiao) (#1638)
+
+### Bug Fixes
+
+* Fix Inverse Kinematics algorithm. (@Kashu7100, @duburcqa) (#1582, #1586)
+* Fix save frame as png image in interactive viewer. (@Kashu7100) (#1606)
+* Filter out collision pairs involved in weld equality constraints. (@duburcqa) (#1621)
+* Fix viewer backend fallback when running in main thread. (@duburcqa) (#1630)
+* Fix 'quat_to_xyz' singularity edge-case. (@duburcqa) (#1628)
+* Fix CUDA runtime being initialized by 'get_device'. (@duburcqa) (#1634)
+
+### Miscellaneous
+
+* Re-enable world-frame in the 'gs view' standalone viewer. (@Kashu7100) (#1584)
+* Migrate from 'taichi' to 'gstaichi'. (@duburcqa, @hughperkins) (#1550, #1618, #1645)
+* Update documentation so the doc will be compiled based on the latest main. (@YilingQiao) (#1616)
+
+## 0.3.1
+
+This small release addresses the most pressing regressions that has been pointed out by the community since 0.3.0. Support of coupling between Rigid Body and FEM has been improved and should be more reliable, though it is still considered experimental for now. Apart from that, no behavior changes are to be expected.
+
+### New Features
+
+* Support 2-channel (LA) textures in Rasterizer. (@LeonLiu4) (#1519)
+* Add 'get_weld_constraints' API. (@LeonLiu4) (#1370)
+* Add USD Materials Baking. (@ACMLCZH) (#1300)
+* Add dedicated sensor manager. (@Milotrince) (#1518)
+* Enhance SAP coupler for coupling between Rigid body and Fem object. (@Libero0809) (#1458)
+* Add IMU sensor. (@Milotrince) (#1551)
+* Add Fem fixed constraint for implicit solver. (@Libero0809) (#1562)
+* Add Joint Equality Constraints for the SAP Coupler. (@Libero0809) (#1565)
+
+### Bug Fixes
+
+* Fix point-cloud rendering from Camera depth map. (@@ceasor-mao, @duburcqa) (#1512, #1515)
+* Fix various rendering bugs. (@duburcqa) (#1537)
+* Fix Z-up orientation and vertex color. (@ceasor-mao) (#1540)
+* Fix hibernation. (@gasnica) (#1542)
+* Fix backend fallback mechanism causing deadlock in Rasterizer. (@duburcqa) (#1546)
+* Fix video recording dialog when running viewer in thread. (@duburcqa) (#1547)
+* Fix joint friction loss. (@duburcqa) (#1555)
+* Fix taichi debug mode errors and warnings. (@Libero0809) (#1560)
+
+### Miscellaneous
+
+* Migrate to native Python API for 'splashsurf'. (@duburcqa) (#1531)
+* Refactor weld constraint API. (@duburcqa) (#1536)
+* Allow following entity or mounting camera building scene. (@duburcqa) (#1548)
+* Faster Genesis import. (@duburcqa) (#1549)
+* Avoid rendering cameras at reset. (@Kashu7100) (#1552)
+* Enable taichi debug mode in tests if possible. (@duburcqa) (#1541)
+* Re-enable markers by default on RGB offscreen cameras. (@duburcqa) (#1570)
+
 ## 0.3.0
 
 This release focuses primarily on stability, covering everything from MJCF/URDF parsing to rendering and physics, backend by a new CI infrastructure running more than 200 unit tests on all supported platforms. The most requested Mujoco features that were previously missing have been implemented. Native support of batching has been extended to all solvers except Stable Fluid, motion planning, and rendering via [gs-madrona](https://github.com/Genesis-Embodied-AI/gs-madrona). Finally, support of soft body dynamics has been enhanced, with the introduction of constraints and coupling between soft and rigid body dynamics.
@@ -92,7 +173,7 @@ This release focuses primarily on stability, covering everything from MJCF/URDF 
 
 * Update Drone Entity and Training Performance Enhancements. (@KafuuChikai) (#598)
 * Added PID controller util, quadcopter PID controller, flight examples. (@jebbrysacz) (#501)
-* Add support of Numpy 2.0. (@johnnynunez, @duburcqa) (#711, #791) 
+* Add support of Numpy 2.0. (@johnnynunez, @duburcqa) (#711, #791)
 * Setup unit test infrastructure. (@duburcqa) (#876)
 * Various minor improvements. (@duburcqa) (#889)
 * Get rid of internally maintained trimesh dependency. (@duburcqa) (#918)

@@ -24,6 +24,8 @@ jobs:
       HF_HUB_DOWNLOAD_TIMEOUT: 60
       GENESIS_IMAGE_VER: "1_1"
       TIMEOUT_MINUTES: 180
+      FORCE_COLOR: 1
+      PY_COLORS: 1
       MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
       OMNI_KIT_ACCEPT_EULA: "yes"
       OMNI_KIT_ALLOW_ROOT: "1"
@@ -67,7 +69,7 @@ jobs:
             bash -c "
               pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
               pip install -e '.[dev,render,usd]' && \
-              pytest -v --forked ./tests
+              pytest -v --backend gpu --dev --forked ./tests
             "
 
       - name: Run benchmarks

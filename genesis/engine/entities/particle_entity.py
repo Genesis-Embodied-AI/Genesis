@@ -1,5 +1,5 @@
 import numpy as np
-import taichi as ti
+import gstaichi as ti
 import torch
 import trimesh
 from scipy.spatial import KDTree
@@ -243,8 +243,8 @@ class ParticleEntity(Entity):
 
         if isinstance(self._morph, gs.options.morphs.Nowhere):
             origin = gu.nowhere()
-            self._vverts = np.array([], dtype=gs.np_float)
-            self._vfaces = np.array([], dtype=gs.np_float)
+            self._vverts = np.zeros((0, 3), dtype=gs.np_float)
+            self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
         elif isinstance(self._morph, gs.options.morphs.MeshSet):
             for i in range(len(self._morph.files)):
                 pos_i = np.asarray(self._morph.poss[i], dtype=gs.np_float)

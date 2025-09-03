@@ -2,10 +2,11 @@ import os
 import pickle
 import sys
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-import taichi as ti
+import gstaichi as ti
 from numpy.typing import ArrayLike
 
 import genesis as gs
@@ -26,7 +27,6 @@ from genesis.options import (
     PBDOptions,
     ProfilingOptions,
     RigidOptions,
-    SensorOptions,
     SFOptions,
     SimOptions,
     SPHOptions,
@@ -42,6 +42,9 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+
+if TYPE_CHECKING:
+    from genesis.sensors.base_sensor import SensorOptions
 
 
 @gs.assert_initialized
@@ -203,6 +206,11 @@ class Scene(RBC):
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
+    def __del__(self):
+        if self._visualizer is not None:
+            self._visualizer.destroy()
+            self._visualizer = None
+
     def _validate_options(
         self,
         sim_options: SimOptions,
@@ -325,7 +333,7 @@ class Scene(RBC):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
-            if surface.vis_mode not in ["visual", "collision", "sdf"]:
+            if surface.vis_mode not in ("visual", "collision", "sdf"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'collision', 'sdf']."
                 )
@@ -344,7 +352,7 @@ class Scene(RBC):
             if surface.vis_mode is None:
                 surface.vis_mode = "particle"
 
-            if surface.vis_mode not in ["particle", "recon"]:
+            if surface.vis_mode not in ("particle", "recon"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'recon']."
                 )
@@ -362,7 +370,7 @@ class Scene(RBC):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
-            if surface.vis_mode not in ["visual", "particle", "recon"]:
+            if surface.vis_mode not in ("visual", "particle", "recon"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'particle', 'recon']."
                 )
@@ -516,7 +524,7 @@ class Scene(RBC):
             gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
 
     @gs.assert_unbuilt
-    def add_sensor(self, sensor_options: SensorOptions):
+    def add_sensor(self, sensor_options: "SensorOptions"):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt
@@ -573,6 +581,12 @@ class Scene(RBC):
             Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
             to True on Linux, otherwise False. If OptiX denoiser is not available in your platform, consider enabling
             the OIDN denoiser option when building the RayTracer.
+        env_idx : int, optional
+            The specific environment index to bind to the camera. This option must be specified if and only if a
+            non-batched renderer is being used. If provided, only this environment will be taken into account when
+            following a rigid entity via 'follow_entity' and when being attached to some rigid link via 'attach'. Note
+            that this option is unrelated to which environment is being rendering on the scene. Default to None for
+            batched renderers (ie BatchRender), 'rendered_envs_idx[0]' otherwise (ie Raytracer or Rasterizer).
         debug : bool
             Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
             simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
@@ -604,11 +618,13 @@ class Scene(RBC):
         Parameters
         ----------
         material : gs.materials.Material
-            The material of the fluid to be emitted. Must be an instance of `gs.materials.MPM.Base` or `gs.materials.SPH.Base`.
+            The material of the fluid to be emitted. Must be an instance of `gs.materials.MPM.Base`,
+            `gs.materials.SPH.Base`, `gs.materials.PBD.Particle` or `gs.materials.PBD.Liquid`.
         max_particles : int
-            The maximum number of particles that can be emitted by the emitter. Particles will be recycled once this limit is reached.
+            The maximum number of particles that can be emitted by the emitter. Particles will be recycled once this
+            limit is reached.
         surface : gs.surfaces.Surface | None, optional
-            The surface of the emitter. If None, use ``gs.surfaces.Default(color=(0.6, 0.8, 1.0, 1.0))``.
+            The surface of the emitter. If None, use `gs.surfaces.Default(color=(0.6, 0.8, 1.0, 1.0))`.
 
         Returns
         -------
@@ -623,11 +639,17 @@ class Scene(RBC):
             material, (gs.materials.MPM.Base, gs.materials.SPH.Base, gs.materials.PBD.Particle, gs.materials.PBD.Liquid)
         ):
             gs.raise_exception(
-                "Non-supported material for emitter. Supported materials are: `gs.materials.MPM.Base`, `gs.materials.SPH.Base`, `gs.materials.PBD.Particle`, `gs.materials.PBD.Liquid`."
+                "Non-supported material for emitter. Supported materials are: `gs.materials.MPM.Base`, "
+                "`gs.materials.SPH.Base`, `gs.materials.PBD.Particle`, `gs.materials.PBD.Liquid`."
             )
 
         if surface is None:
             surface = gs.surfaces.Default(color=(0.6, 0.8, 1.0, 1.0))
+
+        if surface.vis_mode is None:
+            surface.vis_mode = "particle"
+        if surface.vis_mode == "visual":
+            gs.raise_exception("surface.vis_mode='visual' is not supported for fluid emitters.")
 
         emitter = Emitter(max_particles)
         entity = self.add_entity(
@@ -1117,7 +1139,7 @@ class Scene(RBC):
 
         Returns:
             A tuple of tensors of shape (n_envs, H, W, 3) if rgb is not None,
-            otherwise a list of tensors of shape (n_envs, H, W, 1) if depth is not None.
+            otherwise a list of tensors of shape (n_envs, H, W) if depth is not None.
             If n_envs == 0, the first dimension of the tensor is squeezed.
         """
         if self._visualizer.batch_renderer is None:
@@ -1169,9 +1191,9 @@ class Scene(RBC):
         """
         arrays: dict[str, np.ndarray] = {}
 
-        for name, field in self.__dict__.items():
-            if isinstance(field, ti.Field):
-                arrays[".".join((self.__class__.__name__, name))] = field.to_numpy()
+        for name, value in self.__dict__.items():
+            if isinstance(value, (ti.Field, ti.Ndarray)):
+                arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
 
         for solver in self.active_solvers:
             arrays.update(solver.dump_ckpt_to_numpy())
@@ -1209,11 +1231,11 @@ class Scene(RBC):
 
         arrays = state["arrays"]
 
-        for name, field in self.__dict__.items():
-            if isinstance(field, ti.Field):
+        for name, value in self.__dict__.items():
+            if isinstance(value, (ti.Field, ti.Ndarray)):
                 key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
-                    field.from_numpy(arrays[key])
+                    value.from_numpy(arrays[key])
 
         for solver in self.active_solvers:
             solver.load_ckpt_from_numpy(arrays)
@@ -1285,7 +1307,7 @@ class Scene(RBC):
         return self._sim.requires_grad
 
     @property
-    def is_built(self):
+    def is_built(self) -> bool:
         """Whether the scene has been built."""
         return self._is_built
 
