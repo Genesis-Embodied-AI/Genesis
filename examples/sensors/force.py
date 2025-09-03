@@ -1,6 +1,5 @@
 import argparse
 
-from huggingface_hub import snapshot_download
 from tqdm import tqdm
 
 import genesis as gs
@@ -13,7 +12,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI", default=True)
     parser.add_argument("-nv", "--no-vis", action="store_false", dest="vis", help="Disable visualization GUI")
     parser.add_argument("-c", "--cpu", action="store_true", help="Use CPU instead of GPU")
-    parser.add_argument("-t", "--seconds", type=float, default=3, help="Number of seconds to simulate")
+    parser.add_argument("-t", "--seconds", type=float, default=2, help="Number of seconds to simulate")
 
     args = parser.parse_args()
 
@@ -27,7 +26,7 @@ def main():
             use_gjk_collision=True,
             constraint_timeconst=max(0.01, 2 * args.timestep),
         ),
-        vis_options=gs.options.VisOptions(show_world_frame=False),
+        vis_options=gs.options.VisOptions(show_world_frame=True),
         profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         show_viewer=args.vis,
     )
@@ -42,21 +41,18 @@ def main():
         material=gs.materials.Rigid(rho=1.0),
     )
     # load the hand .urdf
-    asset_path = snapshot_download(
-        repo_id="Genesis-Intelligence/assets", allow_patterns="allegro_hand/*", repo_type="dataset"
-    )
     hand = scene.add_entity(
         morph=gs.morphs.URDF(
-            file=f"{asset_path}/allegro_hand/allegro_hand_right_glb.urdf",
-            pos=(0.0, 0.0, 0.1),
-            euler=(0.0, -90.0, 180.0),
+            file="urdf/shadow_hand/shadow_hand.urdf",
+            pos=(0.0, -0.3, 0.1),
+            euler=(-90.0, 0.0, 0.0),
             fixed=True,  # Fix the base so the whole hand doesn't flop on the ground
         ),
         material=gs.materials.Rigid(),
     )
-    palm = hand.get_link("base_link")
+    palm = hand.get_link("palm")
 
-    force_sensor = scene.add_sensor(gs.sensors.ContactForce(entity_idx=palm.idx))
+    force_sensor = scene.add_sensor(gs.sensors.ContactForce(entity_idx=hand.idx, link_idx_local=palm.idx_local))
 
     labels = ["force_x", "force_y", "force_z"]
     if IS_PYQTGRAPH_AVAILABLE:
