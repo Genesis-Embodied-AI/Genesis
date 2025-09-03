@@ -2282,6 +2282,39 @@ class RigidSolver(Solver):
     def get_geoms_friction(self, geoms_idx=None, *, unsafe=False):
         return ti_to_torch(self.geoms_info.friction, geoms_idx, None, unsafe=unsafe)
 
+    def get_aabb(self, entities_idx=None, envs_idx=None, *, unsafe=False):
+        aabb_min = ti_to_torch(
+            self.geoms_state.aabb_min, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
+        )
+        aabb_max = ti_to_torch(
+            self.geoms_state.aabb_max, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
+        )
+
+        aabb = torch.stack([aabb_min, aabb_max], dim=-2)
+
+        if entities_idx is not None:
+            entity_geom_starts = []
+            entity_geom_ends = []
+            for entity_idx in entities_idx:
+                entity = self._entities[entity_idx]
+                entity_geom_starts.append(entity._geom_start)
+                entity_geom_ends.append(entity._geom_start + entity.n_geoms)
+
+            entity_aabbs = []
+            for start, end in zip(entity_geom_starts, entity_geom_ends):
+                if start < end:
+                    entity_geoms_aabb = aabb[..., start:end, :, :]
+                    entity_min = entity_geoms_aabb[..., :, 0, :].min(dim=-2)[0]
+                    entity_max = entity_geoms_aabb[..., :, 1, :].max(dim=-2)[0]
+                    entity_aabb = torch.stack([entity_min, entity_max], dim=-2)
+                else:
+                    entity_aabb = torch.zeros_like(aabb[..., 0:1, :, :])
+                entity_aabbs.append(entity_aabb)
+
+            aabb = torch.stack(entity_aabbs, dim=-2)
+
+        return aabb.squeeze(0) if self.n_envs == 0 else aabb
+
     def set_geom_friction(self, friction, geoms_idx):
         kernel_set_geom_friction(geoms_idx, friction, self.geoms_info)
 

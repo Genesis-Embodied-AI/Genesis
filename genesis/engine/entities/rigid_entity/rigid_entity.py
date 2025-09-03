@@ -1680,6 +1680,26 @@ class RigidEntity(Entity):
         return self._solver.get_links_quat(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
+    def get_aabb(self, envs_idx=None, *, unsafe=False):
+        """
+        Get the axis-aligned bounding box (AABB) of the entity in world frame.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        unsafe : bool, optional
+            Whether to skip input validation. Defaults to False.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
+            The AABB of the entity, where [0, :] = min_corner (x_min, y_min, z_min)
+            and [1, :] = max_corner (x_max, y_max, z_max).
+        """
+        return self._solver.get_aabb(entities_idx=[self._idx_in_solver], envs_idx=envs_idx, unsafe=unsafe)
+
+    @gs.assert_built
     def get_links_vel(
         self,
         links_idx_local=None,
