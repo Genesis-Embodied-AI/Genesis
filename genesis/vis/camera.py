@@ -546,13 +546,9 @@ class Camera(RBC):
         if world_frame:
             T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
             cam_pose = self.transform @ T_OPENGL_TO_OPENCV
-            if cam_pose.ndim == 2:
-                point_cloud = point_cloud @ cam_pose.T
-            else:
-                point_cloud_reshaped = point_cloud.reshape(-1, height * width, 4)
-                point_cloud = (point_cloud_reshaped @ cam_pose.swapaxes(-1, -2)).reshape(point_cloud.shape)
+            point_cloud = point_cloud @ cam_pose.T
 
-        point_cloud = point_cloud[..., :3]
+        point_cloud = point_cloud[..., :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
     def set_pose(self, transform=None, pos=None, lookat=None, up=None, envs_idx=None):

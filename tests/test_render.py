@@ -367,7 +367,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     for i in range(0, len(cameras), 3):
         cam_0, cam_1, cam_2 = cameras[i : (i + 3)]
         R = np.eye(3)
-        trans = np.array([0.1, 0.0, 0.1])
+        trans = np.array([0.1, 0.0, 0.2])
         cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
         cam_1.follow_entity(robot)
 
@@ -490,7 +490,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 )
 @pytest.mark.parametrize("segmentation_level", ["entity", "link", "geom"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
-def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer):
+def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
     """Test segmentation rendering."""
     scene = gs.Scene(
         fem_options=gs.options.FEMOptions(
@@ -549,6 +549,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         pos=(2.0, 0.0, 2.0),
         lookat=(0, 0, 0.5),
         fov=40,
+        GUI=show_viewer,
     )
     scene.build()
 
@@ -572,7 +573,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-def test_point_cloud(renderer, show_viewer):
+def test_point_cloud(renderer_type, renderer, show_viewer):
     CAMERA_DIST = 8.0
     OBJ_OFFSET = 10.0
     BOX_HALFSIZE = 1.0
