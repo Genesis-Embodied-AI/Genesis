@@ -512,6 +512,8 @@ class Camera(RBC):
         # Compute the (denormalized) depth map using PyRender systematically.
         if self._batch_renderer is not None:
             _, depth_arr, _, _ = self._batch_render(rgb=False, depth=True, segmentation=False, normal=False)
+            # FIXME: Converting to numpy for now
+            depth_arr = tensor_to_array(depth_arr)
         elif self._rasterizer is not None:
             self._rasterizer.update_scene()
             _, depth_arr, _, _ = self._rasterizer.render_camera(
@@ -527,26 +529,24 @@ class Camera(RBC):
         cy = self.cy
 
         # Mask out invalid depth
-        mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
+        mask = (self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3))
 
         # Compute normalized pixel coordinates
-        # FIXME: Properly support batching
-        breakpoint()
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
         u = u.reshape((-1,))
         v = v.reshape((-1,))
 
         # Convert to world coordinates
-        depth_grid = depth_arr[v, u]
+        depth_grid = depth_arr[..., v, u]
         world_x = depth_grid * (u + 0.5 - cx) / fx
         world_y = depth_grid * (v + 0.5 - cy) / fy
         world_z = depth_grid
 
-        point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth_arr.size,), dtype=np.float32)), axis=-1)
+        point_cloud = np.stack((world_x, world_y, world_z, np.ones_like(world_z)), axis=-1)
         if world_frame:
             T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
             cam_pose = self.transform @ T_OPENGL_TO_OPENCV
-            point_cloud = point_cloud @ cam_pose.T
+            point_cloud = point_cloud @ cam_pose.swapaxes(-1, -2)
 
         point_cloud = point_cloud[..., :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask

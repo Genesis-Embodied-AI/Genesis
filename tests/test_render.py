@@ -574,10 +574,15 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
 def test_point_cloud(renderer_type, renderer, show_viewer):
+    N_ENVS = 2
+    CAM_RES = (256, 256)
     CAMERA_DIST = 8.0
     OBJ_OFFSET = 10.0
     BOX_HALFSIZE = 1.0
     SPHERE_RADIUS = 1.0
+
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+    BATCH_SHAPE = (N_ENVS,) if N_ENVS > 0 and IS_BATCHRENDER else ()
 
     scene = gs.Scene(
         renderer=renderer,
@@ -608,13 +613,6 @@ def test_point_cloud(renderer_type, renderer, show_viewer):
             fixed=True,
         ),
     )
-    camera_sphere = scene.add_camera(
-        pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
-        lookat=(0.0, OBJ_OFFSET, 0.0),
-        GUI=show_viewer,
-        near=2.0,
-        far=15.0,
-    )
     scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.0, -OBJ_OFFSET, 0.0),
@@ -622,33 +620,45 @@ def test_point_cloud(renderer_type, renderer, show_viewer):
             fixed=True,
         )
     )
+    camera_sphere = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, OBJ_OFFSET, 0.0),
+        near=2.0,
+        far=15.0,
+        GUI=show_viewer,
+    )
     camera_box_1 = scene.add_camera(
+        res=CAM_RES,
         pos=(0.0, -OBJ_OFFSET, CAMERA_DIST),
         lookat=(0.0, -OBJ_OFFSET, 0.0),
-        GUI=show_viewer,
         near=2.0,
         far=15.0,
+        GUI=show_viewer,
     )
     camera_box_2 = scene.add_camera(
+        res=CAM_RES,
         pos=np.array((CAMERA_DIST, CAMERA_DIST - OBJ_OFFSET, CAMERA_DIST)),
         lookat=(0.0, -OBJ_OFFSET, 0.0),
-        GUI=show_viewer,
         near=2.0,
         far=15.0,
+        GUI=show_viewer,
     )
-    scene.build()
+    scene.build(n_envs=N_ENVS)
 
     if show_viewer:
         for camera in scene.visualizer.cameras:
             camera.render(rgb=True, depth=True)
 
     point_cloud, mask = camera_box_1.render_pointcloud(world_frame=False)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
     point_cloud = point_cloud[mask]
     assert_allclose(CAMERA_DIST - point_cloud[:, 2], BOX_HALFSIZE, atol=1e-4)
     assert np.all(-BOX_HALFSIZE <= point_cloud[:, :2].min(axis=0))
     assert np.all(point_cloud[:, :2].max(axis=0) <= BOX_HALFSIZE)
 
     point_cloud, mask = camera_box_2.render_pointcloud(world_frame=False)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
     point_cloud = point_cloud[mask]
     point_cloud = point_cloud @ gu.z_up_to_R(np.array((1.0, 1.0, 1.0)), np.array((0.0, 0.0, 1.0))).T
     point_cloud -= np.array((CAMERA_DIST, CAMERA_DIST, CAMERA_DIST))
@@ -657,12 +667,14 @@ def test_point_cloud(renderer_type, renderer, show_viewer):
     assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=tol)
 
     point_cloud, mask = camera_box_2.render_pointcloud(world_frame=True)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
     point_cloud = point_cloud[mask]
     point_cloud += np.array((0.0, OBJ_OFFSET, 0.0))
     assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=tol)
 
     # It is not possible to get higher accuracy because of tesselation
     point_cloud, mask = camera_sphere.render_pointcloud(world_frame=False)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
     point_cloud = point_cloud[mask]
     assert_allclose(np.linalg.norm((0.0, 0.0, CAMERA_DIST) - point_cloud, axis=-1), SPHERE_RADIUS, atol=1e-2)
 
@@ -806,6 +818,8 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
     [RENDERER_TYPE.RASTERIZER],
 )
 def test_render_planes(tmp_path, png_snapshot, renderer):
+    CAM_RES = (256, 256)
+
     for test_idx, (plane_size, tile_size) in enumerate(
         (
             ((3, 4.5), (0.5, 0.75)),
@@ -813,7 +827,6 @@ def test_render_planes(tmp_path, png_snapshot, renderer):
             ((4.0, 4.0), (1.0, 1.0)),
         )
     ):
-        CAM_RES = (256, 256)
         scene = gs.Scene(
             renderer=renderer,
         )
