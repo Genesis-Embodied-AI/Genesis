@@ -189,7 +189,7 @@ class Sensor(RBC):
         rec_options : RecorderOptions
             The options for the recording.
         """
-        self._manager._sim._recorder_manager.add_recorder(self.read, rec_options)
+        self._manager._sim._scene._recorder_manager.add_recorder(self.read, rec_options)
 
     @property
     def is_built(self) -> bool:

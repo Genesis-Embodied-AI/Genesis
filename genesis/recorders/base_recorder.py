@@ -42,6 +42,7 @@ class Recorder:
         self._options = options
         self._manager = manager
         self._steps_per_sample = 1
+        self._initialized = False
         if options.hz:
             steps_per_sample_float = 1.0 / (options.hz * manager._step_dt)
             steps_per_sample = max(1, round(steps_per_sample_float))
@@ -52,6 +53,22 @@ class Recorder:
                 )
             self._steps_per_sample = steps_per_sample
 
+    def initialize(self):
+        raise NotImplementedError(f"[{type(self).__name__}] initialize() is not implemented.")
+
+    def process(self, data, cur_time):
+        raise NotImplementedError(f"[{type(self).__name__}] process() is not implemented.")
+
+    def cleanup(self):
+        raise NotImplementedError(f"[{type(self).__name__}] cleanup() is not implemented.")
+
+    def reset(self, envs_idx=None):
+        raise NotImplementedError(f"[{type(self).__name__}] reset() is not implemented.")
+
     @property
     def run_in_thread(self) -> bool:
         raise NotImplementedError(f"[{type(self).__name__}] run_in_thread is not implemented.")
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
