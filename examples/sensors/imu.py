@@ -118,12 +118,12 @@ def main():
     finally:
         gs.logger.info("Simulation finished.")
 
+        scene.stop_recording()
+
         print("Ground truth data:")
         print(imu.read_ground_truth())
         print("Measured data:")
         print(imu.read())
-
-        scene.stop_recording()
 
 
 if __name__ == "__main__":

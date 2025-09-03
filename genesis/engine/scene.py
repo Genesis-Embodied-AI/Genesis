@@ -208,8 +208,8 @@ class Scene(RBC):
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def __del__(self):
-        self._sim._data_recorder.destroy()
-        self._sim._data_recorder = None
+        self._sim._recorder_manager.destroy()
+        self._sim._recorder_manager = None
 
         if self._visualizer is not None:
             self._visualizer.destroy()
@@ -572,7 +572,7 @@ class Scene(RBC):
         rec_options : RecorderOptions
             The options for the recording.
         """
-        return self._sim._data_recorder.add_recorder(data_func, rec_options)
+        return self._sim._recorder_manager.add_recorder(data_func, rec_options)
 
     @gs.assert_unbuilt
     def add_camera(
@@ -909,7 +909,7 @@ class Scene(RBC):
             self.FPS_tracker.step()
 
     def stop_recording(self):
-        self._sim._data_recorder.stop()
+        self._sim._recorder_manager.stop()
 
     def _step_grad(self):
         self._sim.collect_output_grads()

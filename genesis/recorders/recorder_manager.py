@@ -121,9 +121,9 @@ class RecorderManager:
                             gs.logger.debug("[DataRecorder] Data queue is full, dropping oldest data sample.")
                             try:
                                 data_queue.get_nowait()
-                                data_queue.put_nowait(data_and_time)
                             except queue.Empty:
-                                # Queue became empty between operations, just put the data
+                                pass  # Queue became empty between operations, just put the data
+                            finally:
                                 data_queue.put_nowait(data_and_time)
                 else:
                     # non-threaded mode: process data synchronously
