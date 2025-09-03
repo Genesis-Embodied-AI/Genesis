@@ -4,12 +4,12 @@ from concurrent.futures import ThreadPoolExecutor, Executor
 from functools import partial
 
 import cv2
+import torch
 import numpy as np
 
 import genesis as gs
 from genesis.constants import IMAGE_TYPE
-
-from .misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array
 
 
 def as_grayscale_image(
@@ -148,24 +148,25 @@ class FrameImageExporter:
         """
         Export multiple frames from a single camera but different environments in parrallel as PNG files.
 
-        Args:
-            i_step:
-                The current step index.
-            i_cam:
-                The index of the camera.
-            rgb: ndarray[np.floating], optional
-                RGB image array of shape (n_envs, H, W, 3).
-            depth: ndarray[np.floating], optional
-                Depth image array of shape (n_envs, H, W).
-            segmentation: ndarray[np.integer], optional
-                Segmentation image array of shape (n_envs, H, W).
-            normal: ndarray[np.floating], optional
-                Normal image array of shape (n_envs, H, W, 3).
-            compress_level: int, optional
-                Compression level when exporting images as PNG. Default to 3.
-            executor: Executor, optional
-                Executor to which I/O bounded jobs (saving to PNG) will be submitted. A local executor will be
-                instantiated if none is provided.
+        Parameters
+        ----------
+        i_step: int
+            The current step index.
+        i_cam: int
+            The index of the camera.
+        rgb: ndarray[np.floating], optional
+            RGB image array of shape (n_envs, H, W, 3).
+        depth: ndarray[np.floating], optional
+            Depth image array of shape (n_envs, H, W).
+        segmentation: ndarray[np.integer], optional
+            Segmentation image array of shape (n_envs, H, W).
+        normal: ndarray[np.floating], optional
+            Normal image array of shape (n_envs, H, W, 3).
+        compress_level: int, optional
+            Compression level when exporting images as PNG. Default to 3.
+        executor: Executor, optional
+            Executor to which I/O bounded jobs (saving to PNG) will be submitted. A local executor will be instantiated
+            if none is provided.
         """
         # Pack frames data for convenience
         frame_data = (rgb, depth, segmentation, normal)
@@ -187,7 +188,10 @@ class FrameImageExporter:
                 continue
 
             # Convert data to numpy
-            imgs_data = tensor_to_array(imgs_data)
+            if isinstance(imgs_data, torch.Tensor):
+                imgs_data = tensor_to_array(imgs_data)
+            else:
+                imgs_data = np.asarray(imgs_data)
 
             # Make sure that image data has shape `(n_env, H, W [, C>1])``
             is_single_channel = img_type in (IMAGE_TYPE.DEPTH, IMAGE_TYPE.SEGMENTATION)

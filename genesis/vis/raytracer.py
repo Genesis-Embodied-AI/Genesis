@@ -621,12 +621,13 @@ class Raytracer:
     def update_camera(self, camera):
         camera_name = str(camera.uid)
         camera_model = camera.model
+        camera_transform = camera.transform
 
         if camera_model == "pinhole":
-            self._cameras[camera_name].update(pose=self.get_transform(camera.transform), fov=camera.fov)
+            self._cameras[camera_name].update(pose=self.get_transform(camera_transform), fov=camera.fov)
         elif camera_model == "thinlens":
             self._cameras[camera_name].update(
-                pose=self.get_transform(camera.transform),
+                pose=self.get_transform(camera_transform),
                 aperture=camera.aperture,
                 focal_len=camera.focal_len * 1000,
                 focus_dis=camera.focus_dist,
