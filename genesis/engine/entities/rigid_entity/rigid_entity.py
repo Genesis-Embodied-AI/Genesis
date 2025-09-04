@@ -871,18 +871,18 @@ class RigidEntity(Entity):
         )
 
     @ti.kernel
-    def _kernel_get_jacobian(self, links_state: array_class.LinksState, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
+    def _kernel_get_jacobian(self, links_info: array_class.LinksInfo, links_state: array_class.LinksState, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
         p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(links_state, tgt_link_idx, i_b, p_vec)
+            self._impl_get_jacobian(links_info, links_state, tgt_link_idx, i_b, p_vec)
 
     @ti.kernel
-    def _kernel_get_jacobian_zero(self, links_state: array_class.LinksState, tgt_link_idx: ti.i32):
+    def _kernel_get_jacobian_zero(self, links_info: array_class.LinksInfo, links_state: array_class.LinksState, tgt_link_idx: ti.i32):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
+            self._impl_get_jacobian(links_info, links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
 
     @ti.func
-    def _func_get_jacobian(self, links_state: array_class.LinksState, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
+    def _func_get_jacobian(self, links_info: array_class.LinksInfo, links_state: array_class.LinksState, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
@@ -894,7 +894,7 @@ class RigidEntity(Entity):
             I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
 
             dof_offset = 0
-            for i_j in range(self._solver.links_info.joint_start[I_l], self._solver.links_info.joint_end[I_l]):
+            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
                 I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
 
                 if self._solver.joints_info.type[I_j] == gs.JOINT_TYPE.FIXED:
