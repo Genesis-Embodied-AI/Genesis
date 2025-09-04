@@ -3707,7 +3707,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     # update jacobian for ee link
                     i_l_ee = links_idx[i_ee]
                     rigid_entity._func_get_jacobian(
-                        links_info, links_state,
+                        joints_info, links_info, links_state,
                         i_l_ee, i_b, ti.Vector.zero(gs.ti_float, 3), pos_mask, rot_mask
                     )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
