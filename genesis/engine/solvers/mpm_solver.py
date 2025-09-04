@@ -447,7 +447,7 @@ class MPMSolver(Solver):
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
-                    if ti.static(self._enable_CPIC):
+                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active()):
                         sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
                         if sep_geom_idx != -1:
                             grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
