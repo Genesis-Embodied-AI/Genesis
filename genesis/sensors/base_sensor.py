@@ -271,7 +271,7 @@ class Sensor(RBC):
         for i, shape in enumerate(self._return_shapes):
             start_idx, end_idx = self._shape_indices[i]
 
-            field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), cache_length, *shape)).squeeze()
+            field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), cache_length, *shape))
 
             if self._manager._sim.n_envs == 0:
                 field_data = field_data.squeeze(0)
