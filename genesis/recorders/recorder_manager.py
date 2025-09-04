@@ -29,7 +29,6 @@ class RecorderManager:
         self._processor_threads: list[threading.Thread] = []
         self._is_recording = False
 
-    @gs.assert_unbuilt
     def add_recorder(self, data_func: Callable, rec_options: "RecorderOptions"):
         """
         Automatically read and process data. See RecorderOptions for more details.
@@ -45,7 +44,6 @@ class RecorderManager:
         rec_options.validate()
         self._recorders.append(RecorderManager.RECORDER_TYPES_MAP[type(rec_options)](self, rec_options))
 
-    @gs.assert_built
     def start(self):
         """Start data recording."""
         if self._is_recording:
