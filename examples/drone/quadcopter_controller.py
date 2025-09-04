@@ -85,7 +85,5 @@ class DronePIDController:
         yaw_del = self.__pid_att_yaw.update(err_yaw, self.__dt)
 
         prop_rpms = self.__mixer(thrust_des, roll_del, pitch_del, yaw_del, x_vel_del, y_vel_del)
-        prop_rpms = prop_rpms.cpu()
-        prop_rpms - prop_rpms.numpy()
 
-        return prop_rpms
+        return prop_rpms.cpu().numpy()
