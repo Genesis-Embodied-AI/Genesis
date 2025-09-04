@@ -430,6 +430,14 @@ def test_walker(gs_sim, mj_sim, gjk_collision, tol):
     qpos[2] += 0.5
     qvel = np.random.rand(gs_robot.n_dofs) * 0.2
 
+    # Make sure it is possible to set the configuration vector without failure
+    qpos = gs_robot.get_dofs_position()
+    gs_robot.set_dofs_position(qpos)
+    assert_allclose(gs_robot.get_dofs_position(), qpos, tol=gs.EPS)
+    qpos = torch.rand(gs_robot.n_dofs).clip(*gs_robot.get_dofs_limit())
+    gs_robot.set_dofs_position(qpos)
+    assert_allclose(gs_robot.get_dofs_position(), qpos, tol=gs.EPS)
+
     # Cannot simulate any longer because collision detection is very sensitive
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=90, tol=tol)
 
@@ -571,7 +579,12 @@ def test_one_ball_joint(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     # Make sure it is possible to set the configuration vector without failure
-    gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
+    qpos = gs_sim.rigid_solver.get_dofs_position()
+    gs_sim.rigid_solver.set_dofs_position(qpos)
+    assert_allclose(gs_sim.rigid_solver.get_dofs_position(), qpos, tol=gs.EPS)
+    qpos = torch.rand(gs_sim.rigid_solver.n_dofs).clip(*gs_sim.rigid_solver.get_dofs_limit())
+    gs_sim.rigid_solver.set_dofs_position(qpos)
+    assert_allclose(gs_sim.rigid_solver.get_dofs_position(), qpos, tol=gs.EPS)
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=1e-8)

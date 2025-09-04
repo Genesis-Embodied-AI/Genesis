@@ -6735,9 +6735,10 @@ def kernel_set_dofs_position(
                     i_q = q_start + i_q_
                     rigid_global_info.qpos[i_q, i_b] = quat[i_q_]
             else:  # (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC)
-                rigid_global_info.qpos[q_start, i_b] = (
-                    rigid_global_info.qpos0[q_start, i_b] + dofs_state.pos[dof_start, i_b]
-                )
+                for i_d_ in range(links_info.dof_end[I_l] - dof_start):
+                    i_q = q_start + i_d_
+                    i_d = dof_start + i_d_
+                    rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos0[i_q, i_b] + dofs_state.pos[i_d, i_b]
 
 
 @gs.maybe_pure
