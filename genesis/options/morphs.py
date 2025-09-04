@@ -733,10 +733,12 @@ class MJCF(FileMorph):
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
         Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity's baselink in meters. Defaults to (0.0, 0.0, 0.0).
+        The position of the entity in meters as a translational offset. Mathematically, 'pos' and 'euler' options
+        correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
+        original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity's baselink in degrees. This follows scipy's extrinsic x-y-z rotation convention.
-        Defaults to (0.0, 0.0, 0.0).
+        The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
+        convention. See 'pos' option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored.
         Defaults to None.
@@ -833,10 +835,12 @@ class URDF(FileMorph):
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
         Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+        The position of the entity in meters as a translational offset. Mathematically, 'pos' and 'euler' options
+        correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
+        original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
-        Defaults to (0.0, 0.0, 0.0).
+        The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
+        convention. See 'pos' option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
@@ -924,10 +928,12 @@ class Drone(FileMorph):
         The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along
         each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+        The position of the entity in meters as a translational offset. Mathematically, 'pos' and 'euler' options
+        correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
+        original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to
-        (0.0, 0.0, 0.0).
+        The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
+        convention. See 'pos' option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
