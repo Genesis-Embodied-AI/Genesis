@@ -370,8 +370,8 @@ class Camera(RBC):
         segmentation=False,
         colorize_seg=False,
         normal=False,
+        antialiasing=False,
         force_render=False,
-        antialiasing=True,
     ):
         """
         Render the camera view.
@@ -400,10 +400,10 @@ class Camera(RBC):
             If True, the segmentation mask will be colorized.
         normal : bool, optional
             Whether to render the surface normal.
-        force_render : bool, optional
-            Whether to force rendering even if the scene has not changed.
         antialiasing : bool, optional
             Whether to apply anti-aliasing. Only supported by 'BatchRenderer' for now.
+        force_render : bool, optional
+            Whether to force rendering even if the scene has not changed.
 
         Returns
         -------
@@ -424,7 +424,7 @@ class Camera(RBC):
         rgb_arr, depth_arr, seg_arr, seg_color_arr, seg_idxc_arr, normal_arr = None, None, None, None, None, None
         if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
-                rgb, depth, segmentation, normal, force_render, antialiasing
+                rgb_, depth, segmentation, normal, antialiasing, force_render
             )
         elif self._raytracer is not None:
             if rgb_:
@@ -480,20 +480,27 @@ class Camera(RBC):
 
         return rgb_arr if rgb else None, depth_arr, seg_arr, normal_arr
 
-    @gs.assert_built
-    def get_segmentation_idx_dict(self):
-        """
-        Returns a dictionary mapping segmentation indices to scene entities.
+    def distance_center_to_plane(self, center_dis):
+        width, height = self.res
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
-        In the segmentation map:
-        - Index 0 corresponds to the background (-1).
-        - Indices > 0 correspond to scene elements, which may be represented as:
-            - `entity_id`
-            - `(entity_id, link_id)`
-            - `(entity_id, link_id, geom_id)`
-          depending on the material type and the configured segmentation level.
-        """
-        return self._rasterizer._context.seg_idxc_map
+        if isinstance(center_dis, np.ndarray):
+            v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+            xd = (u + 0.5 - cx) / fx
+            yd = (v + 0.5 - cy) / fy
+            scale_inv = 1.0 / np.sqrt(xd**2 + yd**2 + 1.0)
+        else:  # torch.Tensor
+            v, u = torch.meshgrid(
+                torch.arange(height, dtype=torch.int32, device=gs.device),
+                torch.arange(width, dtype=torch.int32, device=gs.device),
+                indexing="ij",
+            )
+            xd = (u + 0.5 - cx) / fx
+            yd = (v + 0.5 - cy) / fy
+            scale_inv = torch.rsqrt(xd**2 + yd**2 + 1.0)
+        return center_dis * scale_inv
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
@@ -513,12 +520,16 @@ class Camera(RBC):
         mask_arr : np.ndarray
             The valid depth mask. boolean array of same shape as depth_arr
         """
-        # Compute the (denormalized) depth map using PyRender systematically
-        # TODO: Add support of BatchRendered.
-        self._rasterizer.update_scene()
-        rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-            self, rgb=False, depth=True, segmentation=False, normal=False
-        )
+        # Compute the (denormalized) depth map
+        if self._batch_renderer is not None:
+            _, depth_arr, _, _ = self._batch_render(rgb=False, depth=True, segmentation=False, normal=False)
+            # FIXME: Avoid converting to numpy
+            depth_arr = tensor_to_array(depth_arr)
+        else:
+            self._rasterizer.update_scene()
+            _, depth_arr, _, _ = self._rasterizer.render_camera(
+                self, rgb=False, depth=True, segmentation=False, normal=False
+            )
 
         # Convert OpenGL projection matrix to camera intrinsics
         width, height = self.res
