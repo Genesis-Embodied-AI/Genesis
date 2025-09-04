@@ -326,6 +326,8 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             pos=(1.5, 0.5, 1.5),
             lookat=(0.0, 0.0, 0.5),
             fov=45,
+            near=0.05,
+            far=100.0,
             env_idx=env_idx,
             GUI=show_viewer,
         )
@@ -334,6 +336,8 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             pos=(1.5, -0.5, 1.5),
             lookat=(0.0, 0.0, 0.5),
             fov=45,
+            near=0.05,
+            far=100.0,
             env_idx=env_idx,
             GUI=show_viewer,
         )
@@ -341,6 +345,8 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             res=CAM_RES,
             fov=45,
             env_idx=env_idx,
+            near=0.05,
+            far=100.0,
             GUI=show_viewer,
         )
         cameras += (cam_0, cam_1, cam_2)

@@ -56,6 +56,8 @@ IMG_NUM_ERR_THR = 0.001
 def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
+    if isinstance(val, type):
+        return val.__name__
     return f"{val}"
 
 
