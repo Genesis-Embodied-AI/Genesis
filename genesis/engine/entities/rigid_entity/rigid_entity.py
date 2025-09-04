@@ -872,8 +872,13 @@ class RigidEntity(Entity):
 
     @ti.kernel
     def _kernel_get_jacobian(
-        self, dofs_info: array_class.DofsInfo, joints_info: array_class.JointsInfo, links_info: array_class.LinksInfo,
-        links_state: array_class.LinksState, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()
+        self,
+        dofs_info: array_class.DofsInfo,
+        joints_info: array_class.JointsInfo,
+        links_info: array_class.LinksInfo,
+        links_state: array_class.LinksState,
+        tgt_link_idx: ti.i32,
+        p_local: ti.types.ndarray(),
     ):
         p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
         for i_b in range(self._solver._B):
@@ -881,17 +886,30 @@ class RigidEntity(Entity):
 
     @ti.kernel
     def _kernel_get_jacobian_zero(
-        self, dofs_info: array_class.DofsInfo, joints_info: array_class.JointsInfo, links_info: array_class.LinksInfo,
-        links_state: array_class.LinksState, tgt_link_idx: ti.i32
+        self,
+        dofs_info: array_class.DofsInfo,
+        joints_info: array_class.JointsInfo,
+        links_info: array_class.LinksInfo,
+        links_state: array_class.LinksState,
+        tgt_link_idx: ti.i32,
     ):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(dofs_info, joints_info, links_info, links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
+            self._impl_get_jacobian(
+                dofs_info, joints_info, links_info, links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3)
+            )
 
     @ti.func
     def _func_get_jacobian(
-        self, dofs_info: array_class.DofsInfo, joints_info: array_class.JointsInfo, links_info: array_class.LinksInfo,
+        self,
+        dofs_info: array_class.DofsInfo,
+        joints_info: array_class.JointsInfo,
+        links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
-        tgt_link_idx, i_b, p_local, pos_mask, rot_mask
+        tgt_link_idx,
+        i_b,
+        p_local,
+        pos_mask,
+        rot_mask,
     ):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
@@ -914,9 +932,7 @@ class RigidEntity(Entity):
                     i_d = joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    rotation = gu.ti_transform_by_quat(
-                        dofs_info.motion_ang[I_d], links_state.quat[i_l, i_b]
-                    )
+                    rotation = gu.ti_transform_by_quat(dofs_info.motion_ang[I_d], links_state.quat[i_l, i_b])
                     translation = rotation.cross(tgt_link_pos - links_state.pos[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -930,9 +946,7 @@ class RigidEntity(Entity):
                     i_d = joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    translation = gu.ti_transform_by_quat(
-                        dofs_info.motion_vel[I_d], links_state.quat[i_l, i_b]
-                    )
+                    translation = gu.ti_transform_by_quat(dofs_info.motion_vel[I_d], links_state.quat[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
