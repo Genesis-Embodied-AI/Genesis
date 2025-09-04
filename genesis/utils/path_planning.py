@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import time
+from typing import TYPE_CHECKING
 
 import gstaichi as ti
 import torch
@@ -7,12 +8,16 @@ import torch.nn.functional as F
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils import array_class
+
+if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 class PathPlanner(ABC):
     def __init__(self, entity):
         self._entity = entity
-        self._solver = entity._solver
+        self._solver: "RigidSolver" = entity._solver
 
         self.PENETRATION_EPS = 1e-5 if gs.ti_float == ti.f32 else 0.0
 
@@ -671,6 +676,7 @@ class RRTConnect(PathPlanner):
     @ti.kernel
     def _kernel_rrt_connect_step1(
         self,
+        qpos: array_class.V_ANNOTATION,
         forward_pass: ti.i32,
         q_limit_lower: ti.types.ndarray(),
         q_limit_upper: ti.types.ndarray(),
@@ -742,7 +748,7 @@ class RRTConnect(PathPlanner):
 
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
-                        self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
+                        qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
@@ -867,6 +873,7 @@ class RRTConnect(PathPlanner):
         forward_pass = True
         for _ in range(self._rrt_max_nodes):
             self._kernel_rrt_connect_step1(
+                qpos=self._solver.qpos,
                 forward_pass=forward_pass,
                 q_limit_lower=self._entity.q_limit[0],
                 q_limit_upper=self._entity.q_limit[1],

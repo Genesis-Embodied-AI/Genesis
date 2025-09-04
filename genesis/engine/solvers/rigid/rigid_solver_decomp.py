@@ -130,6 +130,8 @@ class RigidSolver(Solver):
 
         self._cur_step = -1
 
+        self.qpos: ti.Template | ti.types.NDArray | None = None
+
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
         if isinstance(material, gs.materials.Avatar):
             EntityClass = AvatarEntity
