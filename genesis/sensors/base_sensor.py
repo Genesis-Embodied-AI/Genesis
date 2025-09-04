@@ -1,6 +1,6 @@
 import itertools
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Iterable
 
 import gstaichi as ti
 import numpy as np
@@ -87,10 +87,12 @@ class Sensor(RBC):
         self._shared_metadata.delays_ts.append(self._delays_ts)
 
         self._shape_indices: list[tuple[int, int]] = []
-        return_format = self._get_return_format()
-        return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
+        self._return_format = self._get_return_format()
+        is_return_dict = isinstance(self._return_format, dict)
+        self._return_shapes = self._return_format.values() if is_return_dict else (self._return_format,)
+        self._get_formatted_data = self._get_formatted_data_dict if is_return_dict else self._get_formatted_data_tuple
         tensor_size = 0
-        for shape in return_shapes:
+        for shape in self._return_shapes:
             data_size = np.prod(shape)
             self._shape_indices.append((tensor_size, tensor_size + data_size))
             tensor_size += data_size
@@ -131,7 +133,7 @@ class Sensor(RBC):
 
     @classmethod
     def _update_shared_ground_truth_cache(
-        cls, shared_metadata: dict[str, Any], shared_ground_truth_cache: torch.Tensor
+        cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         """
         Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
@@ -250,17 +252,14 @@ class Sensor(RBC):
                 shared_cache[idx_slices] = buffered_data.at(cur_delay_ts_int)[idx_slices]
             tensor_idx += tensor_size
 
-    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor | dict[str, torch.Tensor]:
+    def _get_return_values(self, tensor: torch.Tensor, envs_idx=None) -> list[torch.Tensor]:
         """
-        Formats the given tensor into the format specified in `get_return_format()`.
+        Preprares the given tensor into multiple tensors matching `self._return_shapes`.
 
-        NOTE: This method does not clone the data tensor, it should have been cloned by the caller.
+        Note that this method does not clone the data tensor, it should have been cloned by the caller.
         """
-
         envs_idx = self._sanitize_envs_idx(envs_idx)
 
-        return_format = self._get_return_format()
-        return_shapes = return_format.values() if isinstance(return_format, dict) else (return_format,)
         cache_length = self._get_cache_length()
         return_values = []
 
@@ -269,7 +268,7 @@ class Sensor(RBC):
         else:
             tensor_chunk = tensor[envs_idx].reshape((len(envs_idx), cache_length, -1))
 
-        for i, shape in enumerate(return_shapes):
+        for i, shape in enumerate(self._return_shapes):
             start_idx, end_idx = self._shape_indices[i]
 
             field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), cache_length, *shape)).squeeze()
@@ -278,10 +277,15 @@ class Sensor(RBC):
                 field_data = field_data.squeeze(0)
             return_values.append(field_data)
 
-        if isinstance(return_format, dict):
-            return dict(zip(return_format.keys(), return_values))
-        else:
-            return return_values[0]
+        return return_values
+
+    def _get_formatted_data_dict(self, tensor: torch.Tensor, envs_idx=None) -> dict[str, torch.Tensor]:
+        """Returns a dictionary of tensors matching the return format."""
+        return dict(zip(self._return_format.keys(), self._get_return_values(tensor, envs_idx)))
+
+    def _get_formatted_data_tuple(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor:
+        """Returns a tensor matching the return format."""
+        return self._get_return_values(tensor, envs_idx)[0]
 
     def _sanitize_envs_idx(self, envs_idx) -> torch.Tensor:
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
@@ -362,16 +366,16 @@ class NoisySensorOptionsMixin:
         The measurement resolution of the sensor (smallest increment of change in the sensor reading).
         Default is None, which means no quantization is applied.
     bias : float | tuple[float, ...], optional
-        The bias of the sensor.
-    random_walk_std : float | tuple[float, ...], optional
+        The constant additive bias of the sensor.
+    noise : float | tuple[float, ...], optional
+        The standard deviation of the additive white noise.
+    random_walk : float | tuple[float, ...], optional
         The standard deviation of the random walk, which acts as accumulated bias drift.
-    noise_std : float | tuple[float, ...], optional
-        The standard deviation of the noise.
     delay : float, optional
-        The delay in seconds before the sensor data is read.
+        The delay in seconds, affecting how outdated the sensor data is when it is read.
     jitter : float, optional
-        The jitter in seconds modeled as a normal distribution. Like delay, this will affect how outdated the sensor
-        data is when it is read. Jitter should be less than delay.
+        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
+        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
     interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used. Default is False.
@@ -381,8 +385,8 @@ class NoisySensorOptionsMixin:
 
     resolution: float | tuple[float, ...] | None = None
     bias: float | tuple[float, ...] = 0.0
-    random_walk_std: float | tuple[float, ...] = 0.0
-    noise_std: float | tuple[float, ...] = 0.0
+    noise: float | tuple[float, ...] = 0.0
+    random_walk: float | tuple[float, ...] = 0.0
     jitter: float = 0.0
     interpolate: bool = False
 
@@ -403,9 +407,9 @@ class NoisySensorMetadataMixin:
     resolution: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     cur_random_walk: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    random_walk_std: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    random_walk: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     cur_noise: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    noise_std: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    noise: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     jitter_ts: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     cur_jitter_ts: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
     delay_in_steps: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
@@ -445,12 +449,12 @@ class NoisySensorMixin:
         self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_size, envs_idx)
 
     @gs.assert_built
-    def set_random_walk_std(self, random_walk_std, envs_idx=None):
-        self._set_metadata_field(random_walk_std, self._shared_metadata.random_walk_std, self._cache_size, envs_idx)
+    def set_random_walk(self, random_walk, envs_idx=None):
+        self._set_metadata_field(random_walk, self._shared_metadata.random_walk, self._cache_size, envs_idx)
 
     @gs.assert_built
-    def set_noise_std(self, noise_std, envs_idx=None):
-        self._set_metadata_field(noise_std, self._shared_metadata.noise_std, self._cache_size, envs_idx)
+    def set_noise(self, noise, envs_idx=None):
+        self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_jitter(self, jitter, envs_idx=None):
@@ -477,14 +481,14 @@ class NoisySensorMixin:
         self._shared_metadata.bias = concat_with_tensor(
             self._shared_metadata.bias, self._options.bias, expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.random_walk_std = concat_with_tensor(
-            self._shared_metadata.random_walk_std, self._options.random_walk_std, expand=(batch_size, -1), dim=-1
+        self._shared_metadata.random_walk = concat_with_tensor(
+            self._shared_metadata.random_walk, self._options.random_walk, expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk_std)
-        self._shared_metadata.noise_std = concat_with_tensor(
-            self._shared_metadata.noise_std, self._options.noise_std, expand=(batch_size, -1), dim=-1
+        self._shared_metadata.cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk)
+        self._shared_metadata.noise = concat_with_tensor(
+            self._shared_metadata.noise, self._options.noise, expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.cur_noise = torch.zeros_like(self._shared_metadata.noise_std)
+        self._shared_metadata.cur_noise = torch.zeros_like(self._shared_metadata.noise)
         self._shared_metadata.jitter_ts = concat_with_tensor(
             self._shared_metadata.jitter_ts, self._options.jitter / self._dt, expand=(batch_size, -1), dim=-1
         )
@@ -521,11 +525,11 @@ class NoisySensorMixin:
 
     @classmethod
     def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataMixin, output: torch.Tensor):
-        if torch.any(shared_metadata.random_walk_std > gs.EPS):
-            shared_metadata.cur_random_walk += torch.normal(0, shared_metadata.random_walk_std)
+        if torch.any(shared_metadata.random_walk > gs.EPS):
+            shared_metadata.cur_random_walk += torch.normal(0, shared_metadata.random_walk)
             output += shared_metadata.cur_random_walk
-        if torch.any(shared_metadata.noise_std > gs.EPS):
-            torch.normal(0, shared_metadata.noise_std, out=shared_metadata.cur_noise)
+        if torch.any(shared_metadata.noise > gs.EPS):
+            torch.normal(0, shared_metadata.noise, out=shared_metadata.cur_noise)
             output += shared_metadata.cur_noise
         output += shared_metadata.bias
 

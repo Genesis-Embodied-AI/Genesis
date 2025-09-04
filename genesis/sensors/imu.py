@@ -45,32 +45,35 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     euler_offset : tuple[float, float, float], optional
         The rotational offset of the IMU sensor from the RigidLink in degrees.
     acc_resolution : float, optional
-        The measurement resolution of the accelerometer. Default is 1e-6.
+        The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
+        Default is None, which means no quantization is applied.
     acc_axes_skew : float | tuple[float, float, float] | Iterable[float]
         Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
         for each axis, and off-diagonal elements account for cross-axis misalignment effects.
         - If a scalar is provided (float), all off-diagonal elements are set to the scalar value.
         - If a 3-element vector is provided (tuple[float, float, float]), off-diagonal elements are set.
-    acc_noise_std : tuple[float, float, float]
-        The standard deviation of the white noise for each axis of the accelerometer.
     acc_bias : tuple[float, float, float]
-        The additive bias for each axis of the accelerometer.
-    acc_random_walk_std : tuple[float, float, float]
-        The standard deviation of the bias drift for each axis of the accelerometer.
+        The constant additive bias for each axis of the accelerometer.
+    acc_noise : tuple[float, float, float]
+        The standard deviation of the white noise for each axis of the accelerometer.
+    acc_random_walk : tuple[float, float, float]
+        The standard deviation of the random walk, which acts as accumulated bias drift.
     gyro_resolution : float, optional
-        The measurement resolution of the gyroscope. Default is 1e-5.
+        The measurement resolution of the gyroscope (smallest increment of change in the sensor reading).
+        Default is None, which means no quantization is applied.
     gyro_axes_skew : float | tuple[float, float, float] | Iterable[float]
         Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
-    gyro_noise_std : tuple[float, float, float]
-        The standard deviation of the white noise for each axis of the gyroscope.
     gyro_bias : tuple[float, float, float]
-        The additive bias for each axis of the gyroscope.
-    gyro_random_walk_std : tuple[float, float, float]
+        The constant additive bias for each axis of the gyroscope.
+    gyro_noise : tuple[float, float, float]
+        The standard deviation of the white noise for each axis of the gyroscope.
+    gyro_random_walk : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the gyroscope.
     delay : float, optional
-        The delay in seconds before the sensor data is read.
+        The delay in seconds, affecting how outdated the sensor data is when it is read.
     jitter : float, optional
-        The time jitter standard deviation in seconds before the sensor data is read.
+        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
+        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
     interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used. Default is False.
@@ -82,12 +85,12 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     gyro_resolution: float | tuple[float, float, float] = 1e-5
     acc_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
     gyro_axes_skew: float | tuple[float, float, float] | Iterable[float] = 0.0
-    acc_noise_std: float | tuple[float, float, float] = 0.0
-    gyro_noise_std: float | tuple[float, float, float] = 0.0
+    acc_noise: float | tuple[float, float, float] = 0.0
+    gyro_noise: float | tuple[float, float, float] = 0.0
     acc_bias: float | tuple[float, float, float] = 0.0
     gyro_bias: float | tuple[float, float, float] = 0.0
-    acc_random_walk_std: float | tuple[float, float, float] = 0.0
-    gyro_random_walk_std: float | tuple[float, float, float] = 0.0
+    acc_random_walk: float | tuple[float, float, float] = 0.0
+    gyro_random_walk: float | tuple[float, float, float] = 0.0
 
     def validate(self, scene):
         super().validate(scene)
@@ -139,24 +142,20 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         self._set_metadata_field(bias, self._shared_metadata.gyro_bias, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
-    def set_acc_random_walk_std(self, random_walk_std, envs_idx=None):
-        self._set_metadata_field(
-            random_walk_std, self._shared_metadata.acc_random_walk_std, field_size=3, envs_idx=envs_idx
-        )
+    def set_acc_random_walk(self, random_walk, envs_idx=None):
+        self._set_metadata_field(random_walk, self._shared_metadata.acc_random_walk, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
-    def set_gyro_random_walk_std(self, random_walk_std, envs_idx=None):
-        self._set_metadata_field(
-            random_walk_std, self._shared_metadata.gyro_random_walk_std, field_size=3, envs_idx=envs_idx
-        )
+    def set_gyro_random_walk(self, random_walk, envs_idx=None):
+        self._set_metadata_field(random_walk, self._shared_metadata.gyro_random_walk, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
-    def set_acc_noise_std(self, noise_std, envs_idx=None):
-        self._set_metadata_field(noise_std, self._shared_metadata.acc_noise_std, field_size=3, envs_idx=envs_idx)
+    def set_acc_noise(self, noise, envs_idx=None):
+        self._set_metadata_field(noise, self._shared_metadata.acc_noise, field_size=3, envs_idx=envs_idx)
 
     @gs.assert_built
-    def set_gyro_noise_std(self, noise_std, envs_idx=None):
-        self._set_metadata_field(noise_std, self._shared_metadata.gyro_noise_std, field_size=3, envs_idx=envs_idx)
+    def set_gyro_noise(self, noise, envs_idx=None):
+        self._set_metadata_field(noise, self._shared_metadata.gyro_noise, field_size=3, envs_idx=envs_idx)
 
     # ================================ internal methods ================================
 
@@ -166,20 +165,18 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         """
         self._options.resolution = self._to_full_tuple(self._options.acc_resolution, self._options.gyro_resolution)
         self._options.bias = self._to_full_tuple(self._options.acc_bias, self._options.gyro_bias)
-        self._options.random_walk_std = self._to_full_tuple(
-            self._options.acc_random_walk_std, self._options.gyro_random_walk_std
-        )
-        self._options.noise_std = self._to_full_tuple(self._options.acc_noise_std, self._options.gyro_noise_std)
+        self._options.random_walk = self._to_full_tuple(self._options.acc_random_walk, self._options.gyro_random_walk)
+        self._options.noise = self._to_full_tuple(self._options.acc_noise, self._options.gyro_noise)
         super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
 
         self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = self._view_metadata_as_acc_gyro(
             self._shared_metadata.bias
         )
-        self._shared_metadata.acc_random_walk_std, self._shared_metadata.gyro_random_walk_std = (
-            self._view_metadata_as_acc_gyro(self._shared_metadata.random_walk_std)
+        self._shared_metadata.acc_random_walk, self._shared_metadata.gyro_random_walk = self._view_metadata_as_acc_gyro(
+            self._shared_metadata.random_walk
         )
-        self._shared_metadata.acc_noise_std, self._shared_metadata.gyro_noise_std = self._view_metadata_as_acc_gyro(
-            self._shared_metadata.noise_std
+        self._shared_metadata.acc_noise, self._shared_metadata.gyro_noise = self._view_metadata_as_acc_gyro(
+            self._shared_metadata.noise
         )
         self._shared_metadata.alignment_rot_matrix = torch.cat(
             [
