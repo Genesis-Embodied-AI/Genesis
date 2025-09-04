@@ -429,7 +429,8 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
     try:
         prog = impl.get_runtime().prog
         if compiled_kernel_data is None:
-            compiled_kernel_data = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
+            compile_result = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
+            compiled_kernel_data = compile_result.compiled_kernel_data
         prog.launch_kernel(compiled_kernel_data, launch_ctx)
     except Exception as e:
         e = handle_exception_from_cpp(e)
