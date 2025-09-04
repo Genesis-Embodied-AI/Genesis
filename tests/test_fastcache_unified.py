@@ -135,8 +135,8 @@ def gs_num_envs_child(args: list[str]):
 def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
     if sys.platform == "Darwin" and test_backend == "gpu" and use_ndarray and enable_pure:
         pytest.skip(
-            "fast cache not supported on mac gpus when using ndarray,"
-            " because mac gpu only supports up to 31 kernel parameters, and we need more than that."
+            "fast cache not supported on mac gpus when using ndarray, because mac gpu only supports up to 31 kernel"
+            " parameters, and we need more than that."
         )
 
     # change num_env each time, and check effect on reading from cache
