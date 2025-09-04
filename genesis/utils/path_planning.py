@@ -360,6 +360,7 @@ class RRT(PathPlanner):
         dofs_state: array_class.DofsState,
         dofs_info: array_class.DofsInfo,
         entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
     ):
         """
         Step 1 includes:
@@ -422,7 +423,7 @@ class RRT(PathPlanner):
                         dofs_state,
                         dofs_info,
                         entities_info,
-                        self._solver._rigid_global_info,
+                        rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
@@ -431,7 +432,7 @@ class RRT(PathPlanner):
                         geoms_info,
                         geoms_state,
                         links_state,
-                        self._solver._rigid_global_info,
+                        rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
 
@@ -532,6 +533,7 @@ class RRT(PathPlanner):
                     dofs_state=self._solver.dofs_state,
                     dofs_info=self._solver.dofs_info,
                     entities_info=self._solver.entities_info,
+                    rigid_global_info=self._solver._rigid_global_info,
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
@@ -708,6 +710,7 @@ class RRTConnect(PathPlanner):
         dofs_state: array_class.DofsState,
         dofs_info: array_class.DofsInfo,
         entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
     ):
         """
         Step 1 includes:
@@ -786,7 +789,7 @@ class RRTConnect(PathPlanner):
                         dofs_state,
                         dofs_info,
                         entities_info,
-                        self._solver._rigid_global_info,
+                        rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
@@ -795,7 +798,7 @@ class RRTConnect(PathPlanner):
                         geoms_info,
                         geoms_state,
                         links_state,
-                        self._solver._rigid_global_info,
+                        rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
 
@@ -914,6 +917,7 @@ class RRTConnect(PathPlanner):
                 dofs_state=self._solver.dofs_state,
                 dofs_info=self._solver.dofs_info,
                 entities_info=self._solver.entities_info,
+                rigid_global_info=self._solver._rigid_global_info,
             )
             if is_plan_with_obj:
                 self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
