@@ -353,6 +353,13 @@ class RRT(PathPlanner):
         envs_idx: ti.types.ndarray(),
         links_state: array_class.LinksState,
         links_info: array_class.LinksInfo,
+        joints_state: array_class.JointsState,
+        joints_info: array_class.JointsInfo,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        dofs_state: array_class.DofsState,
+        dofs_info: array_class.DofsInfo,
+        entities_info: array_class.EntitiesInfo,
     ):
         """
         Step 1 includes:
@@ -410,19 +417,19 @@ class RRT(PathPlanner):
                         i_b,
                         links_state,
                         links_info,
-                        self._solver.joints_state,
-                        self._solver.joints_info,
-                        self._solver.dofs_state,
-                        self._solver.dofs_info,
-                        self._solver.entities_info,
+                        joints_state,
+                        joints_info,
+                        dofs_state,
+                        dofs_info,
+                        entities_info,
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
                         i_b,
-                        self._solver.entities_info,
-                        self._solver.geoms_info,
-                        self._solver.geoms_state,
+                        entities_info,
+                        geoms_info,
+                        geoms_state,
                         links_state,
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
@@ -518,6 +525,13 @@ class RRT(PathPlanner):
                     envs_idx=envs_idx,
                     links_state=self._solver.links_state,
                     links_info=self._solver.links_info,
+                    joints_state=self._solver.joints_state,
+                    joints_info=self._solver.joints_info,
+                    geoms_state=self._solver.geoms_state,
+                    geoms_info=self._solver.geoms_info,
+                    dofs_state=self._solver.dofs_state,
+                    dofs_info=self._solver.dofs_info,
+                    entities_info=self._solver.entities_info,
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
@@ -687,6 +701,13 @@ class RRTConnect(PathPlanner):
         envs_idx: ti.types.ndarray(),
         links_state: array_class.LinksState,
         links_info: array_class.LinksInfo,
+        joints_state: array_class.JointsState,
+        joints_info: array_class.JointsInfo,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        dofs_state: array_class.DofsState,
+        dofs_info: array_class.DofsInfo,
+        entities_info: array_class.EntitiesInfo,
     ):
         """
         Step 1 includes:
@@ -760,19 +781,19 @@ class RRTConnect(PathPlanner):
                         i_b,
                         links_state,
                         links_info,
-                        self._solver.joints_state,
-                        self._solver.joints_info,
-                        self._solver.dofs_state,
-                        self._solver.dofs_info,
-                        self._solver.entities_info,
+                        joints_state,
+                        joints_info,
+                        dofs_state,
+                        dofs_info,
+                        entities_info,
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
                         i_b,
-                        self._solver.entities_info,
-                        self._solver.geoms_info,
-                        self._solver.geoms_state,
+                        entities_info,
+                        geoms_info,
+                        geoms_state,
                         links_state,
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
@@ -885,7 +906,14 @@ class RRTConnect(PathPlanner):
                 q_limit_upper=self._entity.q_limit[1],
                 envs_idx=envs_idx,
                 links_state=self._solver.links_state,
-                links_info=self._solver.links_info
+                links_info=self._solver.links_info,
+                joints_state=self._solver.joints_state,
+                joints_info=self._solver.joints_info,
+                geoms_state=self._solver.geoms_state,
+                geoms_info=self._solver.geoms_info,
+                dofs_state=self._solver.dofs_state,
+                dofs_info=self._solver.dofs_info,
+                entities_info=self._solver.entities_info,
             )
             if is_plan_with_obj:
                 self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
