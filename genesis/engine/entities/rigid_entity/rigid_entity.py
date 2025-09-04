@@ -846,12 +846,27 @@ class RigidEntity(Entity):
             gs.raise_exception("Entity has zero dofs.")
 
         if local_point is None:
-            self._kernel_get_jacobian_zero(link.idx)
+            sol = self._solver
+            self._kernel_get_jacobian_zero(
+                tgt_link_idx=link.idx,
+                dofs_info=sol.dofs_info,
+                joints_info=sol.joints_info,
+                links_info=sol.links_info,
+                links_state=sol.links_state,
+            )
         else:
             p_local = torch.as_tensor(local_point, dtype=gs.tc_float, device=gs.device)
             if p_local.shape != (3,):
                 gs.raise_exception("Must be a vector of length 3")
-            self._kernel_get_jacobian(link.idx, p_local)
+            sol = self._solver
+            self._kernel_get_jacobian(
+                tgt_link_idx=link.idx,
+                p_local=p_local,
+                dofs_info=sol.dofs_info,
+                joints_info=sol.joints_info,
+                links_info=sol.links_info,
+                links_state=sol.links_state,
+            )
 
         jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
         if self._solver.n_envs == 0:
@@ -860,56 +875,82 @@ class RigidEntity(Entity):
         return jacobian
 
     @ti.func
-    def _impl_get_jacobian(self, links_state, tgt_link_idx, i_b, p_vec):
+    def _impl_get_jacobian(
+        self,
+        tgt_link_idx,
+        i_b,
+        p_vec,
+        dofs_info: array_class.DofsInfo,
+        joints_info: array_class.JointsInfo,
+        links_info: array_class.LinksInfo,
+        links_state: array_class.LinksState,
+    ):
         self._func_get_jacobian(
-            links_state,
-            tgt_link_idx,
-            i_b,
-            p_vec,
-            ti.Vector.one(gs.ti_int, 3),
-            ti.Vector.one(gs.ti_int, 3),
+            tgt_link_idx=tgt_link_idx,
+            i_b=i_b,
+            p_local=p_vec,
+            pos_mask=ti.Vector.one(gs.ti_int, 3),
+            rot_mask=ti.Vector.one(gs.ti_int, 3),
+            dofs_info=dofs_info,
+            joints_info=joints_info,
+            links_info=links_info,
+            links_state=links_state,
         )
 
     @ti.kernel
     def _kernel_get_jacobian(
         self,
+        tgt_link_idx: ti.i32,
+        p_local: ti.types.ndarray(),
         dofs_info: array_class.DofsInfo,
         joints_info: array_class.JointsInfo,
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
-        tgt_link_idx: ti.i32,
-        p_local: ti.types.ndarray(),
     ):
         p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(dofs_info, joints_info, links_info, links_state, tgt_link_idx, i_b, p_vec)
+            self._impl_get_jacobian(
+                tgt_link_idx=tgt_link_idx,
+                i_b=i_b,
+                p_vec=p_vec,
+                dofs_info=dofs_info,
+                joints_info=joints_info,
+                links_info=links_info,
+                links_state=links_state,
+            )
 
     @ti.kernel
     def _kernel_get_jacobian_zero(
         self,
+        tgt_link_idx: ti.i32,
         dofs_info: array_class.DofsInfo,
         joints_info: array_class.JointsInfo,
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
-        tgt_link_idx: ti.i32,
     ):
         for i_b in range(self._solver._B):
             self._impl_get_jacobian(
-                dofs_info, joints_info, links_info, links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3)
+                tgt_link_idx=tgt_link_idx,
+                i_b=i_b,
+                p_vec=ti.Vector.zero(gs.ti_float, 3),
+                dofs_info=dofs_info,
+                joints_info=joints_info,
+                links_info=links_info,
+                links_state=links_state,
             )
 
     @ti.func
     def _func_get_jacobian(
         self,
-        dofs_info: array_class.DofsInfo,
-        joints_info: array_class.JointsInfo,
-        links_info: array_class.LinksInfo,
-        links_state: array_class.LinksState,
         tgt_link_idx,
         i_b,
         p_local,
         pos_mask,
         rot_mask,
+        dofs_info: array_class.DofsInfo,
+        joints_info: array_class.JointsInfo,
+        links_info: array_class.LinksInfo,
+        links_state: array_class.LinksState,
     ):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
