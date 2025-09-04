@@ -12,6 +12,7 @@ from genesis.engine.materials.base import Material
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.utils import geom as gu
+from genesis.utils import array_class
 from genesis.utils import linalg as lu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
@@ -859,8 +860,9 @@ class RigidEntity(Entity):
         return jacobian
 
     @ti.func
-    def _impl_get_jacobian(self, tgt_link_idx, i_b, p_vec):
+    def _impl_get_jacobian(self, links_state, tgt_link_idx, i_b, p_vec):
         self._func_get_jacobian(
+            links_state,
             tgt_link_idx,
             i_b,
             p_vec,
@@ -869,23 +871,23 @@ class RigidEntity(Entity):
         )
 
     @ti.kernel
-    def _kernel_get_jacobian(self, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
+    def _kernel_get_jacobian(self, links_state: array_class.LinksState, tgt_link_idx: ti.i32, p_local: ti.types.ndarray()):
         p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, p_vec)
+            self._impl_get_jacobian(links_state, tgt_link_idx, i_b, p_vec)
 
     @ti.kernel
-    def _kernel_get_jacobian_zero(self, tgt_link_idx: ti.i32):
+    def _kernel_get_jacobian_zero(self, links_state: array_class.LinksState, tgt_link_idx: ti.i32):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
+            self._impl_get_jacobian(links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
 
     @ti.func
-    def _func_get_jacobian(self, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
+    def _func_get_jacobian(self, links_state, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
-        tgt_link_pos = self._solver.links_state.pos[tgt_link_idx, i_b] + gu.ti_transform_by_quat(
-            p_local, self._solver.links_state.quat[tgt_link_idx, i_b]
+        tgt_link_pos = links_state.pos[tgt_link_idx, i_b] + gu.ti_transform_by_quat(
+            p_local, links_state.quat[tgt_link_idx, i_b]
         )
         i_l = tgt_link_idx
         while i_l > -1:
@@ -903,9 +905,9 @@ class RigidEntity(Entity):
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
                     rotation = gu.ti_transform_by_quat(
-                        self._solver.dofs_info.motion_ang[I_d], self._solver.links_state.quat[i_l, i_b]
+                        self._solver.dofs_info.motion_ang[I_d], links_state.quat[i_l, i_b]
                     )
-                    translation = rotation.cross(tgt_link_pos - self._solver.links_state.pos[i_l, i_b])
+                    translation = rotation.cross(tgt_link_pos - links_state.pos[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -919,7 +921,7 @@ class RigidEntity(Entity):
                     I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
                     translation = gu.ti_transform_by_quat(
-                        self._solver.dofs_info.motion_vel[I_d], self._solver.links_state.quat[i_l, i_b]
+                        self._solver.dofs_info.motion_vel[I_d], links_state.quat[i_l, i_b]
                     )
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -940,7 +942,7 @@ class RigidEntity(Entity):
                         i_d_jac = i_d + dof_offset - self._dof_start
                         I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
                         rotation = self._solver.dofs_info.motion_ang[I_d]
-                        translation = rotation.cross(tgt_link_pos - self._solver.links_state.pos[i_l, i_b])
+                        translation = rotation.cross(tgt_link_pos - links_state.pos[i_l, i_b])
 
                         self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                         self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
