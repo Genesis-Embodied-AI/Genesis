@@ -558,8 +558,8 @@ class Scene(RBC):
         GUI=False,
         spp=256,
         denoise=None,
-        near=0.05,
-        far=100.0,
+        near=0.1,
+        far=20.0,
         env_idx=None,
         debug=False,
     ):
@@ -602,10 +602,10 @@ class Scene(RBC):
             the OIDN denoiser option when building the RayTracer.
         near : float
             Distance from camera center to near plane in meters.
-            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.05.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.1.
         far : float
             Distance from camera center to far plane in meters.
-            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 100.0.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 20.0.
         env_idx : int, optional
             The specific environment index to bind to the camera. This option must be specified if and only if a
             non-batched renderer is being used. If provided, only this environment will be taken into account when
