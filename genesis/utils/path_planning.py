@@ -351,6 +351,8 @@ class RRT(PathPlanner):
         q_limit_lower: ti.types.ndarray(),
         q_limit_upper: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
+        links_state: array_class.LinksState,
+        links_info: array_class.LinksInfo,
     ):
         """
         Step 1 includes:
@@ -406,8 +408,8 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
-                        self._solver.links_state,
-                        self._solver.links_info,
+                        links_state,
+                        links_info,
                         self._solver.joints_state,
                         self._solver.joints_info,
                         self._solver.dofs_state,
@@ -421,7 +423,7 @@ class RRT(PathPlanner):
                         self._solver.entities_info,
                         self._solver.geoms_info,
                         self._solver.geoms_state,
-                        self._solver.links_state,
+                        links_state,
                         self._solver._rigid_global_info,
                         self._solver._static_rigid_sim_config,
                     )
@@ -514,6 +516,8 @@ class RRT(PathPlanner):
                     q_limit_lower=self._entity.q_limit[0],
                     q_limit_upper=self._entity.q_limit[1],
                     envs_idx=envs_idx,
+                    links_state=self._solver.links_state,
+                    links_info=self._solver.links_info,
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
@@ -682,6 +686,7 @@ class RRTConnect(PathPlanner):
         q_limit_upper: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         links_state: array_class.LinksState,
+        links_info: array_class.LinksInfo,
     ):
         """
         Step 1 includes:
@@ -754,7 +759,7 @@ class RRTConnect(PathPlanner):
                         self._entity._idx_in_solver,
                         i_b,
                         links_state,
-                        self._solver.links_info,
+                        links_info,
                         self._solver.joints_state,
                         self._solver.joints_info,
                         self._solver.dofs_state,
@@ -880,6 +885,7 @@ class RRTConnect(PathPlanner):
                 q_limit_upper=self._entity.q_limit[1],
                 envs_idx=envs_idx,
                 links_state=self._solver.links_state,
+                links_info=self._solver.links_info
             )
             if is_plan_with_obj:
                 self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
