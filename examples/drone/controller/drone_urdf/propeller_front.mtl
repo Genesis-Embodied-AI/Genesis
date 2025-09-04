@@ -1,0 +1,6 @@
+newmtl material_0
+Ka 1 0 0
+Kd 0 1 1
+Ks 0.5 0.5 0.5
+Ns 550
+d 0.7
