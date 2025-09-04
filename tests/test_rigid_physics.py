@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import tempfile
+from typing import cast
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import get_assets_dir, tensor_to_array
+from genesis.engine.entities.rigid_entity import RigidEntity
 
 from .utils import (
     assert_allclose,
@@ -2014,7 +2016,7 @@ def test_terrain_size(show_viewer, tol):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 def test_jacobian(gs_sim, tol):
-    pendulum = gs_sim.entities[0]
+    pendulum = cast(RigidEntity, gs_sim.entities[0])
     angle = 0.7
     pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
     gs_sim.scene.step()
