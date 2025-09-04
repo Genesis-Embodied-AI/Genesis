@@ -31,7 +31,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "0c0bb46db0978a59524381194478cf390b3ff996"
-HUGGINGFACE_SNAPSHOT_REVISION = "9a917fc320e7de2b0891b1bc13491a280bea8d38"
+HUGGINGFACE_SNAPSHOT_REVISION = "9a192b8d4d34401b7e20d43601ff73f80516cb2b"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -266,7 +266,7 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     if all(e.size == 0 for e in args):
         return
 
-    np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
+    np.testing.assert_allclose(*map(np.squeeze, args), atol=atol, rtol=rtol, err_msg=err_msg)
 
 
 def assert_array_equal(actual, desired, *, err_msg=""):

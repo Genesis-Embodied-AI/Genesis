@@ -320,6 +320,9 @@ def destroy():
     logger.removeHandler(logger.handler)
     logger = None
 
+    # Clear GsTaichi cache
+    gs.utils.misc.TI_DATA_CACHE.clear()
+
 
 def _globalize_backend(_backend):
     global backend

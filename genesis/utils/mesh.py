@@ -59,7 +59,7 @@ class MeshInfo:
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
                 if uvs is None:
-                    self.uvs[i] = np.zeros((len(verts), 2), dtype=np.float32)
+                    self.uvs[i] = np.zeros((len(verts), 2), dtype=gs.np_float)
             uvs = np.concatenate(self.uvs, axis=0)
         else:
             uvs = None

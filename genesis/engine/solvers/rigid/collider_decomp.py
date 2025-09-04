@@ -596,7 +596,9 @@ def collider_kernel_get_contacts(
     _B = collider_state.active_buffer.shape[1]
     n_contacts_max = gs.ti_int(0)
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # this is a reduction operation (global max), we have to serialize it
+    # TODO: a good unittest and a better implementation from gstaichi for this kind of reduction
+    ti.loop_config(serialize=True)
     for i_b in range(_B):
         n_contacts = collider_state.n_contacts[i_b]
         if n_contacts > n_contacts_max:

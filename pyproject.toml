@@ -43,7 +43,10 @@ dependencies = [
     "tetgen>=0.6.4",
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
-    # Use to display camera images
+    # Used here and there to load and export images
+    # * 11.0 dramatically improves performance when exporting images to PNG
+    "Pillow>11.0",
+    # Use to display camera images and export images
     "opencv-python",
     # Use by `RigidGeom.visualize_sdf` to render SDF as level 0 marching cubes
     "scikit-image",
@@ -57,7 +60,7 @@ dependencies = [
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
-    "gs-madrona==0.0.3; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
+    "gs-madrona==0.0.5; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations

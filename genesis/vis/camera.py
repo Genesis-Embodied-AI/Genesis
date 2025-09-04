@@ -2,6 +2,7 @@ import inspect
 import math
 import os
 import time
+from functools import cached_property
 
 import cv2
 import numpy as np
@@ -9,20 +10,10 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.constants import IMAGE_TYPE
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array
-
-
-# quat for Madrona needs to be transformed to y-forward
-def _T_to_quat_for_madrona(T):
-    if not isinstance(T, torch.Tensor):
-        gs.raise_exception(f"the input must be torch.Tensor. got: {type(T)=}")
-
-    R = T[..., :3, :3].contiguous()
-    quat = gu.R_to_quat(R)
-
-    w, x, y, z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
-    return torch.stack([x + w, x - w, y - z, y + z], dim=1) / math.sqrt(2.0)
+from genesis.utils.image_exporter import as_grayscale_image
 
 
 class Camera(RBC):
@@ -61,9 +52,11 @@ class Camera(RBC):
         Defaults to True.  If OptiX denoiser is not available on your platform, consider enabling the OIDN denoiser
         option when building RayTracer.
     near : float
-        The near plane of the camera.
+        Distance from camera center to near plane in meters.
+        Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.05.
     far : float
-        The far plane of the camera.
+        Distance from camera center to far plane in meters.
+        Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 100.0.
     transform : np.ndarray, shape (4, 4), optional
         The transform matrix of the camera.
     env_idx : int, optional
@@ -71,7 +64,7 @@ class Camera(RBC):
     debug : bool, optional
         Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
         simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
-        systematically, no matter if BatchRender and RayTracer is enabled. This way, it is possible to record the
+        systematically, no matter if BatchRayTracer is enabled. This way, it is possible to record the
         simulation with arbitrary resolution and camera pose, without interfering with what robots can perceive
         from their environment. Defaults to False.
     """
@@ -115,18 +108,25 @@ class Camera(RBC):
         self._initial_transform = None
         if transform is not None:
             self._initial_transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
-        self._aspect_ratio = self._res[0] / self._res[1]
+        self._aspect_ratio = self._res[0] / self._res[1]  # width / height
         self._visualizer = visualizer
-        self._is_built = False
-        self._attached_link = None
-        self._attached_offset_T = None
         self._debug = debug
 
-        self._env_idx = env_idx
+        self._is_built = False
+
+        self._rasterizer = None
+        self._raytracer = None
+        self._batch_renderer = None
+
+        self._env_idx = int(env_idx) if env_idx is not None else None
         self._envs_offset = None
 
         self._in_recording = False
+        self._recorded_t_prev = -1
         self._recorded_imgs = []
+
+        self._attached_link = None
+        self._attached_offset_T = None
 
         self._followed_entity = None
         self._follow_fixed_axis = None
@@ -140,40 +140,62 @@ class Camera(RBC):
             self._focus_dist = np.linalg.norm(np.asarray(lookat) - np.asarray(pos))
 
     def build(self):
-        n_envs = max(self._visualizer.scene.n_envs, 1)
-        self._multi_env_pos_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
-        self._multi_env_lookat_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
-        self._multi_env_up_tensor = torch.empty((n_envs, 3), dtype=gs.tc_float, device=gs.device)
-        self._multi_env_transform_tensor = torch.empty((n_envs, 4, 4), dtype=gs.tc_float, device=gs.device)
-        self._multi_env_quat_tensor = torch.empty((n_envs, 4), dtype=gs.tc_float, device=gs.device)
-
-        self._envs_offset = torch.as_tensor(self._visualizer._scene.envs_offset, dtype=gs.tc_float, device=gs.device)
-
         self._rasterizer = self._visualizer.rasterizer
-        self._raytracer = self._visualizer.raytracer if not self._debug else None
-        self._batch_renderer = self._visualizer.batch_renderer if not self._debug else None
+        if not self._debug:
+            self._raytracer = self._visualizer.raytracer
+            self._batch_renderer = self._visualizer.batch_renderer
 
         if self._batch_renderer is not None:
-            self._rgb_stacked = True
-            self._other_stacked = True
+            self._is_batched = True
+            if self._env_idx is not None:
+                gs.raise_exception("Binding a camera to one specific environment index not supported by BatchRender.")
         else:
-            if self._env_idx is None:
-                self._env_idx = 0
-            elif not isinstance(self._env_idx, int) or self._env_idx >= max(self._visualizer.scene.n_envs, 1):
-                gs.raise_exception("Tracked environment index out-of-bounds")
             if self._raytracer is not None:
                 self._raytracer.add_camera(self)
-                self._rgb_stacked = False
-                self._other_stacked = False
+                self._is_batched = False
             else:
                 self._rasterizer.add_camera(self)
-                self._rgb_stacked = self._visualizer._context.env_separate_rigid
-                self._other_stacked = self._visualizer._context.env_separate_rigid
+                self._is_batched = self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid
+                if self._is_batched:
+                    gs.logger.warning(
+                        "Batched rendering via 'VisOptions.env_separate_rigid=True' is only partially supported by "
+                        "Rasterizer for now. The same camera transform will be used for all the environments."
+                    )
+            if self._env_idx is None:
+                self._env_idx = int(self._visualizer._context.rendered_envs_idx[0])
+                if self._visualizer.scene.n_envs > 0:
+                    gs.logger.info(
+                        "Raytracer and Rasterizer requires binding to the camera with a specific environment index. "
+                        "Defaulting to 'rendered_envs_idx[0]'. Please specify 'env_idx' if necessary."
+                    )
+            if self._env_idx not in self._visualizer._context.rendered_envs_idx:
+                gs.raise_exception("Environment index bound to the camera not in 'VisOptions.rendered_envs_idx'.")
 
+        if self._is_batched and self._env_idx is None:
+            batch_size = (len(self._visualizer._context.rendered_envs_idx),)
+        else:
+            batch_size = ()
+        self._pos = torch.empty((*batch_size, 3), dtype=gs.tc_float, device=gs.device)
+        self._lookat = torch.empty((*batch_size, 3), dtype=gs.tc_float, device=gs.device)
+        self._up = torch.empty((*batch_size, 3), dtype=gs.tc_float, device=gs.device)
+        self._transform = torch.empty((*batch_size, 4, 4), dtype=gs.tc_float, device=gs.device)
+        self._quat = torch.empty((*batch_size, 4), dtype=gs.tc_float, device=gs.device)
+
+        self._envs_offset = torch.as_tensor(
+            self._visualizer._scene.envs_offset[() if self._env_idx is None else self._env_idx],
+            dtype=gs.tc_float,
+            device=gs.device,
+        )
+
+        # Must consider the building process done before setting initial pose, otherwise it will fail
         self._is_built = True
         self.set_pose(
-            transform=self._initial_transform, pos=self._initial_pos, lookat=self._initial_lookat, up=self._initial_up
+            transform=self._initial_transform,
+            pos=self._initial_pos,
+            lookat=self._initial_lookat,
+            up=self._initial_up,
         )
+
         # FIXME: For some reason, it is necessary to update the camera twice...
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
@@ -193,6 +215,9 @@ class Camera(RBC):
         offset_T : np.ndarray, shape (4, 4)
             The transformation matrix specifying the camera's pose relative to the rigid link.
         """
+        if self._visualizer._context.env_separate_rigid:
+            gs.raise_exception("This method is not supported by Rasterizer when 'VisOptions.env_separate_rigid=True'.")
+
         if self._followed_entity is not None:
             gs.raise_exception("Impossible to attach a camera that is already following an entity.")
 
@@ -221,23 +246,20 @@ class Camera(RBC):
         Exception
             If the camera has not been attached to a rigid link.
         """
-        # move_to_attach can be called from update_visual_states(), which could be called either before or after build(),
-        # but set_pose() is only allowed after build(), so we need to check if the camera is built here, and early out if not.
-        if not self._is_built:
-            return
-
         if self._attached_link is None:
-            gs.raise_exception("Camera not attached")
+            gs.raise_exception("Camera not attached to any rigid link.")
 
         link_pos = self._attached_link.get_pos(self._env_idx)
         link_quat = self._attached_link.get_quat(self._env_idx)
+        if self._env_idx is not None and self._visualizer.scene.n_envs > 0:
+            link_pos, link_quat = link_pos[0], link_quat[0]
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = torch.matmul(link_T, self._attached_offset_T)
-        self.set_pose(transform=transform, env_idx=self._env_idx if self._visualizer.scene.n_envs > 0 else None)
+        self.set_pose(transform=transform)
 
     def follow_entity(self, entity, fixed_axis=(None, None, None), smoothing=None, fix_orientation=False):
         """
-        Set the camera to follow a specified entity.
+        Set the camera to follow a specified rigid entity.
 
         Parameters
         ----------
@@ -253,6 +275,9 @@ class Camera(RBC):
             If True, the camera will maintain its orientation relative to the world. If False, the camera will look at
             the base link of the entity.
         """
+        if self._visualizer._context.env_separate_rigid:
+            gs.raise_exception("This method is not supported by Rasterizer when 'VisOptions.env_separate_rigid=True'.")
+
         if self._attached_link is not None:
             gs.raise_exception("Impossible to following an entity with a camera that is already attached.")
 
@@ -263,7 +288,7 @@ class Camera(RBC):
 
     def unfollow_entity(self):
         """
-        Stop following any entity with the camera.
+        Stop following any rigid entity with the camera.
 
         Calling this method has no effect if the camera is not currently following any entity.
         """
@@ -275,22 +300,23 @@ class Camera(RBC):
     @gs.assert_built
     def update_following(self):
         """
-        Update the camera position to follow the specified entity.
+        Update the camera position to follow the specified rigid entity.
         """
         if self._followed_entity is None:
-            gs.raise_exception("No entity to follow. Please call `camera.follow_entity(entity)` first.")
+            gs.raise_exception("Camera not following any rigid entity.")
 
         # Keep the camera orientation fixed by overriding the lookat point if requested
+        env_idx = self._env_idx if self._is_batched and self._env_idx is not None else ()
         if self._follow_fix_orientation:
-            camera_transform = self._multi_env_transform_tensor.clone()
+            camera_transform = self._transform[env_idx].clone()
             camera_lookat = None
-            camera_pos = camera_transform[:, :3, 3]
+            camera_pos = camera_transform[..., :3, 3]
         else:
-            camera_lookat = self._multi_env_lookat_tensor.clone()
-            camera_pos = self._multi_env_pos_tensor.clone()
+            camera_lookat = self._lookat[env_idx].clone()
+            camera_pos = self._pos[env_idx].clone()
 
         # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
-        entity_pos = self._followed_entity.get_pos()
+        entity_pos = self._followed_entity.get_pos(self._env_idx, unsafe=True)
         camera_pos -= self._initial_pos
         if self._follow_smoothing is not None:
             camera_pos[:] = self._follow_smoothing * camera_pos + (1.0 - self._follow_smoothing) * entity_pos
@@ -301,9 +327,9 @@ class Camera(RBC):
         camera_pos += self._initial_pos
 
         # Fix the camera's position along the specified axis if requested
-        for i, fixed_axis in enumerate(self._follow_fixed_axis):
+        for i_a, fixed_axis in enumerate(self._follow_fixed_axis):
             if fixed_axis is not None:
-                camera_pos[:, i] = fixed_axis
+                camera_pos[..., i_a] = fixed_axis
 
         # Update the pose of all camera at once
         if self._follow_fix_orientation:
@@ -325,22 +351,16 @@ class Camera(RBC):
         Render the camera view with batch renderer.
         """
         assert self._visualizer._batch_renderer is not None
-        rgb_arr, depth_arr, seg_arr, normal_arr = self._batch_renderer.render(
-            rgb, depth, segmentation, normal, force_render, antialiasing
-        )
-        # The first dimension of the array is camera.
-        # If n_envs > 0, the second dimension of the output is env.
-        # If n_envs == 0, the second dimension of the output is camera.
-        # Only return the current camera's image
-        if rgb_arr:
-            rgb_arr = rgb_arr[self.idx]
-        if depth:
-            depth_arr = depth_arr[self.idx]
-        if segmentation:
-            seg_arr = seg_arr[self.idx]
-        if normal:
-            normal_arr = normal_arr[self.idx]
-        return rgb_arr, depth_arr, seg_arr, normal_arr
+
+        # Render all cameras at once no matter what
+        buffers = list(self._batch_renderer.render(rgb, depth, segmentation, normal, antialiasing, force_render))
+
+        # Only return current camera data
+        for i, buffer in enumerate(buffers):
+            if buffer is not None:
+                buffers[i] = buffer[self.idx]
+
+        return tuple(buffers)
 
     @gs.assert_built
     def render(
@@ -350,8 +370,8 @@ class Camera(RBC):
         segmentation=False,
         colorize_seg=False,
         normal=False,
+        antialiasing=False,
         force_render=False,
-        antialiasing=True,
     ):
         """
         Render the camera view.
@@ -361,9 +381,12 @@ class Camera(RBC):
         The segmentation mask can be colorized, and if not colorized, it will store an object index in each pixel based
         on the segmentation level specified in `VisOptions.segmentation_level`.
         For example, if `segmentation_level='link'`, the segmentation mask will store `link_idx`, which can then be
-        used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`. If `env_separate_rigid`
-        in `VisOptions` is set to True, each component will return a stack of images, with the number of images equal
-        to `len(rendered_envs_idx)`.
+        used to retrieve the actual link objects using `scene.rigid_solver.links[link_idx]`.
+
+        Note
+        ----
+        If `env_separate_rigid` in `VisOptions` is set to True, each component will return a stack of images, with the
+        number of images equal to `len(rendered_envs_idx)`.
 
         Parameters
         ----------
@@ -377,10 +400,10 @@ class Camera(RBC):
             If True, the segmentation mask will be colorized.
         normal : bool, optional
             Whether to render the surface normal.
-        force_render : bool, optional
-            Whether to force rendering even if the scene has not changed.
         antialiasing : bool, optional
             Whether to apply anti-aliasing. Only supported by 'BatchRenderer' for now.
+        force_render : bool, optional
+            Whether to force rendering even if the scene has not changed.
 
         Returns
         -------
@@ -393,14 +416,18 @@ class Camera(RBC):
         normal_arr : np.ndarray
             The rendered surface normal(s).
         """
-        rgb_arr, depth_arr, seg_arr, seg_color_arr, seg_idxc_arr, normal_arr = None, None, None, None, None, None
+        # Enforce RGB rendering if recording is enabled and the current frame is missing
+        is_recording = self._in_recording and self._recorded_t_prev != self._visualizer.scene._t
+        rgb_ = rgb or is_recording
 
+        # Render the current frame
+        rgb_arr, depth_arr, seg_arr, seg_color_arr, seg_idxc_arr, normal_arr = None, None, None, None, None, None
         if self._batch_renderer is not None:
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._batch_render(
-                rgb, depth, segmentation, normal, force_render, antialiasing
+                rgb_, depth, segmentation, normal, antialiasing, force_render
             )
         elif self._raytracer is not None:
-            if rgb:
+            if rgb_:
                 self._raytracer.update_scene()
                 rgb_arr = self._raytracer.render_camera(self)
 
@@ -412,79 +439,68 @@ class Camera(RBC):
         else:
             self._rasterizer.update_scene()
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-                self, rgb, depth, segmentation, normal=normal
+                self, rgb_, depth, segmentation, normal=normal
             )
 
+        # Colorize the segmentation map is necessary
         if seg_idxc_arr is not None:
             if colorize_seg or (self._GUI and self._visualizer.has_display):
-                seg_color_arr = self._rasterizer._context.colorize_seg_idxc_arr(seg_idxc_arr)
+                seg_color_arr = self._visualizer.colorize_seg_idxc_arr(seg_idxc_arr)
             seg_arr = seg_color_arr if colorize_seg else seg_idxc_arr
 
-        if self._in_recording or self._GUI and self._visualizer.has_display:
-            rgb_np = rgb_arr if rgb_arr is None else tensor_to_array(rgb_arr)
-
-        # succeed rendering, and display image
+        # Display images if requested and supported
         if self._GUI and self._visualizer.has_display:
-            depth_np, seg_color_np, normal_np = map(
-                lambda e: e if e is None else tensor_to_array(e), (depth_arr, seg_color_arr, normal_arr)
-            )
-
             title = f"Genesis - Camera {self._idx}"
-            if rgb:
-                # FIXME: Check whether it always render RGB or RGBA ?
-                rgb_img = np.flip(rgb_np, axis=-1)
-                rgb_env = ""
-                if self._rgb_stacked:
-                    rgb_img = rgb_img[0]
-                    rgb_env = " Environment 0"
-                cv2.imshow(f"{title + rgb_env} [RGB]", rgb_img)
-
-            other_env = " Environment 0" if self._other_stacked else ""
-            if depth:
-                depth_min = depth_np.min()
-                depth_max = depth_np.max()
-                if depth_max - depth_min > gs.EPS:
-                    depth_normalized = (depth_max - depth_np) / (depth_max - depth_min)
-                    depth_img = (depth_normalized * 255).astype(np.uint8)
-                else:
-                    depth_img = np.zeros_like(depth_arr, dtype=np.uint8)
-                if self._other_stacked:
-                    depth_img = depth_img[0]
-                cv2.imshow(f"{title + other_env} [Depth]", depth_img)
-
-            if segmentation:
-                seg_img = np.flip(seg_color_np, axis=-1)
-                if self._other_stacked:
-                    seg_img = seg_img[0]
-                cv2.imshow(f"{title + other_env} [Segmentation]", seg_img)
-
-            if normal:
-                normal_img = np.flip(normal_np, axis=-1)
-                if self._other_stacked:
-                    normal_img = normal_img[0]
-                cv2.imshow(f"{title + other_env} [Normal]", normal_img)
-
+            if self._debug:
+                title += " (debug)"
+            if self._is_batched:
+                title += f" - Environment {self._visualizer._context.rendered_envs_idx[0]}"
+            for img_type, (flag, buffer) in enumerate(
+                ((rgb, rgb_arr), (depth, depth_arr), (segmentation, seg_color_arr), (normal, normal_arr))
+            ):
+                if flag:
+                    if self._is_batched:
+                        buffer = buffer[0]
+                    buffer = tensor_to_array(buffer)
+                    if img_type == IMAGE_TYPE.DEPTH:
+                        buffer = as_grayscale_image(buffer, black_to_white=False)
+                    else:
+                        buffer = np.flip(buffer, axis=-1)
+                    cv2.imshow(f"{title} [{IMAGE_TYPE(img_type)}]", buffer)
             cv2.waitKey(1)
 
-        if self._in_recording and rgb_np is not None:
-            self._recorded_imgs.append(rgb_np)
+        # Store the current frame for video recording
+        if is_recording:
+            if not (self._recorded_t_prev < 0 or self._recorded_t_prev == self._visualizer.scene._t - 1):
+                gs.raise_exception(
+                    "Missing frames in recording. Please call 'camera.render()' after 'every scene.step()'."
+                )
+            self._recorded_t_prev == self._visualizer.scene._t
+            self._recorded_imgs.append(tensor_to_array(rgb_arr))
 
-        return rgb_arr, depth_arr, seg_arr, normal_arr
+        return rgb_arr if rgb else None, depth_arr, seg_arr, normal_arr
 
-    @gs.assert_built
-    def get_segmentation_idx_dict(self):
-        """
-        Returns a dictionary mapping segmentation indices to scene entities.
+    def distance_center_to_plane(self, center_dis):
+        width, height = self.res
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
-        In the segmentation map:
-        - Index 0 corresponds to the background (-1).
-        - Indices > 0 correspond to scene elements, which may be represented as:
-            - `entity_id`
-            - `(entity_id, link_id)`
-            - `(entity_id, link_id, geom_id)`
-          depending on the material type and the configured segmentation level.
-        """
-        return self._rasterizer._context.seg_idxc_map
+        if isinstance(center_dis, np.ndarray):
+            v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
+            xd = (u + 0.5 - cx) / fx
+            yd = (v + 0.5 - cy) / fy
+            scale_inv = 1.0 / np.sqrt(xd**2 + yd**2 + 1.0)
+        else:  # torch.Tensor
+            v, u = torch.meshgrid(
+                torch.arange(height, dtype=torch.int32, device=gs.device),
+                torch.arange(width, dtype=torch.int32, device=gs.device),
+                indexing="ij",
+            )
+            xd = (u + 0.5 - cx) / fx
+            yd = (v + 0.5 - cy) / fy
+            scale_inv = torch.rsqrt(xd**2 + yd**2 + 1.0)
+        return center_dis * scale_inv
 
     @gs.assert_built
     def render_pointcloud(self, world_frame=True):
@@ -499,32 +515,30 @@ class Camera(RBC):
         Returns
         -------
         pc : np.ndarray
-            Numpy array of shape (res[0], res[1], 3) representing the point cloud in each pixel.
+            Numpy array of shape (res[0], res[1], 3) or (N, res[0], res[1], 3).
+            Represents the point cloud in each pixel.
         mask_arr : np.ndarray
-            The valid depth mask.
+            The valid depth mask. boolean array of same shape as depth_arr
         """
-        # Compute the (denormalized) depth map using PyRender systematically.
-        # TODO: Add support of BatchRendered (requires access to projection matrix)
-        self._rasterizer.update_scene()
-        rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
-            self, rgb=False, depth=True, segmentation=False, normal=False
-        )
+        # Compute the (denormalized) depth map
+        if self._batch_renderer is not None:
+            _, depth_arr, _, _ = self._batch_render(rgb=False, depth=True, segmentation=False, normal=False)
+            # FIXME: Avoid converting to numpy
+            depth_arr = tensor_to_array(depth_arr)
+        else:
+            self._rasterizer.update_scene()
+            _, depth_arr, _, _ = self._rasterizer.render_camera(
+                self, rgb=False, depth=True, segmentation=False, normal=False
+            )
 
         # Convert OpenGL projection matrix to camera intrinsics
-        P = self._rasterizer._camera_nodes[self.uid].camera.get_projection_matrix()
-        height, width = depth_arr.shape
-        fx = P[0, 0] * width / 2.0
-        fy = P[1, 1] * height / 2.0
-        cx = (1.0 - P[0, 2]) * width / 2.0
-        cy = (1.0 + P[1, 2]) * height / 2.0
-
-        # Extract camera pose if needed
-        if world_frame:
-            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
-            cam_pose = self._rasterizer._camera_nodes[self.uid].matrix @ T_OPENGL_TO_OPENCV
+        width, height = self.res
+        fx = fy = self.f
+        cx = self.cx
+        cy = self.cy
 
         # Mask out invalid depth
-        mask = np.where((self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3)))
+        mask = (self.near < depth_arr) & (depth_arr < self.far * (1.0 - 1e-3))
 
         # Compute normalized pixel coordinates
         v, u = np.meshgrid(np.arange(height, dtype=np.int32), np.arange(width, dtype=np.int32), indexing="ij")
@@ -532,18 +546,21 @@ class Camera(RBC):
         v = v.reshape((-1,))
 
         # Convert to world coordinates
-        depth_grid = depth_arr[v, u]
+        depth_grid = depth_arr[..., v, u]
         world_x = depth_grid * (u + 0.5 - cx) / fx
         world_y = depth_grid * (v + 0.5 - cy) / fy
         world_z = depth_grid
 
-        point_cloud = np.stack((world_x, world_y, world_z, np.ones((depth_arr.size,), dtype=np.float32)), axis=-1)
+        point_cloud = np.stack((world_x, world_y, world_z, np.ones_like(world_z)), axis=-1)
         if world_frame:
-            point_cloud = point_cloud @ cam_pose.T
-        point_cloud = point_cloud[:, :3].reshape((*depth_arr.shape, 3))
+            T_OPENGL_TO_OPENCV = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float32)
+            cam_pose = self.transform @ T_OPENGL_TO_OPENCV
+            point_cloud = point_cloud @ cam_pose.swapaxes(-1, -2)
+
+        point_cloud = point_cloud[..., :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    def set_pose(self, transform=None, pos=None, lookat=None, up=None, env_idx=None):
+    def set_pose(self, transform=None, pos=None, lookat=None, up=None, envs_idx=None):
         """
         Set the pose of the camera.
         Note that `transform` has a higher priority than `pos`, `lookat`, and `up`.
@@ -552,115 +569,92 @@ class Camera(RBC):
 
         Parameters
         ----------
-        transform : np.ndarray, shape (4, 4), optional
+        transform : np.ndarray, shape (4, 4) or (N, 4, 4), optional
             The transform matrix of the camera.
-        pos : array-like, shape (3,), optional
+        pos : array-like, shape (3,) or (N, 3), optional
             The position of the camera.
-        lookat : array-like, shape (3,), optional
+        lookat : array-like, shape (3,) or (N, 3), optional
             The lookat point of the camera.
-        up : array-like, shape (3,), optional
+        up : array-like, shape (3,) or (N, 3), optional
             The up vector of the camera.
-        env_idx : array of indices in integers, optional
-            The environment indices. If not provided, the camera pose will be set for all environments.
+        envs_idx : array of indices in integers, optional
+            The environment indices for which to update the pose. If not provided, the camera pose will be set for the
+            specific environment bound to the camera if any, all the environments otherwise.
         """
-        n_envs = max(self._visualizer.scene.n_envs, 1)
-        env_idx = self._visualizer._scene._sanitize_envs_idx(env_idx)
-
+        # Early return if nothing to do
         if pos is None and lookat is None and up is None and transform is None:
             return
 
+        # Sanitize 'envs_idx' input argument
+        if envs_idx is not None:
+            if not self._is_batched:
+                gs.raise_exception("Camera does not support batching. Impossible to specify 'envs_idx'.")
+            if self._env_idx is not None:
+                gs.raise_exception("Camera already bound to a specific environment. Impossible to specify 'envs_idx'.")
+        if self._is_batched:
+            if envs_idx is None:
+                envs_idx = (self._env_idx,) if self._env_idx is not None else ()
+                n_envs = len(self._visualizer._context.rendered_envs_idx)
+            else:
+                envs_idx = self._visualizer._scene._sanitize_envs_idx(envs_idx)
+                if set(envs_idx).issubset(self._visualizer._context.rendered_envs_idx):
+                    gs.raise_exception("Environment index not in 'VisOptions.rendered_envs_idx'.")
+                n_envs = len(envs_idx)
+        else:
+            envs_idx = ()
+
+        # Sanitize 'pos', 'lookat', 'up', 'transform' input arguments
         if pos is not None:
             pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
-            if pos.shape[-1] != 3:
-                gs.raise_exception(f"Pos shape {pos.shape} does not match (n_envs, 3)")
-            if pos.ndim == 1:
+            if pos.ndim > (1 + self._is_batched) or pos.shape[-1] != 3:
+                gs.raise_exception(f"Pos shape {pos.shape} does not match (N, 3)")
+            if self._is_batched and pos.ndim == 1:
                 pos = pos.expand((n_envs, 3))
         if lookat is not None:
             lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
-            if lookat.shape[-1] != 3:
-                gs.raise_exception(f"Lookat shape {lookat.shape} does not match (n_envs, 3)")
-            if lookat.ndim == 1:
+            if lookat.ndim > (1 + self._is_batched) or lookat.shape[-1] != 3:
+                gs.raise_exception(f"Lookat shape {lookat.shape} does not match (N, 3)")
+            if self._is_batched and lookat.ndim == 1:
                 lookat = lookat.expand((n_envs, 3))
         if up is not None:
             up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
-            if up.shape[-1] != 3:
-                gs.raise_exception(f"Up shape {up.shape} does not match (n_envs, 3)")
-            if up.ndim == 1:
+            if up.ndim > (1 + self._is_batched) or up.shape[-1] != 3:
+                gs.raise_exception(f"Up shape {up.shape} does not match (N, 3)")
+            if self._is_batched and up.ndim == 1:
                 up = up.expand((n_envs, 3))
         if transform is not None:
             if any(data is not None for data in (pos, lookat, up)):
                 gs.raise_exception("Must specify either 'transform', or ('pos', 'lookat', 'up').")
             transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
-            if transform.shape[-2:] != (4, 4):
-                gs.raise_exception(f"Transform shape {transform.shape} does not match (4, 4)")
-            if transform.ndim == 2:
+            if transform.ndim > (2 + self._is_batched) or transform.shape[-2:] != (4, 4):
+                gs.raise_exception(f"Transform shape {transform.shape} does not match (N, 4, 4)")
+            if self._is_batched and transform.ndim == 2:
                 transform = transform.expand((n_envs, 4, 4))
+        if self._is_batched:
+            for data in (transform, pos, lookat, up):
+                if data is not None and len(data) != n_envs:
+                    gs.raise_exception(f"Input data inconsistent with 'envs_idx'.")
 
-        for data in (transform, pos, lookat, up):
-            if data is not None and len(data) != len(env_idx):
-                gs.raise_exception(f"Input data inconsistent with env_idx.")
-
+        # Compute redundant quantities
         if transform is None:
-            pos_ = pos if pos is not None else self._multi_env_pos_tensor
-            lookat_ = lookat if lookat is not None else self._multi_env_lookat_tensor
-            up_ = up if up is not None else self._multi_env_up_tensor
+            pos_ = pos if pos is not None else self._pos[envs_idx]
+            lookat_ = lookat if lookat is not None else self._lookat[envs_idx]
+            up_ = up if up is not None else self._up[envs_idx]
             transform = gu.pos_lookat_up_to_T(pos_, lookat_, up_)
         else:
             pos, lookat, up = gu.T_to_pos_lookat_up(transform)
 
+        # Update camera transform
         if pos is not None:
-            self._multi_env_pos_tensor[env_idx] = pos
+            self._pos[envs_idx] = pos
         if lookat is not None:
-            self._multi_env_lookat_tensor[env_idx] = lookat
+            self._lookat[envs_idx] = lookat
         if up is not None:
-            self._multi_env_up_tensor[env_idx] = up
-        self._multi_env_transform_tensor[env_idx] = transform
-        self._multi_env_quat_tensor[env_idx] = _T_to_quat_for_madrona(transform)
+            self._up[envs_idx] = up
+        self._transform[envs_idx] = transform
+        self._quat[envs_idx] = gu.R_to_quat(transform[..., :3, :3])
 
-        if self._raytracer is not None:
-            self._raytracer.update_camera(self)
-        elif self._batch_renderer is None:
-            self._rasterizer.update_camera(self)
-
-    @gs.assert_built
-    def set_params(self, fov=None, aperture=None, focus_dist=None, intrinsics=None):
-        """
-        Update the camera parameters.
-
-        Parameters
-        ----------
-        fov: float, optional
-            The vertical field of view of the camera.
-        aperture : float, optional
-            The aperture of the camera. Only supports 'thinlens' camera model.
-        focus_dist : float, optional
-            The focus distance of the camera. Only supports 'thinlens' camera model.
-        intrinsics : np.ndarray, shape (3, 3), optional
-            The intrinsics matrix of the camera. If provided, it should be consistent with the specified 'fov'.
-        """
-        if self.model != "thinlens" and (aperture is not None or focus_dist is not None):
-            gs.logger.warning("Only `thinlens` camera model supports parameter update.")
-
-        if aperture is not None:
-            if self.model != "thinlens":
-                gs.logger.warning("Only `thinlens` camera model supports `aperture`.")
-            self._aperture = aperture
-        if focus_dist is not None:
-            if self.model != "thinlens":
-                gs.logger.warning("Only `thinlens` camera model supports `focus_dist`.")
-            self._focus_dist = focus_dist
-
-        if fov is not None:
-            self._fov = fov
-
-        if intrinsics is not None:
-            intrinsics_fov = 2 * np.rad2deg(np.arctan(0.5 * self._res[1] / intrinsics[0, 0]))
-            if fov is not None:
-                if abs(intrinsics_fov - fov) > 1e-4:
-                    gs.raise_exception("The camera's intrinsic values and fov do not match.")
-            else:
-                self._fov = intrinsics_fov
-
+        # Refresh rendering backend to taken into account updated camera pose
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
         elif self._batch_renderer is None:
@@ -669,14 +663,16 @@ class Camera(RBC):
     @gs.assert_built
     def start_recording(self):
         """
-        Start recording on the camera. After recording is started, all the rgb images rendered by `camera.render()` will be stored, and saved to a video file when `camera.stop_recording()` is called.
+        Start recording on the camera. After recording is started, all the rgb images rendered by `camera.render()`
+        will be stored, and saved to a video file when `camera.stop_recording()` is called.
         """
         self._in_recording = True
 
     @gs.assert_built
     def pause_recording(self):
         """
-        Pause recording on the camera. After recording is paused, the rgb images rendered by `camera.render()` will not be stored. Recording can be resumed by calling `camera.start_recording()` again.
+        Pause recording on the camera. After recording is paused, the rgb images rendered by `camera.render()` will
+        not be stored. Recording can be resumed by calling `camera.start_recording()` again.
         """
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
@@ -685,13 +681,18 @@ class Camera(RBC):
     @gs.assert_built
     def stop_recording(self, save_to_filename=None, fps=60):
         """
-        Stop recording on the camera. Once this is called, all the rgb images stored so far will be saved to a video file. If `save_to_filename` is None, the video file will be saved with the name '{caller_file_name}_cam_{camera.idx}.mp4'.
-        If `env_separate_rigid` in `VisOptions` is set to True, each environment will record and save a video separately. The filenames will be identified by the indices of the environments.
+        Stop recording on the camera. Once this is called, all the rgb images stored so far will be saved to a video
+        file. If `save_to_filename` is None, the video file will be saved with the name
+        '{caller_file_name}_cam_{camera.idx}.mp4'.
+
+        If `env_separate_rigid` in `VisOptions` is set to True, each environment will record and save a video
+        separately. The filenames will be identified by the indices of the environments.
 
         Parameters
         ----------
         save_to_filename : str, optional
-            Name of the output video file. If not provided, the name will be default to the name of the caller file, with camera idx, a timestamp and '.mp4' extension.
+            Name of the output video file. If not provided, the name will be default to the name of the caller file,
+            with camera idx, a timestamp and '.mp4' extension.
         fps : int, optional
             The frames per second of the video file.
         """
@@ -706,7 +707,7 @@ class Camera(RBC):
                 + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
             )
 
-        if self._rgb_stacked:
+        if self._is_batched:
             for env_idx in self._visualizer._context.rendered_envs_idx:
                 env_imgs = [imgs[env_idx] for imgs in self._recorded_imgs]
                 env_name, env_ext = os.path.splitext(save_to_filename)
@@ -714,44 +715,50 @@ class Camera(RBC):
         else:
             gs.tools.animate(self._recorded_imgs, save_to_filename, fps)
 
+        self._recorded_t_prev = -1
         self._recorded_imgs.clear()
         self._in_recording = False
 
-    def get_pos(self, env_idx=None):
+    def get_pos(self, envs_idx=None):
         """The current position of the camera."""
-        env_idx = () if env_idx is None else env_idx
-        pos = self._multi_env_pos_tensor[env_idx]
+        assert self._env_idx is None or envs_idx is None
+        envs_idx = () if envs_idx is None else envs_idx
+        pos = self._pos[envs_idx]
         if self._batch_renderer is None:
-            pos = pos + self._envs_offset[env_idx]
+            pos = pos + self._envs_offset[envs_idx]
         return pos
 
-    def get_lookat(self, env_idx=None):
+    def get_lookat(self, envs_idx=None):
         """The current lookat point of the camera."""
-        env_idx = () if env_idx is None else env_idx
-        lookat = self._multi_env_lookat_tensor[env_idx]
+        assert self._env_idx is None or envs_idx is None
+        envs_idx = () if envs_idx is None else envs_idx
+        lookat = self._lookat[envs_idx]
         if self._batch_renderer is None:
-            lookat = lookat + self._envs_offset[env_idx]
+            lookat = lookat + self._envs_offset[envs_idx]
         return lookat
 
-    def get_up(self, env_idx=None):
+    def get_up(self, envs_idx=None):
         """The current up vector of the camera."""
-        env_idx = () if env_idx is None else env_idx
-        return self._multi_env_up_tensor[env_idx]
+        assert self._env_idx is None or envs_idx is None
+        envs_idx = () if envs_idx is None else envs_idx
+        return self._up[envs_idx]
 
-    def get_quat(self, env_idx=None):
+    def get_quat(self, envs_idx=None):
         """The current quaternion of the camera."""
-        env_idx = () if env_idx is None else env_idx
-        return self._multi_env_quat_tensor[env_idx]
+        assert self._env_idx is None or envs_idx is None
+        envs_idx = () if envs_idx is None else envs_idx
+        return self._quat[envs_idx]
 
-    def get_transform(self, env_idx=None):
+    def get_transform(self, envs_idx=None):
         """
         The current transform matrix of the camera.
         """
-        env_idx = () if env_idx is None else env_idx
-        transform = self._multi_env_transform_tensor[env_idx]
+        assert self._env_idx is None or envs_idx is None
+        envs_idx = () if envs_idx is None else envs_idx
+        transform = self._transform[envs_idx]
         if self._batch_renderer is None:
             transform = transform.clone()
-            transform[..., :3, 3] += self._envs_offset[env_idx]
+            transform[..., :3, 3] += self._envs_offset[envs_idx]
         return transform
 
     def _repr_brief(self):
@@ -847,7 +854,7 @@ class Camera(RBC):
 
     @property
     def env_idx(self):
-        """Index of the environment being tracked by the camera."""
+        """Index of the environment bound to the camera, if any."""
         return self._env_idx
 
     @property
@@ -858,36 +865,68 @@ class Camera(RBC):
     @property
     def pos(self):
         """The current position of the camera for the tracked environment."""
-        return tensor_to_array(self.get_pos(self._env_idx), dtype=np.float32)
+        envs_idx = self._env_idx if self._is_batched else None
+        return tensor_to_array(self.get_pos(envs_idx), dtype=np.float32)
 
     @property
     def lookat(self):
         """The current lookat point of the camera for the tracked environment."""
-        return tensor_to_array(self.get_lookat(self._env_idx), dtype=np.float32)
+        envs_idx = self._env_idx if self._is_batched else None
+        return tensor_to_array(self.get_lookat(envs_idx), dtype=np.float32)
 
     @property
     def up(self):
         """The current up vector of the camera for the tracked environment."""
-        return tensor_to_array(self.get_up(self._env_idx), dtype=np.float32)
+        envs_idx = self._env_idx if self._is_batched else None
+        return tensor_to_array(self.get_up(envs_idx), dtype=np.float32)
 
     @property
     def transform(self):
         """The current transform matrix of the camera for the tracked environment."""
-        return tensor_to_array(self.get_transform(self._env_idx), dtype=np.float32)
+        envs_idx = self._env_idx if self._is_batched else None
+        return tensor_to_array(self.get_transform(envs_idx), dtype=np.float32)
 
-    @property
+    @cached_property
     def extrinsics(self):
         """The current extrinsics matrix of the camera."""
-        extrinsics = np.array(self.transform)
-        extrinsics[:3, 1] *= -1
-        extrinsics[:3, 2] *= -1
-        return np.linalg.inv(extrinsics)
+        res = self.transform.copy()
+        res[..., :3, 1:3] *= -1
+        res.flags.writeable = False
+        return np.linalg.inv(res)
 
-    @property
+    @cached_property
     def intrinsics(self):
         """The current intrinsics matrix of the camera."""
-        # compute intrinsics using fov and resolution
-        f = 0.5 * self._res[1] / np.tan(np.deg2rad(0.5 * self._fov))
-        cx = 0.5 * self._res[0]
-        cy = 0.5 * self._res[1]
-        return np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]])
+        res = np.array([[self.f, 0, self.cx], [0, self.f, self.cy], [0, 0, 1]])
+        res.flags.writeable = False
+        return res
+
+    @cached_property
+    def projection_matrix(self):
+        """Return the projection matrix for this camera."""
+        a = self._aspect_ratio
+        t = np.tan(np.deg2rad(0.5 * self._fov))
+        n = self.near
+        f = self.far
+        res = np.array(
+            [
+                [1.0 / (a * t), 0.0, 0.0, 0.0],
+                [0.0, 1.0 / t, 0.0, 0.0],
+                [0.0, 0.0, (f + n) / (n - f), (2 * f * n) / (n - f)],
+                [0.0, 0.0, -1.0, 0.0],
+            ]
+        )
+        res.flags.writeable = False
+        return res
+
+    @cached_property
+    def f(self):
+        return 0.5 * self._res[1] / np.tan(np.deg2rad(0.5 * self._fov))
+
+    @cached_property
+    def cx(self):
+        return 0.5 * self._res[0]
+
+    @cached_property
+    def cy(self):
+        return 0.5 * self._res[1]

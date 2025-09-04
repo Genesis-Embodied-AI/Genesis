@@ -451,77 +451,94 @@ class Scene(RBC):
         parent_link._child_idxs.append(child_link.idx)
 
     @gs.assert_unbuilt
-    def add_light(
+    def add_mesh_light(
         self,
-        *,
         morph: Morph | None = None,
         color: ArrayLike | None = (1.0, 1.0, 1.0, 1.0),
         intensity: float = 20.0,
         revert_dir: bool | None = False,
         double_sided: bool | None = False,
-        beam_angle: float | None = 180.0,
-        pos: ArrayLike | None = None,
-        dir: ArrayLike | None = None,
-        directional: bool | None = None,
-        castshadow: bool | None = None,
-        cutoff: float | None = None,
+        cutoff: float | None = 180.0,
     ):
         """
-        Add a light to the scene.
-
-        Warning
-        -------
-        The signature of this method is different depending on the renderer being used, i.e.:
-        - RayTracer: 'add_light(self, morph, color, intensity, revert_dir, double_sided, beam_angle)'
-        - BatchRender: 'add_ligth(self, pos, dir, intensity, directional, castshadow, cutoff)'
-        - Rasterizer: **Unsupported**
+        Add a mesh light to the scene. Only supported by RayTracer.
 
         Parameters
         ----------
         morph : gs.morphs.Morph
-            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`. Only supported by
-            RayTracer.
+            The morph of the light. Must be an instance of `gs.morphs.Primitive` or `gs.morphs.Mesh`.
         color : tuple of float, shape (3,)
-            The color of the light, specified as (r, g, b). Only supported by RayTracer.
+            The color of the light, specified as (r, g, b).
         intensity : float
             The intensity of the light.
         revert_dir : bool
             Whether to revert the direction of the light. If True, the light will be emitted towards the mesh's inside.
-            Only supported by RayTracer.
         double_sided : bool
-            Whether to emit light from both sides of surface. Only supported by RayTracer.
-        beam_angle : float
-            The beam angle of the light. Only supported by RayTracer.
-        pos : tuple of float, shape (3,)
-            The position of the light, specified as (x, y, z). Only supported by BatchRenderer.
-        dir : tuple of float, shape (3,)
-            The direction of the light, specified as (x, y, z). Only supported by BatchRenderer.
-        intensity : float
-            The intensity of the light. Only supported by BatchRenderer.
-        directional : bool
-            Whether the light is directional. Only supported by BatchRenderer.
-        castshadow : bool
-            Whether the light casts shadows. Only supported by BatchRenderer.
+            Whether to emit light from both sides of surface.
         cutoff : float
-            The cutoff angle of the light in degrees. Only supported by BatchRenderer.
+            The cutoff angle of the light in degrees. Range: [0.0, 180.0].
         """
-        if self._visualizer.batch_renderer is not None:
-            if any(map(lambda e: e is None, (pos, dir, intensity, directional, castshadow, cutoff))):
-                gs.raise_exception("Input arguments do not complain with expected signature when using 'BatchRenderer'")
+        if not isinstance(self.renderer_options, gs.renderers.RayTracer):
+            if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+                gs.raise_exception(
+                    "This method is only supported by RayTracer. Please use 'add_light' when using BatchRenderer."
+                )
+            else:
+                gs.raise_exception(
+                    "This method is only supported by RayTracer. Impossible to add light when using Rasterizer."
+                )
 
-            self.visualizer.add_light(pos, dir, intensity, directional, castshadow, cutoff)
-        elif self.visualizer.raytracer is not None:
-            if any(map(lambda e: e is None, (morph, color, intensity, revert_dir, double_sided, beam_angle))):
-                gs.raise_exception("Input arguments do not complain with expected signature when using 'RayTracer'")
-            if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
-                gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
+        if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
+            gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
+        mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
+        self._visualizer.add_mesh_light(mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff)
 
-            mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
-            self.visualizer.raytracer.add_mesh_light(
-                mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, beam_angle
-            )
-        else:
-            gs.raise_exception("Adding lights is only supported by 'RayTracer' and 'BatchRenderer'.")
+    @gs.assert_unbuilt
+    def add_light(
+        self,
+        pos: ArrayLike,
+        dir: ArrayLike,
+        color: ArrayLike = (1.0, 1.0, 1.0),
+        intensity: float = 1.0,
+        directional: bool = False,
+        castshadow: bool = True,
+        cutoff: float = 45.0,
+        attenuation: float = 0.0,
+    ):
+        """
+        Add a light to the scene for batch renderer.
+
+        Parameters
+        ----------
+        pos : tuple of float, shape (3,)
+            The position of the light, specified as (x, y, z).
+        dir : tuple of float, shape (3,)
+            The direction of the light, specified as (x, y, z).
+        color : tuple of float, shape (3,)
+            The color of the light, specified as (r, g, b).
+        intensity : float
+            The intensity of the light.
+        directional : bool
+            Whether the light is directional.
+        castshadow : bool
+            Whether the light casts shadows.
+        cutoff : float
+            The cutoff angle of the light in degrees. Range: (0.0, 90.0).
+        attenuation : float
+            The attenuation factor of the light.
+            Light intensity will attenuate by distance with (1 / (1 + attenuation * distance ^ 2))
+        """
+        if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+            if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
+                gs.raise_exception(
+                    "This method is only supported by BatchRenderer. Please use 'add_mesh_light' when using RayTracer."
+                )
+            else:
+                gs.raise_exception(
+                    "This method is only supported by BatchRenderer. Impossible to add light when using Rasterizer."
+                )
+
+        self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
     def add_sensor(self, sensor_options: "SensorOptions"):
@@ -541,6 +558,8 @@ class Scene(RBC):
         GUI=False,
         spp=256,
         denoise=None,
+        near=0.1,
+        far=20.0,
         env_idx=None,
         debug=False,
     ):
@@ -581,6 +600,18 @@ class Scene(RBC):
             Whether to denoise the camera's rendered image. Only available when using the RayTracer renderer. Defaults
             to True on Linux, otherwise False. If OptiX denoiser is not available in your platform, consider enabling
             the OIDN denoiser option when building the RayTracer.
+        near : float
+            Distance from camera center to near plane in meters.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 0.1.
+        far : float
+            Distance from camera center to far plane in meters.
+            Only available when using rasterizer in Rasterizer and BatchRender renderer. Defaults to 20.0.
+        env_idx : int, optional
+            The specific environment index to bind to the camera. This option must be specified if and only if a
+            non-batched renderer is being used. If provided, only this environment will be taken into account when
+            following a rigid entity via 'follow_entity' and when being attached to some rigid link via 'attach'. Note
+            that this option is unrelated to which environment is being rendering on the scene. Default to None for
+            batched renderers (ie BatchRender), 'rendered_envs_idx[0]' otherwise (ie Raytracer or Rasterizer).
         debug : bool
             Whether to use the debug camera. It enables to create cameras that can used to monitor / debug the
             simulation without being part of the "sensors". Their output is rendered by the usual simple Rasterizer
@@ -596,7 +627,7 @@ class Scene(RBC):
         if denoise is None:
             denoise = sys.platform != "darwin"
         return self._visualizer.add_camera(
-            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, env_idx, debug
+            res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, near, far, env_idx, debug
         )
 
     @gs.assert_unbuilt
@@ -1114,7 +1145,16 @@ class Scene(RBC):
             )
 
     @gs.assert_built
-    def render_all_cameras(self, rgb=True, depth=False, normal=False, segmentation=False, force_render=False):
+    def render_all_cameras(
+        self,
+        rgb=True,
+        depth=False,
+        segmentation=False,
+        colorize_seg=False,
+        normal=False,
+        antialiasing=False,
+        force_render=False,
+    ):
         """
         Render the scene for all cameras using the batch renderer.
 
@@ -1124,10 +1164,12 @@ class Scene(RBC):
             Whether to render the rgb image.
         depth : bool, optional
             Whether to render the depth image.
-        normal : bool, optional
-            Whether to render the normal image.
         segmentation : bool, optional
             Whether to render the segmentation image.
+        normal : bool, optional
+            Whether to render the normal image.
+        antialiasing : bool, optional
+            Whether to apply anti-aliasing.
         force_render : bool, optional
             Whether to force render the scene.
 
@@ -1139,7 +1181,12 @@ class Scene(RBC):
         if self._visualizer.batch_renderer is None:
             gs.raise_exception("Method only supported by 'BatchRenderer'")
 
-        return self._visualizer.batch_renderer.render(rgb, depth, normal, segmentation, force_render)
+        rgb_out, depth_out, seg_out, normal_out = self._visualizer.batch_renderer.render(
+            rgb, depth, segmentation, normal, antialiasing, force_render
+        )
+        if segmentation and colorize_seg:
+            seg_out = tuple(self._visualizer.batch_renderer.colorize_seg_idxc_arr(seg) for seg in seg_out)
+        return rgb_out, depth_out, seg_out, normal_out
 
     @gs.assert_built
     def clear_debug_object(self, object):
@@ -1390,3 +1437,18 @@ class Scene(RBC):
     def pbd_solver(self):
         """The scene's `pbd_solver`, managing all the `PBDEntity` in the scene."""
         return self._sim.pbd_solver
+
+    @property
+    def segmentation_idx_dict(self):
+        """
+        Returns a dictionary mapping segmentation indices to scene entities.
+
+        In the segmentation map:
+        - Index 0 corresponds to the background (-1).
+        - Indices > 0 correspond to scene elements, which may be represented as:
+            - `entity_id`
+            - `(entity_id, link_id)`
+            - `(entity_id, link_id, geom_id)`
+          depending on the material type and the configured segmentation level.
+        """
+        return self._visualizer.segmentation_idx_dict
