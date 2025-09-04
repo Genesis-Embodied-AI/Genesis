@@ -40,10 +40,10 @@ def test_imu_sensor(show_viewer):
             entity_idx=box.idx,
             acc_axes_skew=0.01,
             gyro_axes_skew=(0.02, 0.03, 0.04),
-            acc_noise_std=(0.01, 0.01, 0.01),
-            gyro_noise_std=(0.01, 0.01, 0.01),
-            acc_random_walk_std=(0.001, 0.001, 0.001),
-            gyro_random_walk_std=(0.001, 0.001, 0.001),
+            acc_noise=(0.01, 0.01, 0.01),
+            gyro_noise=(0.01, 0.01, 0.01),
+            acc_random_walk=(0.001, 0.001, 0.001),
+            gyro_random_walk=(0.001, 0.001, 0.001),
             delay=DT,
             jitter=DT * 0.1,
             interpolate=True,
@@ -75,8 +75,8 @@ def test_imu_sensor(show_viewer):
     box.set_COM_shift(torch.tensor([[0.1, 0.1, 0.1]]))
 
     # try updating noise and bias for accelerometer and gyroscope
-    imu_noisy.set_acc_noise_std([0.01, 0.01, 0.01])
-    imu_noisy.set_gyro_noise_std([0.02, 0.02, 0.02])
+    imu_noisy.set_acc_noise([0.01, 0.01, 0.01])
+    imu_noisy.set_gyro_noise([0.02, 0.02, 0.02])
     imu_noisy.set_bias([0.01, 0.01, 0.01, 0.02, 0.02, 0.02])
     imu_noisy.set_jitter(0.001)
 
@@ -137,9 +137,9 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
             entity_idx=box.idx,
             min_force=0.01,
             max_force=(10.0, 20.0, -GRAVITY / 2),
-            noise_std=NOISE,
+            noise=NOISE,
             bias=BIAS,
-            random_walk_std=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
+            random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
             delay=0.05,
             jitter=0.01,
             interpolate=True,

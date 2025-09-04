@@ -158,19 +158,23 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
         The minimum detectable force per each axis. Values below this will be treated as 0. Default is 0.
     max_force : float | tuple[float, float, float], optional
         The maximum detectable force per each axis. Values above this will be clipped. Default is infinity.
-    noise_std : float | tuple[float, float, float], optional
-        The standard deviation of the noise.
+    resolution : float | tuple[float, float, float], optional
+        The measurement resolution of each axis of force (smallest increment of change in the sensor reading).
+        Default is None, which means no quantization is applied.
     bias : float | tuple[float, float, float], optional
-        The bias of the sensor.
-    random_walk_std : float | tuple[float, float, float], optional
-        The standard deviation of the bias drift.
+        The constant additive bias of the sensor.
+    noise : float | tuple[float, float, float], optional
+        The standard deviation of the additive white noise.
+    random_walk : float | tuple[float, float, float], optional
+        The standard deviation of the random walk, which acts as accumulated bias drift.
     delay : float, optional
-        The delay in seconds before the sensor data is read.
+        The delay in seconds, affecting how outdated the sensor data is when it is read.
     jitter : float, optional
-        The time jitter standard deviation in seconds before the sensor data is read.
+        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
+        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
     interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used.
+        Otherwise, the sensor data at the closest time step will be used. Default is False.
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth data, and not the measured data.
     """
