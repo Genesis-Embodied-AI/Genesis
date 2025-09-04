@@ -46,12 +46,6 @@ jobs:
 
           mkdir -p "${HOME}/.cache"
 
-          # Prefer idle nodes if any
-          IDLE_NODES=$(sinfo -h -o "%N %t" | awk '$2 == "idle" {print $1}')
-          if [[ -n "$IDLE_NODES" ]]; then
-            NODELIST="--nodelist=$IDLE_NODES"
-          fi
-
           # TODO: USD baking does not currently support Python 3.11 since
           # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
           # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
@@ -61,10 +55,8 @@ jobs:
           "${{ github.workspace }}":/root/workspace,\
           "${HOME}/.cache":/root/.cache \
             --no-container-mount-home --container-workdir=/root/workspace \
-            --export=\
-          HF_TOKEN="${HF_TOKEN}",\
-          NVIDIA_DRIVER_CAPABILITIES=all \
-            --partition=hpc-mid ${NODELIST} --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --export=NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN \
+            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
               pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
