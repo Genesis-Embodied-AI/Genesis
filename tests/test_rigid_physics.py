@@ -2,6 +2,7 @@ import math
 import os
 import sys
 import tempfile
+from typing import cast
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import get_assets_dir, tensor_to_array
+from genesis.engine.entities.rigid_entity import RigidEntity
 
 from .utils import (
     assert_allclose,
@@ -430,6 +432,14 @@ def test_walker(gs_sim, mj_sim, gjk_collision, tol):
     qpos[2] += 0.5
     qvel = np.random.rand(gs_robot.n_dofs) * 0.2
 
+    # Make sure it is possible to set the configuration vector without failure
+    qpos = gs_robot.get_dofs_position()
+    gs_robot.set_dofs_position(qpos)
+    assert_allclose(gs_robot.get_dofs_position(), qpos, tol=gs.EPS)
+    qpos = torch.rand(gs_robot.n_dofs).clip(*gs_robot.get_dofs_limit())
+    gs_robot.set_dofs_position(qpos)
+    assert_allclose(gs_robot.get_dofs_position(), qpos, tol=gs.EPS)
+
     # Cannot simulate any longer because collision detection is very sensitive
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=90, tol=tol)
 
@@ -571,7 +581,12 @@ def test_one_ball_joint(gs_sim, mj_sim, tol):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
     # Make sure it is possible to set the configuration vector without failure
-    gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
+    qpos = gs_sim.rigid_solver.get_dofs_position()
+    gs_sim.rigid_solver.set_dofs_position(qpos)
+    assert_allclose(gs_sim.rigid_solver.get_dofs_position(), qpos, tol=gs.EPS)
+    qpos = torch.rand(gs_sim.rigid_solver.n_dofs).clip(*gs_sim.rigid_solver.get_dofs_limit())
+    gs_sim.rigid_solver.set_dofs_position(qpos)
+    assert_allclose(gs_sim.rigid_solver.get_dofs_position(), qpos, tol=gs.EPS)
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=300, tol=1e-8)
@@ -2001,7 +2016,7 @@ def test_terrain_size(show_viewer, tol):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 def test_jacobian(gs_sim, tol):
-    pendulum = gs_sim.entities[0]
+    pendulum = cast(RigidEntity, gs_sim.entities[0])
     angle = 0.7
     pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
     gs_sim.scene.step()
@@ -2956,3 +2971,45 @@ def test_noslip_iterations(scale, show_viewer, tol):
     # allow some small sliding due to first few frames
     # scale = 0.1 is less stable than bigger scale
     assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
+
+@pytest.mark.required
+def test_batched_aabb(tol):
+    scene = gs.Scene()
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            normal=(0, 0, 1),
+            pos=(0, 0, 0),
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.5, 0, 0.05),
+        ),
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.05,
+            pos=(-0.5, 0, 0.05),
+        ),
+    )
+    scene.build()
+
+    all_aabbs = scene.sim.rigid_solver.get_aabb()
+    plane_aabb = plane.get_aabb()
+    box_aabb = box.get_aabb()
+    sphere_aabb = sphere.get_aabb()
+
+    assert_allclose(all_aabbs.shape, (3, 2, 3), atol=0)
+    assert_allclose(plane_aabb.shape[-1], 3, atol=0)
+    assert_allclose(box_aabb.shape[-1], 3, atol=0)
+    assert_allclose(sphere_aabb.shape[-1], 3, atol=0)
+    assert_allclose((plane_aabb, box_aabb, sphere_aabb), all_aabbs, atol=tol)
+
+    box_aabb_min, box_aabb_max = box_aabb
+    assert_allclose(box_aabb_min, (0.45, -0.05, 0.0), atol=tol)
+    assert_allclose(box_aabb_max, (0.55, 0.05, 0.1), atol=tol)
+
+    sphere_aabb_min, sphere_aabb_max = sphere_aabb
+    assert_allclose(sphere_aabb_min, (-0.55, -0.05, 0.0), atol=tol)
+    assert_allclose(sphere_aabb_max, (-0.45, 0.05, 0.1), atol=tol)
