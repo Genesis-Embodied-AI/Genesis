@@ -882,7 +882,7 @@ class RigidEntity(Entity):
             self._impl_get_jacobian(links_state, tgt_link_idx, i_b, ti.Vector.zero(gs.ti_float, 3))
 
     @ti.func
-    def _func_get_jacobian(self, links_state, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
+    def _func_get_jacobian(self, links_state: array_class.LinksState, tgt_link_idx, i_b, p_local, pos_mask, rot_mask):
         for i_row, i_d in ti.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
