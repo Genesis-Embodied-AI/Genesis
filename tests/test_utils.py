@@ -6,7 +6,7 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array, ti_to_torch
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
 
@@ -55,6 +55,39 @@ def test_warn_once_with_empty_message(clear_seen_fixture):
             warn_once("")
             warn_once("")
             mock_warning.assert_called_once_with("")
+
+
+@pytest.mark.parametrize("batch_shape", [(2, 3, 5), ()])
+@pytest.mark.parametrize(
+    "ti_type_spec, arg_shape",
+    [
+        (("field", "scalar"), ()),
+        (("field", "vector"), (7,)),
+        (("field", "matrix"), (7, 1)),
+        (("field", "matrix"), (7, 11)),
+        (("ndarray", "scalar"), ()),
+        (("ndarray", "vector"), (7,)),
+        (("ndarray", "matrix"), (7, 1)),
+        (("ndarray", "matrix"), (7, 11)),
+    ],
+)
+def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
+    import gstaichi as ti
+
+    TI_TYPE_MAP = {
+        ("field", "scalar"): ti.field,
+        ("field", "vector"): ti.Vector.field,
+        ("field", "matrix"): ti.Matrix.field,
+        ("ndarray", "scalar"): ti.ndarray,
+        ("ndarray", "vector"): ti.Vector.ndarray,
+        ("ndarray", "matrix"): ti.Matrix.ndarray,
+    }
+
+    np_arg = np.asarray(np.random.rand(*batch_shape, *arg_shape), dtype=gs.np_float)
+    tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
+    ti_arg = TI_TYPE_MAP[ti_type_spec](*arg_shape, dtype=gs.ti_float, shape=batch_shape)
+    ti_arg.from_numpy(np_arg)
+    assert_allclose(ti_to_torch(ti_arg), ti_arg.to_numpy(), tol=gs.EPS)
 
 
 def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
