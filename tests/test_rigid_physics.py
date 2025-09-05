@@ -2928,6 +2928,52 @@ def test_mesh_primitive_COM(show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("scale", [0.1, 10.0])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_noslip_iterations(scale, show_viewer, tol):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.8, -1, 1.3),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=30,
+            res=(960, 640),
+            max_FPS=600,
+        ),
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        rigid_options=gs.options.RigidOptions(
+            noslip_iterations=5,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    boxes = []
+    for i in range(3):
+        boxes.append(
+            scene.add_entity(
+                gs.morphs.Box(
+                    size=(1 * scale, 1 * scale, 1 * scale),
+                    pos=(i * scale, 0, 0),
+                    fixed=i == 0,
+                ),
+            )
+        )
+    scene.build()
+    # simulate for 20 seconds
+    for i in range(2000):
+        boxes[2].control_dofs_force(np.array([-20000.0 * scale**3]), np.array([0]))
+        # push to -x direction
+        scene.step()
+
+    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
+    # allow some small sliding due to first few frames
+    # scale = 0.1 is less stable than bigger scale
+    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
+
+
+@pytest.mark.required
 def test_batched_aabb(tol):
     scene = gs.Scene()
     plane = scene.add_entity(
