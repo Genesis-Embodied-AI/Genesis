@@ -1242,6 +1242,7 @@ def test_stickman(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_multilink_inverse_kinematics(show_viewer):
     TOL = 1e-5
@@ -1308,6 +1309,7 @@ def test_multilink_inverse_kinematics(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):

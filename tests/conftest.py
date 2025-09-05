@@ -208,6 +208,12 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_runtest_setup(item):
+    # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+    if os.environ.get("GS_USE_NDARRAY") == "1":
+        for mark in item.iter_markers("field_only"):
+            if not mark.args or mark.args[0]:
+                pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
+
     # Enforce GPU affinity if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
