@@ -2972,6 +2972,7 @@ def test_noslip_iterations(scale, show_viewer, tol):
     # scale = 0.1 is less stable than bigger scale
     assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
 
+
 @pytest.mark.required
 def test_batched_aabb(tol):
     scene = gs.Scene()
