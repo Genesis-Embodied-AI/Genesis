@@ -55,61 +55,7 @@ class BaseFileWriter(Recorder):
         return self._options.filename
 
 
-class BaseVideoFileWriter(BaseFileWriter):
-    """Base class for video writers."""
-
-    def build(self):
-        super().build()
-        self.fps = 1.0 / (self._steps_per_sample * self._manager._step_dt)
-
-
 class VideoFileWriterOptions(BaseFileWriterOptions):
-    """
-    Buffer all frames and writes video at cleanup using moviepy.
-
-    Parameters
-    ----------
-    filename : str
-        The path of the output video file ending in ".mp4".
-    fps : float, optional
-        Frames per second for the video. Defaults to the data collection Hz ("real-time").
-    save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
-    """
-
-    fps: float | None = None
-
-    def validate(self):
-        super().validate()
-        if not self.filename.lower().endswith(".mp4"):
-            gs.raise_exception(f"[{type(self).__name__}] Video output should be an .mp4 file")
-
-
-@register_recording(VideoFileWriterOptions)
-class VideoFileWriter(BaseVideoFileWriter):
-
-    def build(self):
-        super().build()
-        self.frames: list[np.ndarray] = []
-        self.counter = 0
-
-    def process(self, data, cur_time):
-        self.frames.append(data)
-
-    def cleanup(self):
-        if self.frames:
-            animate(self.frames, filename=self._get_filename(), fps=self.fps)
-            self.frames.clear()
-        else:
-            gs.logger.warning(f"[{type(self).__name__}] No frames to write to video file.")
-
-    @property
-    def run_in_thread(self) -> bool:
-        return True
-
-
-class Cv2VideoFileWriterOptions(BaseFileWriterOptions):
     """
     Stream video frames to file using cv2.VideoWriter.
 
@@ -157,12 +103,15 @@ class Cv2VideoFileWriterOptions(BaseFileWriterOptions):
             )
 
 
-@register_recording(Cv2VideoFileWriterOptions)
-class Cv2VideoFileWriter(BaseVideoFileWriter):
+@register_recording(VideoFileWriterOptions)
+class VideoFileWriter(BaseFileWriter):
 
     def build(self):
         super().build()
         self.video_writer: cv2.VideoWriter | None = None
+        self.fps = (
+            1.0 / (self._steps_per_sample * self._manager._step_dt) if self._options.fps is None else self._options.fps
+        )
 
         # lazy init these values when processing the first frame
         self.width, self.height = 0, 0
@@ -231,22 +180,20 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
         Column headers for the CSV file. It should match the format of the incoming data, where each scalar value has
         an associated header. If the data is a dict, the header should match the total length of the number of values
         after flattening the values.
-    flush_interval : int | None, optional
-        Determines how often the data is saved to disk. None = only at cleanup, 0 = every write, >0 = every N writes.
+    save_every_write: bool, optional
+        Whether to flush the data to disk as soon as new data is recieved. Defaults to False.
     save_on_reset: bool, optional
         Whether to save the data on scene reset. Defaults to False.
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
     header: tuple[str, ...] | None = None
-    flush_interval: int | None = None
+    save_every_write: bool = False
 
     def validate(self):
         super().validate()
         if not self.filename.lower().endswith(".csv"):
             gs.raise_exception(f"[{type(self).__name__}] CSV output must be a .csv file")
-        if self.flush_interval is not None and self.flush_interval < 0:
-            gs.raise_exception(f"[{type(self).__name__}] flush_interval must be None or >= 0")
 
 
 @register_recording(CSVFileWriterOptions)
@@ -254,8 +201,6 @@ class CSVFileWriter(BaseFileWriter):
 
     def build(self):
         super().build()
-        if self._options.flush_interval is not None:
-            self.flush_counter = 0
 
         os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
         self._initialize_writer()
@@ -302,18 +247,14 @@ class CSVFileWriter(BaseFileWriter):
 
         self.wrote_data = True
         self.csv_writer.writerow(row_data)
-        if self._options.flush_interval is not None:
-            self.flush_counter += 1
-            if self.flush_counter >= self._options.flush_interval:
-                self.file_handle.flush()
-                self.flush_counter = 0
+        if self._options.save_every_write:
+            self.file_handle.flush()
 
     def cleanup(self):
         if self.file_handle:
             if self.wrote_data:
-                gs.logger.info(f'Saving CSV file to ~<"{self._get_filename()}">~...')
                 self.file_handle.close()
-                gs.logger.info("File saved.")
+                gs.logger.info(f'[CSVFileWriter] Saved to ~<"{self._get_filename()}">~.')
             else:
                 self.file_handle.close()
                 os.remove(self._get_filename())  # delete empty file
@@ -371,13 +312,12 @@ class NPZFileWriter(BaseFileWriter):
     def cleanup(self):
         filename = self._get_filename()
         if self.all_data["timestamp"]:  # at least one data point was collected
-            gs.logger.info(f'Saving data to "~<{filename}>~"...')
             try:
                 np.savez_compressed(filename, **self.all_data)
             except ValueError as error:
                 gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
                 np.savez_compressed(filename, **{k: np.array(v, dtype=object) for k, v in self.all_data.items()})
-            gs.logger.info(f"NPZ data saved with keys {list(self.all_data.keys())}.")
+            gs.logger.info(f'[NPZFileWriter] Saved data with keys {list(self.all_data.keys())} to ~<"{filename}">~.')
             self.all_data.clear()
 
     @property
