@@ -113,9 +113,6 @@ class ContactSensor(Sensor):
     def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
 
-    def _get_cache_length(self) -> int:
-        return 1
-
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_bool
@@ -247,9 +244,6 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return (3,)
-
-    def _get_cache_length(self) -> int:
-        return 1
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:

@@ -228,6 +228,9 @@ class Simulator(RBC):
         self.reset_grad()
         self._cur_substep_global = 0
 
+        # reset sensors state
+        self._sensor_manager.reset(envs_idx=envs_idx)
+
     def reset_grad(self):
         for solver in self._active_solvers:
             solver.reset_grad()

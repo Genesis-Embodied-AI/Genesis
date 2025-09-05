@@ -170,10 +170,6 @@ class RecorderManager:
         return self._is_recording
 
     @property
-    def has_recorders(self) -> bool:
-        return len(self._recorders) > 0
-
-    @property
     def is_built(self) -> bool:
         return self._is_built
 

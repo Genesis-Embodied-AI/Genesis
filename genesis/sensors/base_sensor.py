@@ -91,13 +91,12 @@ class Sensor(RBC):
         is_return_dict = isinstance(self._return_format, dict)
         self._return_shapes = self._return_format.values() if is_return_dict else (self._return_format,)
         self._get_formatted_data = self._get_formatted_data_dict if is_return_dict else self._get_formatted_data_tuple
-        tensor_size = 0
+        self._cache_size = 0
         for shape in self._return_shapes:
             data_size = np.prod(shape)
-            self._shape_indices.append((tensor_size, tensor_size + data_size))
-            tensor_size += data_size
+            self._shape_indices.append((self._cache_size, self._cache_size + data_size))
+            self._cache_size += data_size
 
-        self._cache_size = self._get_cache_length() * tensor_size
         self._shared_metadata.cache_sizes.append(self._cache_size)
 
         self._cache_idx: int = -1  # initialized by SensorManager during build
@@ -106,14 +105,32 @@ class Sensor(RBC):
 
     def build(self):
         """
-        This method is called by the SensorManager during the scene build phase to initialize the sensor.
+        Build the sensor.
+
+        This method is called by SensorManager during the scene build phase.
         This is where any shared metadata should be initialized.
+        """
+        pass
+
+    @classmethod
+    def reset(cls, shared_metadata: SharedSensorMetadata, envs_idx):
+        """
+        Reset the sensor.
+
+        This method is called by SensorManager when the scene is reset by `scene.reset()`.
+
+        Parameters
+        ----------
+        shared_metadata : SharedSensorMetadata
+            The shared metadata for the sensor class.
+        envs_idx: array_like
+            The indices of the environments to reset. The envs_idx should already be sanitized by SensorManager.
         """
         pass
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
         """
-        Data format of the read() return value.
+        Get the data format of the read() return value.
 
         Returns
         -------
@@ -124,12 +141,6 @@ class Sensor(RBC):
                 e.g. {"pos": (3,), "quat": (4,)} returns a dict of tensors [0:3] and [3:7] from the cache.
         """
         raise NotImplementedError(f"{type(self).__name__} has not implemented `get_return_format()`.")
-
-    def _get_cache_length(self) -> int:
-        """
-        The length of the cache for this sensor instance, e.g. number of points for a Lidar point cloud.
-        """
-        raise NotImplementedError(f"{type(self).__name__} has not implemented `get_cache_length()`.")
 
     @classmethod
     def _update_shared_ground_truth_cache(
@@ -260,18 +271,13 @@ class Sensor(RBC):
         """
         envs_idx = self._sanitize_envs_idx(envs_idx)
 
-        cache_length = self._get_cache_length()
         return_values = []
-
-        if cache_length == 1:
-            tensor_chunk = tensor[envs_idx]
-        else:
-            tensor_chunk = tensor[envs_idx].reshape((len(envs_idx), cache_length, -1))
+        tensor_chunk = tensor[envs_idx].reshape((len(envs_idx), -1))
 
         for i, shape in enumerate(self._return_shapes):
             start_idx, end_idx = self._shape_indices[i]
 
-            field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), cache_length, *shape))
+            field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), *shape))
 
             if self._manager._sim.n_envs == 0:
                 field_data = field_data.squeeze(0)
@@ -496,32 +502,8 @@ class NoisySensorMixin:
         self._shared_metadata.interpolate.append(self._options.interpolate)
 
     @classmethod
-    def update_shared_cache(
-        cls,
-        shared_metadata: NoisySensorMetadataMixin,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        """
-        Update the shared sensor ground truth cache for all sensors of this class using metadata in SensorManager.
-
-        Note
-        ----
-        `buffered_data` contains the history of ground truth cache, and noise/bias is only applied to the current
-        sensor readout `shared_cache`, not the whole buffer.
-        """
-        buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
-        cls._apply_delay_to_shared_cache(
-            shared_metadata,
-            shared_cache,
-            buffered_data,
-            shared_metadata.cur_jitter_ts,
-            shared_metadata.interpolate,
-        )
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+    def reset(cls, shared_metadata: NoisySensorMetadataMixin, envs_idx):
+        shared_metadata.cur_random_walk[envs_idx, ...].fill_(0.0)
 
     @classmethod
     def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataMixin, output: torch.Tensor):

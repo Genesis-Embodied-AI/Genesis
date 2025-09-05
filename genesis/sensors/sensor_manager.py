@@ -84,6 +84,18 @@ class SensorManager:
                     self._buffered_data[dtype][:, cache_slice],
                 )
 
+    def reset(self, envs_idx=None):
+        envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
+        for dtype in self._buffered_data.keys():
+            self._ground_truth_cache[dtype][envs_idx, ...] = 0.0
+            self._cache[dtype][envs_idx, ...] = 0.0
+            self._buffered_data[dtype].buffer[:, envs_idx, ...] = 0.0
+        for key in self._last_cache_cloned_step.keys():
+            self._cloned_cache[key] = 0.0
+            self._last_cache_cloned_step[key] = -1  # do not use cached data
+        for sensor_cls in self._sensors_by_type.keys():
+            sensor_cls.reset(self._sensors_metadata[sensor_cls], envs_idx)
+
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
         dtype = sensor._get_cache_dtype()
         key = (is_ground_truth, dtype)

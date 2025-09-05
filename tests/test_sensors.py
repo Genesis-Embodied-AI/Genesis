@@ -103,6 +103,15 @@ def test_imu_sensor(show_viewer):
     assert_allclose(imu_biased.read()["lin_acc"], torch.tensor([BIAS[0], BIAS[1], BIAS[2] - GRAVITY]), tol=1e-7)
     assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-5)
 
+    scene.reset()
+
+    assert_array_equal(imu_biased.read()["lin_acc"], 0.0)  # biased, but cache hasn't been updated yet
+    assert_array_equal(imu_delayed.read()["lin_acc"], 0.0)
+    assert_array_equal(imu_noisy.read()["ang_vel"], 0.0)
+
+    scene.step()
+    assert_allclose(imu_biased.read()["lin_acc"], BIAS, tol=1e-7)
+
 
 @pytest.mark.required
 def test_rigid_tactile_sensors_gravity_force(show_viewer):
