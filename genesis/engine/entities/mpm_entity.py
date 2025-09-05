@@ -292,14 +292,14 @@ class MPMEntity(ParticleEntity):
             if actu.shape == (n_groups,):
                 self._tgt["actu"] = actu.reshape((1, 1, -1)).tile((self._sim._B, self.n_particles, 1))
                 is_valid = True
-            elif actu.shape == (n_particles,):
+            elif actu.shape == (self.n_particles,):
                 self._tgt["actu"] = actu.reshape((1, -1, 1)).tile((self._sim._B, 1, n_groups))
                 is_valid = True
         elif actu.ndim == 2:
             if actu.shape == (self._sim._B, n_groups):
                 self._tgt["actu"] = actu.unsqueeze(1).tile((1, self.n_particles, 1))
                 is_valid = True
-            if actu.shape == (self._sim._B, n_particles):
+            if actu.shape == (self._sim._B, self.n_particles):
                 self._tgt["actu"] = actu.unsqueeze(2).tile((1, 1, n_groups))
                 is_valid = True
         elif actu.ndim == 3:
