@@ -376,6 +376,14 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         if not taichi_offline_cache:
             os.environ["TI_OFFLINE_CACHE"] = "0"
 
+        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+        if os.environ.get("GS_USE_NDARRAY") == "1":
+            for mark in request.node.iter_markers("field_only"):
+                if not mark.args or mark.args[0]:
+                    pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
+            if os.environ.get("GS_BETA_PURE") == "1" and backend != gs.cpu and sys.platform == "darwin":
+                pytest.skip("fast cache not supported on mac gpus when using ndarray.")
+
         try:
             gs.utils.get_device(backend)
         except gs.GenesisException:
