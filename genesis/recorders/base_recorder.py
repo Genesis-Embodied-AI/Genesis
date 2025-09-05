@@ -36,13 +36,18 @@ class RecorderOptions(Options):
 
 
 class Recorder:
-    """Base class for all recorders."""
+    """
+    Base class for all recorders.
+
+    Note that modifying the signature of this class in recorder implementations should be avoided since instantiation is
+    done through the RecorderManager.
+    """
 
     def __init__(self, manager: RecorderManager, options: RecorderOptions):
         self._options = options
         self._manager = manager
         self._steps_per_sample = 1
-        self._initialized = False
+        self._is_built = False
         if options.hz:
             steps_per_sample_float = 1.0 / (options.hz * manager._step_dt)
             steps_per_sample = max(1, round(steps_per_sample_float))
@@ -53,22 +58,61 @@ class Recorder:
                 )
             self._steps_per_sample = steps_per_sample
 
-    def initialize(self):
-        raise NotImplementedError(f"[{type(self).__name__}] initialize() is not implemented.")
+    @gs.assert_unbuilt
+    def build(self):
+        """
+        Build the recorder, e.g. by initializing variables and creating widgets or file handles.
+        """
+        raise NotImplementedError(f"[{type(self).__name__}] build() is not implemented.")
 
+    @gs.assert_built
     def process(self, data, cur_time):
+        """
+        Process each incoming data sample.
+
+        Parameters
+        ----------
+        data: Any
+            The data to be processed.
+        cur_time: float
+            The current time of the simulation.
+        """
         raise NotImplementedError(f"[{type(self).__name__}] process() is not implemented.")
 
+    @gs.assert_built
     def cleanup(self):
+        """
+        Cleanup all resources, e.g. by closing widgets or files.
+
+        This method is called when recording is stopped by `scene.stop_recording()`.
+        """
         raise NotImplementedError(f"[{type(self).__name__}] cleanup() is not implemented.")
 
+    @gs.assert_built
     def reset(self, envs_idx=None):
+        """
+        Reset the recorder, e.g. by flushing stored data.
+
+        This method is called when the scene is reset by `scene.reset()`.
+
+        Parameters
+        ----------
+        envs_idx: array_like, optional
+            The indices of the environments to reset. If None, all environments are reset.
+        """
         raise NotImplementedError(f"[{type(self).__name__}] reset() is not implemented.")
 
     @property
     def run_in_thread(self) -> bool:
+        """
+        Whether to run the recorder in a background thread.
+
+        Running in a background thread allows for processing data without blocking the main thread, so this is
+        encouraged for most recorders (simply `return True`), but implementers should check that the recorder is
+        thread-safe on all devices (threading on macOS tends to be less supported).
+        """
         raise NotImplementedError(f"[{type(self).__name__}] run_in_thread is not implemented.")
 
     @property
-    def initialized(self) -> bool:
-        return self._initialized
+    def is_built(self) -> bool:
+        return self._is_built

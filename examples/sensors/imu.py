@@ -22,10 +22,6 @@ def main():
     ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=args.timestep),
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=True,
-            constraint_timeconst=max(0.01, 2 * args.timestep),
-        ),
         vis_options=gs.options.VisOptions(show_world_frame=False),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),

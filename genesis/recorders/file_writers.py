@@ -33,7 +33,13 @@ class BaseFileWriterOptions(RecorderOptions):
 
 
 class BaseFileWriter(Recorder):
-    def initialize(self):
+    """
+    Base class for file writers.
+
+    Handles filename counter when save_on_reset is True.
+    """
+
+    def build(self):
         self.counter = 0
 
     def reset(self, envs_idx=None):
@@ -50,8 +56,10 @@ class BaseFileWriter(Recorder):
 
 
 class BaseVideoFileWriter(BaseFileWriter):
-    def initialize(self):
-        super().initialize()
+    """Base class for video writers."""
+
+    def build(self):
+        super().build()
         self.fps = 1.0 / (self._steps_per_sample * self._manager._step_dt)
 
 
@@ -81,8 +89,8 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
 @register_recording(VideoFileWriterOptions)
 class VideoFileWriter(BaseVideoFileWriter):
 
-    def initialize(self):
-        super().initialize()
+    def build(self):
+        super().build()
         self.frames: list[np.ndarray] = []
         self.counter = 0
 
@@ -101,11 +109,12 @@ class VideoFileWriter(BaseVideoFileWriter):
         return True
 
 
-class Cv2VideoFileWriterOptions(VideoFileWriterOptions):
+class Cv2VideoFileWriterOptions(BaseFileWriterOptions):
     """
     Stream video frames to file using cv2.VideoWriter.
 
     The cv2 writer streams data directly to the file instead of buffering it in memory.
+    Incoming data should either be grayscale [H, W] or color [H, W, RGB] where values are uint8 (0, 255).
 
     Parameters
     ----------
@@ -114,38 +123,45 @@ class Cv2VideoFileWriterOptions(VideoFileWriterOptions):
     fps : float, optional
         Frames per second for the video. Defaults to the data collection Hz ("real-time").
     fourcc : str, optional
-        The codec to use for the video file. Defaults to "avc1" for .mp4 files.
+        The codec to use for the video file. Defaults to "h264" for .mp4 files.
         Supported encodings: .mp4 -> "avc1", "mp4v", "h264"; .avi -> "XVID", "MJPG"
     save_on_reset: bool, optional
         Whether to save the data on reset. Defaults to False.
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
-    fourcc: str = "avc1"
+    FOURCC_MAP: dict[str, tuple[str, ...]] = {
+        ".mp4": ("h264", "avc1", "mp4v"),
+        ".avi": ("XVID", "MJPG"),
+    }
+
+    fps: float | None = None
+    fourcc: str = "h264"
 
     def validate(self):
         super().validate()
-        if self.filename.endswith(".mp4"):
-            if self.fourcc not in ["avc1", "mp4v", "h264"]:
-                gs.raise_exception(
-                    f"[{type(self).__name__}] '{self.fourcc}' is not a supported video codec for .mp4, "
-                    "expected 'avc1', 'mp4v', or 'h264'"
-                )
-        elif self.filename.endswith(".avi"):
-            if self.fourcc not in ["XVID", "MJPG"]:
-                gs.raise_exception(
-                    f"[{type(self).__name__}] '{self.fourcc}' is not a supported video codec for .avi, "
-                    "expected 'XVID' or 'MJPG'"
-                )
-        else:
-            gs.raise_exception(f"[{type(self).__name__}] Video filename must end with .mp4 or .avi.")
+        is_valid_ext = False
+        for ext, codecs in self.FOURCC_MAP.items():
+            if self.filename.endswith(ext):
+                if self.fourcc in codecs:
+                    is_valid_ext = True
+                    break
+                else:
+                    gs.raise_exception(
+                        f"[{type(self).__name__}] '{self.fourcc}' is not a supported video codec for {ext}, "
+                        f"expected one of {codecs}"
+                    )
+        if not is_valid_ext:
+            gs.raise_exception(
+                f"[{type(self).__name__}] Video filename must end with one of {tuple(self.FOURCC_MAP.keys())}."
+            )
 
 
 @register_recording(Cv2VideoFileWriterOptions)
 class Cv2VideoFileWriter(BaseVideoFileWriter):
 
-    def initialize(self):
-        super().initialize()
+    def build(self):
+        super().build()
         self.video_writer: cv2.VideoWriter | None = None
 
         # lazy init these values when processing the first frame
@@ -155,21 +171,22 @@ class Cv2VideoFileWriter(BaseVideoFileWriter):
         os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
 
     def _initialize_data(self, data):
-        self.is_color = len(data[0].shape) == 3 and data[0].shape[-1] == 3
-        if not self.is_color and len(data[0].shape) != 2:
+        assert isinstance(data, (np.ndarray, torch.Tensor))
+        self.is_color = data.ndim == 3 and data.shape[-1] == 3
+        if not self.is_color and data[0].ndim != 2:
             gs.raise_exception(f"[{type(self).__name__}] Data must be either grayscale [H, W] or color [H, W, RGB]")
-        self.height, self.width = data[0].shape[:2]
+        self.height, self.width, *_ = data.shape
 
     def _initialize_writer(self):
         filename = self._get_filename()
-        video_writer = cv2.VideoWriter(
+        self.video_writer = cv2.VideoWriter(
             filename,
             cv2.VideoWriter_fourcc(*self._options.fourcc),
             self.fps,
             (self.width, self.height),
             self.is_color,
         )
-        if not video_writer.isOpened():
+        if not self.video_writer.isOpened():
             gs.raise_exception(f'[{type(self).__name__}] Failed to open video writer for "{filename}"')
 
     def process(self, data, cur_time):
@@ -178,19 +195,24 @@ class Cv2VideoFileWriter(BaseVideoFileWriter):
         if self.video_writer is None:
             self._initialize_writer()
 
+        if isinstance(data, torch.Tensor):
+            data = tensor_to_array(data)
+        data = data.astype(np.uint8)
+
         if self.is_color:
-            data = cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
+            data = np.flip(data, axis=-1)  # convert from RGB to BGR
+
         self.video_writer.write(data)
 
     def cleanup(self):
-        if self.video_writer:
+        if self.video_writer is not None:
             self.video_writer.release()
             gs.logger.info(f'Video saved to "~<{self._options.filename}>~".')
             self.video_writer = None
 
     @property
     def run_in_thread(self) -> bool:
-        return True
+        return False
 
 
 class CSVFileWriterOptions(BaseFileWriterOptions):
@@ -198,21 +220,25 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
     Writes to a .csv file using `csv.writer`.
 
     Can handle any array-like or dict[str, array-like] output, e.g. from sensors.
+    Values must be N-dimensional tensors, arrays or scalars (np.generic, int, float, str)
+    If the data or header is a dict, it cannot be further nested. Values are processed in order.
 
     Parameters
     ----------
     filename : str
         The name of the CSV file to save the data.
-    header : list[str] | None, optional
-        Column headers for the CSV file.
+    header : tuple[str] | None, optional
+        Column headers for the CSV file. It should match the format of the incoming data, where each scalar value has
+        an associated header. If the data is a dict, the header should match the total length of the number of values
+        after flattening the values.
     flush_interval : int | None, optional
         Determines how often the data is saved to disk. None = only at cleanup, 0 = every write, >0 = every N writes.
     save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
+        Whether to save the data on scene reset. Defaults to False.
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
-    header: list[str] | None = None
+    header: tuple[str, ...] | None = None
     flush_interval: int | None = None
 
     def validate(self):
@@ -226,8 +252,8 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
 @register_recording(CSVFileWriterOptions)
 class CSVFileWriter(BaseFileWriter):
 
-    def initialize(self):
-        super().initialize()
+    def build(self):
+        super().build()
         if self._options.flush_interval is not None:
             self.flush_counter = 0
 
@@ -235,38 +261,47 @@ class CSVFileWriter(BaseFileWriter):
         self._initialize_writer()
 
     def _initialize_writer(self):
-        self.wrote_header = False
         self.wrote_data = False
         self.file_handle = open(self._get_filename(), "w", encoding="utf-8", newline="")
         self.csv_writer = csv.writer(self.file_handle)
+
+    def _sanitize_to_list(self, value):
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            return value.reshape((-1,)).tolist()
+        elif isinstance(value, (int, float, bool)):
+            return [value]
+        elif isinstance(value, (list, tuple)):
+            return value
+        else:
+            gs.raise_exception(f"[{type(self).__name__}] Unsupported data type: {type(value)}")
 
     def process(self, data, cur_time):
         row_data = [cur_time]
         if isinstance(data, dict):
             for value in data.values():
-                if isinstance(value, torch.Tensor):
-                    value = value.tolist()
-                row_data.append(value)
+                row_data.extend(self._sanitize_to_list(value))
         else:
-            row_data.extend(data.tolist())
+            row_data.extend(self._sanitize_to_list(data))
 
-        if not self.wrote_header:
-            header = {"timestamp"}
+        if not self.wrote_data:  # write header
+            header = ["timestamp"]
             if self._options.header:
-                header.update(self._options.header)
+                header.extend(self._options.header)
             else:
                 if isinstance(data, dict):
-                    for key in data.keys():
-                        header.add(key)
+                    for key, val in data.items():
+                        if hasattr(val, "__len__"):
+                            header.extend([f"{key}_{i}" for i in range(len(val))])
+                        else:
+                            header.append(key)
                 else:
-                    header.update(["data" + i for i in (len(data) if isinstance(data, Iterable) else 1)])
+                    header.extend([f"data_{i}" for i in range(1, len(row_data))])
             if len(header) != len(row_data):
                 gs.raise_exception(f"[{type(self).__name__}] header length does not match data length.")
             self.csv_writer.writerow(header)
-            self.wrote_header = True
 
-        self.csv_writer.writerow(row_data)
         self.wrote_data = True
+        self.csv_writer.writerow(row_data)
         if self._options.flush_interval is not None:
             self.flush_counter += 1
             if self.flush_counter >= self._options.flush_interval:
@@ -298,7 +333,7 @@ class NPZFileWriterOptions(BaseFileWriterOptions):
     """
     Buffers all data and writes to a .npz file at cleanup.
 
-    Can handle any array-like or dict[str, array-like] output, e.g. from sensors.
+    Can handle any numeric or array-like or dict[str, array-like] data, e.g. from sensors.
 
     Parameters
     ----------
@@ -318,8 +353,8 @@ class NPZFileWriterOptions(BaseFileWriterOptions):
 @register_recording(NPZFileWriterOptions)
 class NPZFileWriter(BaseFileWriter):
 
-    def initialize(self):
-        super().initialize()
+    def build(self):
+        super().build()
         self.all_data: dict[str, list] = defaultdict(list)
 
     def process(self, data, cur_time):
@@ -328,22 +363,21 @@ class NPZFileWriter(BaseFileWriter):
             for key, value in data.items():
                 if isinstance(value, torch.Tensor):
                     value = tensor_to_array(value)
+                assert isinstance(value, (int, float, bool, list, tuple, np.ndarray))
                 self.all_data[key].append(value)
         else:
             self.all_data["data"].append(tensor_to_array(data))
 
     def cleanup(self):
         filename = self._get_filename()
-        saved_data = self.all_data
-        if any(len(v) > 0 for v in saved_data.values()):
+        if self.all_data["timestamp"]:  # at least one data point was collected
             gs.logger.info(f'Saving data to "~<{filename}>~"...')
             try:
-                np.savez_compressed(filename, **saved_data)
+                np.savez_compressed(filename, **self.all_data)
             except ValueError as error:
                 gs.logger.warning(f"NPZFileWriter: saving as dtype=object due to ValueError: {error}")
-                saved_data = {k: np.array(v, dtype=object) for k, v in self.all_data.items()}
-                np.savez_compressed(filename, **saved_data)
-            gs.logger.info(f"NPZ data saved with keys {list(saved_data.keys())}.")
+                np.savez_compressed(filename, **{k: np.array(v, dtype=object) for k, v in self.all_data.items()})
+            gs.logger.info(f"NPZ data saved with keys {list(self.all_data.keys())}.")
             self.all_data.clear()
 
     @property
