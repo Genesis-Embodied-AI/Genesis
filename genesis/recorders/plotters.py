@@ -58,7 +58,7 @@ class BasePlotterOptions(RecorderOptions):
 class BasePlotter(Recorder):
     """Base class for real-time plotters with shared functionality."""
 
-    def initialize(self):
+    def build(self):
         self.x_data: list[float] = []
         self.y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
@@ -178,13 +178,13 @@ class PyQtPlotter(BasePlotter):
     Inherits common plotting functionality from BasePlotter.
     """
 
-    def initialize(self):
+    def build(self):
         if not IS_PYQTGRAPH_AVAILABLE:
             gs.raise_exception(
                 "[PyQtPlotter] pyqtgraph is not installed. Please install it with `pip install pyqtgraph`."
             )
 
-        super().initialize()
+        super().build()
 
         self.app: pg.QtWidgets.QApplication | None = None
         self.widget: pg.GraphicsLayoutWidget | None = None
@@ -282,12 +282,12 @@ class MPLPlotter(BasePlotter):
     Inherits common plotting functionality from BasePlotter.
     """
 
-    def initialize(self):
+    def build(self):
         if not IS_MATPLOTLIB_AVAILABLE:
             gs.raise_exception(
                 "[MPLPlotter] matplotlib is not installed. Please install it with `pip install matplotlib`."
             )
-        super().initialize()
+        super().build()
 
         self.fig: plt.Figure | None = None
         self.axes: list[plt.Axes] = []

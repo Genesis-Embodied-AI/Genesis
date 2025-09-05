@@ -791,7 +791,7 @@ class Scene(RBC):
 
         # recorders
         if self._recorder_manager.has_recorders:
-            self._recorder_manager.start()
+            self._recorder_manager.build()
 
         gs.global_scene_list.add(self)
 

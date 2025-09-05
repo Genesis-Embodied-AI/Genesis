@@ -28,7 +28,9 @@ class RecorderManager:
         self._data_queues: list[queue.Queue] = []
         self._processor_threads: list[threading.Thread] = []
         self._is_recording = False
+        self._is_built = False
 
+    @gs.assert_unbuilt
     def add_recorder(self, data_func: Callable, rec_options: "RecorderOptions"):
         """
         Automatically read and process data. See RecorderOptions for more details.
@@ -44,18 +46,14 @@ class RecorderManager:
         rec_options.validate()
         self._recorders.append(RecorderManager.RECORDER_TYPES_MAP[type(rec_options)](self, rec_options))
 
-    def start(self):
+    @gs.assert_unbuilt
+    def build(self):
         """Start data recording."""
-        if self._is_recording:
-            gs.logger.warning("[DataRecorder] Ignoring start(): data recording is already active.")
-        else:
-            self._start()
-
-    def _start(self):
         for recorder in self._recorders:
-            recorder.initialize()
-            recorder._initialized = True
+            recorder.build()
+            recorder._is_built = True
         self._start_threads()
+        self._is_built = True
 
     def _start_threads(self):
         self._is_recording = True  # needed to enter loop in thread
@@ -74,6 +72,7 @@ class RecorderManager:
                 self._data_queues.append(None)
                 self._processor_threads.append(None)
 
+    @gs.assert_built
     def stop(self):
         """Stop and complete data recording."""
         if not self._is_recording:
@@ -94,6 +93,7 @@ class RecorderManager:
             if recorder.run_in_thread and thread is not None:
                 thread.join()
 
+    @gs.assert_built
     def reset(self, envs_idx=None):
         self._join_threads()  # finish processing data before the reset
         for recorder in self._recorders:
@@ -109,6 +109,7 @@ class RecorderManager:
     def destroy(self):
         self._clear()
 
+    @gs.assert_built
     def step(self, global_step: int):
         """
         Increment the step count and process data from each recording configuration.
@@ -171,6 +172,10 @@ class RecorderManager:
     @property
     def has_recorders(self) -> bool:
         return len(self._recorders) > 0
+
+    @property
+    def is_built(self) -> bool:
+        return self._is_built
 
 
 def register_recording(options_cls: "RecorderOptions"):
