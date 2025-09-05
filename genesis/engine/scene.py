@@ -790,8 +790,7 @@ class Scene(RBC):
             self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.profiling_options.FPS_tracker_alpha)
 
         # recorders
-        if self._recorder_manager.has_recorders:
-            self._recorder_manager.build()
+        self._recorder_manager.build()
 
         gs.global_scene_list.add(self)
 

@@ -32,7 +32,7 @@ class TensorRingBuffer:
         idx_ptr: int | ctypes.c_int = 0,
     ):
         if buffer is None:
-            self.buffer = torch.empty((N, *shape), dtype=dtype, device=gs.device)
+            self.buffer = torch.zeros((N, *shape), dtype=dtype, device=gs.device)
         else:
             assert buffer.shape == (N, *shape)
             self.buffer = buffer

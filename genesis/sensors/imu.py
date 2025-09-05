@@ -197,9 +197,6 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
             "ang_vel": (3,),
         }
 
-    def _get_cache_length(self) -> int:
-        return 1
-
     @classmethod
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
