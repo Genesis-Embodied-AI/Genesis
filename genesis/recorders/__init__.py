@@ -1,6 +1,5 @@
 from .base_recorder import Recorder, RecorderOptions
 from .file_writers import CSVFileWriterOptions as CSVFile
-from .file_writers import Cv2VideoFileWriterOptions as Cv2VideoFile
 from .file_writers import NPZFileWriterOptions as NPZFile
 from .file_writers import VideoFileWriterOptions as VideoFile
 from .plotters import MPLPlotterOptions as MPLPlot
