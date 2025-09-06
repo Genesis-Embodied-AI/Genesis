@@ -528,7 +528,10 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
     terrain_hf_shape = 1
     if collider_static_config.has_terrain:
         links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
-        entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
+        entity_idx = solver.links_info.entity_idx.to_numpy()[links_idx[0]]
+        if isinstance(entity_idx, np.ndarray):
+            entity_idx = entity_idx[0]
+        entity = solver._entities[entity_idx]
         terrain_hf_shape = entity.terrain_hf.shape
 
     kwargs = {
