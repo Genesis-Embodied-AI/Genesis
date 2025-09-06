@@ -32,7 +32,7 @@ class TensorRingBuffer:
         idx_ptr: int | ctypes.c_int = 0,
     ):
         if buffer is None:
-            self.buffer = torch.empty((N, *shape), dtype=dtype, device=gs.device)
+            self.buffer = torch.zeros((N, *shape), dtype=dtype, device=gs.device)
         else:
             assert buffer.shape == (N, *shape)
             self.buffer = buffer
@@ -54,16 +54,23 @@ class TensorRingBuffer:
         self.buffer[self._idx_ptr.value].copy_(tensor)
         self._idx_ptr.value = (self._idx_ptr.value + 1) % self.N
 
-    def at(self, idx: int) -> torch.Tensor:
+    def at(self, idx: int | torch.Tensor) -> torch.Tensor:
         """
         Get a view of the tensor at the given index.
 
         Parameters
         ----------
-        idx : int
+        idx : int | torch.Tensor
             Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
+            Can be a tensor for batched indexing.
         """
-        return self.buffer[(self._idx_ptr.value - idx) % self.N]
+        rel_idx = (self._idx_ptr.value - idx) % self.N
+        if isinstance(idx, torch.Tensor):
+            batch_size = idx.shape[0] if len(idx.shape) > 0 else 1
+            env_indices = torch.arange(batch_size, device=idx.device)
+            return self.buffer[rel_idx, env_indices]
+        else:
+            return self.buffer[rel_idx]
 
     def get(self, idx: int) -> torch.Tensor:
         """
