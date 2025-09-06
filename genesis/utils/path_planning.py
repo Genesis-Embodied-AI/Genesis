@@ -192,6 +192,7 @@ class PathPlanner(ABC):
                 obj_geom_start=obj_geom_start,
                 obj_geom_end=obj_geom_end,
                 out=out,
+                collider_state=self._solver.collider._collider_state,
             )
         return out
 
@@ -204,11 +205,13 @@ class PathPlanner(ABC):
         obj_geom_start: ti.i32,
         obj_geom_end: ti.i32,
         out: ti.types.ndarray(),
+        collider_state: array_class.ColliderState,
     ):
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
 
             collision_detected = self._func_check_collision(
+                collider_state,
                 ignore_geom_pairs,
                 i_b,
                 is_plan_with_obj=is_plan_with_obj,
@@ -220,6 +223,7 @@ class PathPlanner(ABC):
     @ti.func
     def _func_check_collision(
         self,
+        collider_state: array_class.ColliderState,
         ignore_geom_pairs: ti.types.ndarray(),
         i_b: ti.i32,
         is_plan_with_obj: ti.i32 = False,
@@ -227,13 +231,13 @@ class PathPlanner(ABC):
         obj_geom_end: ti.i32 = -1,
     ) -> ti.i32:
         is_collision_detected = ti.cast(False, gs.ti_int)
-        for i_c in range(self._solver.collider._collider_state.n_contacts[i_b]):
+        for i_c in range(collider_state.n_contacts[i_b]):
             if not is_collision_detected:
-                i_ga = self._solver.collider._collider_state.contact_data.geom_a[i_c, i_b]
-                i_gb = self._solver.collider._collider_state.contact_data.geom_b[i_c, i_b]
+                i_ga = collider_state.contact_data.geom_a[i_c, i_b]
+                i_gb = collider_state.contact_data.geom_b[i_c, i_b]
 
                 is_ignored = False
-                if self._solver.collider._collider_state.contact_data.penetration[i_c, i_b] < self.PENETRATION_EPS:
+                if collider_state.contact_data.penetration[i_c, i_b] < self.PENETRATION_EPS:
                     is_ignored = True
                 for i_p in range(ignore_geom_pairs.shape[0]):
                     if not is_ignored:
@@ -445,6 +449,7 @@ class RRT(PathPlanner):
         is_plan_with_obj: ti.i32,
         obj_geom_start: ti.i32,
         obj_geom_end: ti.i32,
+        collider_state: array_class.ColliderState,
     ):
         """
         Step 2 includes:
@@ -459,7 +464,7 @@ class RRT(PathPlanner):
                 is_collision_detected = ti.cast(False, gs.ti_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
-                        ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
+                        collider_state, ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
                     )
                 if is_collision_detected:
                     self._rrt_tree_size[i_b] -= 1
@@ -539,6 +544,7 @@ class RRT(PathPlanner):
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_step2(
+                    collider_state=self._solver.collider._collider_state,
                     ignore_geom_pairs=ignore_geom_pairs,
                     ignore_collision=ignore_collision,
                     envs_idx=envs_idx,
@@ -812,6 +818,8 @@ class RRTConnect(PathPlanner):
         is_plan_with_obj: ti.i32,
         obj_geom_start: ti.i32,
         obj_geom_end: ti.i32,
+        collider_state: array_class.ColliderState,
+        rigid_global_info: array_class.RigidGlobalInfo,
     ):
         """
         Step 2 includes:
@@ -826,7 +834,7 @@ class RRTConnect(PathPlanner):
                 is_collision_detected = ti.cast(False, gs.ti_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
-                        ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
+                        collider_state, ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
                     )
                 if is_collision_detected:
                     self._rrt_tree_size[i_b] -= 1
@@ -848,7 +856,7 @@ class RRTConnect(PathPlanner):
                         for i_q in range(self._entity.n_qs):
                             if (
                                 ti.abs(
-                                    self._solver.qpos[i_q + self._entity._q_start, i_b]
+                                    rigid_global_info.qpos[i_q + self._entity._q_start, i_b]
                                     - self._rrt_node_info.configuration[i_n, i_b][i_q]
                                 )
                                 > self._rrt_max_step_size
@@ -930,6 +938,8 @@ class RRTConnect(PathPlanner):
                 is_plan_with_obj=is_plan_with_obj,
                 obj_geom_start=obj_geom_start,
                 obj_geom_end=obj_geom_end,
+                collider_state=self._solver.collider._collider_state,
+                rigid_global_info=self._solver._rigid_global_info,
             )
             forward_pass = not forward_pass
 
