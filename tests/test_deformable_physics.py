@@ -6,6 +6,11 @@ import genesis as gs
 from .utils import assert_allclose
 
 
+pytestmark = [
+    pytest.mark.field_only,
+]
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 1, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])

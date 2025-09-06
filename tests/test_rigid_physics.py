@@ -2609,7 +2609,8 @@ def test_data_accessor(n_envs, batched, tol):
                 datas = torch.ones((*batch_shape, *spec))
         if ti_data is not None:
             true = ti_to_torch(ti_data)
-            true = true.movedim(true.ndim - getattr(ti_data, "ndim", 0) - 1, 0)
+            ti_ndim = getattr(ti_data, "ndim", len(getattr(ti_data, "element_shape", ())))
+            true = true.movedim(true.ndim - ti_ndim - 1, 0)
             if is_tuple:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]

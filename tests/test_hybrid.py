@@ -6,6 +6,11 @@ import genesis as gs
 from .utils import assert_allclose
 
 
+pytestmark = [
+    pytest.mark.field_only,
+]
+
+
 @pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     ball_pos_init = (0.8, 0.6, 0.12)

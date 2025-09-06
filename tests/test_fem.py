@@ -8,6 +8,11 @@ from genesis.utils.misc import tensor_to_array
 from .utils import assert_allclose, get_hf_dataset
 
 
+pytestmark = [
+    pytest.mark.field_only,
+]
+
+
 # Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
 @pytest.fixture(scope="function")
 def fem_material():

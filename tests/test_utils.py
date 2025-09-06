@@ -1,3 +1,4 @@
+import gc
 from unittest.mock import patch
 
 import pytest
@@ -95,6 +96,7 @@ def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
         debug = ti.cfg.debug
         ti.reset()
         ti.init(arch=ti._lib.core.Arch(arch_idx), debug=debug)
+        gc.collect()
 
 
 def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
