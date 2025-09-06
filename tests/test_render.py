@@ -490,6 +490,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert f.read() == png_snapshot
 
 
+@pytest.mark.field_only
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],

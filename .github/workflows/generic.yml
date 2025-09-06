@@ -28,9 +28,9 @@ jobs:
           - OS: "windows-cpu-4-core"
             PYTHON_VERSION: "3.12"
             GS_USE_NDARRAY: "0"
-          # - OS: "ubuntu-24.04"
-          #   PYTHON_VERSION: "3.12"
-          #   GS_USE_NDARRAY: "1"
+          - OS: "ubuntu-24.04"
+            PYTHON_VERSION: "3.12"
+            GS_USE_NDARRAY: "1"
 
     env:
       HF_HUB_DOWNLOAD_TIMEOUT: 60
