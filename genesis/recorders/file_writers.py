@@ -1,7 +1,6 @@
 import csv
 import os
 from collections import defaultdict
-from collections.abc import Iterable
 
 import cv2
 import numpy as np
@@ -9,7 +8,6 @@ import torch
 
 import genesis as gs
 from genesis.utils import tensor_to_array
-from genesis.utils.tools import animate
 
 from .base_recorder import Recorder, RecorderOptions
 from .recorder_manager import register_recording
