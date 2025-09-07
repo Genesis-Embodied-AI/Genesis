@@ -10,7 +10,7 @@ import trimesh
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 
-from .rigid_geom import RigidGeom, RigidVisGeom
+from .rigid_geom import RigidGeom, RigidVisGeom, _kernel_get_free_verts, _kernel_get_fixed_verts
 
 if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
@@ -304,12 +304,12 @@ class RigidLink(RBC):
             tensor = torch.empty(
                 self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
             )
-            self._kernel_get_free_verts(tensor)
+            _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
         else:
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-            self._kernel_get_fixed_verts(tensor)
+            _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         return tensor
 
     @gs.assert_built
@@ -317,18 +317,6 @@ class RigidLink(RBC):
         for i_g_ in range(self.n_geoms):
             i_g = i_g_ + self._geom_start
             self._solver.update_verts_for_geom(i_g)
-
-    @ti.kernel
-    def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
-        for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
-
-    @ti.kernel
-    def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
-        for i, j in ti.ndrange(self.n_verts, 3):
-            idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_vverts(self):
