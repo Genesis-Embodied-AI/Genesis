@@ -366,7 +366,7 @@ def taichi_offline_cache(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend, precision, taichi_offline_cache):
+def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_cache):
     import genesis as gs
 
     logging_level = request.config.getoption("--log-cli-level")
@@ -374,13 +374,22 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
 
     try:
         if not taichi_offline_cache:
-            os.environ["TI_OFFLINE_CACHE"] = "0"
+            monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+
+        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+        if os.environ.get("GS_USE_NDARRAY") == "1":
+            for mark in request.node.iter_markers("field_only"):
+                if not mark.args or mark.args[0]:
+                    pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
+            if os.environ.get("GS_BETA_PURE") == "1" and backend != gs.cpu and sys.platform == "darwin":
+                pytest.skip("fast cache not supported on mac gpus when using ndarray.")
 
         try:
             gs.utils.get_device(backend)
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gc.collect()
 
         if gs.backend != gs.cpu:
             device_index = gs.device.index
@@ -392,16 +401,17 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         ti_runtime = ti.lang.impl.get_runtime()
         ti_config = ti.lang.impl.current_cfg()
         if ti_config.arch == ti.metal and precision == "64":
-            gs.destroy()
             pytest.skip("Apple Metal GPU does not support 64bits precision.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
-            gs.destroy()
             pytest.skip("No GPU available on this machine")
 
         yield
     finally:
         gs.destroy()
+        # Double garbage collection is necessary after reset of taichi runtime for some reason...
+        # Failing to do so will cause spurious errors and segfault...
+        gc.collect()
         gc.collect()
 
 

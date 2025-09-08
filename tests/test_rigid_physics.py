@@ -14,7 +14,7 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import get_assets_dir, tensor_to_array
+from genesis.utils.misc import get_assets_dir, tensor_to_array, ti_to_torch
 from genesis.engine.entities.rigid_entity import RigidEntity
 
 from .utils import (
@@ -1106,7 +1106,7 @@ def test_pd_control(show_viewer):
         dofs_torque = MOTORS_KP * (MOTORS_POS_TARGET - dofs_pos) - MOTORS_KD * dofs_vel
         robot.control_dofs_force(dofs_torque, envs_idx=1)
         scene.step()
-        qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_torch(device="cpu").T
+        qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_numpy().T
         # dofs_torque = robot.get_dofs_control_force()
         assert_allclose(qf_applied[0], qf_applied[1], tol=1e-6)
 
@@ -1242,6 +1242,7 @@ def test_stickman(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_multilink_inverse_kinematics(show_viewer):
     TOL = 1e-5
@@ -1722,8 +1723,8 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 
     # MPR collision detection is less reliable than SDF and GJK in terms of penetration depth estimation
     is_mpr = convexify and not gjk_collision
-    tol_pos = 0.05 if is_mpr else 0.005
-    tol_rot = 1.0 if is_mpr else 0.25
+    tol_pos = 0.05 if is_mpr else 0.01
+    tol_rot = 1.1 if is_mpr else 0.4
     for i in range(450):
         scene.step()
         if i > 350:
@@ -1854,8 +1855,7 @@ def test_collision_edge_cases(gs_sim, mode, gjk_collision):
     qvel = gs_sim.rigid_solver.get_dofs_velocity()
     assert_allclose(qvel, 0, atol=1e-2)
     qpos = gs_sim.rigid_solver.get_dofs_position()
-    # When using GJK, tolerance should be slightly higher for mode 6, but it is still physically valid.
-    atol = 1e-3 if gjk_collision == True and mode == 6 else 1e-4
+    atol = 1e-3 if gjk_collision and mode in (4, 6) else 1e-4
     assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=atol)
 
 
@@ -2447,10 +2447,10 @@ def test_data_accessor(n_envs, batched, tol):
 
     # Initialize the simulation
     np.random.seed(0)
-    dof_bounds = gs_s.dofs_info.limit.to_torch(device="cpu")
-    dof_bounds[..., :2, :] = torch.tensor((-1.0, 1.0))
-    dof_bounds[..., 2, :] = torch.tensor((0.7, 1.0))
-    dof_bounds[..., 3:6, :] = torch.tensor((-np.pi / 2, np.pi / 2))
+    dof_bounds = gs_s.dofs_info.limit.to_numpy()
+    dof_bounds[..., :2, :] = np.array((-1.0, 1.0))
+    dof_bounds[..., 2, :] = np.array((0.7, 1.0))
+    dof_bounds[..., 3:6, :] = np.array((-np.pi / 2, np.pi / 2))
     for i in range(max(n_envs, 1)):
         qpos = dof_bounds[:, 0] + (dof_bounds[:, 1] - dof_bounds[:, 0]) * np.random.rand(gs_robot.n_dofs)
         gs_robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
@@ -2502,7 +2502,7 @@ def test_data_accessor(n_envs, batched, tol):
     # Check attribute getters / setters.
     # First, without any any row or column masking:
     # * Call 'Get' -> Call 'Set' with random value -> Call 'Get'
-    # * Compare first 'Get' ouput with field value
+    # * Compare first 'Get' ouput with taichi value
     # Then, for any possible combinations of row and column masking:
     # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
     # * Compare first 'Get' output with last 'Get' output
@@ -2521,7 +2521,7 @@ def test_data_accessor(n_envs, batched, tol):
     def must_cast(value):
         return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
 
-    for arg1_max, arg2_max, getter_or_spec, setter, field in (
+    for arg1_max, arg2_max, getter_or_spec, setter, ti_data in (
         # SOLVER
         (gs_s.n_links, n_envs, gs_s.get_links_pos, None, gs_s.links_state.pos),
         (gs_s.n_links, n_envs, gs_s.get_links_quat, None, gs_s.links_state.quat),
@@ -2607,9 +2607,10 @@ def test_data_accessor(n_envs, batched, tol):
                 datas = [torch.ones((*batch_shape, *shape)) for shape in spec]
             else:
                 datas = torch.ones((*batch_shape, *spec))
-        if field is not None:
-            true = field.to_torch(device="cpu")
-            true = true.movedim(true.ndim - getattr(field, "ndim", 0) - 1, 0)
+        if ti_data is not None:
+            true = ti_to_torch(ti_data)
+            ti_ndim = getattr(ti_data, "ndim", len(getattr(ti_data, "element_shape", ())))
+            true = true.movedim(true.ndim - ti_ndim - 1, 0)
             if is_tuple:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]

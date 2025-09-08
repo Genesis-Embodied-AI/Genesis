@@ -333,7 +333,8 @@ ALLOCATE_TENSOR_WARNING = (
     "impede performance if it occurs in the critical path of your application."
 )
 
-TI_DATA_CACHE: dict[int, "FieldMetadata"] = OrderedDict()
+TI_PROG_ID: int = -1
+TI_DATA_CACHE: OrderedDict[int, "FieldMetadata"] = OrderedDict()
 MAX_CACHE_SIZE = 1000
 
 
@@ -341,10 +342,7 @@ MAX_CACHE_SIZE = 1000
 class FieldMetadata:
     ndim: int
     shape: tuple[int, ...]
-    try:
-        dtype: ti._lib.core.DataType
-    except:
-        dtype: ti._lib.core.DataTypeCxx
+    dtype: ti._lib.core.DataTypeCxx
     mapping_key: Any
 
 
@@ -365,7 +363,6 @@ def _ensure_compiled(self, *args):
             extracted.append(subkey)
         key = tuple(extracted)
         ti_data_meta.mapping_key = key
-
     instance_id = self.mapper.mapping.get(key)
     if instance_id is None:
         key = ti.lang.kernel_impl.Kernel.ensure_compiled(self, *args)
@@ -475,6 +472,16 @@ def ti_to_torch(
     Returns:
         torch.tensor: The result torch tensor.
     """
+    global TI_PROG_ID
+
+    # Clear cache if taichi runtime has been restarted
+    prog_id = id(impl.get_runtime().prog)
+    if TI_PROG_ID != prog_id:
+        TI_DATA_CACHE.clear()
+        for kernel in TO_EXT_ARR_FAST_MAP.values():
+            kernel._primal.mapper.mapping.clear()
+        TI_PROG_ID = prog_id
+
     # Get metadata
     ti_data_id = id(value)
     ti_data_meta = TI_DATA_CACHE.get(ti_data_id)
