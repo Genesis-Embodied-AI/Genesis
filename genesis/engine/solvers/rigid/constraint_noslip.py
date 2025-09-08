@@ -166,7 +166,15 @@ def kernel_noslip(
                         else:
                             constraint_state.efc_force[j_efc + 0, i_b] = mid + y
                             constraint_state.efc_force[j_efc + 1, i_b] = mid - y
-                    cost_change = func_cost_change(i_b, Ac, constraint_state.efc_force, j_efc, old_force, res, 2)
+                    cost_change = func_cost_change(
+                        i_b=i_b,
+                        Ac=Ac,
+                        force=constraint_state.efc_force,
+                        force_start=j_efc,
+                        old_force=old_force,
+                        res=res,
+                        dim=2,
+                    )
 
                     improvement -= cost_change
             improvement *= scale
@@ -259,7 +267,7 @@ def func_residual(
 def func_cost_change(
     i_b: int,
     Ac,
-    force,
+    force: array_class.V_ANNOTATION,
     force_start: int,
     old_force,
     res,
