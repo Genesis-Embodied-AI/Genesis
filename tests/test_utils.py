@@ -86,7 +86,6 @@ def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
         }
 
         np_arg = np.asarray(np.random.rand(*batch_shape, *arg_shape), dtype=np.float32)
-        tc_arg = torch.as_tensor(np_arg, dtype=torch.float32, device=gs.device)
         ti_arg = TI_TYPE_MAP[ti_type_spec](*arg_shape, dtype=ti.f32, shape=batch_shape)
         ti_arg.from_numpy(np_arg)
         assert_allclose(ti_to_torch(ti_arg), ti_arg.to_numpy(), tol=gs.EPS)
