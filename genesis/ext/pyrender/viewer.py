@@ -9,7 +9,7 @@ import threading
 from threading import Event, RLock, Semaphore, Thread
 from typing import Optional, TYPE_CHECKING
 
-import imageio
+import cv2
 import numpy as np
 import OpenGL
 from OpenGL.GL import *
@@ -1077,7 +1077,7 @@ class Viewer(pyglet.window.Window):
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)
             data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
-            imageio.imwrite(filename, data)
+            cv2.imwrite(filename, np.flip(data, axis=-1))
 
     def _record(self):
         """Save another frame for the GIF."""
