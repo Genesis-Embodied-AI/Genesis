@@ -8,6 +8,7 @@ import types
 import shutil
 import sys
 import os
+import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Type, NoReturn, Optional
@@ -333,7 +334,7 @@ ALLOCATE_TENSOR_WARNING = (
     "impede performance if it occurs in the critical path of your application."
 )
 
-TI_PROG_ID: int = -1
+TI_PROG_WEAKREF: weakref.ReferenceType | None = None
 TI_DATA_CACHE: OrderedDict[int, "FieldMetadata"] = OrderedDict()
 MAX_CACHE_SIZE = 1000
 
@@ -436,6 +437,14 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
         raise e from None
 
 
+def _destroy_callback(ref: weakref.ReferenceType):
+    global TI_PROG_WEAKREF
+    TI_DATA_CACHE.clear()
+    for kernel in TO_EXT_ARR_FAST_MAP.values():
+        kernel._primal.mapper.mapping.clear()
+    TI_PROG_WEAKREF = None
+
+
 _to_pytorch_type_fast = functools.lru_cache(maxsize=None)(to_pytorch_type)
 TO_EXT_ARR_FAST_MAP = {}
 for data_type, func in (
@@ -472,15 +481,11 @@ def ti_to_torch(
     Returns:
         torch.tensor: The result torch tensor.
     """
-    global TI_PROG_ID
+    global TI_PROG_WEAKREF
 
-    # Clear cache if taichi runtime has been restarted
-    prog_id = id(impl.get_runtime().prog)
-    if TI_PROG_ID != prog_id:
-        TI_DATA_CACHE.clear()
-        for kernel in TO_EXT_ARR_FAST_MAP.values():
-            kernel._primal.mapper.mapping.clear()
-        TI_PROG_ID = prog_id
+    # Keep track of taichi runtime to automatically clear cache if destroyed
+    if TI_PROG_WEAKREF is None:
+        TI_PROG_WEAKREF = weakref.ref(impl.get_runtime().prog, _destroy_callback)
 
     # Get metadata
     ti_data_id = id(value)
