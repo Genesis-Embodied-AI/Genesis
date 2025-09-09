@@ -686,10 +686,14 @@ def test_box_pyramid(factory_logger, request, n_cubes, solver, enable_island, n_
         logger.write(request.getfixturevalue("box_pyramid"))
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("batch_links_info", [False, True])
 @pytest.mark.parametrize("batch_joints_info", [False, True])
 @pytest.mark.parametrize("batch_dofs_info", [False, True])
 def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
+    """
+    Test if batching options (batch_links_info, batch_joints_info, batch_dofs_info) work correctly.
+    """
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             batch_links_info=batch_links_info,
