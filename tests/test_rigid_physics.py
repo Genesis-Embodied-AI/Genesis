@@ -2991,21 +2991,12 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
 
     links_info = terrain.solver.data_manager.links_info
     entity_idx = links_info.entity_idx.to_numpy()
-    if batch_links_info:
-        assert entity_idx.shape == (12, 2)
-    else:
-        assert entity_idx.shape == (12,)
+    assert entity_idx.shape == (12, 2) if batch_links_info else (12,)
 
     joints_info = terrain.solver.data_manager.joints_info
     pos = joints_info.pos.to_numpy()
-    if batch_joints_info:
-        assert pos.shape == (10, 2, 3)
-    else:
-        assert pos.shape == (10, 3)
+    assert pos.shape == (10, 2, 3) if batch_joints_info else (10, 3)
 
     dofs_info = terrain.solver.data_manager.dofs_info
     kp = dofs_info.kp.to_numpy()
-    if batch_dofs_info:
-        assert kp.shape == (9, 2)
-    else:
-        assert kp.shape == (9,)
+    assert kp.shape == (9, 2) if batch_dofs_info else (9,)
