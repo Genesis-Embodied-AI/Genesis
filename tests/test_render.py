@@ -1,3 +1,4 @@
+import io
 import itertools
 import os
 import re
@@ -9,6 +10,7 @@ import numpy as np
 import pyglet
 import pytest
 import torch
+from PIL import Image
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -857,3 +859,119 @@ def test_render_planes(tmp_path, png_snapshot, renderer):
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
             assert f.read() == png_snapshot
+
+
+@pytest.mark.field_only
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
+    CAM_RES = (640, 480)
+
+    # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
+    monkeypatch.setattr("genesis.ext.pyrender.renderer.Renderer.render_texts", lambda *args, **kwargs: None)
+
+    # Increase pixel matching tolerance.
+    # We don't care about "perfect" match here and it is changing when particules are involved.
+    png_snapshot.extension._std_err_threshold = 10.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=5e-4,
+            substeps=10,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=1e-2,
+        ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-1.0, -1.0, -0.2),
+            upper_bound=(1.0, 1.0, 1.0),
+        ),
+        sph_options=gs.options.SPHOptions(
+            lower_bound=(-0.5, -0.5, 0.0),
+            upper_bound=(0.5, 0.5, 1),
+            particle_size=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(6.0, 0.0, 4.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=40,
+            res=CAM_RES,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=True,
+            visualize_mpm_boundary=True,
+            visualize_sph_boundary=True,
+        ),
+        show_viewer=True,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=True,
+            coup_friction=0.0,
+        ),
+    )
+    cube = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.5, 0.5, 0.2),
+            size=(0.2, 0.2, 0.2),
+            euler=(30, 40, 0),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(
+            needs_coup=True,
+            coup_friction=0.0,
+        ),
+    )
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/cloth.obj",
+            scale=1.0,
+            pos=(0.5, 0.5, 0.5),
+            euler=(180.0, 0.0, 0.0),
+        ),
+        material=gs.materials.PBD.Cloth(),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.4, 0.8, 1.0),
+        ),
+    )
+    worm = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/worm/worm.obj",
+            pos=(0.3, 0.3, 0.001),
+            scale=0.1,
+            euler=(90, 0, 0),
+        ),
+        material=gs.materials.MPM.Muscle(
+            E=5e5,
+            nu=0.45,
+            rho=10000.0,
+            model="neohooken",
+            n_groups=4,
+        ),
+    )
+    liquid = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.65),
+            size=(0.4, 0.4, 0.4),
+        ),
+        material=gs.materials.SPH.Liquid(),
+        surface=gs.surfaces.Default(
+            color=(0.4, 0.8, 1.0),
+            vis_mode="particle",
+        ),
+    )
+    scene.build(n_envs=4, env_spacing=(2.0, 2.0))
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb_arr, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
+
+    img = Image.fromarray(rgb_arr)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    assert buffer.getvalue() == png_snapshot

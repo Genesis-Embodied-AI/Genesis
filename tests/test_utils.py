@@ -75,7 +75,7 @@ def test_warn_once_with_empty_message(clear_seen_fixture):
 def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
     import gstaichi as ti
 
-    for _ in range(2):
+    for _ in range(10):
         TI_TYPE_MAP = {
             ("field", "scalar"): ti.field,
             ("field", "vector"): ti.Vector.field,

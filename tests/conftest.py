@@ -409,8 +409,7 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is necessary after reset of taichi runtime for some reason...
-        # Failing to do so will cause spurious errors and segfault...
+        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 
@@ -508,6 +507,9 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
 
 
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
+    _std_err_threshold: float = IMG_STD_ERR_THR
+    _ratio_err_threshold: float = IMG_NUM_ERR_THR
+
     def matches(self, *, serialized_data, snapshot_data) -> bool:
         import numpy as np
 
@@ -519,8 +521,8 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
         img_delta = np.abs(img_arrays[1].astype(np.float32) - img_arrays[0].astype(np.float32)).astype(np.uint8)
         if (
-            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR
-            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > IMG_NUM_ERR_THR * img_delta.size
+            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
+            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
         ):
             raw_bytes = BytesIO()
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
