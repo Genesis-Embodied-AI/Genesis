@@ -409,8 +409,7 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is necessary after reset of taichi runtime for some reason...
-        # Failing to do so will cause spurious errors and segfault...
+        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 
