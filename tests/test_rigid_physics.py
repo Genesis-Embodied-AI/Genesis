@@ -982,42 +982,84 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
-def test_robot_scaling(show_viewer, tol):
-    mass = None
-    links_pos = None
-    for scale in (0.5, 1.0, 2.0):
+@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml", "urdf/go2/urdf/go2.urdf"])
+def test_robot_scale_and_dofs_armature(xml_path, tol):
+    attr_orig = {}
+    for scale in (1.0, 0.2, 5.0):
         scene = gs.Scene(
             sim_options=gs.options.SimOptions(
                 gravity=(0, 0, -10.0),
             ),
-            show_viewer=show_viewer,
+            show_viewer=False,
             show_FPS=False,
         )
-        robot = scene.add_entity(
-            gs.morphs.MJCF(
-                file="xml/franka_emika_panda/panda.xml",
-                scale=scale,
-            ),
-        )
+        morph_kwargs = dict(file=xml_path, scale=scale)
+        if xml_path.endswith(".xml"):
+            morph = gs.morphs.MJCF(**morph_kwargs)
+        else:
+            morph = gs.morphs.URDF(**morph_kwargs)
+        robot = scene.add_entity(morph)
         scene.build()
 
-        mass_ = robot.get_mass() / scale**3
-        if mass is None:
-            mass = mass_
-        assert_allclose(mass, mass_, tol=tol)
+        # Disable armature because it messes up with the mass matrix.
+        # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
+        links_invweight = robot.get_links_invweight()
+        dofs_invweight = robot.get_dofs_invweight()
+        robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+        assert torch.all(robot.get_dofs_invweight() < 1.0)
+        with pytest.raises(AssertionError):
+            assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=tol)
+        with pytest.raises(AssertionError):
+            assert_allclose(robot.get_links_invweight(), links_invweight, tol=tol)
+        robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+        links_invweight = robot.get_links_invweight()
+        dofs_invweight = robot.get_dofs_invweight()
+        qpos = np.random.rand(robot.n_dofs)
+        robot.set_dofs_position(qpos)
+        robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+        assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=gs.EPS)
+        assert_allclose(robot.get_links_invweight(), links_invweight, tol=gs.EPS)
+        scene.reset()
+        assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=gs.EPS)
+        assert_allclose(robot.get_links_invweight(), links_invweight, tol=gs.EPS)
+
+        mass = robot.get_mass() / scale**3
+        attr_orig.setdefault("mass", mass)
+        assert_allclose(mass, attr_orig["mass"], tol=tol)
+
+        inertia = ti_to_torch(scene.rigid_solver.links_info.inertial_i) / scale**5
+        attr_orig.setdefault("inertia", inertia)
+        assert_allclose(inertia, attr_orig["inertia"], tol=tol)
+
+        joint_pos = ti_to_torch(scene.rigid_solver.joints_info.pos) / scale
+        attr_orig.setdefault("joint_pos", joint_pos)
+        assert_allclose(joint_pos, attr_orig["joint_pos"], tol=tol)
+
+        links_pos = robot.get_links_pos() / scale
+        attr_orig.setdefault("links_pos", links_pos)
+        assert_allclose(links_pos, attr_orig["links_pos"], tol=tol)
+
+        # Check that links and dofs invweight are approximately valid.
+        # Note that assessing whether the value is truly correct would be quite tricky.
+        attr_orig.setdefault("links_invweight", links_invweight)
+        attr_orig.setdefault("dofs_invweight", dofs_invweight)
+        if scale > 1.0:
+            scale_ratio_min, scale_ratio_max = scale**3, scale**5
+        else:
+            scale_ratio_min, scale_ratio_max = scale**5, scale**3
+        assert torch.all(scale_ratio_min * links_invweight - tol < attr_orig["links_invweight"])
+        assert torch.all(attr_orig["links_invweight"] < scale_ratio_max * links_invweight + tol)
+        dofs_invweight = robot.get_dofs_invweight()
+        # FIXME: It is necessary to significantly increase the tolerance on gpu backend for some reason...
+        tol_ = tol if gs.backend == gs.cpu else 5e-4
+        assert torch.all(scale_ratio_min * dofs_invweight - tol_ < attr_orig["dofs_invweight"])
+        assert torch.all(attr_orig["dofs_invweight"] < scale_ratio_max * dofs_invweight + tol)
 
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-        qpos = dofs_lower_bound
-        robot.set_dofs_position(qpos)
-
-        links_pos_ = robot.get_links_pos() / scale
-        if links_pos is None:
-            links_pos = links_pos_
-        assert_allclose(links_pos, links_pos_, tol=tol)
-
+        robot.set_dofs_position(dofs_lower_bound)
         scene.step()
         qf_passive = scene.rigid_solver.dofs_state.qf_passive.to_numpy()
-        assert_allclose(qf_passive, 0, tol=tol)
+        assert_allclose(qf_passive, 0.0, tol=tol)
 
 
 @pytest.mark.required
@@ -1052,6 +1094,7 @@ def test_pd_control(show_viewer):
             substeps=1,  # This is essential to be able to emulate native PD control
         ),
         rigid_options=gs.options.RigidOptions(
+            batch_links_info=True,
             batch_dofs_info=True,
             enable_self_collision=False,
             integrator=gs.integrator.approximate_implicitfast,
@@ -1098,7 +1141,12 @@ def test_pd_control(show_viewer):
     # Must update DoF armature to emulate implicit damping for force control.
     # This is equivalent to the first-order correction term involved in implicit integration scheme,
     # in the particular case where `approximate_implicitfast` integrator is used.
-    robot.set_dofs_armature(robot.get_dofs_armature(envs_idx=1) + MOTORS_KD * scene.sim._substep_dt, envs_idx=1)
+    # Note that the low-level internal API is used because invweights must NOT be updated, otherwise
+    # the test cannot pass. This is unecessary and not recommended for practical applications.
+    # robot.set_dofs_armature(robot.get_dofs_armature(envs_idx=1) + MOTORS_KD * scene.sim._substep_dt, envs_idx=1)
+    dofs_armature = scene.rigid_solver.dofs_info.armature.to_numpy()
+    dofs_armature[:, 1] += tensor_to_array(MOTORS_KD * scene.sim._substep_dt)
+    scene.rigid_solver.dofs_info.armature.from_numpy(dofs_armature)
 
     for i in range(1000):
         dofs_pos = robot.get_qpos(envs_idx=1)
@@ -2532,7 +2580,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.links_state.mass_shift),
         (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.links_state.i_pos_shift),
         (gs_s.n_links, -1, gs_s.get_links_inertial_mass, gs_s.set_links_inertial_mass, gs_s.links_info.inertial_mass),
-        (gs_s.n_links, -1, gs_s.get_links_invweight, gs_s.set_links_invweight, gs_s.links_info.invweight),
+        (gs_s.n_links, -1, gs_s.get_links_invweight, None, gs_s.links_info.invweight),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_control_force, gs_s.control_dofs_force, None),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_force, None, gs_s.dofs_state.force),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_velocity, gs_s.set_dofs_velocity, gs_s.dofs_state.vel),
@@ -2565,7 +2613,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_robot.n_links, n_envs, (3,), gs_robot.set_COM_shift, None),
         (gs_robot.n_links, n_envs, (), gs_robot.set_friction_ratio, None),
         (gs_robot.n_links, -1, gs_robot.get_links_inertial_mass, gs_robot.set_links_inertial_mass, None),
-        (gs_robot.n_links, -1, gs_robot.get_links_invweight, gs_robot.set_links_invweight, None),
+        (gs_robot.n_links, -1, gs_robot.get_links_invweight, None, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_control_force, None, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_force, None, None),
         (gs_robot.n_dofs, n_envs, gs_robot.get_dofs_velocity, gs_robot.set_dofs_velocity, None),
