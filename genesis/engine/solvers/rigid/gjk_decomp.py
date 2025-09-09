@@ -61,14 +61,25 @@ class GJK:
         epa_max_iterations = 50
         polytope_max_faces = 6 * epa_max_iterations
 
-        self._gjk_static_config = GJK.GJKStaticConfig(
+        if rigid_solver._static_rigid_sim_config.requires_grad:
+            # For differentiable contact detection, we find multiple contact points for each pair.
+            max_contacts_per_pair = 20
+            max_contact_polygon_verts = 1
+        elif enable_mujoco_multi_contact:
             # The maximum number of contacts per pair is related to the maximum number of contact manifold vertices.
             # MuJoCo sets [max_contacts_per_pair] to 50 and [max_contact_polygon_verts] to 150, when it uses
             # multi-contact detection algorithm, assuming that the faces could have more than 4 vertices. However, we
             # set them to smaller values, because we do not expect the faces to have more than 4 vertices in most cases,
             # and we want to keep the memory usage low.
-            max_contacts_per_pair=8 if enable_mujoco_multi_contact else 1,
-            max_contact_polygon_verts=30 if enable_mujoco_multi_contact else 1,
+            max_contacts_per_pair = 8
+            max_contact_polygon_verts = 30
+        else:
+            max_contacts_per_pair = 1
+            max_contact_polygon_verts = 1
+
+        self._gjk_static_config = GJK.GJKStaticConfig(
+            max_contacts_per_pair=max_contacts_per_pair,
+            max_contact_polygon_verts=max_contact_polygon_verts,
             # Maximum number of iterations for GJK and EPA algorithms
             gjk_max_iterations=gjk_max_iterations,
             epa_max_iterations=epa_max_iterations,
@@ -110,6 +121,14 @@ class GJK:
             # for the multi-contact detection.
             contact_face_tol=gs.np_float(0.99999872),
             contact_edge_tol=gs.np_float(0.00159999931),
+            # Epsilon values for differentiable contact. [eps_boundary] denotes the maximum distance between the face
+            # and the support point in the direction of the face normal. If this distance is 0, the face is on the
+            # boundary of the Minkowski difference. For [eps_distance], the distance between the origin and the face
+            # should not exceed this eps value plus the default EPA depth. For [eps_affine], the affine coordinates
+            # of the origin's projection onto the face should not violate [0, 1] range by this eps value.
+            diff_contact_eps_boundary=gs.np_float(1e-2),
+            diff_contact_eps_distance=gs.np_float(1e-2),
+            diff_contact_eps_affine=gs.np_float(1e-2),
         )
 
         # Initialize GJK state.
@@ -1452,6 +1471,8 @@ def func_epa_insert_vertex_to_polytope(
     i_b,
     obj1_point,
     obj2_point,
+    obj1_localpos,
+    obj2_localpos,
     obj1_id,
     obj2_id,
     minkowski_point,
@@ -1462,6 +1483,8 @@ def func_epa_insert_vertex_to_polytope(
     n = gjk_state.polytope.nverts[i_b]
     gjk_state.polytope_verts.obj1[i_b, n] = obj1_point
     gjk_state.polytope_verts.obj2[i_b, n] = obj2_point
+    gjk_state.polytope_verts.local_obj1[i_b, n] = obj1_localpos
+    gjk_state.polytope_verts.local_obj2[i_b, n] = obj2_localpos
     gjk_state.polytope_verts.id1[i_b, n] = obj1_id
     gjk_state.polytope_verts.id2[i_b, n] = obj2_id
     gjk_state.polytope_verts.mink[i_b, n] = minkowski_point
@@ -1527,6 +1550,8 @@ def func_epa_init_polytope_2d(
             i_b,
             gjk_state.simplex_vertex.obj1[i_b, i],
             gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.local_obj1[i_b, i],
+            gjk_state.simplex_vertex.local_obj2[i_b, i],
             gjk_state.simplex_vertex.id1[i_b, i],
             gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
@@ -1658,6 +1683,8 @@ def func_epa_init_polytope_3d(
             i_b,
             gjk_state.simplex_vertex.obj1[i_b, i],
             gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.local_obj1[i_b, i],
+            gjk_state.simplex_vertex.local_obj2[i_b, i],
             gjk_state.simplex_vertex.id1[i_b, i],
             gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
@@ -1780,6 +1807,8 @@ def func_epa_init_polytope_4d(
             i_b,
             gjk_state.simplex_vertex.obj1[i_b, i],
             gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.local_obj1[i_b, i],
+            gjk_state.simplex_vertex.local_obj2[i_b, i],
             gjk_state.simplex_vertex.id1[i_b, i],
             gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
@@ -2059,17 +2088,18 @@ def func_triangle_affine_coords(
     m_max = gs.ti_float(0.0)
     i_x, i_y = gs.ti_int(0), gs.ti_int(0)
     absms = ti.abs(ms)
-    for i in range(3):
-        if absms[i] >= absms[(i + 1) % 3] and absms[i] >= absms[(i + 2) % 3]:
+    found_max = False
+    for i in ti.static(range(3)):
+        if (not found_max) and absms[i] >= absms[(i + 1) % 3] and absms[i] >= absms[(i + 2) % 3]:
             # Remove the i-th row
             m_max = ms[i]
             i_x, i_y = (i + 1) % 3, (i + 2) % 3
             if i == 1:
                 i_x, i_y = i_y, i_x
-            break
+            found_max = True
 
     cs = gs.ti_vec3(0.0, 0.0, 0.0)
-    for i in range(3):
+    for i in ti.static(range(3)):
         tv1, tv2 = tri_v2, tri_v3
         if i == 1:
             tv1, tv2 = tri_v3, tri_v1
@@ -3362,13 +3392,15 @@ def func_support(
     """
     support_point_obj1 = gs.ti_vec3(0, 0, 0)
     support_point_obj2 = gs.ti_vec3(0, 0, 0)
+    support_point_localpos1 = gs.ti_vec3(0, 0, 0)
+    support_point_localpos2 = gs.ti_vec3(0, 0, 0)
     support_point_id_obj1 = -1
     support_point_id_obj2 = -1
     for i in range(2):
         d = dir if i == 0 else -dir
         i_g = i_ga if i == 0 else i_gb
 
-        sp, si = support_driver(
+        sp, sp_, si = support_driver(
             geoms_state,
             geoms_info,
             verts_info,
@@ -3388,14 +3420,18 @@ def func_support(
         if i == 0:
             support_point_obj1 = sp
             support_point_id_obj1 = si
+            support_point_localpos1 = sp_
         else:
             support_point_obj2 = sp
             support_point_id_obj2 = si
+            support_point_localpos2 = sp_
     support_point_minkowski = support_point_obj1 - support_point_obj2
 
     return (
         support_point_obj1,
         support_point_obj2,
+        support_point_localpos1,
+        support_point_localpos2,
         support_point_id_obj1,
         support_point_id_obj2,
         support_point_minkowski,
@@ -3413,45 +3449,47 @@ def func_project_origin_to_plane(
     Project the origin onto the plane defined by the simplex vertices.
     """
     point, flag = gs.ti_vec3(0, 0, 0), RETURN_CODE.SUCCESS
+    finished = False
 
     d21 = v2 - v1
     d31 = v3 - v1
     d32 = v3 - v2
 
-    for i in range(3):
-        n = gs.ti_vec3(0, 0, 0)
-        v = gs.ti_vec3(0, 0, 0)
-        if i == 0:
-            # Normal = (v1 - v2) x (v3 - v2)
-            n = d32.cross(d21)
-            v = v2
-        elif i == 1:
-            # Normal = (v2 - v1) x (v3 - v1)
-            n = d21.cross(d31)
-            v = v1
-        else:
-            # Normal = (v1 - v3) x (v2 - v3)
-            n = d31.cross(d32)
-            v = v3
-        nv = n.dot(v)
-        nn = n.norm_sqr()
-        if nn == 0:
-            # Zero normal, cannot project.
-            flag = RETURN_CODE.FAIL
-            break
-        elif nn > gjk_static_config.FLOAT_MIN:
-            point = n * (nv / nn)
-            flag = RETURN_CODE.SUCCESS
-            break
-
-        # Last fallback if no valid normal was found
-        if i == 2:
-            # If the normal is still unreliable, cannot project.
-            if nn < gjk_static_config.FLOAT_MIN:
-                flag = RETURN_CODE.FAIL
+    for i in ti.static(range(3)):
+        if not finished:
+            n = gs.ti_vec3(0, 0, 0)
+            v = gs.ti_vec3(0, 0, 0)
+            if i == 0:
+                # Normal = (v1 - v2) x (v3 - v2)
+                n = d32.cross(d21)
+                v = v2
+            elif i == 1:
+                # Normal = (v2 - v1) x (v3 - v1)
+                n = d21.cross(d31)
+                v = v1
             else:
+                # Normal = (v1 - v3) x (v2 - v3)
+                n = d31.cross(d32)
+                v = v3
+            nv = n.dot(v)
+            nn = n.norm_sqr()
+            if nn == 0:
+                # Zero normal, cannot project.
+                flag = RETURN_CODE.FAIL
+                finished = True
+            elif nn > gjk_static_config.FLOAT_MIN:
                 point = n * (nv / nn)
                 flag = RETURN_CODE.SUCCESS
+                finished = True
+
+            # Last fallback if no valid normal was found
+            if (not finished) and (i == 2):
+                # If the normal is still unreliable, cannot project.
+                if nn < gjk_static_config.FLOAT_MIN:
+                    flag = RETURN_CODE.FAIL
+                else:
+                    point = n * (nv / nn)
+                    flag = RETURN_CODE.SUCCESS
 
     return point, flag
 
@@ -3615,17 +3653,18 @@ def support_driver(
     @ shrink_sphere: If True, use point and line support for sphere and capsule.
     """
     v = ti.Vector.zero(gs.ti_float, 3)
+    v_ = ti.Vector.zero(gs.ti_float, 3)
     vid = -1
 
     geom_type = geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
+        v, v_, vid = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
         v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
         v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
+        v, v_, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
             v, vid = support_field._func_support_prism(collider_state, direction, i_g, i_b)
@@ -3635,7 +3674,7 @@ def support_driver(
             geoms_state, geoms_info, verts_info, gjk_state, gjk_static_config, direction, i_g, i_b, i_o
         )
     else:
-        v, vid = support_field._func_support_world(
+        v, v_, vid = support_field._func_support_world(
             geoms_state,
             geoms_info,
             support_field_info,
@@ -3644,7 +3683,7 @@ def support_driver(
             i_g,
             i_b,
         )
-    return v, vid
+    return v, v_, vid
 
 
 @ti.func
@@ -3696,7 +3735,7 @@ def func_safe_gjk(
         dir = ti.Vector.zero(gs.ti_float, 3)
         dir[2 - i // 2] = 1.0 - 2.0 * (i % 2)
 
-        obj1, obj2, id1, id2, minkowski = func_safe_gjk_support(
+        obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
             geoms_state,
             geoms_info,
             verts_info,
@@ -3718,7 +3757,7 @@ def func_safe_gjk(
 
         # If this is not a valid vertex, fall back to a brute-force routine to find a valid vertex.
         if not valid:
-            obj1, obj2, id1, id2, minkowski, init_flag = func_search_valid_simplex_vertex(
+            obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski, init_flag = func_search_valid_simplex_vertex(
                 geoms_state,
                 geoms_info,
                 verts_info,
@@ -3739,6 +3778,8 @@ def func_safe_gjk(
 
         gjk_state.simplex_vertex.obj1[i_b, i] = obj1
         gjk_state.simplex_vertex.obj2[i_b, i] = obj2
+        gjk_state.simplex_vertex.local_obj1[i_b, i] = local_obj1
+        gjk_state.simplex_vertex.local_obj2[i_b, i] = local_obj2
         gjk_state.simplex_vertex.id1[i_b, i] = id1
         gjk_state.simplex_vertex.id2[i_b, i] = id2
         gjk_state.simplex_vertex.mink[i_b, i] = minkowski
@@ -3788,12 +3829,14 @@ def func_safe_gjk(
             if min_si != 3:
                 gjk_state.simplex_vertex.obj1[i_b, min_si] = gjk_state.simplex_vertex.obj1[i_b, 3]
                 gjk_state.simplex_vertex.obj2[i_b, min_si] = gjk_state.simplex_vertex.obj2[i_b, 3]
+                gjk_state.simplex_vertex.local_obj1[i_b, min_si] = gjk_state.simplex_vertex.local_obj1[i_b, 3]
+                gjk_state.simplex_vertex.local_obj2[i_b, min_si] = gjk_state.simplex_vertex.local_obj2[i_b, 3]
                 gjk_state.simplex_vertex.id1[i_b, min_si] = gjk_state.simplex_vertex.id1[i_b, 3]
                 gjk_state.simplex_vertex.id2[i_b, min_si] = gjk_state.simplex_vertex.id2[i_b, 3]
                 gjk_state.simplex_vertex.mink[i_b, min_si] = gjk_state.simplex_vertex.mink[i_b, 3]
 
             # Find a new candidate vertex to replace the worst vertex (which has the smallest signed distance)
-            obj1, obj2, id1, id2, minkowski = func_safe_gjk_support(
+            obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
                 geoms_state,
                 geoms_info,
                 verts_info,
@@ -3830,6 +3873,8 @@ def func_safe_gjk(
 
             gjk_state.simplex_vertex.obj1[i_b, 3] = obj1
             gjk_state.simplex_vertex.obj2[i_b, 3] = obj2
+            gjk_state.simplex_vertex.local_obj1[i_b, 3] = local_obj1
+            gjk_state.simplex_vertex.local_obj2[i_b, 3] = local_obj2
             gjk_state.simplex_vertex.id1[i_b, 3] = id1
             gjk_state.simplex_vertex.id2[i_b, 3] = id2
             gjk_state.simplex_vertex.mink[i_b, 3] = minkowski
@@ -3988,6 +4033,8 @@ def func_search_valid_simplex_vertex(
     """
     obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
     obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
+    local_obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
+    local_obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
     id1 = -1
     id2 = -1
     minkowski = gs.ti_vec3(0.0, 0.0, 0.0)
@@ -4008,13 +4055,15 @@ def func_search_valid_simplex_vertex(
             id1 = geoms_info.vert_start[i_ga] + i
             id2 = geoms_info.vert_start[i_gb] + j
             for p in range(2):
-                obj = func_get_discrete_geom_vertex(
+                obj, local_obj = func_get_discrete_geom_vertex(
                     geoms_state, geoms_info, verts_info, i_ga if p == 0 else i_gb, i_b, i if p == 0 else j
                 )
                 if p == 0:
                     obj1 = obj
+                    local_obj1 = local_obj
                 else:
                     obj2 = obj
+                    local_obj2 = local_obj
             minkowski = obj1 - obj2
 
             # Check if the new vertex is valid
@@ -4035,7 +4084,7 @@ def func_search_valid_simplex_vertex(
 
             for i in range(2):
                 d = dir if i == 0 else -dir
-                obj1, obj2, id1, id2, minkowski = func_safe_gjk_support(
+                obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
                     geoms_state,
                     geoms_info,
                     verts_info,
@@ -4057,7 +4106,7 @@ def func_search_valid_simplex_vertex(
                     flag = RETURN_CODE.SUCCESS
                     break
 
-    return obj1, obj2, id1, id2, minkowski, flag
+    return obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski, flag
 
 
 @ti.func
@@ -4092,11 +4141,11 @@ def func_get_discrete_geom_vertex(
     g_quat = geoms_state.quat[i_g, i_b]
 
     # Get the vertex position in the local frame of the geometry.
-    v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+    v_ = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
     if geom_type == gs.GEOM_TYPE.BOX:
         # For the consistency with the [func_support_box] function of [SupportField] class, we handle the box
         # vertex positions in a different way than the general mesh.
-        v = ti.Vector(
+        v_ = ti.Vector(
             [
                 (1.0 if (i_v & 1 == 1) else -1.0) * geoms_info.data[i_g][0] * 0.5,
                 (1.0 if (i_v & 2 == 2) else -1.0) * geoms_info.data[i_g][1] * 0.5,
@@ -4106,12 +4155,12 @@ def func_get_discrete_geom_vertex(
         )
     elif geom_type == gs.GEOM_TYPE.MESH:
         vert_start = geoms_info.vert_start[i_g]
-        v = verts_info.init_pos[vert_start + i_v]
+        v_ = verts_info.init_pos[vert_start + i_v]
 
     # Transform the vertex position to the world frame
-    v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
+    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
 
-    return v
+    return v, v_
 
 
 @ti.func
@@ -4179,6 +4228,8 @@ def func_safe_gjk_support(
     """
     obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
     obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
+    local_obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
+    local_obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
     id1 = gs.ti_int(-1)
     id2 = gs.ti_int(-1)
     mink = obj1 - obj2
@@ -4214,7 +4265,7 @@ def func_safe_gjk_support(
             d = n_dir if j == 0 else -n_dir
             i_g = i_ga if j == 0 else i_gb
 
-            sp, si = support_driver(
+            sp, local_sp, si = support_driver(
                 geoms_state,
                 geoms_info,
                 verts_info,
@@ -4233,9 +4284,11 @@ def func_safe_gjk_support(
             )
             if j == 0:
                 obj1 = sp
+                local_obj1 = local_sp
                 id1 = si
             else:
                 obj2 = sp
+                local_obj2 = local_sp
                 id2 = si
 
         mink = obj1 - obj2
@@ -4257,7 +4310,7 @@ def func_safe_gjk_support(
         if func_is_new_simplex_vertex_valid(gjk_state, gjk_static_config, i_b, id1, id2, mink):
             break
 
-    return obj1, obj2, id1, id2, mink
+    return obj1, obj2, local_obj1, local_obj2, id1, id2, mink
 
 
 @ti.func
@@ -4607,6 +4660,8 @@ def func_safe_epa_init(
             i_b,
             gjk_state.simplex_vertex.obj1[i_b, i],
             gjk_state.simplex_vertex.obj2[i_b, i],
+            gjk_state.simplex_vertex.local_obj1[i_b, i],
+            gjk_state.simplex_vertex.local_obj2[i_b, i],
             gjk_state.simplex_vertex.id1[i_b, i],
             gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
@@ -4663,6 +4718,7 @@ def func_safe_attach_face_to_polytope(
     gjk_state.polytope_faces.adj_idx[i_b, n][0] = i_a1
     gjk_state.polytope_faces.adj_idx[i_b, n][1] = i_a2
     gjk_state.polytope_faces.adj_idx[i_b, n][2] = i_a3
+    gjk_state.polytope_faces.visited[i_b, n] = 0
     gjk_state.polytope.nfaces[i_b] += 1
 
     # Compute the normal of the plane

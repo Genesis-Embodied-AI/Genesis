@@ -13,6 +13,7 @@ import genesis.utils.geom as gu
 from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.gjk_decomp as gjk
+import genesis.engine.solvers.rigid.diff_gjk_decomp as diff_gjk
 import genesis.engine.solvers.rigid.mpr_decomp as mpr
 import genesis.utils.sdf_decomp as sdf
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
@@ -91,11 +92,14 @@ class Collider:
             # multiplier k for the maximum number of contact pairs for the broad phase
             max_collision_pairs_broad_k=20,
             # maximum number of contact pairs per collision pair
-            n_contacts_per_pair=5,
+            n_contacts_per_pair=20 if self._solver._static_rigid_sim_config.requires_grad else 5,
             # maximum number of contact points for box-box collision detection
             box_MAXCONPAIR=16,
             # ccd algorithm
             ccd_algorithm=ccd_algorithm,
+            # differentiable contact tolerance
+            diff_pos_tolerance=1e-2,
+            diff_normal_tolerance=1e-2,
         )
 
     def _init_collision_fields(self) -> None:
@@ -106,7 +110,7 @@ class Collider:
 
         # Initialize [state], which stores every MUTABLE collision data.
         self._collider_state = array_class.get_collider_state(
-            self._solver, n_possible_pairs, self._collider_static_config
+            self._solver, self._solver._static_rigid_sim_config, n_possible_pairs, self._collider_static_config
         )
         # array_class.ColliderState(self._solver, n_possible_pairs, self._collider_static_config)
 
@@ -352,6 +356,18 @@ class Collider:
             self._support_field._support_field_info,
             self._support_field._support_field_static_config,
         )
+        if self._solver._static_rigid_sim_config.requires_grad:
+            # Differentiable contact position, normal, and penetration computation
+            func_narrow_phase_diff_convex_vs_convex(
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver._static_rigid_sim_config,
+                self._solver._static_rigid_sim_cache_key,
+                self._collider_state,
+                self._collider_info,
+                self._gjk._gjk_state,
+                self._gjk._gjk_static_config,
+            )
         func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
             self._solver.geoms_info,
@@ -579,6 +595,8 @@ def kernel_collider_clear(
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
         else:
             collider_state.n_contacts[i_b] = 0
+            if ti.static(static_rigid_sim_config.requires_grad):
+                collider_state.n_diff_contacts[i_b] = 0
 
 
 @gs.maybe_pure
@@ -966,7 +984,9 @@ def func_contact_mpr_terrain(
     margin = gs.ti_float(0.0)
 
     is_return = False
-    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, geoms_info, geoms_init_AABB, collider_static_config)
+    tolerance = func_compute_tolerance(
+        i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
+    )
     # pos = self._solver.geoms_state[i_ga, i_b].pos - self._solver.geoms_state[i_gb, i_b].pos
     # for i in range(3):
     #     if self._solver.terrain_xyz_maxmin[i] < pos[i] - r2 - margin or \
@@ -1515,6 +1535,52 @@ def func_narrow_phase_convex_vs_convex(
 
 @gs.maybe_pure
 @ti.kernel
+def func_narrow_phase_diff_convex_vs_convex(
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
+    gjk_static_config: ti.template(),
+):
+    # Compute reference contacts
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(collider_state.active_buffer.shape[1]):
+        for i_c in range(collider_state.n_diff_contacts[i_b]):
+            ref_id = collider_state.diff_contact_data.ref_id[i_b, i_c]
+            is_ref = i_c == ref_id
+            i_ga = collider_state.diff_contact_data.geom_a[i_b, i_c]
+            i_gb = collider_state.diff_contact_data.geom_b[i_b, i_c]
+
+            ref_penetration = -1.0
+            if not is_ref:
+                ref_penetration = collider_state.diff_contact_data.ref_penetration[i_b, ref_id]
+
+            contact_pos, contact_normal, penetration, weight, flag = diff_gjk.func_differentiable_contact(
+                geoms_state, collider_state.diff_contact_data, gjk_static_config, i_ga, i_gb, i_b, i_c, ref_penetration
+            )
+
+            if is_ref:
+                collider_state.diff_contact_data.ref_penetration[i_b, i_c] = penetration
+
+            func_add_contact(
+                i_ga,
+                i_gb,
+                contact_normal,
+                contact_pos,
+                penetration * weight,
+                i_b,
+                geoms_state,
+                geoms_info,
+                collider_state,
+                collider_info,
+            )
+
+
+@gs.maybe_pure
+@ti.kernel
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1659,7 +1725,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                 ):
                     is_col = False
                     tolerance = func_compute_tolerance(
-                        i_ga, i_gb, i_b, geoms_info, geoms_init_AABB, collider_static_config
+                        i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
                     )
                     for i in range(2):
                         if i == 1:
@@ -1846,7 +1912,7 @@ def func_plane_box_contact(
     plane_dir = gu.ti_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _ = support_field._func_support_box(geoms_state, geoms_info, normal, i_gb, i_b)
+    v1, _, _ = support_field._func_support_box(geoms_state, geoms_info, normal, i_gb, i_b)
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:
@@ -1867,7 +1933,9 @@ def func_plane_box_contact(
         if ti.static(static_rigid_sim_config.enable_multi_contact):
             n_con = 1
             contact_pos_0 = contact_pos
-            tolerance = func_compute_tolerance(i_ga, i_gb, i_b, geoms_info, geoms_init_AABB, collider_static_config)
+            tolerance = func_compute_tolerance(
+                i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
+            )
             for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
                 if n_con < ti.static(collider_static_config.n_contacts_per_pair):
                     pos_corner = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], gb_pos, gb_quat)
@@ -1910,6 +1978,7 @@ def func_add_contact(
         # print(self._warn_msg_max_collision_pairs)
         pass
     else:
+        # print("i_ga:", i_ga, "i_gb:", i_gb, "i_c:", i_c, "normal:", normal, "contact_pos:", contact_pos, "penetration:", penetration)
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
@@ -1930,13 +1999,41 @@ def func_add_contact(
 
 
 @ti.func
+def func_add_diff_contact(
+    i_ga,
+    i_gb,
+    i_b,
+    i_d,
+    gjk_state: array_class.GJKState,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+):
+    i_c = collider_state.n_diff_contacts[i_b]
+    if i_c < collider_info._max_contact_pairs[None]:
+        collider_state.diff_contact_data.geom_a[i_b, i_c] = i_ga
+        collider_state.diff_contact_data.geom_b[i_b, i_c] = i_gb
+        collider_state.diff_contact_data.localpos1a[i_b, i_c] = gjk_state.diff_contact_data.localpos1a[i_b, i_d]
+        collider_state.diff_contact_data.localpos1b[i_b, i_c] = gjk_state.diff_contact_data.localpos1b[i_b, i_d]
+        collider_state.diff_contact_data.localpos1c[i_b, i_c] = gjk_state.diff_contact_data.localpos1c[i_b, i_d]
+        collider_state.diff_contact_data.localpos2a[i_b, i_c] = gjk_state.diff_contact_data.localpos2a[i_b, i_d]
+        collider_state.diff_contact_data.localpos2b[i_b, i_c] = gjk_state.diff_contact_data.localpos2b[i_b, i_d]
+        collider_state.diff_contact_data.localpos2c[i_b, i_c] = gjk_state.diff_contact_data.localpos2c[i_b, i_d]
+        collider_state.diff_contact_data.w_localpos1[i_b, i_c] = gjk_state.diff_contact_data.w_localpos1[i_b, i_d]
+        collider_state.diff_contact_data.w_localpos2[i_b, i_c] = gjk_state.diff_contact_data.w_localpos2[i_b, i_d]
+        collider_state.diff_contact_data.normal[i_b, i_c] = gjk_state.diff_contact_data.normal[i_b, i_d]
+        # The first contact point is the reference contact point
+        collider_state.diff_contact_data.ref_id[i_b, i_c] = i_c - i_d
+        collider_state.n_diff_contacts[i_b] = i_c + 1
+
+
+@ti.func
 def func_compute_tolerance(
     i_ga,
     i_gb,
     i_b,
+    tolerance,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    collider_static_config: ti.template(),
 ):
     # Note that the original world-aligned bounding box is used to computed the absolute tolerance from the
     # relative one. This way, it is a constant that does not depends on the orientation of the geometry, which
@@ -1948,7 +2045,7 @@ def func_compute_tolerance(
         aabb_size_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]).norm()
         aabb_size = ti.min(aabb_size_a, aabb_size_b)
 
-    return 0.5 * collider_static_config.mc_tolerance * aabb_size
+    return 0.5 * tolerance * aabb_size
 
 
 @ti.func
@@ -2064,7 +2161,13 @@ def func_convex_convex_contact(
             and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
         )
 
-        tolerance = func_compute_tolerance(i_ga, i_gb, i_b, geoms_info, geoms_init_AABB, collider_static_config)
+        tolerance = func_compute_tolerance(
+            i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
+        )
+        diff_pos_tolerance = func_compute_tolerance(
+            i_ga, i_gb, i_b, collider_static_config.diff_pos_tolerance, geoms_info, geoms_init_AABB
+        )
+        diff_normal_tolerance = collider_static_config.diff_normal_tolerance
 
         # Backup state before local perturbation
         ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
@@ -2177,53 +2280,91 @@ def func_convex_convex_contact(
                     elif ti.static(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                     ):
-                        gjk.func_gjk_contact(
-                            geoms_state,
-                            geoms_info,
-                            verts_info,
-                            faces_info,
-                            static_rigid_sim_config,
-                            collider_state,
-                            collider_static_config,
-                            gjk_state,
-                            gjk_static_config,
-                            support_field_info,
-                            support_field_static_config,
-                            i_ga,
-                            i_gb,
-                            i_b,
-                        )
+                        if ti.static(static_rigid_sim_config.requires_grad):
+                            diff_gjk.func_gjk_contact(
+                                links_state,
+                                links_info,
+                                geoms_state,
+                                geoms_info,
+                                geoms_init_AABB,
+                                verts_info,
+                                faces_info,
+                                static_rigid_sim_config,
+                                collider_state,
+                                collider_static_config,
+                                gjk_state,
+                                gjk_static_config,
+                                support_field_info,
+                                support_field_static_config,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                diff_pos_tolerance,
+                                diff_normal_tolerance,
+                            )
+                        else:
+                            gjk.func_gjk_contact(
+                                geoms_state,
+                                geoms_info,
+                                verts_info,
+                                faces_info,
+                                static_rigid_sim_config,
+                                collider_state,
+                                collider_static_config,
+                                gjk_state,
+                                gjk_static_config,
+                                support_field_info,
+                                support_field_static_config,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                            )
 
                         is_col = gjk_state.is_col[i_b] == 1
                         penetration = gjk_state.penetration[i_b]
                         n_contacts = gjk_state.n_contacts[i_b]
 
                         if is_col:
-                            if gjk_state.multi_contact_flag[i_b]:
-                                # Used MuJoCo's multi-contact algorithm to find multiple contact points. Therefore,
-                                # add the discovered contact points and stop multi-contact search.
+                            if ti.static(static_rigid_sim_config.requires_grad):
                                 for i_c in range(n_contacts):
-                                    # Ignore contact points if the number of contacts exceeds the limit.
-                                    if i_c < ti.static(collider_static_config.n_contacts_per_pair):
-                                        contact_pos = gjk_state.contact_pos[i_b, i_c]
-                                        normal = gjk_state.normal[i_b, i_c]
-                                        func_add_contact(
-                                            i_ga,
-                                            i_gb,
-                                            normal,
-                                            contact_pos,
-                                            penetration,
-                                            i_b,
-                                            geoms_state,
-                                            geoms_info,
-                                            collider_state,
-                                            collider_info,
-                                        )
-
+                                    func_add_diff_contact(
+                                        i_ga,
+                                        i_gb,
+                                        i_b,
+                                        i_c,
+                                        gjk_state,
+                                        collider_state,
+                                        collider_info,
+                                    )
                                 break
                             else:
-                                contact_pos = gjk_state.contact_pos[i_b, 0]
-                                normal = gjk_state.normal[i_b, 0]
+                                if gjk_state.multi_contact_flag[i_b]:
+                                    # Since we already found multiple contact points, add the discovered contact points
+                                    # and stop multi-contact search.
+                                    for i_c in range(n_contacts):
+                                        # Ignore contact points if the number of contacts exceeds the limit.
+                                        if i_c < ti.static(collider_static_config.n_contacts_per_pair):
+                                            contact_pos = gjk_state.contact_pos[i_b, i_c]
+                                            normal = gjk_state.normal[i_b, i_c]
+                                            if ti.static(static_rigid_sim_config.requires_grad):
+                                                penetration = gjk_state.diff_penetration[i_b, i_c]
+                                            func_add_contact(
+                                                i_ga,
+                                                i_gb,
+                                                normal,
+                                                contact_pos,
+                                                penetration,
+                                                i_b,
+                                                geoms_state,
+                                                geoms_info,
+                                                collider_state,
+                                                collider_info,
+                                            )
+
+                                    break
+                                else:
+                                    contact_pos = gjk_state.contact_pos[i_b, 0]
+                                    normal = gjk_state.normal[i_b, 0]
 
                 if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                     if try_sdf:
