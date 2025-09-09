@@ -348,12 +348,10 @@ class RasterizerContext:
     def update_tool(self, buffer_updates):
         if self.sim.tool_solver.is_active():
             for tool_entity in self.sim.tool_solver.entities:
-                pos_all = tool_entity.pos[self.sim.cur_substep_local].to_numpy() + self.scene.envs_offset
-                quat_all = tool_entity.quat[self.sim.cur_substep_local].to_numpy() + self.scene.envs_offset
+                poss = tool_entity.pos.to_numpy()[self.sim.cur_substep_local] + self.scene.envs_offset
+                quats = tool_entity.quat.to_numpy()[self.sim.cur_substep_local]
                 for idx in self.rendered_envs_idx:
-                    pos = pos_all[:, idx]
-                    quat = quat_all[:, idx]
-                    pose = gu.trans_quat_to_T(pos, quat)
+                    pose = gu.trans_quat_to_T(poss[idx], quats[idx])
                     self.set_node_pose(self.static_nodes[(idx, tool_entity.uid)], pose=pose)
 
     def set_reflection_mat(self, geom_T):

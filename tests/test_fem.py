@@ -178,7 +178,7 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
     # Verify whether surface faces in the visualizer mesh matches the surface faces of the FEM entity
     rasterizer_context = scene.visualizer.context
     static_nodes = rasterizer_context.static_nodes
-    fem_node_mesh = static_nodes[fem.uid].mesh
+    fem_node_mesh = static_nodes[(0, fem.uid)].mesh
 
     (fem_node_primitive,) = fem_node_mesh.primitives
     fem_node_vertices = fem_node_primitive.positions

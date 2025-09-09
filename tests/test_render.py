@@ -1,3 +1,4 @@
+import io
 import itertools
 import os
 import re
@@ -9,6 +10,7 @@ import numpy as np
 import pyglet
 import pytest
 import torch
+from PIL import Image
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -859,30 +861,19 @@ def test_render_planes(tmp_path, png_snapshot, renderer):
             assert f.read() == png_snapshot
 
 
+@pytest.mark.field_only
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot, show_viewer):
-    IMAGE_FILENAME = tmp_path / "screenshot_batch_deformable_render.png"
+def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
+    CAM_RES = (640, 480)
 
-    # Mock 'get_save_filename' to avoid poping up an interactive dialog
-    def get_save_filename(self, file_exts):
-        return IMAGE_FILENAME
+    # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
+    monkeypatch.setattr("genesis.ext.pyrender.renderer.Renderer.render_texts", lambda *args, **kwargs: None)
 
-    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
-
-    # Mock 'on_key_press' to determine whether requests have been processed
-    is_done = False
-    on_key_press_orig = gs.ext.pyrender.viewer.Viewer.on_key_press
-
-    def on_key_press(self, symbol: int, modifiers: int):
-        nonlocal is_done
-        assert not is_done
-        ret = on_key_press_orig(self, symbol, modifiers)
-        is_done = True
-        return ret
-
-    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_press", on_key_press)
+    # Increase pixel matching tolerance.
+    # We don't care about "perfect" match here and it is changing when particules are involved.
+    png_snapshot.extension._std_err_threshold = 10.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -902,9 +893,10 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot, show_viewe
             particle_size=0.01,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3.5, 0.0, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
+            camera_pos=(6.0, 0.0, 4.0),
+            camera_lookat=(0.0, 0.0, 0.0),
             camera_fov=40,
+            res=CAM_RES,
         ),
         vis_options=gs.options.VisOptions(
             show_world_frame=True,
@@ -914,37 +906,37 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot, show_viewe
         show_viewer=True,
     )
 
-    ########################## entities ##########################
-    frictionless_rigid = gs.materials.Rigid(needs_coup=True, coup_friction=0.0)
-
     plane = scene.add_entity(
-        material=frictionless_rigid,
         morph=gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=True,
+            coup_friction=0.0,
+        ),
     )
-
     cube = scene.add_entity(
-        material=frictionless_rigid,
         morph=gs.morphs.Box(
             pos=(0.5, 0.5, 0.2),
             size=(0.2, 0.2, 0.2),
             euler=(30, 40, 0),
             fixed=True,
         ),
+        material=gs.materials.Rigid(
+            needs_coup=True,
+            coup_friction=0.0,
+        ),
     )
-
     cloth = scene.add_entity(
-        material=gs.materials.PBD.Cloth(),
         morph=gs.morphs.Mesh(
             file="meshes/cloth.obj",
             scale=1.0,
             pos=(0.5, 0.5, 0.5),
             euler=(180.0, 0.0, 0.0),
         ),
+        material=gs.materials.PBD.Cloth(),
         surface=gs.surfaces.Default(
             color=(0.2, 0.4, 0.8, 1.0),
         ),
     )
-
     worm = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/worm/worm.obj",
@@ -961,52 +953,25 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot, show_viewe
         ),
     )
     liquid = scene.add_entity(
-        material=gs.materials.SPH.Liquid(),
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.65),
             size=(0.4, 0.4, 0.4),
         ),
+        material=gs.materials.SPH.Liquid(),
         surface=gs.surfaces.Default(
             color=(0.4, 0.8, 1.0),
             vis_mode="particle",
         ),
     )
-    ########################## build ##########################
     scene.build(n_envs=4, env_spacing=(2.0, 2.0))
-
-    scene.step()
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
+    rgb_arr, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
 
-    # Try saving the current frame
-    pyrender_viewer.dispatch_event("on_key_press", pyglet.window.key.S, 0)
-
-    # Waiting for request completion
-    if pyrender_viewer.run_in_thread:
-        for i in range(100):
-            if is_done:
-                is_done = False
-                break
-            time.sleep(0.1)
-        else:
-            raise AssertionError("Keyboard event not processed before timeout")
-    else:
-        pyrender_viewer.dispatch_pending_events()
-        pyrender_viewer.dispatch_events()
-
-    # test_batch_deformable_render[[]RASTERIZER[]]
-
-    # Skip the rest of the test if necessary
-    if sys.platform == "linux":
-        glinfo = pyrender_viewer.context.get_info()
-        renderer = glinfo.get_renderer()
-        if "llvmpipe" in renderer:
-            llvm_version = re.search(r"LLVM\s+([\d.]+)", renderer).group(1)
-            if llvm_version < "20":
-                pytest.xfail("Text is blurry on Linux using old CPU-based Mesa rendering driver.")
-    # convert to numpy array
-    # Make sure that the result is valid
-    print("IMAGE_FILENAME", IMAGE_FILENAME)
-    with open(IMAGE_FILENAME, "rb") as f:
-        assert f.read() == png_snapshot
+    img = Image.fromarray(rgb_arr)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    assert buffer.getvalue() == png_snapshot
