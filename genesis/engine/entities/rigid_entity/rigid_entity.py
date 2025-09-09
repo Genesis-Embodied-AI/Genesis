@@ -22,7 +22,7 @@ from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, tensor_to_array, ti_to_t
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
-from .rigid_geom import RigidGeom
+from .rigid_geom import RigidGeom, _kernel_get_free_verts, _kernel_get_fixed_verts
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 
@@ -446,7 +446,7 @@ class RigidEntity(Entity):
                 for j_info in links_j_infos[i_l]:
                     j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
-        # Remove the world link if "useless", i.e. free or fixed joint without any geometry attached
+        # Remove the world link if deemed "useless", i.e. fixed joint without any geometry attached
         if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
             del l_infos[0], links_j_infos[0], links_g_infos[0]
             for l_info in l_infos:
@@ -473,7 +473,8 @@ class RigidEntity(Entity):
             ):
                 if l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
                     gs.logger.debug(
-                        f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
+                        f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on "
+                        "geometry."
                     )
                 l_info["inertial_i"] = None
                 l_info["inertial_mass"] = None
@@ -483,6 +484,16 @@ class RigidEntity(Entity):
                 l_info["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in link_j_infos:
                     j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
+
+        # Check if there is something weird with the options
+        for link_j_infos in links_j_infos:
+            for j_info in link_j_infos:
+                fieldnames = ("dofs_frictionloss", "dofs_damping", "dofs_armature")
+                if not all((j_info[name] < gs.EPS).all() for name in fieldnames if name in j_info):
+                    gs.logger.warning(
+                        "Some free joint has non-zero frictionloss, damping or armature parameters. Beware it is "
+                        "non-physical."
+                    )
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.
@@ -1951,12 +1962,12 @@ class RigidEntity(Entity):
             tensor = torch.empty(
                 self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
             )
-            self._kernel_get_free_verts(tensor)
+            _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
         else:
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-            self._kernel_get_fixed_verts(tensor)
+            _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         return tensor
 
     @gs.assert_built
@@ -1964,18 +1975,6 @@ class RigidEntity(Entity):
         for i_g_ in range(self.n_geoms):
             i_g = i_g_ + self._geom_start
             self._solver.update_verts_for_geom(i_g)
-
-    @ti.kernel
-    def _kernel_get_free_verts(self, tensor: ti.types.ndarray()):
-        for i, j, b in ti.ndrange(self.n_verts, 3, self._solver._B):
-            idx_vert = i + self._verts_state_start
-            tensor[b, i, j] = self._solver.free_verts_state.pos[idx_vert, b][j]
-
-    @ti.kernel
-    def _kernel_get_fixed_verts(self, tensor: ti.types.ndarray()):
-        for i, j in ti.ndrange(self.n_verts, 3):
-            idx_vert = i + self._verts_state_start
-            tensor[i, j] = self._solver.fixed_verts_state.pos[idx_vert][j]
 
     @gs.assert_built
     def get_AABB(self):
@@ -2122,8 +2121,11 @@ class RigidEntity(Entity):
 
     @gs.assert_built
     def set_dofs_invweight(self, invweight, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
-        dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.set_dofs_invweight(invweight, dofs_idx, envs_idx, unsafe=unsafe)
+        raise DeprecationError(
+            "This method has been removed because dof invweights are supposed to be a by-product of link properties "
+            "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
+            "considering setters instead."
+        )
 
     @gs.assert_built
     def set_dofs_armature(self, armature, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
@@ -2679,8 +2681,11 @@ class RigidEntity(Entity):
 
     @gs.assert_built
     def set_links_invweight(self, invweight, links_idx_local=None, envs_idx=None, *, unsafe=False):
-        links_idx = self._get_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        self._solver.set_links_invweight(invweight, links_idx, envs_idx, unsafe=unsafe)
+        raise DeprecationError(
+            "This method has been removed because links invweights are supposed to be a by-product of link properties "
+            "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
+            "considering setters instead."
+        )
 
     @gs.assert_built
     def set_mass(self, mass):

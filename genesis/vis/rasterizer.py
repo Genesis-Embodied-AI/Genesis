@@ -1,4 +1,3 @@
-import gc
 import os
 import sys
 
@@ -162,7 +161,6 @@ class Rasterizer(RBC):
                 pass
             del self._renderer
             self._renderer = None
-            gc.collect()
 
     @property
     def viewer(self):
