@@ -164,7 +164,7 @@ class Renderer(object):
                     if isinstance(ln.light, DirectionalLight) and flags & RenderFlags.SHADOWS_DIRECTIONAL:
                         take_pass = True
                     elif isinstance(ln.light, SpotLight) and flags & RenderFlags.SHADOWS_SPOT:
-                        take_pass = False
+                        take_pass = True
                     elif isinstance(ln.light, PointLight) and flags & RenderFlags.SHADOWS_POINT:
                         take_pass = True
                     if take_pass:
