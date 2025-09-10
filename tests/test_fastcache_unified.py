@@ -8,7 +8,7 @@ import argparse
 import genesis as gs
 
 
-TEST_RAN = "test ran"
+RET_SUCCESS = 42
 
 
 def gs_static_child(args: list[str]):
@@ -63,7 +63,7 @@ def gs_static_child(args: list[str]):
         == args.expected_src_ll_cache_hit
     )
 
-    print(TEST_RAN)
+    sys.exit(RET_SUCCESS)
 
 
 @pytest.mark.required
@@ -114,7 +114,7 @@ def test_gs_static(
         env.update(env_changes)
 
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
-        if proc.returncode != 0:
+        if proc.returncode != RET_SUCCESS:
             print("============================")
             print("it", it)
             for k, v in env_changes.items():
@@ -122,8 +122,7 @@ def test_gs_static(
             print(" ".join(cmd_line))
             print("stderr", proc.stderr)
             print("stdout", proc.stdout)
-        assert proc.returncode == 0
-        assert TEST_RAN in proc.stdout
+        assert proc.returncode == RET_SUCCESS
 
 
 def gs_num_envs_child(args: list[str]):
@@ -158,7 +157,7 @@ def gs_num_envs_child(args: list[str]):
     assert kernel_step_1._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
-    print(TEST_RAN)
+    sys.exit(RET_SUCCESS)
 
 
 @pytest.mark.required
@@ -205,15 +204,14 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
         if expected_src_ll_cache_hit:
             cmd_line += ["--expected-src-ll-cache-hit"]
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
-        if proc.returncode != 0:
+        if proc.returncode != RET_SUCCESS:
             print("============================")
             print("it", it, "num_env", num_env)
             print("cmd_line", cmd_line)
             print("env", env)
             print("stderr", proc.stderr)
             print("stdout", proc.stdout)
-        assert proc.returncode == 0
-        assert TEST_RAN in proc.stdout
+        assert proc.returncode == RET_SUCCESS
 
 
 def change_scene(args: list[str]):
@@ -275,7 +273,7 @@ def change_scene(args: list[str]):
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
-    print(TEST_RAN)
+    sys.exit(RET_SUCCESS)
 
 
 @pytest.mark.required
@@ -319,11 +317,11 @@ def test_ndarray_no_compile(
         env["GS_USE_NDARRAY"] = "1"  # test ndarray
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
-        print(proc.stdout)  # needs to do this to see error messages
-        print("-" * 100)
-        print(proc.stderr)
-        assert proc.returncode == 0
-        assert TEST_RAN in proc.stdout
+        if proc.returncode != RET_SUCCESS:
+            print(proc.stdout)  # needs to do this to see error messages
+            print("-" * 100)
+            print(proc.stderr)
+        assert proc.returncode == RET_SUCCESS
 
 
 # The following lines are critical for the test to work. If they are missing, the test will
