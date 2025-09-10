@@ -920,7 +920,10 @@ class RigidSolver(Solver):
 
         if self.collider._collider_static_config.has_terrain:
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
-            entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
+            entity_idx = self.links_info.entity_idx.to_numpy()[links_idx[0]]
+            if isinstance(entity_idx, np.ndarray):
+                entity_idx = entity_idx[0]
+            entity = self._entities[entity_idx]
 
             scale = entity.terrain_scale
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
