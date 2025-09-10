@@ -8,6 +8,9 @@ import argparse
 import genesis as gs
 
 
+TEST_RAN = "test ran"
+
+
 def gs_static_child(args: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable-multi-contact", action="store_true")
@@ -57,6 +60,8 @@ def gs_static_child(args: list[str]):
         == args.expected_src_ll_cache_hit
     )
 
+    print(TEST_RAN)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize(
@@ -93,6 +98,8 @@ def test_gs_static(
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
+        assert TEST_RAN in subprocess.check_output(cmd_line, env=env).decode("utf-8")
+
 
 def gs_num_envs_child(args: list[str]):
     parser = argparse.ArgumentParser()
@@ -125,6 +132,8 @@ def gs_num_envs_child(args: list[str]):
     assert kernel_step_1._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
+
+    print(TEST_RAN)
 
 
 @pytest.mark.required
@@ -179,6 +188,7 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
             print("stderr", proc.stderr)
             print("stdout", proc.stdout)
         assert proc.returncode == 0
+        assert TEST_RAN in proc.stdout
 
 
 def change_scene(args: list[str]):
@@ -240,6 +250,8 @@ def change_scene(args: list[str]):
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
+    print(TEST_RAN)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize(
@@ -286,6 +298,7 @@ def test_ndarray_no_compile(
         print("-" * 100)
         print(proc.stderr)
         assert proc.returncode == 0
+        assert TEST_RAN in proc.stdout
 
 
 # The following lines are critical for the test to work. If they are missing, the test will
