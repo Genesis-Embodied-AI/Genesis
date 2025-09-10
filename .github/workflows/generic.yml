@@ -115,6 +115,10 @@ jobs:
         run: |
           pip install -e '.[dev]'
 
+      - name: Setup tmate session
+        if: startsWith(matrix.OS, 'windows-')
+        uses: mxschmitt/action-tmate@v3
+
       - name: Run unit tests
         run: |
           pytest -v --logical --dev --forked -m required ./tests
