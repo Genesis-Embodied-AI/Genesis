@@ -20,7 +20,10 @@ def gs_static_child(args: list[str]):
     parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.test_backend), precision="32")
+    gs.init(
+        backend=getattr(gs, args.test_backend),
+        precision="32",
+    )
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -30,10 +33,10 @@ def gs_static_child(args: list[str]):
         rigid_options=gs.options.RigidOptions(enable_multi_contact=args.enable_multi_contact),
         show_viewer=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.4, 0.4, 0.4),
             pos=(0.0, 0.0, 0.18),
@@ -44,7 +47,7 @@ def gs_static_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     gs.ti.sync()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
-    assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy() == args.expected_num_contacts
+    assert actual_contacts == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
 
     assert (
@@ -64,6 +67,13 @@ def gs_static_child(args: list[str]):
 
 
 @pytest.mark.required
+# should not affect expected_num_contacts
+@pytest.mark.parametrize("use_ndarray", [False, True])
+# should not affect expected_num_contacts
+# note that using `backend` instead of `test_backend`, breaks genesis pytest...
+@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
+# should not affect expected_num_contacts
+@pytest.mark.parametrize("enable_pure", [False, True])
 @pytest.mark.parametrize(
     "enable_multicontact,expected_num_contacts",
     [
@@ -71,11 +81,13 @@ def gs_static_child(args: list[str]):
         (True, 4),
     ],
 )
-@pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
-# note that using `backend` instead of `test_backend`, breaks genesis pytest...
-@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
 def test_gs_static(
-    enable_multicontact: bool, enable_pure: bool, test_backend: str, expected_num_contacts: int, tmp_path: pathlib.Path
+    enable_multicontact: bool,
+    expected_num_contacts: int,
+    enable_pure: bool,
+    test_backend: str,
+    use_ndarray: bool,
+    tmp_path: pathlib.Path,
 ) -> None:
     for it in range(3):
         # we iterate to make sure stuff is really being read from cache
@@ -86,19 +98,32 @@ def test_gs_static(
             "--expected-num-contacts",
             str(expected_num_contacts),
             "--expected-use-src-ll-cache",
-            "1" if enable_pure else "0",
+            "1" if enable_pure and use_ndarray else "0",
             "--expected-src-ll-cache-hit",
-            "1" if enable_pure and it > 0 else "0",
+            "1" if enable_pure and use_ndarray and it > 0 else "0",
             "--test-backend",
             test_backend,
         ]
         if enable_multicontact:
             cmd_line += ["--enable-multi-contact"]
+        env_changes = {}
+        env_changes["GS_BETA_PURE"] = "1" if enable_pure else "0"
+        env_changes["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env_changes["GS_USE_NDARRAY"] = "1" if use_ndarray else "0"
         env = dict(os.environ)
-        env["GS_BETA_PURE"] = "1" if enable_pure else "0"
-        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env.update(env_changes)
 
-        assert TEST_RAN in subprocess.check_output(cmd_line, env=env).decode("utf-8")
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
+        if proc.returncode != 0:
+            print("============================")
+            print("it", it)
+            for k, v in env_changes.items():
+                print(f"export {k}={v}")
+            print(" ".join(cmd_line))
+            print("stderr", proc.stderr)
+            print("stdout", proc.stdout)
+        assert proc.returncode == 0
+        assert TEST_RAN in proc.stdout
 
 
 def gs_num_envs_child(args: list[str]):
