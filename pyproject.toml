@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==2.2.0",
+    "gstaichi==2.2.1",
     "pydantic>=2.7.1",
     "numpy>=1.26.4",
     "trimesh",
@@ -153,7 +153,8 @@ filterwarnings = [
     "ignore::DeprecationWarning",
 ]
 markers = [
-    "benchmarks: marks benchmarks (executed independently and sequentially).",
-    "required: marks minimal test set that must pass systematically on any environment before merging.",
+    "benchmarks: benchmarks for profiling and monitoring.",
+    "required: minimal test set that must pass systematically on any environment before merging.",
+    "field_only: tests that are not compatible with gstaichi ndarrays."
 ]
 log_cli_level = "WARNING"

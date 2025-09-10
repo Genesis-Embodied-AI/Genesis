@@ -366,7 +366,7 @@ def taichi_offline_cache(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, backend, precision, taichi_offline_cache):
+def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_cache):
     import genesis as gs
 
     logging_level = request.config.getoption("--log-cli-level")
@@ -374,13 +374,22 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
 
     try:
         if not taichi_offline_cache:
-            os.environ["TI_OFFLINE_CACHE"] = "0"
+            monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+
+        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+        if os.environ.get("GS_USE_NDARRAY") == "1":
+            for mark in request.node.iter_markers("field_only"):
+                if not mark.args or mark.args[0]:
+                    pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
+            if os.environ.get("GS_BETA_PURE") == "1" and backend != gs.cpu and sys.platform == "darwin":
+                pytest.skip("fast cache not supported on mac gpus when using ndarray.")
 
         try:
             gs.utils.get_device(backend)
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gc.collect()
 
         if gs.backend != gs.cpu:
             device_index = gs.device.index
@@ -392,16 +401,16 @@ def initialize_genesis(request, backend, precision, taichi_offline_cache):
         ti_runtime = ti.lang.impl.get_runtime()
         ti_config = ti.lang.impl.current_cfg()
         if ti_config.arch == ti.metal and precision == "64":
-            gs.destroy()
             pytest.skip("Apple Metal GPU does not support 64bits precision.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
-            gs.destroy()
             pytest.skip("No GPU available on this machine")
 
         yield
     finally:
         gs.destroy()
+        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
+        gc.collect()
         gc.collect()
 
 
@@ -498,6 +507,9 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
 
 
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
+    _std_err_threshold: float = IMG_STD_ERR_THR
+    _ratio_err_threshold: float = IMG_NUM_ERR_THR
+
     def matches(self, *, serialized_data, snapshot_data) -> bool:
         import numpy as np
 
@@ -509,8 +521,8 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
         img_delta = np.abs(img_arrays[1].astype(np.float32) - img_arrays[0].astype(np.float32)).astype(np.uint8)
         if (
-            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > IMG_STD_ERR_THR
-            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > IMG_NUM_ERR_THR * img_delta.size
+            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
+            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
         ):
             raw_bytes = BytesIO()
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)

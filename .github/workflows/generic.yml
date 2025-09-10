@@ -15,21 +15,29 @@ concurrency:
 
 jobs:
   generic-cpu:
+    name: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_USE_NDARRAY == '1' && 'ndarray' || 'field' }}
+
     strategy:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
         OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
+        GS_USE_NDARRAY: ["0"]
         include:
           - OS: "windows-cpu-4-core"
             PYTHON_VERSION: "3.12"
+            GS_USE_NDARRAY: "0"
+          - OS: "ubuntu-24.04"
+            PYTHON_VERSION: "3.12"
+            GS_USE_NDARRAY: "1"
 
     env:
       HF_HUB_DOWNLOAD_TIMEOUT: 60
       FORCE_COLOR: 1
       PY_COLORS: 1
       GS_CACHE_FILE_PATH: ".cache/genesis"
+      GS_USE_NDARRAY: ${{ matrix.GS_USE_NDARRAY }}
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
       TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"

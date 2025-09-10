@@ -9,6 +9,7 @@ from trimesh.visual.color import ColorVisuals
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.constants import IMAGE_TYPE
+from genesis.utils.misc import ti_to_torch
 
 from .rasterizer_context import SegmentationColorMap
 
@@ -169,7 +170,7 @@ class GenesisGeomRetriever(GeomRetriever):
 
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_property_torch(self, num_worlds):
-        geom_rgb_torch = self.rigid_solver.vgeoms_info.color.to_torch()
+        geom_rgb_torch = ti_to_torch(self.rigid_solver.vgeoms_info.color)
         geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)
         geom_rgb_uint = (geom_rgb_int[:, 0] << 16) | (geom_rgb_int[:, 1] << 8) | geom_rgb_int[:, 2]
         geom_rgb = geom_rgb_uint.unsqueeze(0).repeat(num_worlds, 1)
@@ -183,8 +184,8 @@ class GenesisGeomRetriever(GeomRetriever):
 
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_state_torch(self):
-        geom_pos = self.rigid_solver.vgeoms_state.pos.to_torch()
-        geom_rot = self.rigid_solver.vgeoms_state.quat.to_torch()
+        geom_pos = ti_to_torch(self.rigid_solver.vgeoms_state.pos)
+        geom_rot = ti_to_torch(self.rigid_solver.vgeoms_state.quat)
         geom_pos = geom_pos.transpose(0, 1).contiguous()
         geom_rot = geom_rot.transpose(0, 1).contiguous()
         return geom_pos, geom_rot

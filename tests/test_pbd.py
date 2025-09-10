@@ -3,6 +3,11 @@ import pytest
 import genesis as gs
 
 
+pytestmark = [
+    pytest.mark.field_only,
+]
+
+
 # Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
 @pytest.fixture(scope="function")
 def pbd_material():

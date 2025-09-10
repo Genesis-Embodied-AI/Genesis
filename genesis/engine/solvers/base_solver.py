@@ -1,10 +1,12 @@
 from typing import TYPE_CHECKING
-import numpy as np
+
 import gstaichi as ti
+import numpy as np
 import torch
-from genesis.utils.misc import ti_to_torch
 
 import genesis as gs
+import genesis.utils.array_class as array_class
+from genesis.utils.misc import ti_to_torch
 from genesis.engine.entities.base_entity import Entity
 from genesis.repr_base import RBC
 
@@ -36,7 +38,7 @@ class Solver(RBC):
         if self._init_gravity is not None:
             g_np = np.asarray(self._init_gravity, dtype=gs.np_float)
             g_np = np.tile(g_np, (self._B, 1))
-            self._gravity = ti.Vector.field(3, dtype=gs.ti_float, shape=self._B)
+            self._gravity = array_class.V(dtype=gs.ti_vec3, shape=(self._B,))
             self._gravity.from_numpy(g_np)
 
     @gs.assert_built
@@ -55,13 +57,7 @@ class Solver(RBC):
             if g.ndim == 1:
                 g = np.tile(g, (len(envs_idx), 1))
             assert g.shape == (len(envs_idx), 3), "Input gravity array should match (len(envs_idx), 3)"
-            self._kernel_set_gravity(g, envs_idx)
-
-    @ti.kernel
-    def _kernel_set_gravity(self, gravity: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
-        for i_b_ in range(envs_idx.shape[0]):
-            for j in ti.static(range(3)):
-                self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
+            _kernel_set_gravity(g, envs_idx, self._gravity)
 
     def get_gravity(self, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
@@ -178,3 +174,10 @@ class Solver(RBC):
     def _repr_brief(self):
         repr_str = f"{self._repr_type()}: {self._uid}, n_entities: {self.n_entities}"
         return repr_str
+
+
+@ti.kernel
+def _kernel_set_gravity(tensor: ti.types.ndarray(), envs_idx: ti.types.ndarray(), gravity: array_class.V_ANNOTATION):
+    for i_b_ in range(envs_idx.shape[0]):
+        for j in ti.static(range(3)):
+            gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]

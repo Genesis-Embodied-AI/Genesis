@@ -238,9 +238,6 @@ class OffscreenRenderer(object):
         self._platform.delete_context()
         del self._platform
         self._platform = None
-        import gc
-
-        gc.collect()
 
     def _create(self, platform):
         if platform == "pyglet":

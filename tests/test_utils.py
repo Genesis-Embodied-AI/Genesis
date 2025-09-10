@@ -1,3 +1,4 @@
+import gc
 from unittest.mock import patch
 
 import pytest
@@ -74,7 +75,7 @@ def test_warn_once_with_empty_message(clear_seen_fixture):
 def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
     import gstaichi as ti
 
-    for _ in range(2):
+    for _ in range(10):
         TI_TYPE_MAP = {
             ("field", "scalar"): ti.field,
             ("field", "vector"): ti.Vector.field,
@@ -85,7 +86,6 @@ def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
         }
 
         np_arg = np.asarray(np.random.rand(*batch_shape, *arg_shape), dtype=np.float32)
-        tc_arg = torch.as_tensor(np_arg, dtype=torch.float32, device=gs.device)
         ti_arg = TI_TYPE_MAP[ti_type_spec](*arg_shape, dtype=ti.f32, shape=batch_shape)
         ti_arg.from_numpy(np_arg)
         assert_allclose(ti_to_torch(ti_arg), ti_arg.to_numpy(), tol=gs.EPS)
@@ -95,6 +95,7 @@ def test_ti_to_torch(ti_type_spec, batch_shape, arg_shape):
         debug = ti.cfg.debug
         ti.reset()
         ti.init(arch=ti._lib.core.Arch(arch_idx), debug=debug)
+        gc.collect()
 
 
 def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
