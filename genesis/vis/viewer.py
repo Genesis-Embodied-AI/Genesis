@@ -74,8 +74,8 @@ class Viewer(RBC):
             else:
                 all_opengl_platforms = ("native",)
         else:
-            if gs.platform == "Windows" and opengl_platform_orig == "osmesa":
-                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is not supported on Windows OS.")
+            if opengl_platform_orig == "osmesa" and gs.platform != "Linux":
+                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is only supported on Linux OS for now.")
             all_opengl_platforms = (opengl_platform_orig,)
 
         for i, platform in enumerate(all_opengl_platforms):
@@ -107,7 +107,7 @@ class Viewer(RBC):
                 break
             except OpenGL.error.Error:
                 # Invalid OpenGL context. Trying another platform if any...
-                gs.logger.debug(f"Invalid OpenGL context.")
+                gs.logger.debug("Invalid OpenGL context.")
 
                 # Clear broken OpenGL context if it went this far
                 if self._pyrender_viewer is not None:
@@ -163,6 +163,9 @@ class Viewer(RBC):
         # lock FPS
         if self._max_FPS is not None:
             self.rate.sleep()
+
+    def close_offscreen(self, render_target):
+        return self._pyrender_viewer.close_offscreen(render_target)
 
     def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
         return self._pyrender_viewer.render_offscreen(camera_node, render_target, rgb, depth, seg, normal)

@@ -242,7 +242,7 @@ def load_meshes(filename):
     meshes : list of :class:`~trimesh.base.Trimesh`
         The meshes loaded from the file.
     """
-    meshes = trimesh.load(filename)
+    meshes = trimesh.load(filename, process=False)
 
     # If we got a scene, dump the meshes
     if isinstance(meshes, trimesh.Scene):

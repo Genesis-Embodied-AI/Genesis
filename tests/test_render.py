@@ -778,8 +778,11 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
         viewer_options=gs.options.ViewerOptions(
             # Force screen-independent low-quality resolution when running unit tests for consistency
             res=(640, 480),
-            # Enable running in background thread if supported by the platform
-            run_in_thread=sys.platform == "linux",
+            # Enable running in background thread if supported by the platform.
+            # Note that windows is not supported because it would trigger the following exception if some previous tests
+            # was only using rasterizer without interactive viewer:
+            # 'EventLoop.run() must be called from the same thread that imports pyglet.app'.
+            run_in_thread=(sys.platform == "linux"),
         ),
         show_viewer=True,
     )
@@ -897,6 +900,7 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
             camera_lookat=(0.0, 0.0, 0.0),
             camera_fov=40,
             res=CAM_RES,
+            run_in_thread=(sys.platform == "linux"),
         ),
         vis_options=gs.options.VisOptions(
             show_world_frame=True,

@@ -164,7 +164,7 @@ class Renderer(object):
                     if isinstance(ln.light, DirectionalLight) and flags & RenderFlags.SHADOWS_DIRECTIONAL:
                         take_pass = True
                     elif isinstance(ln.light, SpotLight) and flags & RenderFlags.SHADOWS_SPOT:
-                        take_pass = False
+                        take_pass = True
                     elif isinstance(ln.light, PointLight) and flags & RenderFlags.SHADOWS_POINT:
                         take_pass = True
                     if take_pass:
@@ -340,12 +340,6 @@ class Renderer(object):
         self._delete_main_framebuffer()
         self._delete_shadow_framebuffer()
         self._delete_floor_framebuffer()
-
-    def __del__(self):
-        try:
-            self.delete()
-        except Exception:
-            pass
 
     ###########################################################################
     # Rendering passes
