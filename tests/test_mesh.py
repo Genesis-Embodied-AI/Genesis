@@ -326,7 +326,6 @@ def test_usd_bake(usd_file, show_viewer):
             file=usd_file,
         ),
     )
-    scene.build()
 
 
 @pytest.mark.required
@@ -355,7 +354,6 @@ def test_urdf_with_existing_glb(tmp_path, show_viewer):
             file=urdf_path,
         ),
     )
-    scene.build()
 
 
 @pytest.mark.required
@@ -406,7 +404,51 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
             file=urdf_path,
         ),
     )
-    scene.build()
+
+
+@pytest.mark.required
+def test_urdf_mesh_processing(tmp_path, show_viewer):
+    stl_file = "1707/base_link.stl"
+    asset_path = get_hf_dataset(pattern=stl_file)
+    stl_path = os.path.join(asset_path, stl_file)
+
+    urdf_path = tmp_path / "model.urdf"
+    urdf_path.write_text(
+        f"""<robot name="shoe">
+              <link name="base">
+                <visual>
+                  <geometry><mesh filename="{stl_path}"/></geometry>
+                </visual>
+              </link>
+            </robot>
+         """
+    )
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    obj = scene.add_entity(
+        gs.morphs.Mesh(
+            file=stl_path,
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+        ),
+    )
+
+    tmesh_obj_col = obj.geoms[0].mesh.trimesh
+    tmesh_obj_vis = obj.vgeoms[0].vmesh.trimesh
+    tmesh_robot_vis = robot.vgeoms[0].vmesh.trimesh
+
+    assert len(tmesh_obj_col.vertices) != len(tmesh_obj_vis.vertices)
+    assert len(tmesh_obj_vis.vertices) == len(tmesh_robot_vis.vertices)
+    assert len(tmesh_obj_vis.faces) == len(tmesh_robot_vis.faces)
+
+    tmesh = trimesh.Trimesh(vertices=tmesh_obj_vis.vertices, faces=tmesh_obj_vis.faces, process=True)
+    assert len(tmesh.vertices) != len(tmesh_obj_vis.vertices)
 
 
 @pytest.mark.required
@@ -422,7 +464,6 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
             fixed=True,
         )
     )
-    scene.build()
 
 
 @pytest.mark.required
