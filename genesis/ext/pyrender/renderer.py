@@ -341,12 +341,6 @@ class Renderer(object):
         self._delete_shadow_framebuffer()
         self._delete_floor_framebuffer()
 
-    def __del__(self):
-        try:
-            self.delete()
-        except Exception:
-            pass
-
     ###########################################################################
     # Rendering passes
     ###########################################################################

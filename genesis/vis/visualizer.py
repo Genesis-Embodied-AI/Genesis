@@ -111,12 +111,12 @@ class Visualizer(RBC):
         self.destroy()
 
     def destroy(self):
-        if self._viewer is not None:
-            self._viewer.stop()
-            self._viewer = None
         if self._rasterizer is not None:
             self._rasterizer.destroy()
             self._rasterizer = None
+        if self._viewer is not None:
+            self._viewer.stop()
+            self._viewer = None
         if self._batch_renderer is not None:
             self._batch_renderer.destroy()
             self._batch_renderer = None
