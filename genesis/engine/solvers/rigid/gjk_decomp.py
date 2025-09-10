@@ -2073,7 +2073,7 @@ def func_triangle_affine_coords(
     for i in ti.static(range(3)):
         i1, i2 = (i + 1) % 3, (i + 2) % 3
         if i == 1:
-            i1, i2 = i2, i1
+            i1, i2 = (i + 2) % 3, (i + 1) % 3
 
         ms[i] = (
             tri_v2[i1] * tri_v3[i2]
@@ -2095,26 +2095,35 @@ def func_triangle_affine_coords(
             m_max = ms[i]
             i_x, i_y = (i + 1) % 3, (i + 2) % 3
             if i == 1:
-                i_x, i_y = i_y, i_x
+                i_x, i_y = (i + 2) % 3, (i + 1) % 3
             found_max = True
 
+    # Hard coded for differentiability
     cs = gs.ti_vec3(0.0, 0.0, 0.0)
-    for i in ti.static(range(3)):
-        tv1, tv2 = tri_v2, tri_v3
-        if i == 1:
-            tv1, tv2 = tri_v3, tri_v1
-        elif i == 2:
-            tv1, tv2 = tri_v1, tri_v2
-
-        # Corresponds to the signed area of 2-simplex (triangle): (point, tv1, tv2)
-        cs[i] = (
-            point[i_x] * tv1[i_y]
-            + point[i_y] * tv2[i_x]
-            + tv1[i_x] * tv2[i_y]
-            - point[i_x] * tv2[i_y]
-            - point[i_y] * tv1[i_x]
-            - tv2[i_x] * tv1[i_y]
-        )
+    cs[0] = (
+        point[i_x] * tri_v2[i_y]
+        + point[i_y] * tri_v3[i_x]
+        + tri_v2[i_x] * tri_v3[i_y]
+        - point[i_x] * tri_v3[i_y]
+        - point[i_y] * tri_v2[i_x]
+        - tri_v3[i_x] * tri_v2[i_y]
+    )
+    cs[1] = (
+        point[i_x] * tri_v3[i_y]
+        + point[i_y] * tri_v1[i_x]
+        + tri_v3[i_x] * tri_v1[i_y]
+        - point[i_x] * tri_v1[i_y]
+        - point[i_y] * tri_v3[i_x]
+        - tri_v1[i_x] * tri_v3[i_y]
+    )
+    cs[2] = (
+        point[i_x] * tri_v1[i_y]
+        + point[i_y] * tri_v2[i_x]
+        + tri_v1[i_x] * tri_v2[i_y]
+        - point[i_x] * tri_v2[i_y]
+        - point[i_y] * tri_v1[i_x]
+        - tri_v2[i_x] * tri_v1[i_y]
+    )
 
     # Affine coordinates are computed as: [ l1, l2, l3 ] = [ C1 / m_max, C2 / m_max, C3 / m_max ]
     return cs / m_max
@@ -4793,26 +4802,39 @@ def func_plane_normal(
     d31 = v3 - v1
     d32 = v3 - v2
 
-    for i in ti.static(range(3)):
-        if not finished:
-            n = gs.ti_vec3(0.0, 0.0, 0.0)
-            if i == 0:
-                # Normal = (v1 - v2) x (v3 - v2)
-                n = d32.cross(d21)
-            elif i == 1:
-                # Normal = (v2 - v1) x (v3 - v1)
-                n = d21.cross(d31)
-            else:
-                # Normal = (v1 - v3) x (v2 - v3)
-                n = d31.cross(d32)
-            nn = n.norm()
-            if nn == 0:
-                # Zero normal, cannot project.
-                flag = RETURN_CODE.FAIL
-                finished = True
-            elif nn > gjk_static_config.FLOAT_MIN:
-                normal = n.normalized()
-                flag = RETURN_CODE.SUCCESS
-                finished = True
+    # Trial 1
+    n1 = d32.cross(d21)
+    n1_norm = n1.norm()
+    if n1_norm == 0.0:
+        flag = RETURN_CODE.FAIL
+        finished = True
+    elif n1_norm > gjk_static_config.FLOAT_MIN:
+        normal = n1.normalized()
+        flag = RETURN_CODE.SUCCESS
+        finished = True
+
+    # Trial 2
+    n2 = d21.cross(d31)
+    n2_norm = n2.norm()
+    if not finished:
+        if n2_norm == 0.0:
+            flag = RETURN_CODE.FAIL
+            finished = True
+        elif n2_norm > gjk_static_config.FLOAT_MIN:
+            normal = n2.normalized()
+            flag = RETURN_CODE.SUCCESS
+            finished = True
+
+    # Trial 3
+    n3 = d31.cross(d32)
+    n3_norm = n3.norm()
+    if not finished:
+        if n3_norm == 0.0:
+            flag = RETURN_CODE.FAIL
+            finished = True
+        elif n3_norm > gjk_static_config.FLOAT_MIN:
+            normal = n3.normalized()
+            flag = RETURN_CODE.SUCCESS
+            finished = True
 
     return normal, flag

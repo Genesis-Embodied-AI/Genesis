@@ -751,29 +751,25 @@ def func_differentiable_contact(
     proj_o, flag = GJK.func_project_origin_to_plane(gjk_static_config, mink1, mink2, mink3)
 
     if flag == GJK.RETURN_CODE.SUCCESS:
+        # FIXME: Check validity of affine coordinates
         _lambda = GJK.func_triangle_affine_coords(proj_o, mink1, mink2, mink3)
 
-        if ti.math.isnan(_lambda[0]) or ti.math.isnan(_lambda[1]) or ti.math.isnan(_lambda[2]):
-            flag = GJK.RETURN_CODE.FAIL
-        elif ti.math.isinf(_lambda[0]) or ti.math.isinf(_lambda[1]) or ti.math.isinf(_lambda[2]):
-            flag = GJK.RETURN_CODE.FAIL
-        else:
-            # Check validity of affine coordinates through reprojection
-            proj_o_lambda = mink1 * _lambda[0] + mink2 * _lambda[1] + mink3 * _lambda[2]
-            reprojection_error = (proj_o - proj_o_lambda).norm()
+        # Check validity of affine coordinates through reprojection
+        proj_o_lambda = mink1 * _lambda[0] + mink2 * _lambda[1] + mink3 * _lambda[2]
+        reprojection_error = (proj_o - proj_o_lambda).norm()
 
-            # Take into account the face magnitude, as the error is relative to the face size.
-            max_edge_len_inv = ti.rsqrt(
-                max(
-                    (mink1 - mink2).norm_sqr(),
-                    (mink2 - mink3).norm_sqr(),
-                    (mink3 - mink1).norm_sqr(),
-                    gjk_static_config.FLOAT_MIN_SQ,
-                )
+        # Take into account the face magnitude, as the error is relative to the face size.
+        max_edge_len_inv = ti.rsqrt(
+            max(
+                (mink1 - mink2).norm_sqr(),
+                (mink2 - mink3).norm_sqr(),
+                (mink3 - mink1).norm_sqr(),
+                gjk_static_config.FLOAT_MIN_SQ,
             )
-            rel_reprojection_error = reprojection_error * max_edge_len_inv
-            if rel_reprojection_error > gjk_static_config.polytope_max_reprojection_error:
-                flag = GJK.RETURN_CODE.FAIL
+        )
+        rel_reprojection_error = reprojection_error * max_edge_len_inv
+        if rel_reprojection_error > gjk_static_config.polytope_max_reprojection_error:
+            flag = GJK.RETURN_CODE.FAIL
 
         if flag == GJK.RETURN_CODE.SUCCESS:
             # Point on geom 1
@@ -783,18 +779,19 @@ def func_differentiable_contact(
 
             # Contact position, normal, and penetration depth
             contact_pos = 0.5 * (w1 + w2)
-            contact_normal = w2 - w1
-            penetration = contact_normal.norm()
+            contact_normal_0 = w2 - w1
+            penetration = contact_normal_0.norm()
             if penetration > gjk_static_config.FLOAT_MIN:
-                contact_normal = contact_normal / penetration
+                contact_normal = contact_normal_0.normalized()
 
                 # Compute weight for the penetration depth ---> Differentiable
                 # Boundary weight: Compute boundary signed distance to the face
                 _normal, flag = GJK.func_plane_normal(gjk_static_config, mink1, mink2, mink3)
 
                 if flag == GJK.RETURN_CODE.SUCCESS:
+                    face_normal = _normal
                     if _normal.dot(ref_normal) < 0.0:
-                        _normal = -_normal
+                        face_normal = -_normal
 
                     face_center = (mink1 + mink2 + mink3) / 3.0
 
@@ -802,7 +799,7 @@ def func_differentiable_contact(
                     w_pos2 = gu.ti_transform_by_trans_quat(w_localpos2, trans2, quat2)
                     w = w_pos1 - w_pos2
 
-                    bsdist = ti.max(w.dot(_normal) - face_center.dot(_normal), 0.0)
+                    bsdist = ti.max(w.dot(face_normal) - face_center.dot(face_normal), 0.0)
                     boundary_weight = 1.0 - ti.math.clamp(bsdist / eps_B, 0.0, 1.0)
 
                     # Distance weight
@@ -810,11 +807,13 @@ def func_differentiable_contact(
                     if ref_penetration >= 0.0:
                         distance_weight = 1.0 - ti.math.clamp((penetration - ref_penetration) / eps_D, 0.0, 1.0)
 
-                    # Affine weight
-                    affine_weight_0 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[0], _lambda[0] - 1.0) / eps_A, 0.0, 1.0)
-                    affine_weight_1 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[1], _lambda[1] - 1.0) / eps_A, 0.0, 1.0)
-                    affine_weight_2 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[2], _lambda[2] - 1.0) / eps_A, 0.0, 1.0)
-                    affine_weight = (affine_weight_0 + affine_weight_1 + affine_weight_2) / 3.0
+                    # Affine weight: Theoretically we need this, but in practice it could cause instability
+                    # FIXME: Can we stabilize it?
+                    # affine_weight_0 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[0], _lambda[0] - 1.0) / eps_A, 0.0, 1.0)
+                    # affine_weight_1 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[1], _lambda[1] - 1.0) / eps_A, 0.0, 1.0)
+                    # affine_weight_2 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[2], _lambda[2] - 1.0) / eps_A, 0.0, 1.0)
+                    # affine_weight = (affine_weight_0 + affine_weight_1 + affine_weight_2) / 3.0
+                    affine_weight = 1.0
 
                     # Compute final weight
                     weight = affine_weight * distance_weight * boundary_weight

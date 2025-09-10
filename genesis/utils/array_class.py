@@ -1672,9 +1672,10 @@ class StructGeomsState:
 
 def get_geoms_state(solver):
     shape = solver._batch_shape(solver.n_geoms_)
+    requires_grad = solver._static_rigid_sim_config.requires_grad
     kwargs = {
-        "pos": V(dtype=gs.ti_vec3, shape=shape),
-        "quat": V(dtype=gs.ti_vec4, shape=shape),
+        "pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
         "aabb_min": V(dtype=gs.ti_vec3, shape=shape),
         "aabb_max": V(dtype=gs.ti_vec3, shape=shape),
         "verts_updated": V(dtype=gs.ti_int, shape=shape),
