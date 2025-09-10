@@ -1290,8 +1290,8 @@ class Viewer(pyglet.window.Window):
         # Run the entire rendering pipeline once, to make sure that everything is fine.
         try:
             self.refresh()
-        except OpenGL.error.Error as e:
-            # Invalid OpenGL context. Closing before anything else.
+        except (OpenGL.error.Error, RuntimeError) as e:
+            # Invalid OpenGL context and crossing threading boundaries. Closing before anything else.
             self.on_close()
 
             if self._run_in_thread:

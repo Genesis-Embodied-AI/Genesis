@@ -107,7 +107,7 @@ class Viewer(RBC):
                 break
             except OpenGL.error.Error:
                 # Invalid OpenGL context. Trying another platform if any...
-                gs.logger.debug(f"Invalid OpenGL context.")
+                gs.logger.debug("Invalid OpenGL context.")
 
                 # Clear broken OpenGL context if it went this far
                 if self._pyrender_viewer is not None:
