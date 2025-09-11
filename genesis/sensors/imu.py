@@ -48,17 +48,17 @@ def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) ->
     return full_tuple
 
 
-def _view_metadata_as_acc_gyro(metadata_tensor_flat: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def _view_metadata_as_acc_gyro(metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Get views of the metadata tensor (B, n_imus * 6) as a tuple of acc and gyro metadata tensors (B, n_imus * 3).
     """
-    batch_shape, n_data = metadata_tensor_flat.shape[:-1], metadata_tensor_flat.shape[-1]
+    batch_shape, n_data = metadata_tensor.shape[:-1], metadata_tensor.shape[-1]
     n_imus = n_data // 6
-    metadata_tensor = metadata_tensor_flat.reshape((*batch_shape, n_imus, 2, 3))
+    metadata_tensor_per_sensor = metadata_tensor.reshape((*batch_shape, n_imus, 2, 3))
 
     return (
-        metadata_tensor[..., 0, :].reshape(*batch_shape, n_imus * 3),
-        metadata_tensor[..., 1, :].reshape(*batch_shape, n_imus * 3),
+        metadata_tensor_per_sensor[..., 0, :].reshape(*batch_shape, n_imus * 3),
+        metadata_tensor_per_sensor[..., 1, :].reshape(*batch_shape, n_imus * 3),
     )
 
 

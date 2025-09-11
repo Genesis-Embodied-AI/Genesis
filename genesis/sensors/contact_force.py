@@ -291,7 +291,9 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
             shared_metadata.interpolate,
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        reshaped_cache = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
-        reshaped_cache.clamp_(max=shared_metadata.max_force)  # clip for max force
-        reshaped_cache[reshaped_cache < shared_metadata.min_force] = 0.0  # set to 0 for undetectable force
+        shared_cache_per_sensor = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
+        # clip for max force
+        shared_cache_per_sensor.clamp_(max=shared_metadata.max_force)
+        # set to 0 for undetectable force
+        shared_cache_per_sensor[shared_cache_per_sensor < shared_metadata.min_force] = 0.0
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
