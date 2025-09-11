@@ -20,6 +20,7 @@ from genesis.options.solvers import (
     ToolOptions,
 )
 from genesis.repr_base import RBC
+from genesis.sensors import SensorManager
 
 from .entities import HybridEntity
 from .solvers.base_solver import Solver
@@ -36,7 +37,6 @@ from .solvers import (
 from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
-from genesis.sensors.sensor_manager import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -227,6 +227,9 @@ class Simulator(RBC):
         # TODO: keeping as is for now
         self.reset_grad()
         self._cur_substep_global = 0
+
+        # reset sensors state
+        self._sensor_manager.reset(envs_idx=envs_idx)
 
     def reset_grad(self):
         for solver in self._active_solvers:

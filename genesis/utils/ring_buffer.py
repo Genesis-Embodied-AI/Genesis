@@ -54,16 +54,21 @@ class TensorRingBuffer:
         self.buffer[self._idx_ptr.value].copy_(tensor)
         self._idx_ptr.value = (self._idx_ptr.value + 1) % self.N
 
-    def at(self, idx: int) -> torch.Tensor:
+    def at(self, idx: int | torch.Tensor) -> torch.Tensor:
         """
         Get a view of the tensor at the given index.
 
         Parameters
         ----------
-        idx : int
+        idx : int | torch.Tensor
             Index of the element to get, where 0 is the latest element, 1 is the second latest, etc.
+            Can be a tensor for batched indexing.
         """
-        return self.buffer[(self._idx_ptr.value - idx) % self.N]
+        rel_idx = (self._idx_ptr.value - idx) % self.N
+        if isinstance(idx, torch.Tensor):
+            batch_size = len(idx) if idx.ndim > 0 else 1
+            return self.buffer[rel_idx, :batch_size]
+        return self.buffer[rel_idx]
 
     def get(self, idx: int) -> torch.Tensor:
         """

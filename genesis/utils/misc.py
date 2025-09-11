@@ -10,8 +10,8 @@ import sys
 import os
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Any, Type, NoReturn, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, NoReturn, Optional, Type
 
 import numpy as np
 import cpuinfo
@@ -325,6 +325,39 @@ def tensor_to_array(x: torch.Tensor, dtype: Type[np.generic] | None = None) -> n
 
 def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
+
+
+def concat_with_tensor(
+    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dtype: torch.dtype | None = None, dim: int = 0
+):
+    """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
+    if not isinstance(value, torch.Tensor):
+        value = torch.tensor([value], dtype=dtype or gs.tc_float, device=gs.device)
+    if expand is not None:
+        value = value.expand(*expand)
+    if tensor.numel() == 0:
+        return value
+    return torch.cat([tensor, value], dim=dim)
+
+
+def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] = lambda: gs.tc_float):
+    """
+    Helper method to create a tensor field for dataclasses.
+
+    Parameters
+    ----------
+    shape : tuple
+        The shape of the tensor field.
+    dtype_factory : Callable[[], torch.dtype], optional
+        The factory function to create the dtype of the tensor field. Default is gs.tc_float.
+        A factory is used because gs types may not be available at the time of field creation.
+    """
+
+    def _default_factory():
+        nonlocal shape, dtype_factory
+        return torch.empty(shape, dtype=dtype_factory(), device=gs.device)
+
+    return field(default_factory=_default_factory)
 
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
