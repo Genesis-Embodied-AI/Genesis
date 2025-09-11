@@ -1,6 +1,6 @@
 import itertools
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -32,15 +32,25 @@ except ImportError:
 COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y", "w"))
 
 
+def _data_to_array(data: Any) -> np.ndarray:
+    if isinstance(data, torch.Tensor):
+        data = tensor_to_array(data)
+    return np.atleast_1d(data)
+
+
 class BasePlotterOptions(RecorderOptions):
     """
-    Base class for live visualization.
+    Base class for live line plot visualization of scalar data.
+
+    The recorded data_func should return scalar data (single scalar, a tuple of scalars, or a dict with string keys and
+    scalar or tuple of scalars as values).
 
     Parameters
     ----------
-    labels: list[str] | dict[str, list[str]] | None
-        The labels for the plot. If a dict is provided, the data should also be a dict. The keys will be used as subplot
-        titles and the values will be used as labels within each subplot.
+    labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
         The size of the window.
     history_length: int
@@ -49,7 +59,7 @@ class BasePlotterOptions(RecorderOptions):
         The title of the plot.
     """
 
-    labels: list[str] | dict[str, list[str]] | None = None
+    labels: tuple[str] | dict[str, tuple[str]] | None = None
     window_size: tuple[int, int] = (800, 600)
     history_length: int = 100
     title: str = ""
@@ -59,6 +69,7 @@ class BasePlotter(Recorder):
     """Base class for real-time plotters with shared functionality."""
 
     def build(self):
+        super().build()
         self.x_data: list[float] = []
         self.y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
@@ -87,13 +98,13 @@ class BasePlotter(Recorder):
                 # data was provided
                 self.subplot_structure = {}
                 for key, values in labels_or_data.items():
-                    values = self._data_to_array(values)
+                    values = _data_to_array(values)
                     self.subplot_structure[key] = tuple(f"{key}_{i}" for i in range(len(values)))
             else:
                 gs.raise_exception(f"[{type(self).__name__}] Unsupported input argument type: {type(labels_or_data)}")
         else:
             self.is_dict_data = False
-            if not isinstance(labels_or_data, Iterable):
+            if not isinstance(labels_or_data, Sequence):
                 labels_or_data = (labels_or_data,)
             if isinstance(labels_or_data[0], (int, float, np.number)):
                 labels_or_data = [f"data_{i}" for i in range(len(labels_or_data))]
@@ -109,10 +120,10 @@ class BasePlotter(Recorder):
             for key, values in data.items():
                 if key not in self.subplot_structure:
                     continue  # skip keys not included in subplot structure
-                values = self._data_to_array(values)
+                values = _data_to_array(values)
                 processed_data[key] = values
         else:
-            data = self._data_to_array(data)
+            data = _data_to_array(data)
             processed_data = {"main": data}
 
         # update time data
@@ -144,11 +155,6 @@ class BasePlotter(Recorder):
 
         return processed_data
 
-    def _data_to_array(self, data: Any) -> np.ndarray:
-        if isinstance(data, torch.Tensor):
-            data = tensor_to_array(data)
-        return np.atleast_1d(data)
-
 
 class PyQtPlotterOptions(BasePlotterOptions):
     """
@@ -156,9 +162,10 @@ class PyQtPlotterOptions(BasePlotterOptions):
 
     Parameters
     ----------
-    labels: list[str] | dict[str, list[str]] | None
-        The labels for the plot. If a dict is provided, the data should also be a dict. The keys will be used as subplot
-        titles and the values will be used as labels within each subplot.
+    labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
         The size of the window.
     history_length: int
@@ -260,9 +267,10 @@ class MPLPlotterOptions(BasePlotterOptions):
 
     Parameters
     ----------
-    labels: list[str] | dict[str, list[str]] | None
-        The labels for the plot. If a dict is provided, the data should also be a dict. The keys will be used as subplot
-        titles and the values will be used as labels within each subplot.
+    labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
         The size of the window.
     history_length: int

@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Sequence
 
 import gstaichi as ti
 import numpy as np
@@ -8,9 +8,10 @@ import torch
 import genesis as gs
 from genesis.engine.solvers import RigidSolver
 from genesis.utils.geom import ti_inv_transform_by_quat
-from genesis.utils.misc import concat_with_tensor
+from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 from .base_sensor import (
+    MaybeTuple3FType,
     NoisySensorMetadataMixin,
     NoisySensorMixin,
     NoisySensorOptionsMixin,
@@ -87,9 +88,7 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: RigidSolver | None = None
-    expanded_links_idx: torch.Tensor = field(
-        default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device)
-    )
+    expanded_links_idx: torch.Tensor = make_tensor_field((0, 0, 0), dtype=gs.tc_int)
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata)
@@ -154,7 +153,7 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
     min_force : float | tuple[float, float, float], optional
         The minimum detectable force per each axis. Values below this will be treated as 0. Default is 0.
     max_force : float | tuple[float, float, float], optional
-        The maximum detectable force per each axis. Values above this will be clipped. Default is infinity.
+        The maximum output force per each axis. Values above this will be clipped. Default is infinity.
     resolution : float | tuple[float, float, float], optional
         The measurement resolution of each axis of force (smallest increment of change in the sensor reading).
         Default is None, which means no quantization is applied.
@@ -176,17 +175,17 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
         If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
-    min_force: float | tuple[float, float, float] = 0.0
-    max_force: float | tuple[float, float, float] = np.inf
+    min_force: MaybeTuple3FType = 0.0
+    max_force: MaybeTuple3FType = np.inf
 
     def validate(self, scene):
         super().validate(scene)
         if not (
-            isinstance(self.min_force, float) or (isinstance(self.min_force, Iterable) and len(self.min_force) == 3)
+            isinstance(self.min_force, float) or (isinstance(self.min_force, Sequence) and len(self.min_force) == 3)
         ):
             gs.raise_exception(f"min_force must be a float or tuple of 3 floats, got: {self.min_force}")
         if not (
-            isinstance(self.max_force, float) or (isinstance(self.max_force, Iterable) and len(self.max_force) == 3)
+            isinstance(self.max_force, float) or (isinstance(self.max_force, Sequence) and len(self.max_force) == 3)
         ):
             gs.raise_exception(f"max_force must be a float or tuple of 3 floats, got: {self.max_force}")
         if np.any(np.array(self.min_force) < 0):
@@ -194,7 +193,7 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
         if np.any(np.array(self.max_force) <= np.array(self.min_force)):
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
         if self.resolution is not None and not (
-            isinstance(self.resolution, float) or (isinstance(self.resolution, Iterable) and len(self.resolution) == 3)
+            isinstance(self.resolution, float) or (isinstance(self.resolution, Sequence) and len(self.resolution) == 3)
         ):
             gs.raise_exception(f"resolution must be a float or tuple of 3 floats, got: {self.resolution}")
 
@@ -205,7 +204,8 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
     Shared metadata for all contact force sensors.
     """
 
-    min_max_force: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    min_force: torch.Tensor = make_tensor_field((0, 3))
+    max_force: torch.Tensor = make_tensor_field((0, 3))
 
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
@@ -216,7 +216,7 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
     """
 
     def build(self):
-        if not isinstance(self._options.resolution, Iterable):
+        if not (isinstance(self._options.resolution, tuple) and len(self._options.resolution) == 3):
             self._options.resolution = tuple([self._options.resolution] * 3)
 
         super().build()
@@ -224,23 +224,19 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
-        # shape of min_max_force is (n_sensors, 2, 3)
-        min_max_force = torch.zeros((2, 3), dtype=gs.tc_float, device=gs.device)
-        min_max_force[0, :] = (
-            self._options.min_force
-            if isinstance(self._options.min_force, float)
-            else torch.tensor(self._options.min_force, dtype=gs.tc_float, device=gs.device)
+        self._shared_metadata.min_force = self._concat_with_tensor(
+            self._shared_metadata.min_force,
+            self._options.min_force if isinstance(self._options.min_force, tuple) else (self._options.min_force,) * 3,
         )
-        min_max_force[1, :] = (
-            self._options.max_force
-            if isinstance(self._options.max_force, float)
-            else torch.tensor(self._options.max_force, dtype=gs.tc_float, device=gs.device)
+        self._shared_metadata.max_force = self._concat_with_tensor(
+            self._shared_metadata.max_force,
+            self._options_value_to_tensor(self._options.max_force, (3,)),
         )
-        self._shared_metadata.min_max_force = (
-            min_max_force.unsqueeze(0)
-            if self._shared_metadata.min_max_force.numel() == 0
-            else torch.stack((self._shared_metadata.min_max_force, min_max_force))
-        )
+
+    def _options_value_to_tensor(self, value: float | Sequence[float], shape: tuple[int, ...]) -> torch.Tensor:
+        if not isinstance(value, Sequence):
+            value = [value]
+        return torch.tensor(value, dtype=gs.tc_float, device=gs.device).expand(shape)
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return (3,)
@@ -254,23 +250,25 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         cls, shared_metadata: ContactForceSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
+        force, link_a, link_b = all_contacts["force"], all_contacts["link_a"], all_contacts["link_b"]
+
         shared_ground_truth_cache.fill_(0.0)
-        if all_contacts["link_a"].shape[-1] == 0:
+        if link_a.shape[-1] == 0:
             return  # no contacts
 
         links_quat = shared_metadata.solver.get_links_quat()
         if shared_metadata.solver.n_envs == 0:
-            all_contacts["force"] = all_contacts["force"].unsqueeze(0)
-            all_contacts["link_a"] = all_contacts["link_a"].unsqueeze(0)
-            all_contacts["link_b"] = all_contacts["link_b"].unsqueeze(0)
+            force = force.unsqueeze(0)
+            link_a = link_a.unsqueeze(0)
+            link_b = link_b.unsqueeze(0)
             links_quat = links_quat.unsqueeze(0)
 
         _kernel_get_contacts_forces(
-            all_contacts["force"].contiguous(),
-            all_contacts["link_a"].contiguous(),
-            all_contacts["link_b"].contiguous(),
-            links_quat.contiguous(),
-            np.array(shared_metadata.links_idx, dtype=gs.np_int),
+            force,
+            link_a,
+            link_b,
+            links_quat,
+            shared_metadata.links_idx,
             shared_ground_truth_cache,
         )
 
@@ -283,7 +281,7 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         buffered_data: "TensorRingBuffer",
     ):
         buffered_data.append(shared_ground_truth_cache)
-        torch.normal(0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
+        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
@@ -293,6 +291,6 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         reshaped_cache = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
-        reshaped_cache.clamp_(max=shared_metadata.min_max_force[:, 1, :])  # clip for max force
-        reshaped_cache[reshaped_cache < shared_metadata.min_max_force[:, 0, :]] = 0.0  # set to 0 for undetectable force
+        reshaped_cache.clamp_(max=shared_metadata.max_force)  # clip for max force
+        reshaped_cache[reshaped_cache < shared_metadata.min_force] = 0.0  # set to 0 for undetectable force
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)

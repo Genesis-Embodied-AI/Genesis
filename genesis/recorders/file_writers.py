@@ -38,6 +38,7 @@ class BaseFileWriter(Recorder):
     """
 
     def build(self):
+        super().build()
         self.counter = 0
 
     def reset(self, envs_idx=None):

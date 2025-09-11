@@ -1,6 +1,6 @@
 import itertools
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Sequence
 
 import gstaichi as ti
 import numpy as np
@@ -12,13 +12,18 @@ from genesis.engine.solvers import RigidSolver
 from genesis.options import Options
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
-from genesis.utils.misc import concat_with_tensor
+from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
     from genesis.recorders.base_recorder import RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
 
     from .sensor_manager import SensorManager
+
+NumericType = int | float | bool
+NumericSequenceType = NumericType | Sequence[NumericType]
+Tuple3FType = tuple[float, float, float]
+MaybeTuple3FType = float | Tuple3FType
 
 
 class SensorOptions(Options):
@@ -43,7 +48,7 @@ class SensorOptions(Options):
         Validate the sensor options values before the sensor is added to the scene.
         """
         delay_hz = self.delay / scene._sim.dt
-        if not np.isclose(delay_hz, round(delay_hz), atol=1e-6):
+        if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
             gs.logger.warn(
                 f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got {self.delay}"
                 f" and {scene._sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
@@ -65,11 +70,11 @@ class Sensor(RBC):
     """
     Base class for all types of sensors.
 
-    To create a sensor, prefer using `scene.add_sensor(sensor_options)` instead of instantiating directly.
+    To create a sensor, prefer using `scene.add_sensor(sensor_options)` instead of instantiating this class directly.
 
     Note
     -----
-    The Sensor system is designed to be performant.  All sensors of the same type are updated at once and stored
+    The Sensor system is designed to be performant. All sensors of the same type are updated at once and stored
     in a cache in SensorManager. Cache size is inferred from the return format and cache length of each sensor.
     `read()` and `read_ground_truth()`, the public-facing methods of every Sensor, automatically handles indexing into
     the shared cache to return the correct data.
@@ -86,15 +91,19 @@ class Sensor(RBC):
         self._delays_ts = round(self._options.delay / self._dt)
         self._shared_metadata.delays_ts.append(self._delays_ts)
 
-        self._shape_indices: list[tuple[int, int]] = []
+        self._cache_slices: list[slice] = []
         self._return_format = self._get_return_format()
         is_return_dict = isinstance(self._return_format, dict)
-        self._return_shapes = self._return_format.values() if is_return_dict else (self._return_format,)
-        self._get_formatted_data = self._get_formatted_data_dict if is_return_dict else self._get_formatted_data_tuple
+        if is_return_dict:
+            self._return_shapes = self._return_format.values()
+            self._get_formatted_data = self._get_formatted_data_dict
+        else:
+            self._return_shapes = (self._return_format,)
+            self._get_formatted_data = self._get_formatted_data_tuple
         self._cache_size = 0
         for shape in self._return_shapes:
             data_size = np.prod(shape)
-            self._shape_indices.append((self._cache_size, self._cache_size + data_size))
+            self._cache_slices.append(slice(self._cache_size, self._cache_size + data_size))
             self._cache_size += data_size
 
         self._shared_metadata.cache_sizes.append(self._cache_size)
@@ -275,9 +284,7 @@ class Sensor(RBC):
         tensor_chunk = tensor[envs_idx].reshape((len(envs_idx), -1))
 
         for i, shape in enumerate(self._return_shapes):
-            start_idx, end_idx = self._shape_indices[i]
-
-            field_data = tensor_chunk[..., start_idx:end_idx].reshape((len(envs_idx), *shape))
+            field_data = tensor_chunk[..., self._cache_slices[i]].reshape((len(envs_idx), *shape))
 
             if self._manager._sim.n_envs == 0:
                 field_data = field_data.squeeze(0)
@@ -315,8 +322,8 @@ class RigidSensorOptionsMixin:
 
     entity_idx: int
     link_idx_local: int = 0
-    pos_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    euler_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
+    euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
     def validate(self, scene):
         super().validate(scene)
@@ -336,9 +343,9 @@ class RigidSensorMetadataMixin:
     """
 
     solver: RigidSolver | None = None
-    links_idx: list[int] = field(default_factory=list)
-    offsets_pos: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    offsets_quat: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    links_idx: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
+    offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
+    offsets_quat: torch.Tensor = make_tensor_field((0, 0, 4))
 
 
 class RigidSensorMixin:
@@ -352,7 +359,9 @@ class RigidSensorMixin:
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
-        self._shared_metadata.links_idx.append(self._options.link_idx_local + self._options.entity_idx)
+        self._shared_metadata.links_idx = concat_with_tensor(
+            self._shared_metadata.links_idx, self._options.link_idx_local + self._options.entity_idx
+        )
         self._shared_metadata.offsets_pos = concat_with_tensor(
             self._shared_metadata.offsets_pos, self._options.pos_offset
         )
@@ -410,15 +419,15 @@ class NoisySensorMetadataMixin:
     Base shared metadata class for analog sensors that are attached to a RigidEntity.
     """
 
-    resolution: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    bias: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    cur_random_walk: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    random_walk: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    cur_noise: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    noise: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    jitter_ts: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    cur_jitter_ts: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
-    delay_in_steps: torch.Tensor = field(default_factory=lambda: torch.tensor([], dtype=gs.tc_float, device=gs.device))
+    resolution: torch.Tensor = make_tensor_field((0, 0))
+    bias: torch.Tensor = make_tensor_field((0, 0))
+    cur_random_walk: torch.Tensor = make_tensor_field((0, 0))
+    random_walk: torch.Tensor = make_tensor_field((0, 0))
+    cur_noise: torch.Tensor = make_tensor_field((0, 0))
+    noise: torch.Tensor = make_tensor_field((0, 0))
+    jitter_ts: torch.Tensor = make_tensor_field((0, 0))
+    cur_jitter_ts: torch.Tensor = make_tensor_field((0, 0))
+    delay_in_steps: torch.Tensor = make_tensor_field((0, 0))
     interpolate: list[bool] = field(default_factory=list)
 
 
@@ -435,7 +444,7 @@ class NoisySensorMixin:
         )
 
     def _sanitize_for_metadata_tensor(self, input, shape, dtype) -> torch.Tensor:
-        if not isinstance(input, Iterable):
+        if not isinstance(input, Sequence):
             input = [input]
         tensor_input = torch.tensor(input, dtype=dtype, device=gs.device)
         if tensor_input.ndim == len(shape) - 1:
@@ -508,10 +517,10 @@ class NoisySensorMixin:
     @classmethod
     def _add_noise_drift_bias(cls, shared_metadata: NoisySensorMetadataMixin, output: torch.Tensor):
         if torch.any(shared_metadata.random_walk > gs.EPS):
-            shared_metadata.cur_random_walk += torch.normal(0, shared_metadata.random_walk)
+            shared_metadata.cur_random_walk += torch.normal(0.0, shared_metadata.random_walk)
             output += shared_metadata.cur_random_walk
         if torch.any(shared_metadata.noise > gs.EPS):
-            torch.normal(0, shared_metadata.noise, out=shared_metadata.cur_noise)
+            torch.normal(0.0, shared_metadata.noise, out=shared_metadata.cur_noise)
             output += shared_metadata.cur_noise
         output += shared_metadata.bias
 

@@ -48,7 +48,7 @@ class SensorManager:
 
             update_ground_truth_only = True
             for sensor in sensors:
-                update_ground_truth_only = update_ground_truth_only and sensor._options.update_ground_truth_only
+                update_ground_truth_only &= sensor._options.update_ground_truth_only
                 sensor._cache_idx = cache_size_per_dtype[dtype]
                 cache_size_per_dtype[dtype] += sensor._cache_size
                 max_buffer_len = max(max_buffer_len, sensor._delays_ts + 1)
@@ -87,11 +87,11 @@ class SensorManager:
     def reset(self, envs_idx=None):
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
         for dtype in self._buffered_data.keys():
-            self._ground_truth_cache[dtype][envs_idx, ...] = 0.0
-            self._cache[dtype][envs_idx, ...] = 0.0
-            self._buffered_data[dtype].buffer[:, envs_idx, ...] = 0.0
+            self._ground_truth_cache[dtype][envs_idx].zero_()
+            self._cache[dtype][envs_idx].zero_()
+            self._buffered_data[dtype].buffer[:, envs_idx].zero_()
         for key in self._last_cache_cloned_step.keys():
-            self._cloned_cache[key] = 0.0
+            self._cloned_cache[key].zero_()
             self._last_cache_cloned_step[key] = -1  # do not use cached data
         for sensor_cls in self._sensors_by_type.keys():
             sensor_cls.reset(self._sensors_metadata[sensor_cls], envs_idx)

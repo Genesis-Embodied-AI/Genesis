@@ -8,7 +8,7 @@ from .utils import assert_allclose, assert_array_equal
 
 
 @pytest.mark.required
-def test_imu_sensor(show_viewer):
+def test_imu_sensor(show_viewer, tol):
     """Test if the IMU sensor returns the correct data."""
     GRAVITY = -10.0
     DT = 1e-2
@@ -33,8 +33,19 @@ def test_imu_sensor(show_viewer):
         ),
     )
 
-    imu_biased = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx, acc_bias=BIAS, gyro_bias=BIAS))
-    imu_delayed = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx, delay=DT * 2))
+    imu_biased = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            acc_bias=BIAS,
+            gyro_bias=BIAS,
+        )
+    )
+    imu_delayed = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            delay=DT * 2,
+        )
+    )
     imu_noisy = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
@@ -64,17 +75,17 @@ def test_imu_sensor(show_viewer):
 
     # IMU should calculate "classical linear acceleration" using the local frame without accounting for gravity
     # acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
-    assert_allclose(imu_biased.read()["lin_acc"], BIAS, tol=1e-7)
-    assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-7)
-    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=1e-7)
-    assert_allclose(imu_delayed.read()["ang_vel"], 0.0, tol=1e-7)
+    assert_allclose(imu_biased.read()["lin_acc"], BIAS, tol=tol)
+    assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=tol)
+    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=tol)
+    assert_allclose(imu_delayed.read()["ang_vel"], 0.0, tol=tol)
     assert_allclose(imu_noisy.read()["lin_acc"], 0.0, tol=1e-1)
     assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=1e-1)
 
     # shift COM to induce angular velocity
     box.set_COM_shift(torch.tensor([[0.1, 0.1, 0.1]]))
 
-    # try updating noise and bias for accelerometer and gyroscope
+    # update noise and bias for accelerometer and gyroscope
     imu_noisy.set_acc_noise([0.01, 0.01, 0.01])
     imu_noisy.set_gyro_noise([0.02, 0.02, 0.02])
     imu_noisy.set_bias([0.01, 0.01, 0.01, 0.02, 0.02, 0.02])
@@ -88,7 +99,7 @@ def test_imu_sensor(show_viewer):
     assert_array_equal(imu_biased.read_ground_truth()["ang_vel"], imu_delayed.read_ground_truth()["ang_vel"])
 
     with np.testing.assert_raises(AssertionError, msg="Angular velocity should not be zero due to COM shift"):
-        assert_allclose(imu_biased.read_ground_truth()["ang_vel"], 0.0, tol=1e-7)
+        assert_allclose(imu_biased.read_ground_truth()["ang_vel"], 0.0, tol=tol)
 
     with np.testing.assert_raises(AssertionError, msg="Delayed data should not be equal to the ground truth data"):
         assert_array_equal(imu_delayed.read()["lin_acc"] - imu_delayed.read_ground_truth()["lin_acc"], 0.0)
@@ -99,22 +110,22 @@ def test_imu_sensor(show_viewer):
     for _ in range(80):
         scene.step()
 
-    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=1e-7)
-    assert_allclose(imu_biased.read()["lin_acc"], torch.tensor([BIAS[0], BIAS[1], BIAS[2] - GRAVITY]), tol=1e-7)
+    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=tol)
+    assert_allclose(imu_biased.read()["lin_acc"], (BIAS[0], BIAS[1], BIAS[2] - GRAVITY), tol=tol)
     assert_allclose(imu_biased.read()["ang_vel"], BIAS, tol=1e-5)
 
     scene.reset()
 
-    assert_array_equal(imu_biased.read()["lin_acc"], 0.0)  # biased, but cache hasn't been updated yet
-    assert_array_equal(imu_delayed.read()["lin_acc"], 0.0)
-    assert_array_equal(imu_noisy.read()["ang_vel"], 0.0)
+    assert_allclose(imu_biased.read()["lin_acc"], 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
+    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=gs.EPS)
+    assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=gs.EPS)
 
     scene.step()
-    assert_allclose(imu_biased.read()["lin_acc"], BIAS, tol=1e-7)
+    assert_allclose(imu_biased.read()["lin_acc"], BIAS, tol=tol)
 
 
 @pytest.mark.required
-def test_rigid_tactile_sensors_gravity_force(show_viewer):
+def test_rigid_tactile_sensors_gravity_force(show_viewer, tol):
     """Test if the sensor will detect the correct forces being applied on a falling box."""
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
@@ -140,7 +151,11 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
         material=gs.materials.Rigid(rho=1.0),  # mass = 1 kg
     )
 
-    bool_sensor = scene.add_sensor(gs.sensors.Contact(entity_idx=box.idx))
+    bool_sensor = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box.idx,
+        )
+    )
     force_sensor = scene.add_sensor(
         gs.sensors.ContactForce(
             entity_idx=box.idx,
@@ -160,9 +175,10 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
     scene.step()
 
     assert not bool_sensor.read().any(), "RigidContactSensor should not be in contact with the ground yet."
-    assert_array_equal(
+    assert_allclose(
         force_sensor.read_ground_truth(),
         0.0,
+        tol=gs.EPS,
         err_msg="RigidContactForceSensor ground truth should be zero before contact.",
     )
     assert_allclose(
@@ -178,13 +194,13 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer):
     assert bool_sensor.read().all(), "Sensor should detect contact with the ground"
     assert_allclose(
         force_sensor.read_ground_truth(),
-        torch.tensor([0.0, 0.0, -GRAVITY]),
-        tol=1e-6,
+        (0.0, 0.0, -GRAVITY),
+        tol=tol,
         err_msg="RigidContactForceSensor ground truth should be equal to -gravity (normal) force.",
     )
     assert_allclose(
         force_sensor.read(),
-        ([BIAS[0], BIAS[1], -GRAVITY / 2]),
+        (BIAS[0], BIAS[1], -GRAVITY / 2),
         tol=NOISE * 10,
         err_msg="RigidContactForceSensor should read bias and noise and -gravity (normal) force clipped by max_force.",
     )

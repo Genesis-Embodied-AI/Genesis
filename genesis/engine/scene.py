@@ -212,10 +212,11 @@ class Scene(RBC):
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def __del__(self):
-        self._recorder_manager.destroy()
-        self._recorder_manager = None
+        if getattr(self, "_recorder_manager", None) is not None:
+            self._recorder_manager.destroy()
+            self._recorder_manager = None
 
-        if self._visualizer is not None:
+        if getattr(self, "_visualizer", None) is not None:
             self._visualizer.destroy()
             self._visualizer = None
 

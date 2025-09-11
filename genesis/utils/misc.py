@@ -10,8 +10,8 @@ import sys
 import os
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Any, Type, NoReturn, Optional
+from dataclasses import dataclass, field
+from typing import Any, NoReturn, Optional, Type
 
 import numpy as np
 import cpuinfo
@@ -335,6 +335,16 @@ def concat_with_tensor(
     if expand is not None:
         value_tensor = value_tensor.expand(*expand)
     return torch.cat([tensor, value_tensor], dim=dim)
+
+
+def make_tensor_field(shape, dtype: torch.dtype | None = None):
+    def _default_factory():
+        nonlocal shape, dtype
+        if dtype is None:
+            dtype = gs.tc_float
+        return torch.empty(shape, dtype=dtype, device=gs.device)
+
+    return field(default_factory=_default_factory)
 
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------

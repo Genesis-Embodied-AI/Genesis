@@ -32,7 +32,7 @@ class TensorRingBuffer:
         idx_ptr: int | ctypes.c_int = 0,
     ):
         if buffer is None:
-            self.buffer = torch.zeros((N, *shape), dtype=dtype, device=gs.device)
+            self.buffer = torch.empty((N, *shape), dtype=dtype, device=gs.device)
         else:
             assert buffer.shape == (N, *shape)
             self.buffer = buffer
@@ -66,9 +66,8 @@ class TensorRingBuffer:
         """
         rel_idx = (self._idx_ptr.value - idx) % self.N
         if isinstance(idx, torch.Tensor):
-            batch_size = idx.shape[0] if len(idx.shape) > 0 else 1
-            env_indices = torch.arange(batch_size, device=idx.device)
-            return self.buffer[rel_idx, env_indices]
+            batch_size = len(idx) if idx.ndim > 0 else 1
+            return self.buffer[rel_idx, :batch_size]
         else:
             return self.buffer[rel_idx]
 

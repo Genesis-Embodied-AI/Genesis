@@ -69,7 +69,7 @@ def main():
 
     try:
         steps = int(args.seconds / args.timestep)
-        for _ in tqdm(range(steps), total=steps):
+        for _ in tqdm(range(steps)):
             scene.step()
 
     except KeyboardInterrupt:
