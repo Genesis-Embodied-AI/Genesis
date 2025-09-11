@@ -9,6 +9,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 
 if TYPE_CHECKING:
@@ -264,15 +265,19 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
+
         # timer.stamp("_func_solve")
         func_update_qacc(
-            qacc_ws=self.qacc_ws,
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("_func_update_qacc")
+
+        if self._solver._static_rigid_sim_config.noslip_iterations > 0:
+            self.noslip()
+
         func_update_contact_force(
             links_state=self._solver.links_state,
             collider_state=self._collider._collider_state,
@@ -281,6 +286,34 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("compute force")
+
+    def noslip(self):
+        # return
+        constraint_noslip.kernel_build_efc_AR_b(
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
+        )
+
+        constraint_noslip.kernel_noslip(
+            collider_state=self._collider._collider_state,
+            constraint_state=self.constraint_state,
+            rigid_global_info=self._solver._rigid_global_info,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
+        )
+
+        constraint_noslip.kernel_dual_finish(
+            dofs_state=self._solver.dofs_state,
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
+        )
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
@@ -1362,7 +1395,6 @@ def func_update_contact_force(
 @gs.maybe_pure
 @ti.kernel
 def func_update_qacc(
-    qacc_ws: array_class.V_ANNOTATION,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
@@ -1374,10 +1406,8 @@ def func_update_qacc(
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] += constraint_state.qfrc_constraint[i_d, i_b]
-
-    for i_d, i_b in ti.ndrange(n_dofs, _B):
-        qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
 @gs.maybe_pure
@@ -1490,7 +1520,7 @@ def func_ls_point_fn(
         active = gs.ti_bool(True)  # Equality constraints
         if ne <= i_c and i_c < nef:  # Friction constraints
             f = constraint_state.efc_frictionloss[i_c, i_b]
-            r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
+            r = constraint_state.diag[i_c, i_b]
             rf = r * f
             linear_neg = x <= -rf
             linear_pos = x >= rf
@@ -1896,7 +1926,7 @@ def func_update_constraint(
         floss_force = gs.ti_float(0.0)
         if ne <= i_c and i_c < nef:  # Friction constraints
             f = constraint_state.efc_frictionloss[i_c, i_b]
-            r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
+            r = constraint_state.diag[i_c, i_b]
             rf = r * f
             linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
             linear_pos = constraint_state.Jaref[i_c, i_b] >= rf

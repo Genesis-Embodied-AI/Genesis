@@ -248,6 +248,13 @@ class RigidOptions(Options):
         Number of line search iterations for the constraint solver. Defaults to 50.
     ls_tolerance : float, optional
         Tolerance for the line search. Defaults to 1e-2.
+    noslip_iterations : int, optional
+        Number of iterations for the noslip solver. Defaults to 0 (disabled).
+        noslip is a post-processing step after the main solver to suppress slip/drift.
+        Recommended to set this value to 5 for manipulation tasks or when slip/drift is a big problem.
+        This option should only be enabled if necessary because it is experimental and will slow down the simulation.
+    noslip_tolerance : float, optional
+        Tolerance for the noslip solver. Defaults to 1e-6.
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
     contact_resolve_time : float, optional
@@ -297,6 +304,8 @@ class RigidOptions(Options):
     tolerance: float = 1e-8
     ls_iterations: int = 50
     ls_tolerance: float = 1e-2
+    noslip_iterations: int = 0
+    noslip_tolerance: float = 1e-6
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
     constraint_timeconst: float = 0.01
