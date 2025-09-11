@@ -1520,7 +1520,7 @@ def func_ls_point_fn(
         active = gs.ti_bool(True)  # Equality constraints
         if ne <= i_c and i_c < nef:  # Friction constraints
             f = constraint_state.efc_frictionloss[i_c, i_b]
-            r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
+            r = constraint_state.diag[i_c, i_b]
             rf = r * f
             linear_neg = x <= -rf
             linear_pos = x >= rf
@@ -1926,7 +1926,7 @@ def func_update_constraint(
         floss_force = gs.ti_float(0.0)
         if ne <= i_c and i_c < nef:  # Friction constraints
             f = constraint_state.efc_frictionloss[i_c, i_b]
-            r = 1.0 / ti.max(constraint_state.efc_D[i_c, i_b], gs.EPS)
+            r = constraint_state.diag[i_c, i_b]
             rf = r * f
             linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
             linear_pos = constraint_state.Jaref[i_c, i_b] >= rf

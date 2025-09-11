@@ -2933,20 +2933,13 @@ def test_mesh_primitive_COM(show_viewer, tol):
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_noslip_iterations(scale, show_viewer, tol):
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.8, -1, 1.3),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            res=(960, 640),
-            max_FPS=600,
-        ),
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         rigid_options=gs.options.RigidOptions(
             noslip_iterations=5,
         ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         show_viewer=show_viewer,
     )
 
@@ -2955,23 +2948,41 @@ def test_noslip_iterations(scale, show_viewer, tol):
         boxes.append(
             scene.add_entity(
                 gs.morphs.Box(
-                    size=(1 * scale, 1 * scale, 1 * scale),
+                    size=(scale, scale, scale),
                     pos=(i * scale, 0, 0),
-                    fixed=i == 0,
+                    fixed=(i == 0),
                 ),
             )
         )
     scene.build()
+
+    rho = 200
+    coeff_f = 1.0
+    n_box = 2
+    g = 9.81
+    # FIXME: we need apply a larger force than expected to keep the boxes static
+    safety = 2.5
+
     # simulate for 20 seconds
     for i in range(2000):
-        boxes[2].control_dofs_force(np.array([-20000.0 * scale**3]), np.array([0]))
-        # push to -x direction
+        boxes[2].control_dofs_force(np.array([-safety / coeff_f * n_box * rho * scale**3 * g]), np.array([0]))
         scene.step()
 
     box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
     # allow some small sliding due to first few frames
     # scale = 0.1 is less stable than bigger scale
     assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
+
+    # reduce the multiplier and it will slide
+    safety = 0.9
+    for i in range(2000):
+        # push to -x direction
+        boxes[2].control_dofs_force(np.array([-safety / coeff_f * n_box * rho * scale**3 * g]), np.array([0]))
+        scene.step()
+
+    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
+    # it will slip away
+    assert box_1_z < -scale
 
 
 @pytest.mark.required

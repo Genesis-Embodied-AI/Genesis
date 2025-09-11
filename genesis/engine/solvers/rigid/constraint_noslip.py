@@ -23,16 +23,16 @@ def kernel_build_efc_AR_b(
     for i_b in range(_B):
         nefc = constraint_state.n_constraints[i_b]
         # zero AR
-        for r in range(nefc):
-            for c in range(nefc):
-                constraint_state.efc_AR[r, c, i_b] = gs.ti_float(0.0)
+        for i_row in range(nefc):
+            for i_col in range(nefc):
+                constraint_state.efc_AR[i_row, i_col, i_b] = gs.ti_float(0.0)
 
         # build AR = J * inv(M) * J^T
         # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp
-        for r in range(nefc):
+        for i_row in range(nefc):
             # tmp = M^{-1} * Jr^T
             for i_d in range(n_dofs):
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[r, i_d, i_b]
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
 
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
@@ -43,16 +43,12 @@ def kernel_build_efc_AR_b(
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
-            # AR[r, c] = J[c, :] dot tmp
-            for c in range(nefc):
+            # AR[r, c] = J[c, :] * tmp
+            for i_col in range(nefc):
                 s = gs.ti_float(0.0)
                 for i_d in range(n_dofs):
-                    s += constraint_state.jac[c, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
-                constraint_state.efc_AR[r, c, i_b] = s
-
-        # we don't need this term if we only use PGS for noslip
-        # for r in range(nefc):
-        #     constraint_state.efc_AR[r, r, i_b] += 1.0 / constraint_state.efc_D[r, i_b]
+                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                constraint_state.efc_AR[i_row, i_col, i_b] = s
 
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
@@ -71,11 +67,10 @@ def kernel_noslip(
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    n_dofs = constraint_state.jac.shape[1]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-
         # temp variables
         res = ti.Vector.zero(gs.ti_float, 5)
         old_force = ti.Vector.zero(gs.ti_float, 5)
@@ -94,20 +89,14 @@ def kernel_noslip(
             improvement = gs.ti_float(0.0)
             if i_iter == 0:
                 for i_c in range(constraint_state.n_constraints[i_b]):
-                    improvement += (
-                        0.5
-                        * constraint_state.efc_force[i_c, i_b]
-                        * constraint_state.efc_force[i_c, i_b]
-                        / constraint_state.efc_D[i_c, i_b]
-                    )
+                    improvement += 0.5 * constraint_state.efc_force[i_c, i_b] ** 2 * constraint_state.diag[i_c, i_b]
 
             for i_c in range(ne, ne + nf):
-                res = func_residual(
+                res = func_residual_constraint_force(
                     res=res,
                     i_b=i_b,
                     i_efc=i_c,
                     dim=1,
-                    flg_subR=True,
                     constraint_state=constraint_state,
                 )
                 old_force[0] = constraint_state.efc_force[i_c, i_b]
@@ -117,7 +106,7 @@ def kernel_noslip(
                 elif constraint_state.efc_force[i_c, i_b] > constraint_state.efc_frictionloss[i_c, i_b]:
                     constraint_state.efc_force[i_c, i_b] = constraint_state.efc_frictionloss[i_c, i_b]
                 delta = constraint_state.efc_force[i_c, i_b] - old_force[0]
-                improvement -= 0.5 * delta * delta / constraint_state.efc_AR[i_c, i_c, i_b] + delta * res[0]
+                improvement -= 0.5 * delta**2 / constraint_state.efc_AR[i_c, i_c, i_b] + delta * res[0]
 
             # Project contact friction (pyramidal 4-edge) with normal fixed
             for i_col in range(n_con):
@@ -125,46 +114,42 @@ def kernel_noslip(
                 mu = collider_state.contact_data.friction[i_col, i_b]
                 for j2 in range(2):
                     j_efc = base + j2 * 2
-                    res = func_residual(
+                    res = func_residual_constraint_force(
                         res=res,
                         i_b=i_b,
                         i_efc=j_efc,
                         dim=2,
-                        flg_subR=True,
                         constraint_state=constraint_state,
                     )
                     for i2 in range(2):
                         old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
-                    Ac = func_extract_block(
+                    Ac = func_extract_block_matrix_from_AR(
                         Ac=Ac,
                         i_b=i_b,
                         start=j_efc,
                         n=2,
-                        flg_subR=True,
                         constraint_state=constraint_state,
                     )
-                    for i2 in range(2):
-                        bc[i2] = res[i2]
-                        for i3 in range(2):
-                            bc[i2] -= Ac[i2 * 2 + i3] * old_force[i3]
-                    mid = 0.5 * (
-                        constraint_state.efc_force[j_efc + 0, i_b] + constraint_state.efc_force[j_efc + 1, i_b]
-                    )
-                    y = 0.5 * (constraint_state.efc_force[j_efc + 0, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
+                    for j in range(2):
+                        bc[j] = res[j]
+                        for k in range(2):
+                            bc[j] -= Ac[j * 2 + k] * old_force[k]
+                    mid = 0.5 * (constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b])
+                    y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
                     K1 = Ac[0] + Ac[3] - Ac[1] - Ac[2]
                     K0 = mid * (Ac[0] - Ac[3]) + bc[0] - bc[1]
                     if K1 < gs.EPS:
-                        constraint_state.efc_force[j_efc + 0, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
+                        constraint_state.efc_force[j_efc, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
                     else:
                         y = -K0 / K1
                         if y < -mid:
-                            constraint_state.efc_force[j_efc + 0, i_b] = 0
+                            constraint_state.efc_force[j_efc, i_b] = 0
                             constraint_state.efc_force[j_efc + 1, i_b] = 2 * mid
                         elif y > mid:
-                            constraint_state.efc_force[j_efc + 0, i_b] = 2 * mid
+                            constraint_state.efc_force[j_efc, i_b] = 2 * mid
                             constraint_state.efc_force[j_efc + 1, i_b] = 0
                         else:
-                            constraint_state.efc_force[j_efc + 0, i_b] = mid + y
+                            constraint_state.efc_force[j_efc, i_b] = mid + y
                             constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                     cost_change = func_cost_change(
                         i_b=i_b,
@@ -226,40 +211,31 @@ def kernel_dual_finish(
 
 
 @ti.func
-def func_extract_block(
+def func_extract_block_matrix_from_AR(
     Ac,
     i_b: int,
     start: int,
     n: int,
-    flg_subR: bool,
     constraint_state: array_class.ConstraintState,
 ):
     for j in range(n):
         for k in range(n):
             Ac[j * n + k] = constraint_state.efc_AR[start + j, start + k, i_b]
-    # if flg_subR: # we don't need this term if we only use PGS for noslip
-    #     for j in range(n):
-    #         Ac[j * (n + 1)] -= 1.0 / constraint_state.efc_D[start + j, i_b]
-    #         Ac[j * (n + 1)] = ti.max(1e-10, Ac[j * (n + 1)])
     return Ac
 
 
 @ti.func
-def func_residual(
+def func_residual_constraint_force(
     res,
     i_b: int,
     i_efc: int,
     dim: int,
-    flg_subR: bool,
     constraint_state: array_class.ConstraintState,
 ):
     for j in range(dim):
         res[j] = constraint_state.efc_b[i_efc + j, i_b]
         for k in range(constraint_state.n_constraints[i_b]):
             res[j] += constraint_state.efc_AR[i_efc + j, k, i_b] * constraint_state.efc_force[k, i_b]
-    # if flg_subR: # we don't need this term if we only use PGS for noslip
-    #     for j in range(dim):
-    #         res[j] -= 1.0 / constraint_state.efc_D[i_efc + j, i_b] * constraint_state.efc_force[i_efc + j, i_b]
     return res
 
 
@@ -275,7 +251,7 @@ def func_cost_change(
 ):
     change = gs.ti_float(0.0)
     if dim == 1:
-        delta = force[force_start + 0, i_b] - old_force[0]
+        delta = force[force_start, i_b] - old_force[0]
         change = 0.5 * Ac[0] * delta * delta + delta * res[0]
     else:
         delta = ti.Vector.zero(gs.ti_float, 2)
@@ -285,7 +261,7 @@ def func_cost_change(
             for j in range(dim):
                 change += 0.5 * Ac[i * dim + j] * delta[i] * delta[j]
             change += delta[i] * res[i]
-    if change > 1e-10:
+    if change > gs.EPS:
         for i in range(dim):
             force[force_start + i, i_b] = old_force[i]
         change = 0.0

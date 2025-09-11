@@ -249,10 +249,10 @@ class RigidOptions(Options):
     ls_tolerance : float, optional
         Tolerance for the line search. Defaults to 1e-2.
     noslip_iterations : int, optional
-        Number of iterations for the noslip solver. Defaults to 0. noslip is a post-processing step after the main solver.
-        It is used to suppress slip/drift. The default setting 0 disables this solver.
+        Number of iterations for the noslip solver. Defaults to 0 (disabled).
+        noslip is a post-processing step after the main solver to suppress slip/drift.
         Recommended to set this value to 5 for manipulation tasks or when slip/drift is a big problem.
-        It can make the solver slower and less stable.
+        This option should only be enabled if necessary because it is experimental and will slow down the simulation.
     noslip_tolerance : float, optional
         Tolerance for the noslip solver. Defaults to 1e-6.
     sparse_solve : bool, optional

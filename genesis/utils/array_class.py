@@ -174,9 +174,8 @@ def get_constraint_state(constraint_solver, solver):
     if solver._static_rigid_sim_config.noslip_iterations > 0:
         if len_constraints_ * len_constraints_ * f_batch()[0] > 2 * 10**9:
             gs.logger.warning(
-                f"efc_AR shape {len_constraints_}x{len_constraints_}x{f_batch()[0]} is very large. "
-                f"Consider manually set a smaller 'max_collision_pairs' in RigidOptions to reduce the size of "
-                "reserved memory. "
+                f"efc_AR shape {len_constraints_}x{len_constraints_}x{f_batch()[0]} is very large. Consider manually "
+                f"set a smaller 'max_collision_pairs' in RigidOptions to reduce the size of reserved memory. "
             )
         efc_AR_shape = solver._batch_shape((len_constraints_, len_constraints_))
         efc_b_shape = solver._batch_shape(len_constraints_)
