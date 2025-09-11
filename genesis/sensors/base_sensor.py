@@ -263,13 +263,15 @@ class Sensor(RBC):
             # get int for indexing into ring buffer (0 = most recent, 1 = delayed by one timestep, etc.)
             cur_delay_ts_int = cur_delay_ts.to(dtype=gs.tc_int)
             idx_slices = (slice(None), slice(tensor_idx, tensor_idx + tensor_size))
+            cache_length = len(shared_cache)
             if interpolate:
                 ratio = torch.frac(cur_delay_ts).unsqueeze(-1)
-                data_left = buffered_data.at(cur_delay_ts_int)[idx_slices]
-                data_right = buffered_data.at(cur_delay_ts_int + 1)[idx_slices]
+                data_left = buffered_data.at(cur_delay_ts_int).reshape(cache_length, -1)[idx_slices]
+                data_right = buffered_data.at(cur_delay_ts_int + 1).reshape(cache_length, -1)[idx_slices]
                 shared_cache[idx_slices] = data_left + ratio * (data_right - data_left)
             else:
-                shared_cache[idx_slices] = buffered_data.at(cur_delay_ts_int)[idx_slices]
+                buffered_tensor = buffered_data.at(cur_delay_ts_int).reshape(cache_length, -1)
+                shared_cache[idx_slices] = buffered_tensor[idx_slices]
             tensor_idx += tensor_size
 
     def _get_return_values(self, tensor: torch.Tensor, envs_idx=None) -> list[torch.Tensor]:
@@ -368,7 +370,7 @@ class RigidSensorMixin:
         quat_tensor = torch.tensor(euler_to_quat([self._options.euler_offset]), dtype=gs.tc_float, device=gs.device)
         if self._shared_metadata.solver.n_envs > 0:
             quat_tensor = quat_tensor.unsqueeze(0).expand((self._manager._sim._B, 1, 4))
-        self._shared_metadata.offsets_quat = torch.cat([self._shared_metadata.offsets_quat, quat_tensor], dim=-2)
+        self._shared_metadata.offsets_quat = concat_with_tensor(self._shared_metadata.offsets_quat, quat_tensor, dim=-2)
 
 
 class NoisySensorOptionsMixin:

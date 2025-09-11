@@ -331,13 +331,16 @@ def concat_with_tensor(
     tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dtype: torch.dtype | None = None, dim: int = 0
 ):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
-    value_tensor = torch.tensor([value], dtype=dtype or gs.tc_float, device=gs.device)
+    if not isinstance(value, torch.Tensor):
+        value = torch.tensor([value], dtype=dtype or gs.tc_float, device=gs.device)
     if expand is not None:
-        value_tensor = value_tensor.expand(*expand)
-    return torch.cat([tensor, value_tensor], dim=dim)
+        value = value.expand(*expand)
+    if tensor.numel() == 0:
+        return value
+    return torch.cat([tensor, value], dim=dim)
 
 
-def make_tensor_field(shape, dtype_factory: Callable[[], torch.dtype] = lambda: gs.tc_float):
+def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] = lambda: gs.tc_float):
     """
     Helper method to create a tensor field for dataclasses.
 

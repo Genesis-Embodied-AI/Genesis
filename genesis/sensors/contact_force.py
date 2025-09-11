@@ -230,11 +230,11 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
-        self._shared_metadata.min_force = self._concat_with_tensor(
+        self._shared_metadata.min_force = concat_with_tensor(
             self._shared_metadata.min_force,
             _to_expanded_tensor(self._options.min_force, (3,)),
         )
-        self._shared_metadata.max_force = self._concat_with_tensor(
+        self._shared_metadata.max_force = concat_with_tensor(
             self._shared_metadata.max_force,
             _to_expanded_tensor(self._options.max_force, (3,)),
         )
@@ -265,10 +265,10 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
             links_quat = links_quat.unsqueeze(0)
 
         _kernel_get_contacts_forces(
-            force,
-            link_a,
-            link_b,
-            links_quat,
+            force.contiguous(),
+            link_a.contiguous(),
+            link_b.contiguous(),
+            links_quat.contiguous(),
             shared_metadata.links_idx,
             shared_ground_truth_cache,
         )

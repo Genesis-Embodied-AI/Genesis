@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import gstaichi as ti
 import numpy as np
@@ -10,7 +10,7 @@ from genesis.utils.geom import (
     inv_transform_by_trans_quat,
     transform_quat_by_quat,
 )
-from genesis.utils.misc import make_tensor_field, tensor_to_array
+from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 from .base_sensor import (
     MaybeTuple3FType,
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType | np.ndarray | torch.Tensor
+MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
 
 
 def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
@@ -71,7 +71,7 @@ def _get_skew_to_alignment_matrix(input: MaybeMatrix3x3Type, out: torch.Tensor |
 
     if isinstance(input, float):
         # set off-diagonal elements to the scalar value
-        torch.diagonal(out)[:] = torch.Tensor(input, dtype=gs.tc_float, device=gs.device)
+        torch.diagonal(out)[:] = input
         out.fill_diagonal_(1.0)
     elif isinstance(input, torch.Tensor):
         out.copy_(input)
@@ -242,16 +242,14 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         self._shared_metadata.acc_noise, self._shared_metadata.gyro_noise = _view_metadata_as_acc_gyro(
             self._shared_metadata.noise
         )
-        self._shared_metadata.alignment_rot_matrix = torch.cat(
-            [
-                self._shared_metadata.alignment_rot_matrix,
-                torch.stack(
-                    [
-                        _get_skew_to_alignment_matrix(self._options.acc_axes_skew),
-                        _get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
-                    ],
-                ).expand(self._manager._sim._B, -1, -1, -1),
-            ],
+        self._shared_metadata.alignment_rot_matrix = concat_with_tensor(
+            self._shared_metadata.alignment_rot_matrix,
+            torch.stack(
+                [
+                    _get_skew_to_alignment_matrix(self._options.acc_axes_skew),
+                    _get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
+                ],
+            ).expand(self._manager._sim._B, -1, -1, -1),
             dim=1,
         )
 
