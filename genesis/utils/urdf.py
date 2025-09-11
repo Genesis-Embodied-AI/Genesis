@@ -262,7 +262,7 @@ def parse_urdf(morph, surface):
         else:
             gs.raise_exception(f"Unsupported URDF joint type: {joint.joint_type}")
 
-        j_info["dofs_invweight"] = np.zeros(j_info["n_dofs"])
+        j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
         j_info["dofs_frictionloss"] = np.zeros(j_info["n_dofs"])
         j_info["sol_params"] = gu.default_solver_params()
         j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])

@@ -8,6 +8,9 @@ import argparse
 import genesis as gs
 
 
+RET_SUCCESS = 42
+
+
 def gs_static_child(args: list[str]):
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable-multi-contact", action="store_true")
@@ -17,7 +20,10 @@ def gs_static_child(args: list[str]):
     parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.test_backend), precision="32")
+    gs.init(
+        backend=getattr(gs, args.test_backend),
+        precision="32",
+    )
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -27,10 +33,10 @@ def gs_static_child(args: list[str]):
         rigid_options=gs.options.RigidOptions(enable_multi_contact=args.enable_multi_contact),
         show_viewer=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.4, 0.4, 0.4),
             pos=(0.0, 0.0, 0.18),
@@ -41,7 +47,7 @@ def gs_static_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     gs.ti.sync()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
-    assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy() == args.expected_num_contacts
+    assert actual_contacts == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
 
     assert (
@@ -57,8 +63,17 @@ def gs_static_child(args: list[str]):
         == args.expected_src_ll_cache_hit
     )
 
+    sys.exit(RET_SUCCESS)
+
 
 @pytest.mark.required
+# should not affect expected_num_contacts
+@pytest.mark.parametrize("use_ndarray", [False, True])
+# should not affect expected_num_contacts
+# note that using `backend` instead of `test_backend`, breaks genesis pytest...
+@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
+# should not affect expected_num_contacts
+@pytest.mark.parametrize("enable_pure", [False, True])
 @pytest.mark.parametrize(
     "enable_multicontact,expected_num_contacts",
     [
@@ -66,11 +81,13 @@ def gs_static_child(args: list[str]):
         (True, 4),
     ],
 )
-@pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
-# note that using `backend` instead of `test_backend`, breaks genesis pytest...
-@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
 def test_gs_static(
-    enable_multicontact: bool, enable_pure: bool, test_backend: str, expected_num_contacts: int, tmp_path: pathlib.Path
+    enable_multicontact: bool,
+    expected_num_contacts: int,
+    enable_pure: bool,
+    test_backend: str,
+    use_ndarray: bool,
+    tmp_path: pathlib.Path,
 ) -> None:
     for it in range(3):
         # we iterate to make sure stuff is really being read from cache
@@ -81,17 +98,31 @@ def test_gs_static(
             "--expected-num-contacts",
             str(expected_num_contacts),
             "--expected-use-src-ll-cache",
-            "1" if enable_pure else "0",
+            "1" if enable_pure and use_ndarray else "0",
             "--expected-src-ll-cache-hit",
-            "1" if enable_pure and it > 0 else "0",
+            "1" if enable_pure and use_ndarray and it > 0 else "0",
             "--test-backend",
             test_backend,
         ]
         if enable_multicontact:
             cmd_line += ["--enable-multi-contact"]
+        env_changes = {}
+        env_changes["GS_BETA_PURE"] = "1" if enable_pure else "0"
+        env_changes["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env_changes["GS_USE_NDARRAY"] = "1" if use_ndarray else "0"
         env = dict(os.environ)
-        env["GS_BETA_PURE"] = "1" if enable_pure else "0"
-        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env.update(env_changes)
+
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
+        if proc.returncode != RET_SUCCESS:
+            print("============================")
+            print("it", it)
+            for k, v in env_changes.items():
+                print(f"export {k}={v}")
+            print(" ".join(cmd_line))
+            print("stderr", proc.stderr)
+            print("stdout", proc.stdout)
+        assert proc.returncode == RET_SUCCESS
 
 
 def gs_num_envs_child(args: list[str]):
@@ -126,6 +157,8 @@ def gs_num_envs_child(args: list[str]):
     assert kernel_step_1._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
+    sys.exit(RET_SUCCESS)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
@@ -133,7 +166,7 @@ def gs_num_envs_child(args: list[str]):
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
 @pytest.mark.parametrize("use_ndarray", [False, True])
 def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
-    if sys.platform == "darwin" and test_backend == "gpu" and use_ndarray and enable_pure:
+    if sys.platform == "darwin" and test_backend == "gpu" and use_ndarray:
         pytest.skip(
             "fast cache not supported on mac gpus when using ndarray, because mac gpu only supports up to 31 kernel"
             " parameters, and we need more than that."
@@ -171,14 +204,14 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
         if expected_src_ll_cache_hit:
             cmd_line += ["--expected-src-ll-cache-hit"]
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
-        if proc.returncode != 0:
+        if proc.returncode != RET_SUCCESS:
             print("============================")
             print("it", it, "num_env", num_env)
             print("cmd_line", cmd_line)
             print("env", env)
             print("stderr", proc.stderr)
             print("stdout", proc.stdout)
-        assert proc.returncode == 0
+        assert proc.returncode == RET_SUCCESS
 
 
 def change_scene(args: list[str]):
@@ -240,6 +273,8 @@ def change_scene(args: list[str]):
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
+    sys.exit(RET_SUCCESS)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize(
@@ -255,6 +290,12 @@ def change_scene(args: list[str]):
 def test_ndarray_no_compile(
     enable_pure: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
+    if sys.platform == "darwin" and test_backend == "gpu":
+        pytest.skip(
+            "fast cache not supported on mac gpus when using ndarray, because mac gpu only supports up to 31 kernel"
+            " parameters, and we need more than that."
+        )
+
     for it in range(len(list_n_objs_n_envs)):
         # we iterate to make sure stuff is really being read from cache
         n_objs, n_envs = list_n_objs_n_envs[it]
@@ -276,10 +317,11 @@ def test_ndarray_no_compile(
         env["GS_USE_NDARRAY"] = "1"  # test ndarray
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
-        print(proc.stdout)  # needs to do this to see error messages
-        print("-" * 100)
-        print(proc.stderr)
-        assert proc.returncode == 0
+        if proc.returncode != RET_SUCCESS:
+            print(proc.stdout)  # needs to do this to see error messages
+            print("-" * 100)
+            print(proc.stderr)
+        assert proc.returncode == RET_SUCCESS
 
 
 # The following lines are critical for the test to work. If they are missing, the test will

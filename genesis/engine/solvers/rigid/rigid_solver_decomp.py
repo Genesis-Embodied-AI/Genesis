@@ -303,36 +303,44 @@ class RigidSolver(Solver):
             self._init_collider()
             self._init_constraint_solver()
 
-            # Compute state in neutral configuration at rest
-            kernel_forward_kinematics_links_geoms(
-                self._scene._envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
-            )
-            self._init_invweight()
-            kernel_init_meaninertia(
-                rigid_global_info=self._rigid_global_info,
-                entities_info=self.entities_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
-            )
+            self._init_invweight_and_meaninertia(force_update=False)
 
-    def _init_invweight(self):
+    def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True, unsafe=False):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
         if self._n_dofs == 0:
             return
 
+        # Handling default arguments
+        batched = self._options.batch_dofs_info and self._options.batch_links_info
+        if not batched and envs_idx is not None:
+            gs.raise_exception(
+                "Links and dofs must be batched to selectively update invweight and meaninertia for some environment."
+            )
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+
+        # Compute state in neutral configuration at rest
+        qpos = ti_to_torch(self.qpos0, envs_idx, transpose=True, unsafe=True)
+        if self.n_envs == 0:
+            qpos = qpos.squeeze(0)
+        self.set_qpos(qpos, envs_idx=envs_idx if self.n_envs > 0 else None)
+        kernel_forward_kinematics_links_geoms(
+            envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            geoms_state=self.geoms_state,
+            geoms_info=self.geoms_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+        )
+
         # Compute mass matrix without any implicit damping terms
+        # TODO: This kernel could be optimized to take `envs_idx` as input if performance is critical.
         kernel_compute_mass_matrix(
             links_state=self.links_state,
             links_info=self.links_info,
@@ -346,11 +354,11 @@ class RigidSolver(Solver):
         )
 
         # Define some proxies for convenience
-        mass_mat_D_inv = self._rigid_global_info.mass_mat_D_inv.to_numpy()[:, 0]
-        mass_mat_L = self._rigid_global_info.mass_mat_L.to_numpy()[:, :, 0]
-        offsets = self.links_state.i_pos.to_numpy()[:, 0]
-        cdof_ang = self.dofs_state.cdof_ang.to_numpy()[:, 0]
-        cdof_vel = self.dofs_state.cdof_vel.to_numpy()[:, 0]
+        mass_mat_D_inv = self._rigid_global_info.mass_mat_D_inv.to_numpy()
+        mass_mat_L = self._rigid_global_info.mass_mat_L.to_numpy()
+        offsets = self.links_state.i_pos.to_numpy()
+        cdof_ang = self.dofs_state.cdof_ang.to_numpy()
+        cdof_vel = self.dofs_state.cdof_vel.to_numpy()
         links_joint_start = self.links_info.joint_start.to_numpy()
         links_joint_end = self.links_info.joint_end.to_numpy()
         links_dof_end = self.links_info.dof_end.to_numpy()
@@ -359,79 +367,114 @@ class RigidSolver(Solver):
         joints_type = self.joints_info.type.to_numpy()
         joints_dof_start = self.joints_info.dof_start.to_numpy()
         joints_n_dofs = self.joints_info.n_dofs.to_numpy()
-        if self._options.batch_links_info:
-            links_joint_start = links_joint_start[:, 0]
-            links_joint_end = links_joint_end[:, 0]
-            links_dof_end = links_dof_end[:, 0]
-            links_n_dofs = links_n_dofs[:, 0]
-            links_parent_idx = links_parent_idx[:, 0]
-        if self._options.batch_joints_info:
-            joints_type = joints_type[:, 0]
-            joints_dof_start = joints_dof_start[:, 0]
-            joints_n_dofs = joints_n_dofs[:, 0]
 
-        # Compute the inverted mass matrix efficiently
-        mass_mat_L_inv = np.eye(self.n_dofs_)
-        for i in range(self.n_dofs_):
-            for j in range(i):
-                mass_mat_L_inv[i] -= mass_mat_L[i, j] * mass_mat_L_inv[j]
-        mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv) @ mass_mat_L_inv.T
+        links_invweight = np.zeros((len(envs_idx), self._n_links, 2), dtype=gs.np_float)
+        dofs_invweight = np.zeros((len(envs_idx), self._n_dofs), dtype=gs.np_float)
 
-        # Compute links invweight
-        links_invweight = np.zeros((self._n_links, 2), dtype=gs.np_float)
-        for i_l in range(self._n_links):
-            jacp = np.zeros((3, self._n_dofs))
-            jacr = np.zeros((3, self._n_dofs))
+        # TODO: Simple numpy-based for-loop for now as it is not performance critical
+        for i_b_, i_b in enumerate(envs_idx):
+            # Compute the inverted mass matrix efficiently
+            mass_mat_L_inv = np.eye(self.n_dofs_)
+            for i in range(self.n_dofs_):
+                for j in range(i):
+                    mass_mat_L_inv[i] -= mass_mat_L[i, j, i_b] * mass_mat_L_inv[j]
+            mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv[:, i_b]) @ mass_mat_L_inv.T
 
-            offset = offsets[i_l]
+            # Compute links invweight if necessary
+            if i_b_ == 0 or self._options.batch_links_info:
+                for i_l in range(self._n_links):
+                    jacp = np.zeros((3, self._n_dofs))
+                    jacr = np.zeros((3, self._n_dofs))
 
-            j_l = i_l
-            while j_l != -1:
-                for i_d_ in range(links_n_dofs[j_l]):
-                    i_d = links_dof_end[j_l] - i_d_ - 1
-                    jacp[:, i_d] = cdof_vel[i_d] + np.cross(cdof_ang[i_d], offset)
-                    jacr[:, i_d] = cdof_ang[i_d]
-                j_l = links_parent_idx[j_l]
+                    offset = offsets[i_l, i_b]
 
-            jac = np.concatenate((jacp, jacr), axis=0)
+                    j_l = i_l
+                    while j_l != -1:
+                        link_n_dofs = links_n_dofs[j_l]
+                        if self._options.batch_links_info:
+                            link_n_dofs = link_n_dofs[i_b]
+                        for i_d_ in range(link_n_dofs):
+                            link_dof_end = links_dof_end[j_l]
+                            if self._options.batch_links_info:
+                                link_dof_end = link_dof_end[i_b]
+                            i_d = link_dof_end - i_d_ - 1
+                            jacp[:, i_d] = cdof_vel[i_d, i_b] + np.cross(cdof_ang[i_d, i_b], offset)
+                            jacr[:, i_d] = cdof_ang[i_d, i_b]
+                        link_parent_idx = links_parent_idx[j_l]
+                        if self._options.batch_links_info:
+                            link_parent_idx = link_parent_idx[i_b]
+                        j_l = link_parent_idx
 
-            A = jac @ mass_mat_inv @ jac.T
-            A_diag = np.diag(A)
+                    jac = np.concatenate((jacp, jacr), axis=0)
 
-            links_invweight[i_l, 0] = A_diag[:3].mean()
-            links_invweight[i_l, 1] = A_diag[3:].mean()
+                    A = jac @ mass_mat_inv @ jac.T
+                    A_diag = np.diag(A)
 
-        # Compute dofs invweight
-        dofs_invweight = np.zeros((self._n_dofs,), dtype=gs.np_float)
-        for i_l in range(self._n_links):
-            for i_j in range(links_joint_start[i_l], links_joint_end[i_l]):
-                joint_type = joints_type[i_j]
-                if joint_type == gs.JOINT_TYPE.FIXED:
-                    continue
+                    links_invweight[i_b_, i_l, 0] = A_diag[:3].mean()
+                    links_invweight[i_b_, i_l, 1] = A_diag[3:].mean()
 
-                dof_start = joints_dof_start[i_j]
-                n_dofs = joints_n_dofs[i_j]
-                jac = np.zeros((n_dofs, self._n_dofs))
-                for i_d_ in range(n_dofs):
-                    jac[i_d_, dof_start + i_d_] = 1.0
+            # Compute dofs invweight
+            if i_b_ == 0 or self._options.batch_dofs_info:
+                for i_l in range(self._n_links):
+                    link_joint_start = links_joint_start[i_l]
+                    link_joint_end = links_joint_end[i_l]
+                    if self._options.batch_links_info:
+                        link_joint_start = link_joint_start[i_b]
+                        link_joint_end = link_joint_end[i_b]
+                    for i_j in range(link_joint_start, link_joint_end):
+                        joint_type = joints_type[i_j]
+                        if self._options.batch_joints_info:
+                            joint_type = joint_type[i_b]
+                        if joint_type == gs.JOINT_TYPE.FIXED:
+                            continue
 
-                A = jac @ mass_mat_inv @ jac.T
-                A_diag = np.diag(A)
+                        dof_start = joints_dof_start[i_j]
+                        n_dofs = joints_n_dofs[i_j]
+                        if self._options.batch_joints_info:
+                            dof_start = dof_start[i_b]
+                            n_dofs = n_dofs[i_b]
+                        jac = np.zeros((n_dofs, self._n_dofs))
+                        for i_d_ in range(n_dofs):
+                            jac[i_d_, dof_start + i_d_] = 1.0
 
-                if joint_type == gs.JOINT_TYPE.FREE:
-                    dofs_invweight[dof_start : (dof_start + 3)] = A_diag[:3].mean()
-                    dofs_invweight[(dof_start + 3) : (dof_start + 6)] = A_diag[3:].mean()
-                elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                    dofs_invweight[dof_start : (dof_start + 3)] = A_diag[:3].mean()
-                else:  # REVOLUTE or PRISMATIC
-                    dofs_invweight[dof_start] = A_diag[0]
+                        A = jac @ mass_mat_inv @ jac.T
+                        A_diag = np.diag(A)
 
-        # Update links and dofs invweight for values that are not already pre-computed
+                        if joint_type == gs.JOINT_TYPE.FREE:
+                            dofs_invweight[i_b_, dof_start : (dof_start + 3)] = A_diag[:3].mean()
+                            dofs_invweight[i_b_, (dof_start + 3) : (dof_start + 6)] = A_diag[3:].mean()
+                        elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                            dofs_invweight[i_b_, dof_start : (dof_start + 3)] = A_diag[:3].mean()
+                        else:  # REVOLUTE or PRISMATIC
+                            dofs_invweight[i_b_, dof_start] = A_diag[0]
+
+            # Stop there if not batched
+            if not batched:
+                break
+
+        # Update links and dofs invweight if necessary
+        if not self._options.batch_links_info:
+            links_invweight = links_invweight[0]
+        if not self._options.batch_dofs_info:
+            dofs_invweight = dofs_invweight[0]
         kernel_init_invweight(
+            envs_idx,
             links_invweight,
             dofs_invweight,
             links_info=self.links_info,
             dofs_info=self.dofs_info,
+            force_update=force_update,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+        )
+
+        # Compute meaninertia from mass matrix
+        kernel_init_meaninertia(
+            envs_idx=envs_idx,
+            rigid_global_info=self._rigid_global_info,
+            entities_info=self.entities_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
     def _batch_shape(self, shape=None, first_dim=False, B=None):
@@ -879,7 +922,10 @@ class RigidSolver(Solver):
 
         if self.collider._collider_static_config.has_terrain:
             links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
-            entity = self._entities[self.links_info.entity_idx.to_numpy()[links_idx[0]]]
+            entity_idx = self.links_info.entity_idx.to_numpy()[links_idx[0]]
+            if isinstance(entity_idx, np.ndarray):
+                entity_idx = entity_idx[0]
+            entity = self._entities[entity_idx]
 
             scale = entity.terrain_scale
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
@@ -1733,22 +1779,6 @@ class RigidSolver(Solver):
             mass = mass.unsqueeze(0)
         kernel_set_links_inertial_mass(mass, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
 
-    def set_links_invweight(self, invweight, links_idx=None, envs_idx=None, *, unsafe=False):
-        _, links_idx, envs_idx = self._sanitize_2D_io_variables(
-            invweight,
-            links_idx,
-            self.n_links,
-            2,
-            envs_idx,
-            batched=self._options.batch_links_info,
-            idx_name="links_idx",
-            skip_allocation=True,
-            unsafe=unsafe,
-        )
-        if self.n_envs == 0 and self._options.batch_links_info:
-            invweight = invweight.unsqueeze(0)
-        kernel_set_links_invweight(invweight, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
-
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None, *, unsafe=False):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_1D_io_variables(
             friction_ratio, geoms_idx, self.n_geoms, envs_idx, idx_name="geoms_idx", skip_allocation=True, unsafe=unsafe
@@ -1883,7 +1913,7 @@ class RigidSolver(Solver):
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None, *, unsafe=False):
         tensor_list = list(tensor_list)
         for i, tensor in enumerate(tensor_list):
-            tensor_list[i], dofs_idx, envs_idx = self._sanitize_1D_io_variables(
+            tensor_list[i], dofs_idx, envs_idx_ = self._sanitize_1D_io_variables(
                 tensor,
                 dofs_idx,
                 self.n_dofs,
@@ -1893,28 +1923,32 @@ class RigidSolver(Solver):
                 unsafe=unsafe,
             )
         if name == "kp":
-            kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "kv":
-            kernel_set_dofs_kv(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_kv(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "force_range":
             kernel_set_dofs_force_range(
-                tensor_list[0], tensor_list[1], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
+                tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
             )
         elif name == "stiffness":
-            kernel_set_dofs_stiffness(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
-        elif name == "invweight":
-            kernel_set_dofs_invweight(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_stiffness(
+                tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+            )
         elif name == "armature":
-            kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
+            qpos_cur = self.get_qpos(envs_idx=envs_idx, qs_idx=qs_idx, unsafe=unsafe)
+            self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True, unsafe=unsafe)
+            self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx, unsafe=unsafe)
         elif name == "damping":
-            kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "frictionloss":
             kernel_set_dofs_frictionloss(
-                tensor_list[0], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
+                tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
             )
         elif name == "limit":
             kernel_set_dofs_limit(
-                tensor_list[0], tensor_list[1], dofs_idx, envs_idx, self.dofs_info, self._static_rigid_sim_config
+                tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
             )
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
@@ -1930,9 +1964,6 @@ class RigidSolver(Solver):
 
     def set_dofs_stiffness(self, stiffness, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([stiffness], dofs_idx, "stiffness", envs_idx, unsafe=unsafe)
-
-    def set_dofs_invweight(self, invweight, dofs_idx=None, envs_idx=None, *, unsafe=False):
-        self._set_dofs_info([invweight], dofs_idx, "invweight", envs_idx, unsafe=unsafe)
 
     def set_dofs_armature(self, armature, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([armature], dofs_idx, "armature", envs_idx, unsafe=unsafe)
@@ -2609,7 +2640,7 @@ def kernel_compute_mass_matrix(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
-    decompose: ti.i32,
+    decompose: ti.template(),
 ):
     func_compute_mass_matrix(
         implicit_damping=False,
@@ -2635,36 +2666,56 @@ def kernel_compute_mass_matrix(
 @gs.maybe_pure
 @ti.kernel
 def kernel_init_invweight(
+    envs_idx: ti.types.ndarray(),
     links_invweight: ti.types.ndarray(),
     dofs_invweight: ti.types.ndarray(),
-    # taichi variables
     links_info: array_class.LinksInfo,
     dofs_info: array_class.DofsInfo,
+    force_update: ti.template(),
+    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    for I in ti.grouped(links_info.parent_idx):
-        for j in ti.static(range(2)):
-            if links_info.invweight[I][j] < gs.EPS:
-                links_info.invweight[I][j] = links_invweight[I[0], j]
+    if ti.static(static_rigid_sim_config.batch_links_info):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l, i_b_ in ti.ndrange(links_info.parent_idx.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            for j in ti.static(range(2)):
+                if force_update or links_info.invweight[i_l, i_b][j] < gs.EPS:
+                    links_info.invweight[i_l, i_b][j] = links_invweight[i_b_, i_l, j]
+    else:
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_l in range(links_info.parent_idx.shape[0]):
+            for j in ti.static(range(2)):
+                if force_update or links_info.invweight[i_l][j] < gs.EPS:
+                    links_info.invweight[i_l][j] = links_invweight[i_l, j]
 
-    for I in ti.grouped(dofs_info.dof_start):
-        if dofs_info.invweight[I] < gs.EPS:
-            dofs_info.invweight[I] = dofs_invweight[I[0]]
+    if ti.static(static_rigid_sim_config.batch_dofs_info):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_d, i_b_ in ti.ndrange(dofs_info.dof_start.shape[0], envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            if force_update or dofs_info.invweight[i_d, i_b] < gs.EPS:
+                dofs_info.invweight[i_d, i_b] = dofs_invweight[i_b_, i_d]
+    else:
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_d in range(dofs_info.dof_start.shape[0]):
+            if force_update or dofs_info.invweight[i_d] < gs.EPS:
+                dofs_info.invweight[i_d] = dofs_invweight[i_d]
 
 
 @gs.maybe_pure
 @ti.kernel
 def kernel_init_meaninertia(
-    # taichi variables
+    envs_idx: ti.types.ndarray(),
     rigid_global_info: array_class.RigidGlobalInfo,
     entities_info: array_class.EntitiesInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = rigid_global_info.mass_mat.shape[0]
-    _B = rigid_global_info.mass_mat.shape[2]
     n_entities = entities_info.n_links.shape[0]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_b in range(_B):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
         if n_dofs > 0:
             rigid_global_info.meaninertia[i_b] = 0.0
             for i_e in range(n_entities):
@@ -6375,24 +6426,6 @@ def kernel_set_links_inertial_mass(
 
 @gs.maybe_pure
 @ti.kernel
-def kernel_set_links_invweight(
-    invweight: ti.types.ndarray(),
-    links_idx: ti.types.ndarray(),
-    envs_idx: ti.types.ndarray(),
-    links_info: array_class.LinksInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    if ti.static(static_rigid_sim_config.batch_links_info):
-        for i_l_, i_b_, j in ti.ndrange(links_idx.shape[0], envs_idx.shape[0], 2):
-            links_info.invweight[links_idx[i_l_], envs_idx[i_b_]][j] = invweight[i_b_, i_l_, j]
-    else:
-        for i_l_, j in ti.ndrange(links_idx.shape[0], 2):
-            links_info.invweight[links_idx[i_l_]][j] = invweight[i_l_, j]
-
-
-@gs.maybe_pure
-@ti.kernel
 def kernel_set_geoms_friction_ratio(
     friction_ratio: ti.types.ndarray(),
     geoms_idx: ti.types.ndarray(),
@@ -6557,24 +6590,6 @@ def kernel_set_dofs_stiffness(
     else:
         for i_d_ in range(dofs_idx.shape[0]):
             dofs_info.stiffness[dofs_idx[i_d_]] = stiffness[i_d_]
-
-
-@gs.maybe_pure
-@ti.kernel
-def kernel_set_dofs_invweight(
-    invweight: ti.types.ndarray(),
-    dofs_idx: ti.types.ndarray(),
-    envs_idx: ti.types.ndarray(),
-    dofs_info: array_class.DofsInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-    if ti.static(static_rigid_sim_config.batch_dofs_info):
-        for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            dofs_info.invweight[dofs_idx[i_d_], envs_idx[i_b_]] = invweight[i_b_, i_d_]
-    else:
-        for i_d_ in range(dofs_idx.shape[0]):
-            dofs_info.invweight[dofs_idx[i_d_]] = invweight[i_d_]
 
 
 @gs.maybe_pure
