@@ -64,6 +64,12 @@ def _kernel_get_contacts_forces(
                     output[i_b, j_s + j] += force_b[j]
 
 
+def _to_expanded_tensor(value: float | Sequence[float], shape: tuple[int, ...]) -> torch.Tensor:
+    if not isinstance(value, Sequence):
+        value = [value]
+    return torch.tensor(value, dtype=gs.tc_float, device=gs.device).expand(shape)
+
+
 class ContactSensorOptions(RigidSensorOptionsMixin, SensorOptions):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
@@ -88,7 +94,7 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: RigidSolver | None = None
-    expanded_links_idx: torch.Tensor = make_tensor_field((0, 0, 0), dtype=gs.tc_int)
+    expanded_links_idx: torch.Tensor = make_tensor_field((0, 0, 0), dtype_factory=lambda: gs.tc_int)
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata)
@@ -226,17 +232,12 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
 
         self._shared_metadata.min_force = self._concat_with_tensor(
             self._shared_metadata.min_force,
-            self._options.min_force if isinstance(self._options.min_force, tuple) else (self._options.min_force,) * 3,
+            _to_expanded_tensor(self._options.min_force, (3,)),
         )
         self._shared_metadata.max_force = self._concat_with_tensor(
             self._shared_metadata.max_force,
-            self._options_value_to_tensor(self._options.max_force, (3,)),
+            _to_expanded_tensor(self._options.max_force, (3,)),
         )
-
-    def _options_value_to_tensor(self, value: float | Sequence[float], shape: tuple[int, ...]) -> torch.Tensor:
-        if not isinstance(value, Sequence):
-            value = [value]
-        return torch.tensor(value, dtype=gs.tc_float, device=gs.device).expand(shape)
 
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return (3,)

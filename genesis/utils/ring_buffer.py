@@ -68,8 +68,7 @@ class TensorRingBuffer:
         if isinstance(idx, torch.Tensor):
             batch_size = len(idx) if idx.ndim > 0 else 1
             return self.buffer[rel_idx, :batch_size]
-        else:
-            return self.buffer[rel_idx]
+        return self.buffer[rel_idx]
 
     def get(self, idx: int) -> torch.Tensor:
         """

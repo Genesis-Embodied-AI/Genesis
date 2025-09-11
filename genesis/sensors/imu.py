@@ -174,8 +174,8 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
     """
 
     alignment_rot_matrix: torch.Tensor = make_tensor_field((0, 0, 3, 3))
-    acc_indices: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
-    gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
+    acc_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
