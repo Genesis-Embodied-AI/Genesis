@@ -112,7 +112,7 @@ def kernel_noslip(
             for i_col in range(n_con):
                 base = const_start + i_col * 4
                 mu = collider_state.contact_data.friction[i_col, i_b]
-                for j2 in range(2):
+                for j2 in ti.static(range(2)):
                     j_efc = base + j2 * 2
                     res = func_residual_constraint_force(
                         res=res,
@@ -121,7 +121,7 @@ def kernel_noslip(
                         dim=2,
                         constraint_state=constraint_state,
                     )
-                    for i2 in range(2):
+                    for i2 in ti.static(range(2)):
                         old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
                     Ac = func_extract_block_matrix_from_AR(
                         Ac=Ac,
@@ -130,9 +130,9 @@ def kernel_noslip(
                         n=2,
                         constraint_state=constraint_state,
                     )
-                    for j in range(2):
+                    for j in ti.static(range(2)):
                         bc[j] = res[j]
-                        for k in range(2):
+                        for k in ti.static(range(2)):
                             bc[j] -= Ac[j * 2 + k] * old_force[k]
                     mid = 0.5 * (constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b])
                     y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
