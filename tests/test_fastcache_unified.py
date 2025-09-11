@@ -327,5 +327,4 @@ def test_ndarray_no_compile(
 # The following lines are critical for the test to work. If they are missing, the test will
 # incorrectly pass, without doing anything.
 if __name__ == "__main__":
-    print("__main__")
     globals()[sys.argv[1]](sys.argv[2:])
