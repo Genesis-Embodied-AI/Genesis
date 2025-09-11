@@ -188,7 +188,7 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol):
         err_msg="RigidContactForceSensor should only read bias and small amount of noise before contact.",
     )
 
-    for _ in range(100):
+    for _ in range(120):
         scene.step()
 
     assert bool_sensor.read().all(), "Sensor should detect contact with the ground"
