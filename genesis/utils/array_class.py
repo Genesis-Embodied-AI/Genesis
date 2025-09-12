@@ -279,15 +279,15 @@ class StructContactData:
     link_b: V_ANNOTATION
 
 
-def get_contact_data(solver, max_contact_pairs):
+def get_contact_data(solver, max_contact_pairs, requires_grad):
     f_batch = solver._batch_shape
     max_contact_pairs_ = max(1, max_contact_pairs)
     kwargs = {
         "geom_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "geom_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
-        "penetration": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
-        "normal": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
-        "pos": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
+        "penetration": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
+        "pos": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
         "friction": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
         "sol_params": V_VEC(7, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
         "force": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_)),
@@ -306,6 +306,60 @@ def get_contact_data(solver, max_contact_pairs):
                     setattr(self, k, v)
 
         return ClassContactData()
+
+
+@dataclasses.dataclass
+class StructDiffContactData:
+    # Non-differentiable data
+    geom_a: V_ANNOTATION
+    geom_b: V_ANNOTATION
+    localpos1a: V_ANNOTATION
+    localpos1b: V_ANNOTATION
+    localpos1c: V_ANNOTATION
+    localpos2a: V_ANNOTATION
+    localpos2b: V_ANNOTATION
+    localpos2c: V_ANNOTATION
+    vid1: V_ANNOTATION
+    vid2: V_ANNOTATION
+    w_localpos1: V_ANNOTATION
+    w_localpos2: V_ANNOTATION
+    normal: V_ANNOTATION
+    ref_id: V_ANNOTATION
+    # Differentiable data
+    ref_penetration: V_ANNOTATION
+
+
+def get_diff_contact_data(solver, max_contacts_per_pair):
+    _B = solver._B
+    kwargs = {
+        "geom_a": V(dtype=gs.ti_int, shape=(_B, max_contacts_per_pair)),
+        "geom_b": V(dtype=gs.ti_int, shape=(_B, max_contacts_per_pair)),
+        "localpos1a": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "localpos1b": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "localpos1c": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "localpos2a": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "localpos2b": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "localpos2c": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "vid1": V_VEC(3, dtype=gs.ti_int, shape=(_B, max_contacts_per_pair)),
+        "vid2": V_VEC(3, dtype=gs.ti_int, shape=(_B, max_contacts_per_pair)),
+        "w_localpos1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "w_localpos2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        "ref_id": V(dtype=gs.ti_int, shape=(_B, max_contacts_per_pair)),
+        "ref_penetration": V(dtype=gs.ti_float, shape=(_B, max_contacts_per_pair), needs_grad=True),
+    }
+
+    if use_ndarray:
+        return StructDiffContactData(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassDiffContactInfo:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassDiffContactInfo()
 
 
 @dataclasses.dataclass
@@ -467,19 +521,22 @@ class StructColliderState:
     n_contacts_hibernated: V_ANNOTATION
     first_time: V_ANNOTATION
     contact_cache: StructContactCache
+    diff_contact_data: StructDiffContactData
+    n_diff_contacts: V_ANNOTATION
 
 
-def get_collider_state(solver, n_possible_pairs, collider_static_config):
+def get_collider_state(solver, static_rigid_sim_config, n_possible_pairs, collider_static_config):
     _B = solver._B
     f_batch = solver._batch_shape
     n_geoms = solver.n_geoms_
     max_collision_pairs = min(solver._max_collision_pairs, n_possible_pairs)
     max_collision_pairs_broad = max_collision_pairs * collider_static_config.max_collision_pairs_broad_k
     max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
+    requires_grad = static_rigid_sim_config.requires_grad
 
     ############## broad phase SAP ##############
 
-    contact_data = get_contact_data(solver, max_contact_pairs)
+    contact_data = get_contact_data(solver, max_contact_pairs, requires_grad)
     sort_buffer = get_sort_buffer(solver)
     contact_cache = get_contact_cache(solver)
     kwargs = {
@@ -505,6 +562,14 @@ def get_collider_state(solver, n_possible_pairs, collider_static_config):
         "first_time": V(dtype=gs.ti_int, shape=_B),
         "contact_cache": contact_cache,
     }
+
+    if requires_grad:
+        kwargs.update(
+            {
+                "diff_contact_data": get_diff_contact_data(solver, max_contact_pairs),
+                "n_diff_contacts": V(dtype=gs.ti_int, shape=_B),
+            }
+        )
 
     if use_ndarray:
         return StructColliderState(**kwargs)
@@ -642,6 +707,8 @@ class StructMDVertex:
     # Vertex of the Minkowski difference
     obj1: V_ANNOTATION
     obj2: V_ANNOTATION
+    local_obj1: V_ANNOTATION
+    local_obj2: V_ANNOTATION
     id1: V_ANNOTATION
     id2: V_ANNOTATION
     mink: V_ANNOTATION
@@ -652,6 +719,8 @@ def get_gjk_simplex_vertex(solver):
     kwargs = {
         "obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
         "obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
+        "local_obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
+        "local_obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
         "id1": V(dtype=gs.ti_int, shape=(_B, 4)),
         "id2": V(dtype=gs.ti_int, shape=(_B, 4)),
         "mink": V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
@@ -676,6 +745,8 @@ def get_epa_polytope_vertex(solver, gjk_static_config):
     kwargs = {
         "obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
         "obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
+        "local_obj1": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
+        "local_obj2": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
         "id1": V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
         "id2": V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
         "mink": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
@@ -785,6 +856,7 @@ class StructEPAPolytopeFace:
     normal: V_ANNOTATION
     dist2: V_ANNOTATION
     map_idx: V_ANNOTATION
+    visited: V_ANNOTATION
 
 
 def get_epa_polytope_face(solver, polytope_max_faces):
@@ -796,6 +868,7 @@ def get_epa_polytope_face(solver, polytope_max_faces):
         "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
         "dist2": V(dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
         "map_idx": V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
+        "visited": V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
     }
 
     if use_ndarray:
@@ -980,6 +1053,9 @@ class StructGJKState:
     is_col: V_ANNOTATION
     penetration: V_ANNOTATION
     distance: V_ANNOTATION
+    diff_contact_data: StructDiffContactData
+    n_diff_contact_data: V_ANNOTATION
+    diff_penetration: V_ANNOTATION
 
 
 def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
@@ -1063,6 +1139,16 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
             "distance": V(dtype=gs.ti_float, shape=(_B,)),
         }
     )
+
+    ### Differentiable contact detection
+    if static_rigid_sim_config.requires_grad:
+        kwargs.update(
+            {
+                "diff_contact_data": get_diff_contact_data(solver, max_contacts_per_pair),
+                "n_diff_contact_data": V(dtype=gs.ti_int, shape=(_B,)),
+                "diff_penetration": V(dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+            }
+        )
 
     if use_ndarray:
         return StructGJKState(**kwargs)
@@ -1605,9 +1691,10 @@ class StructGeomsState:
 
 def get_geoms_state(solver):
     shape = solver._batch_shape(solver.n_geoms_)
+    requires_grad = solver._static_rigid_sim_config.requires_grad
     kwargs = {
-        "pos": V(dtype=gs.ti_vec3, shape=shape),
-        "quat": V(dtype=gs.ti_vec4, shape=shape),
+        "pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
         "aabb_min": V(dtype=gs.ti_vec3, shape=shape),
         "aabb_max": V(dtype=gs.ti_vec3, shape=shape),
         "verts_updated": V(dtype=gs.ti_int, shape=shape),
@@ -2132,3 +2219,4 @@ ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
 ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState
+DiffContactData = ti.template() if not use_ndarray else StructDiffContactData

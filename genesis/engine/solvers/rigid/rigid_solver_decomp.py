@@ -243,6 +243,7 @@ class RigidSolver(Solver):
         self._static_rigid_sim_cache_key = array_class.get_static_rigid_sim_cache_key(self)
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
+            requires_grad=getattr(self.sim.options, "requires_grad", False),
             use_hibernation=getattr(self, "_use_hibernation", False),
             use_contact_island=getattr(self, "_use_contact_island", False),
             batch_links_info=getattr(self._options, "batch_links_info", False),
@@ -1045,6 +1046,8 @@ class RigidSolver(Solver):
         self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
         self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
         self.collider._collider_state.n_contacts.fill(0)
+        if hasattr(self.collider._collider_state, "n_diff_contacts"):
+            self.collider._collider_state.n_diff_contacts.fill(0)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
