@@ -1,0 +1,29 @@
+
+# ========= genesis =========
+num_envs: 1 
+drone_num: 1
+dt: 0.01
+max_vis_FPS: 60 
+use_FPV_camera: True
+max_dis_num: 5
+cam_quat: [-0.455, -0.542, 0.542, 0.455]  # FPV camera, 70.0 degree, show in https://quaternions.online/
+cam_res: [640, 480]                         # width, height
+drone_init_pos: [0.0, 0.0, 0.0]          # Initial position of the drone
+viewer_follow_drone: True
+load_map: True
+use_rc: True
+show_viewer: True
+render_cam: True
+controller: "angle"
+vis_waypoints: False
+map: "gates"
+min_dis: 0.8
+map_width: 3
+map_length: 3
+
+
+
+
+
+
+
