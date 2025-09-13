@@ -11,7 +11,7 @@ ang:
   kd_p: 0.0001
   kf_p: 0.0
 
-  kp_y: 4000                                          
+  kp_y: 7000                                          
   ki_y: 0.0
   kd_y: 0.0
   kf_y: 0.0
@@ -27,32 +27,32 @@ rat:
   kd_p: 0.0
   kf_p: 0.0
 
-  kp_y: 5000.0
+  kp_y: 7000.0
   ki_y: 0.0
   kd_y: 0.0
   kf_y: 0.0
 
 pos:
-  kp_x: 1.0
+  kp_x: 0.5
   ki_x: 0.001
-  kd_x: 0.0
+  kd_x: 0.005
   kf_x: 0.0
 
-  kp_y: 1.0
+  kp_y: 0.5
   ki_y: 0.001
-  kd_y: 0.0
+  kd_y: 0.005
   kf_y: 0.0
 
-  kp_t: 1.0
-  ki_t: 0.001
-  kd_t: 0.0
+  kp_t: 1.7
+  ki_t: 0.01
+  kd_t: 0.01
   kf_t: 0.0
 
 pid_exec_freq: 60
 
 # =========== drone_param =============
 # see in assets/drone_urdf/cf2x.urdf
-thrust_compensate: 0.7
+thrust_compensate: 0.0
 weight: 0.5   
 motor_inertia: 2.6e-07
 g: 9.81   
