@@ -84,6 +84,8 @@ dev = [
     "huggingface_hub",
     "wandb",
     "ipython",
+    # for visualization recorders test
+    "matplotlib",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
