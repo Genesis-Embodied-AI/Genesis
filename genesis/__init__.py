@@ -51,10 +51,6 @@ def _noop(fn: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 use_pure = os.environ.get("GS_BETA_PURE") == "1"
-if use_pure:
-    maybe_pure: Callable[[Callable[_P, _R]], Callable[_P, _R]] = ti.pure
-else:
-    maybe_pure = _noop
 
 
 ########################## init ##########################
