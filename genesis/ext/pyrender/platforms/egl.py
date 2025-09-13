@@ -117,7 +117,7 @@ class EGLPlatform(Platform):
     """Renders using EGL."""
 
     def __init__(self, viewport_width, viewport_height, device_id: int | None = None):
-        super(EGLPlatform, self).__init__(viewport_width, viewport_height)
+        super().__init__(viewport_width, viewport_height)
         if _eglQueryDevicesEXT is None and device_id not in (0, None):
             raise RuntimeError("EGL platform plugin is not available. Enforcing specific EGL device not supported.")
         self._egl_device_id = device_id

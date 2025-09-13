@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
-from genesis.utils.misc import ti_field_to_torch
+from genesis.utils.misc import ti_to_torch
 from genesis.utils.geom import ti_transform_by_quat, ti_transform_quat_by_quat
 
 from .base_solver import Solver
@@ -1144,7 +1144,7 @@ class FEMSolver(Solver):
         if not self.is_active():
             return None
 
-        return ti_field_to_torch(self.elements_v_energy.force)
+        return ti_to_torch(self.elements_v_energy.force)
 
     @ti.kernel
     def _kernel_add_elements(

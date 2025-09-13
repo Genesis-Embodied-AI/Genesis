@@ -7,6 +7,7 @@ import logging as _logging
 import traceback
 from platform import system
 from contextlib import redirect_stdout
+from typing import Callable, TypeVar, ParamSpec
 
 # Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
@@ -14,10 +15,8 @@ _ti_outputs = io.StringIO()
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    try:
-        import gstaichi as ti
-    except ImportError:
-        raise ImportError("genesis now uses gstaichi as the backend. Please install it by 'pip install gstaichi'")
+    import gstaichi as ti
+
 try:
     import torch
 except ImportError as e:
@@ -41,6 +40,20 @@ _initialized = False
 backend = None
 exit_callbacks = []
 global_scene_list = set()
+
+
+_P = ParamSpec("P")
+_R = TypeVar("R")
+
+
+def _noop(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+    return fn
+
+
+if os.environ.get("GS_BETA_PURE") == "1":
+    maybe_pure: Callable[[Callable[_P, _R]], Callable[_P, _R]] = ti.pure
+else:
+    maybe_pure = _noop
 
 
 ########################## init ##########################
@@ -187,7 +200,7 @@ def init(
         if backend == gs_backend.cpu:
             taichi_kwargs.update(cpu_max_num_threads=1)
         else:
-            logger.warning("CPU backend is strongly recommended in debug mode.")
+            logger.warning("Debug mode is partially supported for GPU backend.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = True
@@ -199,6 +212,9 @@ def init(
             "Consider setting 'performance_mode=True' in production to maximise runtime speed, if significantly "
             "increasing compilation time is not a concern."
         )
+
+    if os.environ.get("GS_BETA_PURE") == "1":
+        logger.info("Enabling pure kernels for fast cache loading.")
 
     if seed is not None:
         global SEED
@@ -233,9 +249,8 @@ def init(
         )
 
     # Make sure that gstaichi arch is matching requirement
-    ti_runtime = ti.lang.impl.get_runtime()
-    ti_arch = ti_runtime.prog.config().arch
-    if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+    ti_config = ti.lang.impl.current_cfg()
+    if backend != gs.cpu and ti_config.arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
         device, device_name, total_mem, backend = get_device(gs.cpu)
 
     _globalize_backend(backend)
@@ -278,7 +293,7 @@ def destroy():
     _initialized = False
 
     # Unregister at-exit callback that is not longer relevant.
-    # This is important when `init` / `destory` is called multiple times, which is typically the case for unit tests.
+    # This is important when `init` / `destroy` is called multiple times, which is typically the case for unit tests.
     atexit.unregister(destroy)
 
     # Display any buffered error message if logger is configured
@@ -294,9 +309,8 @@ def destroy():
     # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
-        if scene._visualizer is not None:
-            scene._visualizer.destroy()
-        del scene
+        if scene.visualizer is not None:
+            scene.visualizer.destroy()
     global_scene_list.clear()
 
     # Reset gstaichi

@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import gstaichi as ti
 import torch
-from genesis.utils.misc import ti_field_to_torch
+from genesis.utils.misc import ti_to_torch
 
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity
@@ -64,18 +64,18 @@ class Solver(RBC):
                 self._gravity[envs_idx[i_b_]][j] = gravity[i_b_, j]
 
     def get_gravity(self, envs_idx=None, *, unsafe=False):
-        tensor = ti_field_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
+        tensor = ti_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
 
-        for attr_name, field in self.__dict__.items():
-            if not isinstance(field, ti.Field):
+        for attr_name, value in self.__dict__.items():
+            if not isinstance(value, (ti.Field, ti.Ndarray)):
                 continue
 
             key_base = ".".join((self.__class__.__name__, attr_name))
-            data = field.to_numpy()
+            data = value.to_numpy()
 
             # StructField → data is a dict: flatten each member
             if isinstance(data, dict):
@@ -89,17 +89,17 @@ class Solver(RBC):
         # if it has data_manager, add it to the arrays
         if hasattr(self, "data_manager"):
             for attr_name, struct in self.data_manager.__dict__.items():
-                for sub_name, sub_arr in struct.__dict__.items():
+                for sub_name, value in struct.__dict__.items():
                     # if it's a ti.Field or ti.Ndarray, convert to numpy
-                    if isinstance(sub_arr, ti.Field) or isinstance(sub_arr, ti.Ndarray):
+                    if isinstance(value, (ti.Field, ti.Ndarray)):
                         store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
-                        arrays[store_name] = sub_arr.to_numpy()
+                        arrays[store_name] = value.to_numpy()
 
         return arrays
 
     def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
-        for attr_name, field in self.__dict__.items():
-            if not isinstance(field, ti.Field):
+        for attr_name, value in self.__dict__.items():
+            if not isinstance(value, (ti.Field, ti.Ndarray)):
                 continue
 
             key_base = ".".join((self.__class__.__name__, attr_name))
@@ -113,7 +113,7 @@ class Solver(RBC):
                     member_items[sub_name] = saved_arr
 
             if member_items:  # we found at least one sub-member
-                field.from_numpy(member_items)
+                value.from_numpy(member_items)
                 continue
 
             # ---- Ordinary field ---------------------------------------------
@@ -121,14 +121,14 @@ class Solver(RBC):
                 continue  # nothing saved for this attribute
 
             arr = arr_dict[key_base]
-            field.from_numpy(arr)
+            value.from_numpy(arr)
 
         # if it has data_manager, add it to the arrays
         if hasattr(self, "data_manager"):
             for attr_name, struct in self.data_manager.__dict__.items():
                 for sub_name, sub_arr in struct.__dict__.items():
                     # if it's a ti.Field or ti.Ndarray, convert to numpy
-                    if isinstance(sub_arr, ti.Field) or isinstance(sub_arr, ti.Ndarray):
+                    if isinstance(sub_arr, (ti.Field, ti.Ndarray)):
                         store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
                         if store_name in arr_dict:
                             sub_arr.from_numpy(arr_dict[store_name])

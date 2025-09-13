@@ -206,6 +206,11 @@ class Scene(RBC):
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
+    def __del__(self):
+        if self._visualizer is not None:
+            self._visualizer.destroy()
+            self._visualizer = None
+
     def _validate_options(
         self,
         sim_options: SimOptions,
@@ -1120,7 +1125,7 @@ class Scene(RBC):
 
         Returns:
             A tuple of tensors of shape (n_envs, H, W, 3) if rgb is not None,
-            otherwise a list of tensors of shape (n_envs, H, W, 1) if depth is not None.
+            otherwise a list of tensors of shape (n_envs, H, W) if depth is not None.
             If n_envs == 0, the first dimension of the tensor is squeezed.
         """
         if self._visualizer.batch_renderer is None:
@@ -1172,9 +1177,9 @@ class Scene(RBC):
         """
         arrays: dict[str, np.ndarray] = {}
 
-        for name, field in self.__dict__.items():
-            if isinstance(field, ti.Field):
-                arrays[".".join((self.__class__.__name__, name))] = field.to_numpy()
+        for name, value in self.__dict__.items():
+            if isinstance(value, (ti.Field, ti.Ndarray)):
+                arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
 
         for solver in self.active_solvers:
             arrays.update(solver.dump_ckpt_to_numpy())
@@ -1212,11 +1217,11 @@ class Scene(RBC):
 
         arrays = state["arrays"]
 
-        for name, field in self.__dict__.items():
-            if isinstance(field, ti.Field):
+        for name, value in self.__dict__.items():
+            if isinstance(value, (ti.Field, ti.Ndarray)):
                 key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
-                    field.from_numpy(arrays[key])
+                    value.from_numpy(arrays[key])
 
         for solver in self.active_solvers:
             solver.load_ckpt_from_numpy(arrays)
