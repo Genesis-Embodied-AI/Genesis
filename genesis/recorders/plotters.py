@@ -22,6 +22,7 @@ except ImportError:
 
 IS_MATPLOTLIB_AVAILABLE = False
 try:
+    import matplotlib as mpl
     import matplotlib.pyplot as plt
 
     IS_MATPLOTLIB_AVAILABLE = True
@@ -47,22 +48,28 @@ class BasePlotterOptions(RecorderOptions):
 
     Parameters
     ----------
+    title: str
+        The title of the plot.
     labels: tuple[str] | dict[str, tuple[str]] | None
         The labels for the plot. The length of the labels should match the length of the data.
         If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
         The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
-        The size of the window.
+        The size of the window in pixels.
     history_length: int
-        The length of the history to store.
-    title: str
-        The title of the plot.
+        The maximum number of previous data to store.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool
+        Whether to show the window. Defaults to True, set to False for headless mode.
     """
 
-    labels: tuple[str] | dict[str, tuple[str]] | None = None
+    title: str = ""
+    labels: tuple[str, ...] | dict[str, tuple[str, ...]] | None = None
     window_size: tuple[int, int] = (800, 600)
     history_length: int = 100
-    title: str = ""
+    save_to_filename: str | None = None
+    show_window: bool = True
 
 
 class BasePlotter(Recorder):
@@ -89,17 +96,17 @@ class BasePlotter(Recorder):
         """Set up the plot structure based on labels or first data sample."""
         if isinstance(labels_or_data, dict):
             self.is_dict_data = True
-            first_value = next(iter(labels_or_data.values()))
+            next_dict_value = next(iter(labels_or_data.values()))
 
-            if isinstance(first_value, list):
-                # labels were provided
-                self.subplot_structure = {k: tuple(v) for k, v in labels_or_data.items()}
-            elif isinstance(first_value, (torch.Tensor, np.ndarray)):
+            if isinstance(next_dict_value, (torch.Tensor, np.ndarray)):
                 # data was provided
                 self.subplot_structure = {}
                 for key, values in labels_or_data.items():
                     values = _data_to_array(values)
                     self.subplot_structure[key] = tuple(f"{key}_{i}" for i in range(len(values)))
+            elif isinstance(next_dict_value, Sequence) and isinstance(next_dict_value[0], str):
+                # labels were provided
+                self.subplot_structure = {k: tuple(v) for k, v in labels_or_data.items()}
             else:
                 gs.raise_exception(f"[{type(self).__name__}] Unsupported input argument type: {type(labels_or_data)}")
         else:
@@ -162,16 +169,20 @@ class PyQtPlotterOptions(BasePlotterOptions):
 
     Parameters
     ----------
+    title: str
+        The title of the plot.
     labels: tuple[str] | dict[str, tuple[str]] | None
         The labels for the plot. The length of the labels should match the length of the data.
         If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
         The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
-        The size of the window.
+        The size of the window in pixels.
     history_length: int
-        The length of the history to store.
-    title: str
-        The title of the plot.
+        The maximum number of previous data to store.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool
+        Whether to show the window. Defaults to True, set to False for headless mode.
     """
 
     pass
@@ -203,8 +214,14 @@ class PyQtPlotter(BasePlotter):
         else:
             self.app = pg.QtWidgets.QApplication.instance()
 
-        self.widget = pg.GraphicsLayoutWidget(show=True, title=self._options.title)
+        self.widget = pg.GraphicsLayoutWidget(show=self._options.show_window, title=self._options.title)
         self.widget.resize(*self._options.window_size)
+
+        if self._options.save_to_filename:
+            self.video_writer = self._manager.add_recorder(
+                data_func=self._video_data_func,
+                rec_options=gs.recorders.VideoFile(filename=self._options.save_to_filename, hz=self._options.hz),
+            )
 
         gs.logger.info("[PyQtPlotter] created PyQtGraph window")
 
@@ -260,6 +277,17 @@ class PyQtPlotter(BasePlotter):
     def run_in_thread(self) -> bool:
         return True
 
+    def _video_data_func(self):
+        """Capture the plot image as a video frame."""
+        pixmap = self.widget.grab()
+        qimage = pixmap.toImage()
+
+        qimage = qimage.convertToFormat(pg.QtGui.QImage.Format_RGB888)
+        ptr = qimage.bits()
+        ptr.setsize(qimage.byteCount())
+
+        return np.array(ptr).reshape(qimage.height(), qimage.width(), 3)
+
 
 class MPLPlotterOptions(BasePlotterOptions):
     """
@@ -268,6 +296,15 @@ class MPLPlotterOptions(BasePlotterOptions):
     Parameters
     ----------
     labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
+    window_size: tuple[int, int]
+        The size of the window.
+    history_length: int
+        The length of the history to store.
+    title: str
+        The title of the plot.   labels: tuple[str] | dict[str, tuple[str]] | None
         The labels for the plot. The length of the labels should match the length of the data.
         If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
         The keys will be used as subplot titles and the values will be used as labels within each subplot.
@@ -306,13 +343,18 @@ class MPLPlotter(BasePlotter):
 
         # create figure and subplots
         n_subplots = len(self.subplot_structure)
+        dpi = mpl.rcParams.get("figure.dpi", 100)
+        # matplotlib figsize uses inches
+        figsize = (
+            self._options.window_size[0] / dpi,
+            self._options.window_size[1] / dpi,
+        )
+
         if n_subplots == 1:
-            self.fig, ax = plt.subplots(figsize=self._options.window_size)
+            self.fig, ax = plt.subplots(figsize=figsize)
             self.axes = [ax]
         else:
-            self.fig, axes = plt.subplots(
-                n_subplots, 1, figsize=self._options.window_size, sharex=True, constrained_layout=True
-            )
+            self.fig, axes = plt.subplots(n_subplots, 1, figsize=figsize, sharex=True, constrained_layout=True)
             self.axes = axes if isinstance(axes, (list, tuple, np.ndarray)) else [axes]
         self.fig.suptitle(self._options.title)
 
@@ -342,11 +384,18 @@ class MPLPlotter(BasePlotter):
             ax.set_xlim(0, 10)
             ax.set_ylim(-1, 1)
 
-        self.fig.show()
+        if self._options.show_window:
+            self.fig.show()
         self.fig.canvas.draw()
 
         for ax in self.axes:
             self.backgrounds.append(self.fig.canvas.copy_from_bbox(ax.bbox))
+
+        if self._options.save_to_filename:
+            self.video_writer = self._manager.add_recorder(
+                data_func=self._video_data_func,
+                rec_options=gs.recorders.VideoFile(filename=self._options.save_to_filename, hz=self._options.hz),
+            )
 
     def process(self, data, cur_time):
         """Process new data point and update plot using blitting."""
@@ -419,3 +468,8 @@ class MPLPlotter(BasePlotter):
     @property
     def run_in_thread(self) -> bool:
         return gs.platform != "macOS"
+
+    def _video_data_func(self):
+        """Capture the plot image as a video frame."""
+        np_buffer = np.frombuffer(self.fig.canvas.tostring_argb(), dtype="uint8")
+        return np_buffer.reshape(*reversed(self.fig.canvas.get_width_height()), 4)[..., 1:]

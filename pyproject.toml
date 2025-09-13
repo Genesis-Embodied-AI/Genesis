@@ -85,6 +85,8 @@ dev = [
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
     "mujoco>=3.3.6,<3.4.0",
+    # for visualization recorders test
+    "matplotlib",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
