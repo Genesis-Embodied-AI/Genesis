@@ -10,9 +10,9 @@ class Hybrid(Material):
 
     Parameters
     ----------
-    mat_rigid: gs.materials.base.Material
+    material_rigid: gs.materials.base.Material
         The material of the rigid body.
-    mat_soft: gs.materials.base.Material
+    material_soft: gs.materials.base.Material
         The material of the soft body.
     fixed: bool, optional
         Whether the rigid entity is with a fixed base link. Default is False.
@@ -34,8 +34,8 @@ class Hybrid(Material):
 
     def __init__(
         self,
-        mat_rigid,
-        mat_soft,
+        material_rigid,
+        material_soft,
         fixed=True,
         use_default_coupling=False,
         damping=0.0,
@@ -47,8 +47,8 @@ class Hybrid(Material):
     ):
         super().__init__()
 
-        self._mat_rigid = mat_rigid
-        self._mat_soft = mat_soft
+        self._material_rigid = material_rigid
+        self._material_soft = material_soft
         self._thickness = thickness
         self._fixed = fixed
         self._use_default_coupling = use_default_coupling
@@ -59,14 +59,14 @@ class Hybrid(Material):
         self._func_instantiate_rigid_soft_association = func_instantiate_rigid_soft_association
 
     @property
-    def mat_rigid(self):
+    def material_rigid(self):
         """The material of the rigid body."""
-        return self._mat_rigid
+        return self._material_rigid
 
     @property
-    def mat_soft(self):
+    def material_soft(self):
         """The material of the soft body."""
-        return self._mat_soft
+        return self._material_soft
 
     @property
     def thickness(self):
