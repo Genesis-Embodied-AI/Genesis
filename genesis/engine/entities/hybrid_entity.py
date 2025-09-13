@@ -59,25 +59,25 @@ class HybridEntity(Entity):
     ):
         super().__init__(idx, scene, morph, None, material, surface)
 
-        mat_rigid = material.mat_rigid
-        mat_soft = material.mat_soft
+        material_rigid = material.material_rigid
+        material_soft = material.material_soft
 
         surface_rigid = gs.surfaces.Smooth(roughness=0.4)  # HACK hardcoded
 
-        assert isinstance(mat_soft, gs.materials.MPM.Base)  # TODO: need FEM and PBD
+        assert isinstance(material_soft, gs.materials.MPM.Base)  # TODO: need FEM and PBD
 
         if isinstance(morph, gs.morphs.URDF):
             # set up rigid part
             morph.fixed = material.fixed  # NOTE: use hybrid material to determine this
             if material.use_default_coupling:
                 gs.logger.info("Use default coupling in hybrid. Overwrite `needs_coup` in rigid material to True")
-                mat_rigid._needs_coup = True
+                material_rigid._needs_coup = True
             else:
                 gs.logger.info("Use default coupling in hybrid. Overwrite `needs_coup` in rigid material to False")
-                mat_rigid._needs_coup = False
+                material_rigid._needs_coup = False
 
             part_rigid = scene.add_entity(
-                material=mat_rigid,
+                material=material_rigid,
                 morph=morph,
                 surface=surface_rigid,
             )
@@ -93,7 +93,7 @@ class HybridEntity(Entity):
             part_soft = func_instantiate_soft_from_rigid(
                 scene=scene,
                 part_rigid=part_rigid,
-                material_soft=mat_soft,
+                material_soft=material_soft,
                 material_hybrid=material,
                 surface=surface,
             )
@@ -101,7 +101,7 @@ class HybridEntity(Entity):
         elif isinstance(morph, gs.morphs.Mesh):
             # instantiate soft part
             part_soft = scene.add_entity(
-                material=mat_soft,
+                material=material_soft,
                 morph=morph,
                 surface=surface,
             )
@@ -118,7 +118,7 @@ class HybridEntity(Entity):
                 scene=scene,
                 mesh=mesh,
                 morph=morph,
-                material_rigid=mat_rigid,
+                material_rigid=material_rigid,
                 material_hybrid=material,
                 surface=surface_rigid,
             )
@@ -145,17 +145,17 @@ class HybridEntity(Entity):
                 muscle_group = muscle_group.astype(gs.np_int, copy=False)
 
             # set muscle group
-            mat_soft._n_groups = len(link_idcs)
+            material_soft._n_groups = len(link_idcs)
             self._muscle_group_cache = muscle_group
 
             # set up info in taichi field
-            if isinstance(mat_soft, gs.materials.MPM.Base):
+            if isinstance(material_soft, gs.materials.MPM.Base):
                 part_soft_info = ti.types.struct(
                     link_idx=gs.ti_int,
                     geom_idx=gs.ti_int,
                     trans_local_to_global=gs.ti_vec3,
                     quat_local_to_global=gs.ti_vec4,
-                ).field(shape=(mat_soft.n_groups,), needs_grad=False, layout=ti.Layout.SOA)
+                ).field(shape=(material_soft.n_groups,), needs_grad=False, layout=ti.Layout.SOA)
                 part_soft_info.link_idx.from_numpy(np.asarray(link_idcs, dtype=gs.np_int))
                 part_soft_info.geom_idx.from_numpy(np.asarray(geom_idcs, dtype=gs.np_int))
                 part_soft_info.trans_local_to_global.from_numpy(np.asarray(trans_local_to_global, dtype=gs.np_float))
@@ -167,7 +167,7 @@ class HybridEntity(Entity):
                 self._part_soft_info = part_soft_info
                 self._part_soft_init_positions = part_soft_init_positions
             else:
-                raise ValueError(f"Cannot handle soft material {mat_soft}")
+                raise ValueError(f"Cannot handle soft material {material_soft}")
 
             # set coupling func
             def wrap_func(func, before=False):
@@ -180,7 +180,7 @@ class HybridEntity(Entity):
 
                 return wrapper
 
-            if isinstance(mat_soft, gs.materials.MPM.Base):
+            if isinstance(material_soft, gs.materials.MPM.Base):
                 # NOTE: coupling operating at particle level and here we modify post_coupling, i.e., update particle state after g2p
                 self._update_soft_part_at_pre_coupling = False
                 if self._update_soft_part_at_pre_coupling:
@@ -192,13 +192,13 @@ class HybridEntity(Entity):
                         part_soft.solver.substep_post_coupling, before=False
                     )
             else:
-                raise ValueError(f"Cannot handle soft material {mat_soft}")
+                raise ValueError(f"Cannot handle soft material {material_soft}")
 
         # set members
-        self._mat_rigid = mat_rigid
+        self._material_rigid = material_rigid
         self._part_rigid = part_rigid
         self._solver_rigid = part_rigid.solver
-        self._mat_soft = mat_soft
+        self._material_soft = material_soft
         self._part_soft = part_soft
         self._solver_soft = part_soft.solver
 
@@ -429,7 +429,7 @@ class HybridEntity(Entity):
                 dt_for_rigid_acc = (
                     self._solver_rigid.dt
                 )  # NOTE: use rigid dt here as we are sorta doing integration within soft solver substep
-                mass_real = self._solver_soft.particles_info[i_global].mass / self._solver_soft._p_vol_scale
+                mass_real = self._solver_soft.particles_info[i_global].mass / self._solver_soft._particle_volume_scale
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
                 frc_ang = (x_pos - self._solver_rigid.links_state.root_COM[link_idx, i_b]).cross(frc_vel)
