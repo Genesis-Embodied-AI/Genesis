@@ -102,11 +102,11 @@ class PIDcontroller:
 
     def mixer(self, action=None) -> torch.Tensor:
 
-        throttle_rc = torch.clamp((self.rc_command[3] + self.throttle_command) * 3, 0.1, 3) * self.base_rpm
+        throttle_rc = torch.clamp((self.rc_command[3] + self.throttle_command) * 3, 0.0, 3.0) * self.base_rpm
         if action is None:
             throttle = throttle_rc
         else:
-            throttle_action = torch.clamp((action[:, -1] + self.thrust_compensate) * 3, min=0.1, max=3.0) * self.base_rpm
+            throttle_action = torch.clamp(action[:, -1] * 3 + self.thrust_compensate, min=0.0, max=3.0) * self.base_rpm
             throttle = throttle_rc + throttle_action
 
         # self.pid_output[:] = torch.clip(self.pid_output[:], -3.0, 3.0)
@@ -179,9 +179,9 @@ class PIDcontroller:
             action: torch.Size([num_envs, 4]), like [[roll, pitch, yaw, thrust]] if num_envs = 1
         """
         yaw_mask = torch.tensor([1,1,0], device=self.device)
-        if action is None:
+        if action is None:  # in RC mode
             self.body_set_point[:] = -self.odom.body_euler * yaw_mask + self.rc_command[:3]  
-        else:
+        else:               # in RL mode
             self.body_set_point[:] = -self.odom.body_euler * yaw_mask + action[:, :3]  # action is in rad, like [[roll, pitch, yaw, thrust]] if num_envs = 1
 
         self.last_setpoint_error[:] = self.cur_setpoint_error
@@ -198,26 +198,28 @@ class PIDcontroller:
         Position controller, sequence is (x, y, z), use previous-D-term PID controller
         Note that the action is in world frame, (x, y, z) -> (pitch, -roll, throttle)
         :param: 
-            action: torch.Size([num_envs, 4]), like [[x, y, z, 0]] if num_envs = 1, 0 sued to adapt thrust
+            action: torch.Size([num_envs, 4]), like [[x, y, z, 0]] if num_envs = 1, 0 used to adapt thrust
             head_free: Keep yaw follow the target, namely keep the drone facing the target direction.
         """
-        self.body_set_point[:] = action[:, :3]
-        cur_pos_error = (self.body_set_point - self.odom.world_pos)
-        cur_pos_error[:, 1] *= -1                       # since roll increase, y decrease
-        cur_pos_error = cur_pos_error[:, [1, 0, 2]]     # change to (roll, pitch, throttle)
-        if head_free:
-            cur_pos_error = ve2vb(cur_pos_error, self.odom.body_euler[:, 2])
+        cur_pos_error = (action[:, :3] - self.odom.world_pos)
+        self.cur_setpoint_error[:] = cur_pos_error*5 - self.odom.world_linear_vel
+        self.cur_setpoint_error[:, 1] *= -1                       # since roll increase, y decrease
+        self.cur_setpoint_error = self.cur_setpoint_error[:, [1, 0, 2]]     # change to (roll, pitch, throttle)
 
-        self.P_term_p[:] = (cur_pos_error * self.kp_p)
-        self.I_term_p[:] = torch.clamp(self.I_term_p + cur_pos_error * self.ki_p, -0.5, 0.5)
+        if head_free:
+            # cur_pos_error = ve2vb(cur_pos_error, self.odom.body_euler[:, 2])
+            print("head_free not implemented yet")
+
+        self.P_term_p[:] = (self.cur_setpoint_error[:] * self.kp_p)
+        self.I_term_p[:] = torch.clamp(self.I_term_p + self.cur_setpoint_error[:] * self.ki_p, -0.5, 0.5)
         self.D_term_p[:] = torch.clamp((self.odom.last_world_linear_vel - self.odom.world_linear_vel) * self.kd_p, -0.5, 0.5)  
 
         sum = self.P_term_p + self.I_term_p + self.D_term_p 
-        self.throttle_command = torch.clamp(sum[:,-1], min=0.0, max=1.0)
+        self.throttle_command = torch.clamp(sum[:,-1], min=0.0, max=0.5)
 
         # sum[:,-1] = torch.atan2(action[:, 1], action[:, 0])
         sum[:, -1] = 0
-        self.angle_controller(torch.clamp(sum, -1, 1))
+        self.angle_controller(torch.clamp(sum, -0.5, 0.5))
 
     def reset(self, env_idx=None):
         if env_idx is None:

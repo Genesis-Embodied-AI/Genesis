@@ -8,7 +8,7 @@ max_dis_num: 5
 cam_quat: [-0.455, -0.542, 0.542, 0.455]  # FPV camera, 70.0 degree, show in https://quaternions.online/
 cam_pos: [0.02, 0.0, 0.04]
 cam_res: [16, 12]                         # width, height
-drone_init_pos: [0.0, 0.0, 0.01]           # Initial position of the drone
+drone_init_pos: [0.0, 0.0, 1]           # Initial position of the drone
 use_FPV_camera: True
 viewer_follow_drone: False
 load_map: False

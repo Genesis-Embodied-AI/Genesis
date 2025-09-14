@@ -29,6 +29,7 @@ class Odom:
         self.world_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         self.world_ang_vel = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
 
+        self.last_body_euler = torch.zeros_like(self.body_euler)
         self.last_world_pos = torch.zeros((self.num_envs, 3), device=self.device, dtype=gs.tc_float)
         self.last_world_linear_vel = torch.zeros_like(self.body_linear_vel)
         self.last_time = time.perf_counter()
@@ -61,7 +62,8 @@ class Odom:
         self.world_linear_acc[:] = (self.world_linear_vel - self.last_world_linear_vel) / dT
 
     def att_update(self):
-        self.cal_cur_quat()  
+        self.cal_cur_quat()
+        self.last_body_euler[:] = self.body_euler  
         self.body_euler[:] = quat_to_xyz(self.body_quat, rpy=True)
 
     def pos_update(self):

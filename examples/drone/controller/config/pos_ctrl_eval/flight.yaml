@@ -33,32 +33,32 @@ rat:
   kf_y: 0.0
 
 pos:
-  kp_x: 0.5
-  ki_x: 0.001
-  kd_x: 0.005
+  kp_x: 1.5
+  ki_x: 0.01
+  kd_x: 0.05
   kf_x: 0.0
 
-  kp_y: 0.5
-  ki_y: 0.001
-  kd_y: 0.005
+  kp_y: 1.5
+  ki_y: 0.01
+  kd_y: 0.05
   kf_y: 0.0
 
-  kp_t: 1.7
+  kp_t: 1.0
   ki_t: 0.01
-  kd_t: 0.01
+  kd_t: 0.0
   kf_t: 0.0
 
 pid_exec_freq: 60
 
 # =========== drone_param =============
 # see in assets/drone_urdf/cf2x.urdf
-thrust_compensate: 0.0
+thrust_compensate: 1.0
 weight: 0.5   
 motor_inertia: 2.6e-07
 g: 9.81   
 kf: 3.16e-10
-base_rpm: 62293.9641914   # equal to (m*g/4*kf)^0.5
-inertia_matrix:       # no use
+base_rpm: 56500 
+inertia_matrix:           # no use
   - [0.0014, 0.0,     0.0,     0.0]
   - [0.0,    0.0014,  0.0,     0.0]
   - [0.0,    0.0,     0.00217, 0.0]

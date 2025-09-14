@@ -23,8 +23,8 @@ def main():
             idx = torch.arange(num_envs, "cuda")
         else:
             idx = envs_idx
-        command_buf[idx, 0] = gs_rand_float(cur_pos[idx, 0]-0.3, cur_pos[idx, 0]+0.3)
-        command_buf[idx, 1] = gs_rand_float(cur_pos[idx, 1]-0.3, cur_pos[idx, 1]+0.3)
+        command_buf[idx, 0] = gs_rand_float(cur_pos[idx, 0]-0.5, cur_pos[idx, 0]+0.5)
+        command_buf[idx, 1] = gs_rand_float(cur_pos[idx, 1]-0.5, cur_pos[idx, 1]+0.5)
         command_buf[idx, 2] = gs_rand_float(torch.clamp(cur_pos[idx, 2]-0.2, min=0.3, max=2.0), cur_pos[idx, 2]+0.2)
 
     
