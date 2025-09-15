@@ -21,6 +21,7 @@ from .base_sensor import (
     Sensor,
     SensorOptions,
     SharedSensorMetadata,
+    _to_tuple,
 )
 from .sensor_manager import register_sensor
 
@@ -64,12 +65,6 @@ def _kernel_get_contacts_forces(
                     output[i_b, j_s + j] += force_b[j]
 
 
-def _to_expanded_tensor(value: float | Sequence[float], shape: tuple[int, ...]) -> torch.Tensor:
-    if not isinstance(value, Sequence):
-        value = [value]
-    return torch.tensor(value, dtype=gs.tc_float, device=gs.device).expand(shape)
-
-
 class ContactSensorOptions(RigidSensorOptionsMixin, SensorOptions):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
@@ -94,7 +89,7 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: RigidSolver | None = None
-    expanded_links_idx: torch.Tensor = make_tensor_field((0, 0, 0), dtype_factory=lambda: gs.tc_int)
+    expanded_links_idx: torch.Tensor = make_tensor_field((0, 1, 0), dtype_factory=lambda: gs.tc_int)
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata)
@@ -105,13 +100,14 @@ class ContactSensor(Sensor):
     """
 
     def build(self):
+        super().build()
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
         self._shared_metadata.expanded_links_idx = concat_with_tensor(
             self._shared_metadata.expanded_links_idx,
-            [self._options.entity_idx + self._options.link_idx_local],
-            expand=(self._manager._sim._B, -1, -1),
+            self._options.entity_idx + self._options.link_idx_local,
+            expand=(self._manager._sim._B, 1, -1),
             dim=-1,
         )
 
@@ -127,9 +123,12 @@ class ContactSensor(Sensor):
         cls, shared_metadata: ContactSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
-        contact_links = torch.cat([all_contacts["link_a"], all_contacts["link_b"]], dim=-1)
-        is_contact = (contact_links.unsqueeze(-2) == shared_metadata.expanded_links_idx).any(dim=-1)
-        shared_ground_truth_cache.copy_(is_contact)
+        if all_contacts["link_a"].numel() == 0:
+            shared_ground_truth_cache.fill_(False)
+        else:
+            contact_links = torch.cat([all_contacts["link_a"], all_contacts["link_b"]], dim=-1)
+            is_contact = (contact_links[..., -1, None] == shared_metadata.expanded_links_idx).any(dim=-1)
+            shared_ground_truth_cache.copy_(is_contact)
 
     @classmethod
     def _update_shared_cache(
@@ -140,7 +139,9 @@ class ContactSensor(Sensor):
         buffered_data: "TensorRingBuffer",
     ):
         buffered_data.append(shared_ground_truth_cache)
+        print("buffered_data:", buffered_data.buffer.dtype)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
+        print("shared_cache:", shared_cache)
 
 
 # ==========================================================================================================
@@ -232,14 +233,14 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
 
         self._shared_metadata.min_force = concat_with_tensor(
             self._shared_metadata.min_force,
-            _to_expanded_tensor(self._options.min_force, (3,)),
+            _to_tuple(self._options.min_force, length_per_value=3),
         )
         self._shared_metadata.max_force = concat_with_tensor(
             self._shared_metadata.max_force,
-            _to_expanded_tensor(self._options.max_force, (3,)),
+            _to_tuple(self._options.max_force, length_per_value=3),
         )
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
+    def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
 
     @classmethod

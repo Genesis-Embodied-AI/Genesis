@@ -24,6 +24,7 @@ from .base_sensor import (
     Sensor,
     SensorOptions,
     SharedSensorMetadata,
+    _to_tuple,
 )
 from .sensor_manager import register_sensor
 
@@ -32,20 +33,6 @@ if TYPE_CHECKING:
 
 Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
-
-
-def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
-    """
-    Convert all input values to one flattened tuple, where each value is ensured to be a tuple of length_per_value.
-    """
-    full_tuple = ()
-    for value in values:
-        if isinstance(value, (int, float)):
-            value = (value,) * length_per_value
-        elif isinstance(value, torch.Tensor):
-            value = value.reshape((-1,))
-        full_tuple += tuple(value)
-    return full_tuple
 
 
 def _view_metadata_as_acc_gyro(metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

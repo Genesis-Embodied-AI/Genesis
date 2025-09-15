@@ -1,5 +1,6 @@
 import itertools
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Sequence
 
 import gstaichi as ti
@@ -24,6 +25,20 @@ NumericType = int | float | bool
 NumericSequenceType = NumericType | Sequence[NumericType]
 Tuple3FType = tuple[float, float, float]
 MaybeTuple3FType = float | Tuple3FType
+
+
+def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
+    """
+    Convert all input values to one flattened tuple, where each value is ensured to be a tuple of length_per_value.
+    """
+    full_tuple = ()
+    for value in values:
+        if isinstance(value, (int, float)):
+            value = (value,) * length_per_value
+        elif isinstance(value, torch.Tensor):
+            value = value.reshape((-1,))
+        full_tuple += tuple(value)
+    return full_tuple
 
 
 class SensorOptions(Options):
@@ -62,7 +77,7 @@ class SharedSensorMetadata:
     """
 
     cache_sizes: list[int] = field(default_factory=list)
-    delays_ts: list[int] = field(default_factory=list)
+    delays_ts: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
 
 @ti.data_oriented
@@ -88,8 +103,7 @@ class Sensor(RBC):
         self._is_built = False
 
         self._dt = self._manager._sim.dt
-        self._delays_ts = round(self._options.delay / self._dt)
-        self._shared_metadata.delays_ts.append(self._delays_ts)
+        self._delay_ts = round(self._options.delay / self._dt)
 
         self._cache_slices: list[slice] = []
         self._return_format = self._get_return_format()
@@ -106,8 +120,6 @@ class Sensor(RBC):
             self._cache_slices.append(slice(self._cache_size, self._cache_size + data_size))
             self._cache_size += data_size
 
-        self._shared_metadata.cache_sizes.append(self._cache_size)
-
         self._cache_idx: int = -1  # initialized by SensorManager during build
 
     # =============================== methods to implement ===============================
@@ -119,7 +131,13 @@ class Sensor(RBC):
         This method is called by SensorManager during the scene build phase.
         This is where any shared metadata should be initialized.
         """
-        pass
+        self._shared_metadata.delays_ts = concat_with_tensor(
+            self._shared_metadata.delays_ts,
+            self._delay_ts,
+            dtype=gs.tc_int,
+            expand=(self._manager._sim._B, -1),
+        )
+        self._shared_metadata.cache_sizes.append(self._cache_size)
 
     @classmethod
     def reset(cls, shared_metadata: SharedSensorMetadata, envs_idx):
@@ -260,17 +278,17 @@ class Sensor(RBC):
                 cur_delay_ts = delay_ts + cur_jitter_ts[:, sensor_idx]
             else:
                 cur_delay_ts = torch.tensor(delay_ts, dtype=gs.tc_float, device=gs.device)
+
             # get int for indexing into ring buffer (0 = most recent, 1 = delayed by one timestep, etc.)
             cur_delay_ts_int = cur_delay_ts.to(dtype=gs.tc_int)
             idx_slices = (slice(None), slice(tensor_idx, tensor_idx + tensor_size))
-            cache_length = len(shared_cache)
             if interpolate:
                 ratio = torch.frac(cur_delay_ts).unsqueeze(-1)
-                data_left = buffered_data.at(cur_delay_ts_int).reshape(cache_length, -1)[idx_slices]
-                data_right = buffered_data.at(cur_delay_ts_int + 1).reshape(cache_length, -1)[idx_slices]
+                data_left = buffered_data.at(cur_delay_ts_int)[idx_slices]
+                data_right = buffered_data.at(cur_delay_ts_int + 1)[idx_slices]
                 shared_cache[idx_slices] = data_left + ratio * (data_right - data_left)
             else:
-                buffered_tensor = buffered_data.at(cur_delay_ts_int).reshape(cache_length, -1)
+                buffered_tensor = buffered_data.at(cur_delay_ts_int)
                 shared_cache[idx_slices] = buffered_tensor[idx_slices]
             tensor_idx += tensor_size
 
@@ -487,27 +505,28 @@ class NoisySensorMixin:
         Initialize all shared metadata needed to update all noisy sensors.
         """
         super().build()
+        _to_tuple = partial(_to_tuple, length_per_value=self._cache_size)
 
         batch_size = self._manager._sim._B
 
         if isinstance(self._options.resolution, tuple):
             self._options.resolution = tuple([-1 if r is None else r for r in self._options.resolution])
         self._shared_metadata.resolution = concat_with_tensor(
-            self._shared_metadata.resolution, self._options.resolution or -1, expand=(batch_size, -1), dim=-1
+            self._shared_metadata.resolution, _to_tuple(self._options.resolution or -1), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.bias = concat_with_tensor(
-            self._shared_metadata.bias, self._options.bias, expand=(batch_size, -1), dim=-1
+            self._shared_metadata.bias, _to_tuple(self._options.bias), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.random_walk = concat_with_tensor(
-            self._shared_metadata.random_walk, self._options.random_walk, expand=(batch_size, -1), dim=-1
+            self._shared_metadata.random_walk, _to_tuple(self._options.random_walk), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk)
         self._shared_metadata.noise = concat_with_tensor(
-            self._shared_metadata.noise, self._options.noise, expand=(batch_size, -1), dim=-1
+            self._shared_metadata.noise, _to_tuple(self._options.noise), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_noise = torch.zeros_like(self._shared_metadata.noise)
         self._shared_metadata.jitter_ts = concat_with_tensor(
-            self._shared_metadata.jitter_ts, self._options.jitter / self._dt, expand=(batch_size, -1), dim=-1
+            self._shared_metadata.jitter_ts, _to_tuple(self._options.jitter / self._dt), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         self._shared_metadata.interpolate.append(self._options.interpolate)
