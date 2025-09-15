@@ -807,7 +807,7 @@ class SPHSolver(Solver):
         poss: ti.types.ndarray(),
     ):
         for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
-            i_p = particles_idx[i_p_]
+            i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
                 self.particles[i_p, i_b].pos[i] = poss[i_b_, i_p_, i]
@@ -836,7 +836,7 @@ class SPHSolver(Solver):
         vels: ti.types.ndarray(),
     ):
         for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
-            i_p = particles_idx[i_p_]
+            i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
                 self.particles[i_p, i_b].vel[i] = vels[i_b_, i_p_, i]
@@ -864,7 +864,7 @@ class SPHSolver(Solver):
         actives: ti.types.ndarray(),  # shape [B, n_particles]
     ):
         for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
-            i_p = particles_idx[i_p_]
+            i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles_ng[i_p, i_b].active = actives[i_b_, i_p_]
 

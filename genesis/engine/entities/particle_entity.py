@@ -112,7 +112,7 @@ class ParticleEntity(Entity):
         # Note that this attribute must only be used in forward pass
         self.active = False
 
-    def _sanitize_particles_idx_local(self, particles_idx_local, *, unsafe=False):
+    def _sanitize_particles_idx_local(self, particles_idx_local, envs_idx=None, *, unsafe=False):
         if particles_idx_local is None:
             particles_idx_local = range(self._n_particles)
         elif isinstance(particles_idx_local, slice):
@@ -128,23 +128,30 @@ class ParticleEntity(Entity):
             return particles_idx_local
 
         _particles_idx_local = torch.as_tensor(particles_idx_local, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _particles_idx_local is not particles_idx_local:
+        if _particles_idx_local is not particles_idx_local or (envs_idx is not None and _particles_idx_local.ndim < 2):
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        _particles_idx_local = torch.atleast_1d(_particles_idx_local)
-        if _particles_idx_local.ndim != 1:
-            gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        if len(particles_idx_local):
-            inputs_start, inputs_end = min(particles_idx_local), max(particles_idx_local)
-            if not (0 <= inputs_start and inputs_end < self._n_particles):
-                gs.raise_exception(f"`{idx_name}` is out-of-range.")
+        if envs_idx is not None:
+            if _particles_idx_local.ndim < 2:
+                _particles_idx_local = _particles_idx_local.reshape((1, -1)).tile((len(envs_idx), 1))
+                if _particles_idx_local.ndim != 2:
+                    gs.raise_exception("Expecting 0D, 1D or 2D tensor for `particles_idx_local`.")
+        else:
+            _particles_idx_local = torch.atleast_1d(_particles_idx_local)
+            if _particles_idx_local.ndim != 1:
+                gs.raise_exception("Expecting 0D or 1D tensor for `particles_idx_local`.")
+        if not ((0 <= _particles_idx_local).all() or (_particles_idx_local < input_size).all()):
+            gs.raise_exception("Elements of `particles_idx_local' are out-of-range.")
 
         return _particles_idx_local
 
-    def _sanitize_particles_tensor(self, element_shape, dtype, tensor, envs_idx=None, *, batched=True):
+    def _sanitize_particles_tensor(
+        self, element_shape, dtype, tensor, particles_idx=None, envs_idx=None, *, batched=True
+    ):
+        n_particles = len(particles_idx) if particles_idx is not None else self._n_particles
         if batched:
-            batch_shape = (len(envs_idx), self._n_particles)
+            batch_shape = (len(envs_idx), n_particles)
         else:
-            batch_shape = (self._n_particles,)
+            batch_shape = (n_particles,)
         tensor_shape = (*batch_shape, *element_shape)
 
         tensor = to_gs_tensor(tensor, dtype)
@@ -456,26 +463,25 @@ class ParticleEntity(Entity):
                 self._tgt_buffer[key].append(self._tgt[key])
 
         if any(self._tgt[key] is not None for key in self._tgt_keys):
-            envs_idx = self._scene._sanitize_envs_idx(None)
-            particles_idx_local = self._sanitize_particles_idx_local(None)
+            particles_idx_local = self._sanitize_particles_idx_local(None, self._scene._envs_idx)
 
         # Note that setting positions resets velocities to zero, so it must be done BEFORE setting velocities
         if self._tgt["pos"] is not None:
             self._tgt["pos"].assert_contiguous()
             self._tgt["pos"].assert_sceneless()
-            self._set_particles_pos(self._tgt["pos"], particles_idx_local, envs_idx)
+            self._set_particles_pos(self._tgt["pos"], particles_idx_local)
 
         if self._tgt["vel"] is not None:
             self._tgt["vel"].assert_contiguous()
             self._tgt["vel"].assert_sceneless()
-            self._set_particles_vel(self._tgt["vel"], particles_idx_local, envs_idx)
+            self._set_particles_vel(self._tgt["vel"], particles_idx_local)
 
         if self._tgt["act"] is not None:
             self._tgt["act"].assert_contiguous()
             self._tgt["act"].assert_sceneless()
             act_values = torch.tensor((gs.ACTIVE, gs.INACTIVE), dtype=gs.tc_int, device=gs.device)
             assert torch.isin(self._tgt["act"], act_values).all()
-            self._set_particles_active(self._tgt["act"], particles_idx_local, envs_idx)
+            self._set_particles_active(self._tgt["act"], particles_idx_local)
 
         for key in self._tgt_keys:
             self._tgt[key] = None
@@ -520,7 +526,7 @@ class ParticleEntity(Entity):
                 f"Manually setting particle '{name}'. This is not recommended and could break gradient flow."
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        self._tgt[key] = self._sanitize_particles_tensor(element_shape, dtype, tensor, envs_idx)
+        self._tgt[key] = self._sanitize_particles_tensor(element_shape, dtype, tensor, envs_idx=envs_idx)
 
     def set_com_pos(self, pos, envs_idx=None, *, unsafe=False):
         """
@@ -560,7 +566,7 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("pos", "position", (3,), gs.tc_float, poss, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local, envs_idx):
+    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the position of some particles.
 
@@ -568,10 +574,10 @@ class ParticleEntity(Entity):
         ----------
         poss: torch.Tensor, shape (M, N, 3)
             Target position of each particle.
-        particles_idx_local : torch.Tensor, shape (N,)
-            Index of the particles relative to this entity.
+        particles_idx_local : torch.Tensor, shape (M, N)
+            Index of the particles relative to this entity. If None, all particles will be considered. Defaults to None.
         envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
+            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
         raise NotImplementedError
 
@@ -620,7 +626,7 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("vel", "velocity", (3,), gs.tc_float, vels, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local, envs_idx):
+    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the velocity of some particles.
 
@@ -628,10 +634,10 @@ class ParticleEntity(Entity):
         ----------
         vels: torch.Tensor, shape (M, N, 3)
             Target velocity of each particle.
-        particles_idx_local : torch.Tensor, shape (N,)
-            Index of the particles relative to this entity.
+        particles_idx_local : torch.Tensor, shape (M, N)
+            Index of the particles relative to this entity. If None, all particles will be considered. Defaults to None.
         envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
+            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
         raise NotImplementedError
 
@@ -695,7 +701,7 @@ class ParticleEntity(Entity):
         self.set_particles_active(gs.INACTIVE)
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local, envs_idx):
+    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the velocity of some particles.
 
@@ -703,10 +709,10 @@ class ParticleEntity(Entity):
         ----------
         actives: torch.Tensor, shape (M, N, 3)
             Activeness boolean flags for each particle.
-        particles_idx_local : torch.Tensor, shape (N,)
-            Index of the particles relative to this entity.
+        particles_idx_local : torch.Tensor, shape (M, N)
+            Index of the particles relative to this entity. If None, all particles will be considered. Defaults to None.
         envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
+            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
         raise NotImplementedError
 
@@ -778,7 +784,7 @@ class ParticleEntity(Entity):
         cur_particles = self.get_particles_pos(envs_idx)
         distances = torch.linalg.norm(cur_particles - pos.unsqueeze(1), dim=-1)
         closest_idx = torch.argmin(distances, dim=-1)
-        return closest_idx
+        return closest_idx.to(dtype=gs.tc_int)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

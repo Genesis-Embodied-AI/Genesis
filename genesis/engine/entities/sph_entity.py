@@ -143,103 +143,39 @@ class SPHEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local, envs_idx):
-        """
-        Set the position of some particles.
-
-        Parameters
-        ----------
-        poss: torch.Tensor, shape (M, N, 3)
-            Target position of each particle.
-        particles_idx_local : torch.Tensor, shape (N,)
-            Index of the particles relative to this entity.
-        envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
-        """
+    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_pos(particles_idx_local + self._particle_start, envs_idx, poss)
 
     def get_particles_pos(self, envs_idx=None, *, unsafe=False):
-        """
-        Retrieve current particle positions from the solver.
-
-        Parameters
-        ----------
-        envs_idx : None | int | array_like, shape (M,), optional
-            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
-
-        Returns
-        -------
-        poss : torch.Tensor, shape (M, n_particles, 3)
-            Tensor of particle positions.
-        """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         poss = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
         return poss
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local, envs_idx):
-        """
-        Set the velocity of some particles.
-
-        Parameters
-        ----------
-        vels: torch.Tensor, shape (M, N, 3)
-            Target velocity of each particle.
-        particles_idx_local : torch.Tensor, shape (N,)
-            Index of the particles relative to this entity.
-        envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
-        """
+    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_vel(particles_idx_local + self._particle_start, envs_idx, vels)
 
     def get_particles_vel(self, envs_idx=None, *, unsafe=False):
-        """
-        Retrieve current particle velocities from the solver.
-
-        Parameters
-        ----------
-        envs_idx : None | int | array_like, shape (M,), optional
-            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
-
-        Returns
-        -------
-        poss : torch.Tensor
-            Tensor of particle velocities, shape (M, n_particles, 3).
-        """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         vels = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
         return vels
 
     @gs.assert_built
-    def _set_particles_active(self, active, envs_idx):
-        """
-        Set the activeness state of all the particles individually.
-
-        Parameters
-        ----------
-        active : torch.Tensor, shape (M, n_particles)
-            Activeness boolean flags for each particle.
-        envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
-        """
-        self.solver._kernel_set_particles_active(self._particle_start, self._n_particles, envs_idx, actives)
+    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
+        self.solver._kernel_set_particles_active(particles_idx_local + self._particle_start, envs_idx, actives)
 
     def get_particles_active(self, envs_idx=None, *, unsafe=False):
-        """
-        Retrieve current particle activeness boolean flags from the solver.
-
-        Parameters
-        ----------
-        envs_idx : None | int | array_like, shape (M,), optional
-            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
-
-        Returns
-        -------
-        poss : torch.Tensor, shape (M, n_particles, 3)
-            Tensor of particle activeness boolean flags.
-        """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         actives = torch.empty((len(envs_idx), self.n_particles), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)

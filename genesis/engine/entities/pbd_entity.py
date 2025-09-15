@@ -135,7 +135,10 @@ class PBDTetEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local, envs_idx):
+    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
         self.solver._kernel_fix_particles(particles_idx, envs_idx)
@@ -147,7 +150,10 @@ class PBDTetEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local, envs_idx):
+    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
         self.solver._kernel_fix_particles(particles_idx, envs_idx)
@@ -159,7 +165,10 @@ class PBDTetEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local, envs_idx):
+    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_active(particles_idx_local + self._particle_start, envs_idx, actives)
 
     def get_particles_active(self, envs_idx=None, *, unsafe=False):
@@ -181,7 +190,7 @@ class PBDTetEntity(ParticleEntity):
             The indices of the environments to set. If None, all environments will be set. Defaults to None.
         """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         self.solver._kernel_fix_particles(particles_idx_local + self._particle_start, envs_idx)
 
     @gs.assert_built
@@ -197,7 +206,7 @@ class PBDTetEntity(ParticleEntity):
             The indices of the environments to set. If None, all environments will be set. Defaults to None.
         """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         self.solver.release_particles(particles_idx_local + self._particle_start, envs_idx)
 
     # ------------------------------------------------------------------------------------

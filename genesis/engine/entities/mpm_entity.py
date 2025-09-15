@@ -246,9 +246,8 @@ class MPMEntity(ParticleEntity):
         if isinstance(self.material, gs.materials.MPM.Muscle) and self._tgt["actu"] is not None:
             self._tgt["actu"].assert_contiguous()
             self._tgt["actu"].assert_sceneless()
-            envs_idx = self._scene._sanitize_envs_idx(None)
-            particles_idx_local = self._sanitize_particles_idx_local(None)
-            self._set_particles_actu(self._tgt["actu"], particles_idx_local, envs_idx)
+            particles_idx_local = self._sanitize_particles_idx_local(None, self._scene._envs_idx)
+            self._set_particles_actu(self._tgt["actu"], particles_idx_local)
 
         super().process_input(in_backward)
 
@@ -343,13 +342,17 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local, envs_idx):
+    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_pos(
             self._sim.cur_substep_local, particles_idx_local + self._particle_start, envs_idx, poss
         )
 
     @gs.assert_built
-    def _set_particles_pos_grad(self, poss_grad, envs_idx):
+    def _set_particles_pos_grad(self, poss_grad, envs_idx=None):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self.solver._kernel_set_particles_pos_grad(
             self._sim.cur_substep_local, self._particle_start, self._n_particles, envs_idx, poss_grad
         )
@@ -363,13 +366,17 @@ class MPMEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local, envs_idx):
+    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_vel(
             self._sim.cur_substep_local, particles_idx_local + self._particle_start, envs_idx, vels
         )
 
     @gs.assert_built
-    def _set_particles_vel_grad(self, vels_grad, envs_idx):
+    def _set_particles_vel_grad(self, vels_grad, envs_idx=None):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self.solver._kernel_set_particles_vel_grad(
             self._sim.cur_substep_local, self._particle_start, self._n_particles, envs_idx, vels_grad
         )
@@ -383,7 +390,10 @@ class MPMEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local, envs_idx):
+    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_active(
             self._sim.cur_substep_local, particles_idx_local + self._particle_start, envs_idx, actives
         )
@@ -421,7 +431,7 @@ class MPMEntity(ParticleEntity):
 
     @assert_muscle
     @gs.assert_built
-    def _set_particles_actu(self, actus, particles_idx_local, envs_idx):
+    def _set_particles_actu(self, actus, particles_idx_local, envs_idx=None, *, unsafe=False):
         """
         Set particle actuation values.
 
@@ -429,27 +439,29 @@ class MPMEntity(ParticleEntity):
         ----------
         actus: torch.Tensor, shape (M, N, 3)
             Activation value of each particle.
-        particles_idx_local : torch.Tensor, shape (N,)
+        particles_idx_local : torch.Tensor, shape (M, N)
             Index of the particles relative to this entity.
         envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
+            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self.solver._kernel_set_particles_actu(
             self._sim.cur_substep_local, self.material.n_groups, particles_idx_local, envs_idx, actus
         )
 
     @gs.assert_built
-    def _set_particles_actu_grad(self, actu_grad, envs_idx):
+    def _set_particles_actu_grad(self, actu_grad, envs_idx=None):
         """
         Set gradients for particle actuation values.
 
         Parameters
         ----------
-        f : int
-            The current substep index.
         actu_grad : gs.Tensor
             A tensor containing gradients for actuation inputs.
+        envs_idx : torch.Tensor, shape (M,)
+            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self.solver._kernel_set_particles_actu_grad(
             self._sim.cur_substep_local, self._particle_start, self._n_particles, envs_idx, actu_grad
         )
@@ -469,10 +481,10 @@ class MPMEntity(ParticleEntity):
 
         Parameters
         ----------
-        muscle_group : gs.Tensor
-            A tensor of shape (n_particles,) with integer group IDs.
+        muscle_group : gs.Tensor, shape ([n_particles,])
+            A tensor with integer group IDs.
         """
-        particles_idx_local = self._sanitize_particles_idx_local(None, unsafe=False)
+        particles_idx_local = self._sanitize_particles_idx_local(None)
         muscle_group = self._sanitize_particles_tensor((), gs.tc_int, muscle_group, batched=False)
         assert (0 <= muscle_group).all() and (muscle_group < self.material.n_groups).all()
         self.solver._kernel_set_particles_muscle_group(particles_idx_local + self._particle_start, muscle_group)
@@ -485,10 +497,10 @@ class MPMEntity(ParticleEntity):
 
         Returns
         -------
-        muscle_group : gs.Tensor
-            A tensor of shape (n_particles,) containing the muscle group ID of each particle.
+        muscle_group : gs.Tensor, shape (n_particles,)
+            A tensor containing the muscle group ID of each particle.
         """
-        muscle_group = gs.zeros((self._n_particles,), dtype=int, requires_grad=False, scene=self._scene)
+        muscle_group = gs.zeros((self._n_particles,), dtype=gs.tc_int, requires_grad=False, scene=self._scene)
         self.solver._kernel_get_particles_muscle_group(self._particle_start, self._n_particles, muscle_group)
         return muscle_group
 
@@ -500,10 +512,10 @@ class MPMEntity(ParticleEntity):
 
         Parameters
         ----------
-        muscle_direction : gs.Tensor
-            A tensor of shape (n_particles, 3) with unit vectors representing muscle directions.
+        muscle_direction : gs.Tensor, shape ([n_particles,] 3)
+            A tensor with unit vectors representing muscle directions.
         """
-        particles_idx_local = self._sanitize_particles_idx_local(None, unsafe=False)
+        particles_idx_local = self._sanitize_particles_idx_local(None)
         muscle_direction = self._sanitize_particles_tensor((3,), gs.tc_float, muscle_direction, batched=False)
         assert ((1.0 - muscle_direction.norm(dim=-1)).abs() < gs.EPS).all()
         self.solver._kernel_set_particles_muscle_direction(particles_idx_local + self._particle_start, muscle_direction)
@@ -514,10 +526,10 @@ class MPMEntity(ParticleEntity):
 
         Parameters
         ----------
-        muscle_group : torch.Tensor, optional
-            A tensor of shape (n_particles,) with group indices.
-        muscle_direction : torch.Tensor, optional
-            A tensor of shape (n_particles, 3) with unit vectors.
+        muscle_group : torch.Tensor, shape ([n_particles,]), optional
+            A tensor  with group indices.
+        muscle_direction : torch.Tensor, shape ([n_particles,] 3), optional
+            A tensor with unit vectors.
         """
         if muscle_group is not None:
             self.set_muscle_group(muscle_group)
@@ -532,10 +544,13 @@ class MPMEntity(ParticleEntity):
 
         Parameters
         ----------
-        free : gs.Tensor
-            A tensor of shape (n_particles,) indicating if each particle is free (1) or fixed (0).
+        free : torch.Tensor, shape ([n_particles,])
+            A tensor indicating if each particle is free (1) or fixed (0).
         """
-        self.solver._kernel_set_free(self._particle_start, self._n_particles, free)
+        particles_idx_local = self._sanitize_particles_idx_local(None)
+        free = self._sanitize_particles_tensor((), gs.tc_bool, free, batched=False)
+        assert torch.isin(free, torch.Tensor([False, True], dtype=gs.tc_bool, device=gs.device)).all()
+        self.solver._kernel_set_particles_free(particles_idx_local + self._particle_start, free)
 
     @assert_active
     def get_free(self):
@@ -544,9 +559,9 @@ class MPMEntity(ParticleEntity):
 
         Returns
         -------
-        free : gs.Tensor
-            A tensor of shape (n_particles,) indicating free (1) or fixed (0) status.
+        free : torch.Tensor, shape (n_particles,)
+            A tensor indicating free (1) or fixed (0) status.
         """
         free = gs.zeros((self._n_particles,), dtype=gs.tc_bool, requires_grad=False, scene=self._scene)
-        self.solver._kernel_get_free(self._particle_start, self._n_particles, free)
+        self.solver._kernel_get_particles_free(self._particle_start, self._n_particles, free)
         return free
