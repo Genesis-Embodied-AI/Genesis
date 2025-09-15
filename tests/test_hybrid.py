@@ -11,7 +11,6 @@ pytestmark = [
 ]
 
 
-@pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     ball_pos_init = (0.8, 0.6, 0.12)
 
@@ -49,10 +48,10 @@ def test_rigid_mpm_muscle(show_viewer):
             fixed=True,
         ),
         material=gs.materials.Hybrid(
-            mat_rigid=gs.materials.Rigid(
+            material_rigid=gs.materials.Rigid(
                 gravity_compensation=1.0,
             ),
-            mat_soft=gs.materials.MPM.Muscle(
+            material_soft=gs.materials.MPM.Muscle(
                 E=1e4,
                 nu=0.45,
                 rho=1000.0,

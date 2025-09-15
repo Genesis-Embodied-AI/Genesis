@@ -239,7 +239,7 @@ class SAPCoupler(RBC):
                 self._init_equality_constraint()
 
         if self._enable_rigid_fem_contact:
-            self.rigid_fem_contact = RigidFemTetContactHanlder(self.sim)
+            self.rigid_fem_contact = RigidFemTetContactHandler(self.sim)
             self.contact_handlers.append(self.rigid_fem_contact)
 
         self._init_sap_fields()
@@ -2842,7 +2842,7 @@ class RigidFloorVertContactHandler(RigidContactHandler):
 
 
 @ti.data_oriented
-class RigidFemTetContactHanlder(RigidFEMContactHandler):
+class RigidFemTetContactHandler(RigidFEMContactHandler):
     """
     Class for handling self-contact between tetrahedral elements in a simulation using hydroelastic model.
 
