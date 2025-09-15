@@ -45,7 +45,7 @@ from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
-    from genesis.recorders import RecorderOptions
+    from genesis.recorders import Recorder, RecorderOptions
     from genesis.sensors import SensorOptions
 
 
@@ -564,7 +564,7 @@ class Scene(RBC):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt
-    def start_recording(self, data_func: Callable, rec_options: "RecorderOptions"):
+    def start_recording(self, data_func: Callable, rec_options: "RecorderOptions") -> "Recorder":
         """
         Automatically read and process data. See RecorderOptions for more details.
 
@@ -577,6 +577,11 @@ class Scene(RBC):
             A function with no arguments that returns the data to be recorded.
         rec_options : RecorderOptions
             The options for the recording.
+
+        Returns
+        -------
+        recorder : Recorder
+            The created recorder object.
         """
         return self._recorder_manager.add_recorder(data_func, rec_options)
 

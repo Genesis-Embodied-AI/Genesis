@@ -1,4 +1,5 @@
 import platform
+import io
 import os
 import subprocess
 import time
@@ -1015,3 +1016,10 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         gs_sim.scene.step()
         # if gs_sim.scene.visualizer:
         #     gs_sim.scene.visualizer.update()
+
+
+def rgb_array_to_buffer(rgb_arr: np.ndarray) -> bytes:
+    img = Image.fromarray(rgb_arr)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()

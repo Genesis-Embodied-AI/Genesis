@@ -1,17 +1,15 @@
-import matplotlib as mpl
-import pytest
-
-mpl.use("Agg")  # headless mode for plt
 import csv
 
-import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 
 import genesis as gs
 
+from .utils import rgb_array_to_buffer
+
 
 @pytest.mark.required
-def test_plotter(tmp_path):
+def test_plotter(png_snapshot):
     """Test if the plotter recorders works."""
     DT = 0.01
     STEPS = 10
@@ -37,18 +35,17 @@ def test_plotter(tmp_path):
             "b": [call_count * 0.01, call_count * 0.02],
         }
 
-    filepath = tmp_path / "test_plot.mp4"
-    plotter = gs.recorders.MPLPlot(
-        labels={"a": ("x", "y", "z"), "b": ("u", "v")},
-        title="Test MPLPlotter",
-        history_length=50,
-        window_size=(400, 300),
-        hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
-        show_window=False,
-        save_to_filename=str(filepath),
+    plotter = scene.start_recording(
+        data_func=dummy_data_func,
+        rec_options=gs.recorders.MPLPlot(
+            labels={"a": ("x", "y", "z"), "b": ("u", "v")},
+            title="Test MPLPlotter",
+            history_length=50,
+            window_size=(400, 300),
+            hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
+            show_window=False,
+        ),
     )
-
-    scene.start_recording(dummy_data_func, plotter)
 
     scene.build()
 
@@ -56,11 +53,9 @@ def test_plotter(tmp_path):
         scene.step()
 
     assert call_count == STEPS // 2
+    assert rgb_array_to_buffer(plotter.get_image_array()) == png_snapshot
 
     scene.stop_recording()
-
-    assert filepath.exists(), "Recorded video file should exist"
-    assert filepath.stat().st_size > 0, "Recorded video file should not be empty"
 
 
 @pytest.mark.required
@@ -119,7 +114,7 @@ def test_file_writers(tmp_path):
 
 
 @pytest.mark.required
-def test_video_writer(tmp_path):
+def test_video_writer(tmp_path, png_snapshot):
     """Test if the VideoFileWriter works with camera rendering."""
 
     scene = gs.Scene(

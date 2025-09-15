@@ -1,3 +1,4 @@
+import io
 import itertools
 from collections import defaultdict
 from collections.abc import Sequence
@@ -5,9 +6,10 @@ from typing import Any
 
 import numpy as np
 import torch
+from PIL import Image
 
 import genesis as gs
-from genesis.utils import tensor_to_array
+from genesis.utils import has_display, tensor_to_array
 
 from .base_recorder import Recorder, RecorderOptions
 from .recorder_manager import register_recording
@@ -23,7 +25,6 @@ except ImportError:
 IS_MATPLOTLIB_AVAILABLE = False
 try:
     import matplotlib as mpl
-    import matplotlib.pyplot as plt
 
     IS_MATPLOTLIB_AVAILABLE = True
 except ImportError:
@@ -182,10 +183,10 @@ class PyQtPlotterOptions(BasePlotterOptions):
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
     show_window: bool
-        Whether to show the window. Defaults to True, set to False for headless mode.
+        Whether to show the window. Defaults to True if a display is connected, False otherwise.
     """
 
-    pass
+    show_window: bool = has_display()
 
 
 @register_recording(PyQtPlotterOptions)
@@ -219,7 +220,7 @@ class PyQtPlotter(BasePlotter):
 
         if self._options.save_to_filename:
             self.video_writer = self._manager.add_recorder(
-                data_func=self._video_data_func,
+                data_func=self.get_image_array,
                 rec_options=gs.recorders.VideoFile(filename=self._options.save_to_filename, hz=self._options.hz),
             )
 
@@ -277,8 +278,15 @@ class PyQtPlotter(BasePlotter):
     def run_in_thread(self) -> bool:
         return True
 
-    def _video_data_func(self):
-        """Capture the plot image as a video frame."""
+    def get_image_array(self):
+        """
+        Capture the plot image as a video frame.
+
+        Returns
+        -------
+        image_array : np.ndarray
+            The RGB image as a numpy array.
+        """
         pixmap = self.widget.grab()
         qimage = pixmap.toImage()
 
@@ -295,25 +303,20 @@ class MPLPlotterOptions(BasePlotterOptions):
 
     Parameters
     ----------
+    title: str
+        The title of the plot.
     labels: tuple[str] | dict[str, tuple[str]] | None
         The labels for the plot. The length of the labels should match the length of the data.
         If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
         The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
-        The size of the window.
+        The size of the window in pixels.
     history_length: int
-        The length of the history to store.
-    title: str
-        The title of the plot.   labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
-    window_size: tuple[int, int]
-        The size of the window.
-    history_length: int
-        The length of the history to store.
-    title: str
-        The title of the plot.
+        The maximum number of previous data to store.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool
+        Whether to show the window. Defaults to True, set to False for headless mode.
     """
 
     pass
@@ -334,6 +337,10 @@ class MPLPlotter(BasePlotter):
             )
         super().build()
 
+        if not self._options.show_window:
+            mpl.use("Agg")
+        import matplotlib.pyplot as plt
+
         self.fig: plt.Figure | None = None
         self.axes: list[plt.Axes] = []
         self.lines: dict[str, list[plt.Line2D]] = {}
@@ -345,10 +352,7 @@ class MPLPlotter(BasePlotter):
         n_subplots = len(self.subplot_structure)
         dpi = mpl.rcParams.get("figure.dpi", 100)
         # matplotlib figsize uses inches
-        figsize = (
-            self._options.window_size[0] / dpi,
-            self._options.window_size[1] / dpi,
-        )
+        figsize = (self._options.window_size[0] / dpi, self._options.window_size[1] / dpi)
 
         if n_subplots == 1:
             self.fig, ax = plt.subplots(figsize=figsize)
@@ -393,8 +397,11 @@ class MPLPlotter(BasePlotter):
 
         if self._options.save_to_filename:
             self.video_writer = self._manager.add_recorder(
-                data_func=self._video_data_func,
-                rec_options=gs.recorders.VideoFile(filename=self._options.save_to_filename, hz=self._options.hz),
+                data_func=self.get_image_array,
+                rec_options=gs.recorders.VideoFile(
+                    filename=self._options.save_to_filename,
+                    hz=self._options.hz,
+                ),
             )
 
     def process(self, data, cur_time):
@@ -456,6 +463,8 @@ class MPLPlotter(BasePlotter):
         """Clean up Matplotlib resources."""
         if self.fig:
             try:
+                import matplotlib.pyplot as plt
+
                 plt.close(self.fig)
                 gs.logger.debug("[MPLPlotter] closed Matplotlib window")
             except Exception as e:
@@ -469,7 +478,27 @@ class MPLPlotter(BasePlotter):
     def run_in_thread(self) -> bool:
         return gs.platform != "macOS"
 
-    def _video_data_func(self):
-        """Capture the plot image as a video frame."""
-        np_buffer = np.frombuffer(self.fig.canvas.tostring_argb(), dtype="uint8")
-        return np_buffer.reshape(*reversed(self.fig.canvas.get_width_height()), 4)[..., 1:]
+    def get_image_array(self):
+        """
+        Capture the plot image as a video frame.
+
+        Returns
+        -------
+        image_array : np.ndarray
+            The RGB image as a numpy array.
+        """
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        if isinstance(self.fig.canvas, FigureCanvasAgg):
+            print("Using FigureCanvasAgg")
+            width, height = self.fig.canvas.get_width_height()
+            rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
+            return rgba_array_flat.reshape((height, width, 4))[..., :3]
+        else:
+            # Slower but more generic fallback only if necessary
+            print("Using fallback")
+            buffer = io.BytesIO()
+            self.fig.savefig(buffer, format="png", dpi="figure", transparent=False, bbox_inches="tight")
+            buffer.seek(0)
+            img = Image.open(buffer)
+            return np.asarray(img.convert("RGB"))
