@@ -180,23 +180,23 @@ def get_platform():
 
 
 def get_device(backend: gs_backend, device_idx: Optional[int] = None):
-    if backend == gs_backend.cuda:
+    if backend == gs_backend.cpu:
+        device_name = cpuinfo.get_cpu_info()["brand_raw"]
+        total_mem = psutil.virtual_memory().total / 1024**3
+        device = torch.device("cpu", device_idx)
+    elif backend == gs_backend.cuda:
         if not torch.cuda.is_available():
             gs.raise_exception("torch cuda not available")
-
         device = torch.device("cuda", device_idx)
         device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
         total_mem = device_property.total_memory / 1024**3
-
     elif backend == gs_backend.metal:
         if not torch.backends.mps.is_available():
             gs.raise_exception("metal device not available")
-
-        # on mac, cpu and gpu are in the same device
+        # on mac, cpu and gpu are in the same physical hardware and sharing memory
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
         device = torch.device("mps", device_idx)
-
     elif backend == gs_backend.vulkan:
         if torch.cuda.is_available():
             device, device_name, total_mem, _ = get_device(gs_backend.cuda)
@@ -212,19 +212,13 @@ def get_device(backend: gs_backend, device_idx: Optional[int] = None):
             logger = getattr(gs, "logger", None) or LOGGER
             logger.warning("No Intel XPU device available. Falling back to CPU for torch device.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
-
-    elif backend == gs_backend.gpu:
+    else:  # backend == gs_backend.gpu:
         if torch.cuda.is_available():
             return get_device(gs_backend.cuda)
         elif get_platform() == "macOS":
             return get_device(gs_backend.metal)
         else:
             return get_device(gs_backend.vulkan)
-
-    else:
-        device_name = cpuinfo.get_cpu_info()["brand_raw"]
-        total_mem = psutil.virtual_memory().total / 1024**3
-        device = torch.device("cpu", device_idx)
 
     return device, device_name, total_mem, backend
 
