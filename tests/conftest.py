@@ -57,7 +57,7 @@ def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
     if isinstance(val, type):
-        return val.__name__
+        return ".".join((val.__module__, val.__name__))
     return f"{val}"
 
 
@@ -368,6 +368,11 @@ def taichi_offline_cache(request):
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_cache):
     import genesis as gs
+
+    # Early return if backend is None
+    if backend is None:
+        yield
+        return
 
     logging_level = request.config.getoption("--log-cli-level")
     debug = request.config.getoption("--dev")
