@@ -25,7 +25,7 @@ jobs:
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
         GS_USE_NDARRAY: ["0"]
         include:
-          - OS: "windows-cpu-4-core"
+          - OS: "windows-2025"
             PYTHON_VERSION: "3.12"
             GS_USE_NDARRAY: "0"
           - OS: "ubuntu-24.04"
