@@ -61,8 +61,8 @@ class BasePlotterOptions(RecorderOptions):
         The maximum number of previous data to store.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
-    show_window: bool
-        Whether to show the window. Defaults to True, set to False for headless mode.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
     """
 
     title: str = ""
@@ -70,7 +70,7 @@ class BasePlotterOptions(RecorderOptions):
     window_size: tuple[int, int] = (800, 600)
     history_length: int = 100
     save_to_filename: str | None = None
-    show_window: bool = True
+    show_window: bool | None = None
 
 
 class BasePlotter(Recorder):
@@ -78,6 +78,9 @@ class BasePlotter(Recorder):
 
     def build(self):
         super().build()
+
+        self.show_window = self._options.show_window if self._options.show_window is not None else has_display()
+
         self.x_data: list[float] = []
         self.y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
@@ -182,11 +185,11 @@ class PyQtPlotterOptions(BasePlotterOptions):
         The maximum number of previous data to store.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
-    show_window: bool
-        Whether to show the window. Defaults to True if a display is connected, False otherwise.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
     """
 
-    show_window: bool = has_display()
+    show_window: bool | None = None
 
 
 @register_recording(PyQtPlotterOptions)
@@ -215,7 +218,7 @@ class PyQtPlotter(BasePlotter):
         else:
             self.app = pg.QtWidgets.QApplication.instance()
 
-        self.widget = pg.GraphicsLayoutWidget(show=self._options.show_window, title=self._options.title)
+        self.widget = pg.GraphicsLayoutWidget(show=self.show_window, title=self._options.title)
         self.widget.resize(*self._options.window_size)
 
         if self._options.save_to_filename:
@@ -315,8 +318,8 @@ class MPLPlotterOptions(BasePlotterOptions):
         The maximum number of previous data to store.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
-    show_window: bool
-        Whether to show the window. Defaults to True, set to False for headless mode.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
     """
 
     pass
@@ -337,8 +340,6 @@ class MPLPlotter(BasePlotter):
             )
         super().build()
 
-        if not self._options.show_window:
-            mpl.use("Agg")
         import matplotlib.pyplot as plt
 
         self.fig: plt.Figure | None = None
@@ -388,7 +389,7 @@ class MPLPlotter(BasePlotter):
             ax.set_xlim(0, 10)
             ax.set_ylim(-1, 1)
 
-        if self._options.show_window:
+        if self.show_window:
             self.fig.show()
         self.fig.canvas.draw()
 
@@ -490,13 +491,11 @@ class MPLPlotter(BasePlotter):
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 
         if isinstance(self.fig.canvas, FigureCanvasAgg):
-            print("Using FigureCanvasAgg")
-            width, height = self.fig.canvas.get_width_height()
+            width, height = self.fig.canvas.get_width_height(physical=True)  # use physical for true buffer size
             rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
             return rgba_array_flat.reshape((height, width, 4))[..., :3]
         else:
             # Slower but more generic fallback only if necessary
-            print("Using fallback")
             buffer = io.BytesIO()
             self.fig.savefig(buffer, format="png", dpi="figure", transparent=False, bbox_inches="tight")
             buffer.seek(0)

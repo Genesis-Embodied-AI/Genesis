@@ -5,18 +5,19 @@ import pytest
 
 import genesis as gs
 
-from .utils import rgb_array_to_buffer
+from .utils import rgb_array_to_png_bytes
 
 
 @pytest.mark.required
-def test_plotter(png_snapshot):
+def test_plotter(png_snapshot, show_viewer):
     """Test if the plotter recorders works."""
     DT = 0.01
     STEPS = 10
+    HISTORY_LENGTH = 5
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=DT),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
@@ -40,10 +41,10 @@ def test_plotter(png_snapshot):
         rec_options=gs.recorders.MPLPlot(
             labels={"a": ("x", "y", "z"), "b": ("u", "v")},
             title="Test MPLPlotter",
-            history_length=50,
+            history_length=HISTORY_LENGTH,
             window_size=(400, 300),
             hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
-            show_window=False,
+            show_window=show_viewer,
         ),
     )
 
@@ -53,7 +54,9 @@ def test_plotter(png_snapshot):
         scene.step()
 
     assert call_count == STEPS // 2
-    assert rgb_array_to_buffer(plotter.get_image_array()) == png_snapshot
+    assert len(plotter.x_data) == HISTORY_LENGTH
+    assert np.isclose(plotter.x_data[-1], STEPS * DT, atol=gs.EPS)
+    assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
 
     scene.stop_recording()
 

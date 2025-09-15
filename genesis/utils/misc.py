@@ -363,16 +363,14 @@ def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], t
     return field(default_factory=_default_factory)
 
 
-def try_get_display_size(raise_exception: bool = True) -> tuple[bool, int | None, int | None, float | None]:
+def try_get_display_size() -> tuple[int | None, int | None, float | None]:
     """
     Try to connect to display if it exists and get the screen size.
 
-    If there is no display and `raise_exception` is True, this function will throw an exception.
+    If there is no display, this function will throw an exception.
 
     Returns
     -------
-    has_display : bool
-        Whether the display is connected.
     screen_height : int | None
         The height of the screen in pixels.
     screen_width : int | None
@@ -380,34 +378,31 @@ def try_get_display_size(raise_exception: bool = True) -> tuple[bool, int | None
     screen_scale : float | None
         The scale of the screen.
     """
-    try:
-        if pyglet.version < "2.0":
-            display = pyglet.canvas.Display()
-            screen = display.get_default_screen()
+    if pyglet.version < "2.0":
+        display = pyglet.canvas.Display()
+        screen = display.get_default_screen()
+        screen_scale = 1.0
+    else:
+        display = pyglet.display.get_display()
+        screen = display.get_default_screen()
+        try:
+            screen_scale = screen.get_scale()
+        except NotImplementedError:
+            # Probably some headless screen
             screen_scale = 1.0
-        else:
-            display = pyglet.display.get_display()
-            screen = display.get_default_screen()
-            try:
-                screen_scale = screen.get_scale()
-            except NotImplementedError:
-                # Probably some headless screen
-                screen_scale = 1.0
-        screen_height, screen_width = screen.height, screen.width
-        has_display = True
-    except Exception:
-        if raise_exception:
-            raise
-        has_display = False
-    return has_display, screen_height, screen_width, screen_scale
+
+    return screen.height, screen.width, screen_scale
 
 
 def has_display() -> bool:
     """
     Check if a display is connected.
     """
-    has_display, *_ = try_get_display_size(raise_exception=False)
-    return has_display
+    try:
+        try_get_display_size()
+        return True
+    except Exception:
+        return False
 
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------

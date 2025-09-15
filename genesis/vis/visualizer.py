@@ -41,9 +41,9 @@ class Visualizer(RBC):
             gs.raise_exception_from("Rendering not working on this machine.", e)
         self._context = RasterizerContext(vis_options)
 
-        # try to connect to display
         try:
-            self._has_display, screen_height, _, screen_scale = gs.utils.try_get_display_size()
+            screen_height, _, screen_scale = gs.utils.try_get_display_size()
+            self._has_display = True
         except Exception as e:
             if show_viewer:
                 gs.raise_exception_from("No display detected. Use `show_viewer=False` for headless mode.", e)
