@@ -505,28 +505,28 @@ class NoisySensorMixin:
         Initialize all shared metadata needed to update all noisy sensors.
         """
         super().build()
-        _to_tuple = partial(_to_tuple, length_per_value=self._cache_size)
+        to_tuple = partial(_to_tuple, length_per_value=self._cache_size)
 
         batch_size = self._manager._sim._B
 
         if isinstance(self._options.resolution, tuple):
             self._options.resolution = tuple([-1 if r is None else r for r in self._options.resolution])
         self._shared_metadata.resolution = concat_with_tensor(
-            self._shared_metadata.resolution, _to_tuple(self._options.resolution or -1), expand=(batch_size, -1), dim=-1
+            self._shared_metadata.resolution, to_tuple(self._options.resolution or -1), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.bias = concat_with_tensor(
-            self._shared_metadata.bias, _to_tuple(self._options.bias), expand=(batch_size, -1), dim=-1
+            self._shared_metadata.bias, to_tuple(self._options.bias), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.random_walk = concat_with_tensor(
-            self._shared_metadata.random_walk, _to_tuple(self._options.random_walk), expand=(batch_size, -1), dim=-1
+            self._shared_metadata.random_walk, to_tuple(self._options.random_walk), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk)
         self._shared_metadata.noise = concat_with_tensor(
-            self._shared_metadata.noise, _to_tuple(self._options.noise), expand=(batch_size, -1), dim=-1
+            self._shared_metadata.noise, to_tuple(self._options.noise), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_noise = torch.zeros_like(self._shared_metadata.noise)
         self._shared_metadata.jitter_ts = concat_with_tensor(
-            self._shared_metadata.jitter_ts, _to_tuple(self._options.jitter / self._dt), expand=(batch_size, -1), dim=-1
+            self._shared_metadata.jitter_ts, to_tuple(self._options.jitter / self._dt), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         self._shared_metadata.interpolate.append(self._options.interpolate)

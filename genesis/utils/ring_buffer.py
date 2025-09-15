@@ -67,8 +67,8 @@ class TensorRingBuffer:
         rel_idx = (self._idx_ptr.value - idx) % self.N
         if isinstance(idx, torch.Tensor):
             batch_size = len(idx) if idx.ndim > 0 else 1
-            batch_indices = torch.arange(batch_size, device=gs.device, dtype=gs.tc_int)
-            return self.buffer[rel_idx, batch_indices]
+            # using [tensor_indices, slice] results in an extra dimension
+            return self.buffer[rel_idx, :batch_size][:, 0]
         return self.buffer[rel_idx]
 
     def get(self, idx: int) -> torch.Tensor:

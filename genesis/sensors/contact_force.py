@@ -139,9 +139,7 @@ class ContactSensor(Sensor):
         buffered_data: "TensorRingBuffer",
     ):
         buffered_data.append(shared_ground_truth_cache)
-        print("buffered_data:", buffered_data.buffer.dtype)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
-        print("shared_cache:", shared_cache)
 
 
 # ==========================================================================================================
