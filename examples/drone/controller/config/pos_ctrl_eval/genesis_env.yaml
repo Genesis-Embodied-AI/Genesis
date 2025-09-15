@@ -10,7 +10,7 @@ cam_pos: [0.02, 0.0, 0.04]
 cam_res: [16, 12]                         # width, height
 drone_init_pos: [0.0, 0.0, 1]           # Initial position of the drone
 use_FPV_camera: True
-viewer_follow_drone: False
+viewer_follow_drone: True
 load_map: False
 use_rc: False
 show_viewer: True
