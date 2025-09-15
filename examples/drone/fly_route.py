@@ -43,8 +43,8 @@ def fly_to_point(target, controller: DronePIDController, scene: gs.Scene, cam: C
         z = drone_pos[2]
         cam.set_pose(lookat=(x, y, z))
         x = target[0] - x
-        y = target[0] - y
-        z = target[0] - z
+        y = target[1] - y
+        z = target[2] - z
         distance = math.sqrt(x**2 + y**2 + z**2)
         step += 1
 
