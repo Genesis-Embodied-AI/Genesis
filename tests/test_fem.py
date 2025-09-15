@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pytest
 import igl
@@ -329,9 +331,12 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         )
 
 
-# FIXME: Compilation is crashing on Apple Metal backend
 @pytest.mark.required
-def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
+def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, backend, show_viewer):
+    # FIXME: Fix GsTaichi bug on Apple Metal due to SpirV compilation failure
+    if sys.platform == "darwin" and backend == gs.backend.gpu:
+        pytest.xfail("This test is broken on Mac OS because of a bug in GsTaichi.")
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
