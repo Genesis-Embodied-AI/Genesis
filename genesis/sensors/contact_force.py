@@ -161,7 +161,7 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
         The maximum output force per each axis. Values above this will be clipped. Default is infinity.
     resolution : float | tuple[float, float, float], optional
         The measurement resolution of each axis of force (smallest increment of change in the sensor reading).
-        Default is None, which means no quantization is applied.
+        Default is 0.0, which means no quantization is applied.
     bias : float | tuple[float, float, float], optional
         The constant additive bias of the sensor.
     noise : float | tuple[float, float, float], optional

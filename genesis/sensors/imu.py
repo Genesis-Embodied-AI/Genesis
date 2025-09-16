@@ -94,7 +94,7 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         The rotational offset of the IMU sensor from the RigidLink in degrees.
     acc_resolution : float, optional
         The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
-        Default is None, which means no quantization is applied.
+        Default is 0.0, which means no quantization is applied.
     acc_axes_skew : float | tuple[float, float, float] | Sequence[float]
         Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
         for each axis, and off-diagonal elements account for cross-axis misalignment effects.
@@ -109,7 +109,7 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         The standard deviation of the random walk, which acts as accumulated bias drift.
     gyro_resolution : float, optional
         The measurement resolution of the gyroscope (smallest increment of change in the sensor reading).
-        Default is None, which means no quantization is applied.
+        Default is 0.0, which means no quantization is applied.
     gyro_axes_skew : float | tuple[float, float, float] | Sequence[float]
         Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
     gyro_bias : tuple[float, float, float]
@@ -130,8 +130,8 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
-    acc_resolution: MaybeTuple3FType = 1e-6
-    gyro_resolution: MaybeTuple3FType = 1e-5
+    acc_resolution: MaybeTuple3FType = 0.0
+    gyro_resolution: MaybeTuple3FType = 0.0
     acc_axes_skew: MaybeMatrix3x3Type = 0.0
     gyro_axes_skew: MaybeMatrix3x3Type = 0.0
     acc_noise: MaybeTuple3FType = 0.0

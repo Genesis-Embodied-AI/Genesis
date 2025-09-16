@@ -64,7 +64,7 @@ class SensorOptions(Options):
         """
         delay_hz = self.delay / scene._sim.dt
         if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
-            gs.logger.warn(
+            gs.logger.warning(
                 f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got {self.delay}"
                 f" and {scene._sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
             )
@@ -399,7 +399,7 @@ class NoisySensorOptionsMixin:
     ----------
     resolution : float | tuple[float, ...], optional
         The measurement resolution of the sensor (smallest increment of change in the sensor reading).
-        Default is None, which means no quantization is applied.
+        Default is 0.0, which means no quantization is applied.
     bias : float | tuple[float, ...], optional
         The constant additive bias of the sensor.
     noise : float | tuple[float, ...], optional
@@ -418,7 +418,7 @@ class NoisySensorOptionsMixin:
         If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
-    resolution: float | tuple[float, ...] | None = None
+    resolution: float | tuple[float, ...] = 0.0
     bias: float | tuple[float, ...] = 0.0
     noise: float | tuple[float, ...] = 0.0
     random_walk: float | tuple[float, ...] = 0.0
@@ -509,10 +509,8 @@ class NoisySensorMixin:
 
         batch_size = self._manager._sim._B
 
-        if isinstance(self._options.resolution, tuple):
-            self._options.resolution = tuple([-1 if r is None else r for r in self._options.resolution])
         self._shared_metadata.resolution = concat_with_tensor(
-            self._shared_metadata.resolution, to_tuple(self._options.resolution or -1), expand=(batch_size, -1), dim=-1
+            self._shared_metadata.resolution, to_tuple(self._options.resolution), expand=(batch_size, -1), dim=-1
         )
         self._shared_metadata.bias = concat_with_tensor(
             self._shared_metadata.bias, to_tuple(self._options.bias), expand=(batch_size, -1), dim=-1
@@ -547,7 +545,7 @@ class NoisySensorMixin:
 
     @classmethod
     def _quantize_to_resolution(cls, resolution: torch.Tensor, output: torch.Tensor):
-        mask = resolution > 0
+        mask = resolution > gs.EPS
         output[mask] = torch.round(output[mask] / resolution[mask]) * resolution[mask]
 
     @classmethod
