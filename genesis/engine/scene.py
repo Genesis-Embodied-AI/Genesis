@@ -212,13 +212,7 @@ class Scene(RBC):
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def __del__(self):
-        if getattr(self, "_recorder_manager", None) is not None:
-            self._recorder_manager.destroy()
-            self._recorder_manager = None
-
-        if getattr(self, "_visualizer", None) is not None:
-            self._visualizer.destroy()
-            self._visualizer = None
+        self.destroy()
 
     def _validate_options(
         self,
@@ -278,6 +272,16 @@ class Scene(RBC):
 
         if not isinstance(renderer_options, RendererOptions):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
+
+    def destroy(self):
+        if getattr(self, "_recorder_manager", None) is not None:
+            if self._recorder_manager.is_recording:
+                self._recorder_manager.stop()
+            self._recorder_manager = None
+
+        if getattr(self, "_visualizer", None) is not None:
+            self._visualizer.destroy()
+            self._visualizer = None
 
     @gs.assert_unbuilt
     def add_entity(

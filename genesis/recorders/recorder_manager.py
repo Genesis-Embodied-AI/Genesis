@@ -75,9 +75,6 @@ class RecorderManager:
             recorder.reset(envs_idx)
             recorder.start()
 
-    def destroy(self):
-        self._recorders.clear()
-
     @gs.assert_built
     def step(self, global_step: int):
         """

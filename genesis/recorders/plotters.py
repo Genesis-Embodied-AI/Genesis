@@ -462,14 +462,19 @@ class MPLPlotter(BasePlotter):
 
     def cleanup(self):
         """Clean up Matplotlib resources."""
+        # logger may not be available during destruction
+        logger_exists = hasattr(gs, "logger")
+
         if self.fig:
             try:
                 import matplotlib.pyplot as plt
 
                 plt.close(self.fig)
-                gs.logger.debug("[MPLPlotter] closed Matplotlib window")
+                if logger_exists:
+                    gs.logger.debug("[MPLPlotter] closed Matplotlib window")
             except Exception as e:
-                gs.logger.warning(f"[MPLPlotter] Error closing window: {e}")
+                if logger_exists:
+                    gs.logger.warning(f"[MPLPlotter] Error closing window: {e}")
             finally:
                 self.fig = None
                 self.lines.clear()

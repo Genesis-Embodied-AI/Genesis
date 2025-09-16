@@ -8,19 +8,30 @@ import genesis as gs
 from .utils import rgb_array_to_png_bytes
 
 
-@pytest.mark.required
-def test_plotter(png_snapshot):
-    """Test if the plotter recorders works."""
+@pytest.fixture
+def mpl_agg_backend():
     import matplotlib as mpl
     import matplotlib.pyplot as plt
 
+    # Force using Agg backend for repeatability
+    try:
+        mpl_backend = mpl.get_backend()
+    except AttributeError:
+        mpl_backend = "Agg"
+    plt.switch_backend("Agg")
+
+    yield
+
+    # Restore original backend
+    plt.switch_backend(mpl_backend)
+
+
+@pytest.mark.required
+def test_plotter(png_snapshot, mpl_agg_backend):
+    """Test if the plotter recorders works."""
     DT = 0.01
     STEPS = 10
     HISTORY_LENGTH = 5
-
-    # Force using Agg backend for repeatability
-    mpl_backend = mpl.get_backend()
-    plt.switch_backend("Agg")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=DT),
@@ -65,9 +76,8 @@ def test_plotter(png_snapshot):
     assert np.isclose(plotter.x_data[-1], STEPS * DT, atol=gs.EPS)
     assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
 
-    scene.stop_recording()
-
-    plt.switch_backend(mpl_backend)
+    # Intentionally do not stop the recording to test the destructor
+    # scene.stop_recording()
 
 
 @pytest.mark.required
