@@ -1,5 +1,6 @@
 import queue
 import threading
+import time
 from typing import Callable, Generic, TypeVar
 
 import genesis as gs
@@ -116,8 +117,7 @@ class Recorder(Generic[T]):
         """
         if self.run_in_thread:
             # sync the thread to ensure all data is processed
-            self.join_thread()
-            self.start_thread()
+            self.sync()
 
     @property
     def run_in_thread(self) -> bool:
@@ -181,6 +181,27 @@ class Recorder(Generic[T]):
             self._processor_thread.start()
         else:
             gs.logger.warning(f"[{type(self).__name__}] start_thread(): Processor thread already exists.")
+
+    @gs.assert_built
+    def sync(self, timestep: float = 0.1, timeout: float | None = None):
+        """
+        Wait until the data queue is empty.
+
+        Parameters
+        ----------
+        timestep: float
+            The time to sleep between checks.
+        timeout: float | None
+            The maximum time to wait for the data queue to be empty. If None, wait indefinitely.
+            If the timeout is reached, an exception is raised.
+        """
+        if self._data_queue is not None:
+            if timeout is not None:
+                start_time = time.time()
+            while not self._data_queue.empty():
+                time.sleep(timestep)
+                if timeout is not None and time.time() - start_time > timeout:
+                    gs.raise_exception(f"[{type(self).__name__}] sync(): Timeout waiting for data queue to be empty.")
 
     @gs.assert_built
     def step(self, global_step: int):
