@@ -183,25 +183,29 @@ class Recorder(Generic[T]):
             gs.logger.warning(f"[{type(self).__name__}] start_thread(): Processor thread already exists.")
 
     @gs.assert_built
-    def sync(self, timestep: float = 0.1, timeout: float | None = None):
+    def sync(self, timeout: float | None = None):
         """
         Wait until the data queue is empty.
 
         Parameters
         ----------
-        timestep: float
-            The time to sleep between checks.
         timeout: float | None
             The maximum time to wait for the data queue to be empty. If None, wait indefinitely.
             If the timeout is reached, an exception is raised.
         """
+        timestep = min(0.1, timeout) if timeout is not None else 0.1
         if self._data_queue is not None:
+
             if timeout is not None:
                 start_time = time.time()
+
             while not self._data_queue.empty():
-                time.sleep(timestep)
                 if timeout is not None and time.time() - start_time > timeout:
                     gs.raise_exception(f"[{type(self).__name__}] sync(): Timeout waiting for data queue to be empty.")
+
+                dt = min(timestep, (start_time + timeout) - time.time()) if timeout is not None else timestep
+                if dt > 0.0:
+                    time.sleep(dt)
 
     @gs.assert_built
     def step(self, global_step: int):
