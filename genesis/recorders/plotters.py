@@ -92,7 +92,9 @@ class BasePlotter(Recorder):
             self._setup_plot_structure(self._options.labels)
 
     def reset(self, envs_idx=None):
-        # envs_idx is ignored
+        super().reset(envs_idx)
+
+        # no envs specific resetting supported
         self.x_data.clear()
         self.y_data.clear()
 
@@ -189,7 +191,7 @@ class PyQtPlotterOptions(BasePlotterOptions):
         Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
     """
 
-    show_window: bool | None = None
+    pass
 
 
 @register_recording(PyQtPlotterOptions)

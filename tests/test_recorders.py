@@ -71,6 +71,8 @@ def test_plotter(png_snapshot, mpl_agg_backend):
     for _ in range(STEPS):
         scene.step()
 
+    if plotter.run_in_thread:
+        plotter.join_thread()
     assert call_count == STEPS // 2
     assert len(plotter.x_data) == HISTORY_LENGTH
     assert np.isclose(plotter.x_data[-1], STEPS * DT, atol=gs.EPS)

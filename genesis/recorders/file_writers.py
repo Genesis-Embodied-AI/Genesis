@@ -42,7 +42,9 @@ class BaseFileWriter(Recorder):
         self.counter = 0
 
     def reset(self, envs_idx=None):
-        # envs_idx is ignored
+        super().reset(envs_idx)
+
+        # no envs specific saving supported
         if self._options.save_on_reset:
             self.cleanup()
             self.counter += 1
@@ -259,8 +261,9 @@ class CSVFileWriter(BaseFileWriter):
                 os.remove(self._get_filename())  # delete empty file
 
     def reset(self, envs_idx=None):
-        # envs_idx is ignored
         super().reset(envs_idx)
+
+        # no envs specific saving supported
         if self._options.save_on_reset:
             self._initialize_writer()
 

@@ -114,7 +114,10 @@ class Recorder(Generic[T]):
         envs_idx: array_like, optional
             The indices of the environments to reset. If None, all environments are reset.
         """
-        raise NotImplementedError(f"[{type(self).__name__}] reset() is not implemented.")
+        if self.run_in_thread:
+            # sync the thread to ensure all data is processed
+            self.join_thread()
+            self.start_thread()
 
     @property
     def run_in_thread(self) -> bool:
@@ -148,25 +151,36 @@ class Recorder(Generic[T]):
         self._is_recording = True
 
         if self.run_in_thread:
-            self._data_queue = queue.Queue(maxsize=self._options.buffer_size)
-            self._processor_thread = threading.Thread(target=self._process_data_loop)
-            self._processor_thread.start()
+            self.start_thread()
 
     @gs.assert_built
     def stop(self):
         """Stop the recording thread and cleanup resources."""
         if self._is_recording:
             self._is_recording = False
-            self.sync()
+            if self.run_in_thread:
+                self.join_thread()
             self.cleanup()
 
     @gs.assert_built
-    def sync(self):
+    def join_thread(self):
         """Wait for the processor thread to finish."""
-        if self.run_in_thread and self._processor_thread is not None:
+        if self._processor_thread is not None:
             self._processor_thread.join()
             self._processor_thread = None
             self._data_queue = None
+        else:
+            gs.logger.warning(f"[{type(self).__name__}] join_thread(): No processor thread to join.")
+
+    @gs.assert_built
+    def start_thread(self):
+        """Wait for the processor thread to finish."""
+        if self._processor_thread is None:
+            self._data_queue = queue.Queue(maxsize=self._options.buffer_size)
+            self._processor_thread = threading.Thread(target=self._process_data_loop)
+            self._processor_thread.start()
+        else:
+            gs.logger.warning(f"[{type(self).__name__}] start_thread(): Processor thread already exists.")
 
     @gs.assert_built
     def step(self, global_step: int):

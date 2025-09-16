@@ -71,7 +71,6 @@ class RecorderManager:
     @gs.assert_built
     def reset(self, envs_idx=None):
         for recorder in self._recorders:
-            recorder.sync()
             recorder.reset(envs_idx)
             recorder.start()
 
