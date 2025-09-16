@@ -2044,6 +2044,18 @@ class StaticRigidSimCacheKey:
     integrator: int = cache_value()
     sparse_solve: bool = cache_value()
     solver_type: int = cache_value()
+    # dynamic properties
+    substep_dt: float = cache_value()
+    iterations: int = cache_value()
+    tolerance: float = cache_value()
+    ls_iterations: int = cache_value()
+    ls_tolerance: float = cache_value()
+    noslip_iterations: int = cache_value()
+    noslip_tolerance: float = cache_value()
+    n_equalities: int = cache_value()
+    n_equalities_candidate: int = cache_value()
+    hibernation_thresh_acc: float = cache_value()
+    hibernation_thresh_vel: float = cache_value()
 
 
 def get_static_rigid_sim_cache_key(solver):
@@ -2061,6 +2073,19 @@ def get_static_rigid_sim_cache_key(solver):
         "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
         "sparse_solve": getattr(solver._options, "sparse_solve", False),
         "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
+        # dynamic properties
+        # TODO: we should store those properties into field/ndarray to avoid recompilation when they are changed
+        "substep_dt": getattr(solver, "_substep_dt", 1e-2),
+        "iterations": getattr(solver._options, "iterations", 10),
+        "tolerance": getattr(solver._options, "tolerance", 1e-6),
+        "ls_iterations": getattr(solver._options, "ls_iterations", 10),
+        "ls_tolerance": getattr(solver._options, "ls_tolerance", 1e-6),
+        "noslip_iterations": getattr(solver._options, "noslip_iterations", 0),
+        "noslip_tolerance": getattr(solver._options, "noslip_tolerance", 1e-6),
+        "n_equalities": getattr(solver, "_n_equalities", 0),
+        "n_equalities_candidate": getattr(solver, "n_equalities_candidate", 0),
+        "hibernation_thresh_acc": getattr(solver, "_hibernation_thresh_acc", 0.0),
+        "hibernation_thresh_vel": getattr(solver, "_hibernation_thresh_vel", 0.0),
     }
     return StaticRigidSimCacheKey(**kwargs)
 
