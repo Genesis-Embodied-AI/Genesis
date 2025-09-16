@@ -1363,7 +1363,7 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
     CUBE_SIZE = 0.07
 
     # FIXME: Implement a more robust plan planning algorithm
-    if backend == gs.gpu and sys.platform == "darwin":
+    if sys.platform == "darwin" and backend == gs.gpu:
         pytest.skip(reason="This algorithm is very fragile and fail to converge on MacOS.")
 
     scene = gs.Scene(

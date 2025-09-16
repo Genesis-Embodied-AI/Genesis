@@ -486,14 +486,15 @@ class RigidEntity(Entity):
                     j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
         # Check if there is something weird with the options
-        for link_j_infos in links_j_infos:
-            for j_info in link_j_infos:
-                fieldnames = ("dofs_frictionloss", "dofs_damping", "dofs_armature")
-                if not all((j_info[name] < gs.EPS).all() for name in fieldnames if name in j_info):
-                    gs.logger.warning(
-                        "Some free joint has non-zero frictionloss, damping or armature parameters. Beware it is "
-                        "non-physical."
-                    )
+        non_physical_fieldnames = ("dofs_frictionloss", "dofs_damping", "dofs_armature")
+        for j_info in (
+            j_info for link_j_infos in links_j_infos for j_info in link_j_infos if j_info["type"] == gs.JOINT_TYPE.FREE
+        ):
+            if not all((j_info[name] < gs.EPS).all() for name in non_physical_fieldnames if name in j_info):
+                gs.logger.warning(
+                    "Some free joint has non-zero frictionloss, damping or armature parameters. Beware it is "
+                    "non-physical."
+                )
 
         # Define a flag that determines whether the link at hand is associated with a robot.
         # Note that 0d array is used rather than native type because this algo requires mutable objects.

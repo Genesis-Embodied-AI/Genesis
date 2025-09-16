@@ -271,7 +271,6 @@ class Simulator(RBC):
             for _ in range(self._substeps):
                 self.rigid_solver.substep()
                 self._cur_substep_global += 1
-
         else:
             self.process_input(in_backward=in_backward)
             for _ in range(self._substeps):

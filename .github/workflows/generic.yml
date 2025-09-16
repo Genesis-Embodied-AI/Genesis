@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   generic-cpu:
-    name: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_USE_NDARRAY == '1' && 'ndarray' || 'field' }}
+    name: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_USE_NDARRAY == '1' && 'ndarray' || 'field' }}
 
     strategy:
       fail-fast: false
@@ -23,13 +23,20 @@ jobs:
         # See official Github documentation for details: https://shorturl.at/NJgsj
         OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
+        GS_BACKEND: ["cpu"]
         GS_USE_NDARRAY: ["0"]
         include:
-          - OS: "windows-cpu-4-core"
+          - OS: "windows-2025"
             PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_USE_NDARRAY: "0"
+          - OS: "macos-15"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "gpu"
             GS_USE_NDARRAY: "0"
           - OS: "ubuntu-24.04"
             PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
             GS_USE_NDARRAY: "1"
 
     env:
@@ -38,11 +45,12 @@ jobs:
       PY_COLORS: 1
       GS_CACHE_FILE_PATH: ".cache/genesis"
       GS_USE_NDARRAY: ${{ matrix.GS_USE_NDARRAY }}
+      GS_TORCH_FORCE_CPU_DEVICE: "1"
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
       TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
       TI_ENABLE_CUDA: "0"
-      TI_ENABLE_METAL: "0"
+      TI_ENABLE_METAL: "1"
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
       TI_DEBUG: "0"
@@ -117,7 +125,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --dev --forked -m required ./tests
+          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: always()

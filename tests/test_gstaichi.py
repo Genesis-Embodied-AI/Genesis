@@ -1,36 +1,85 @@
+import argparse
+import gc
+import os
 import pathlib
-import pytest
 import subprocess
 import sys
-import os
 
-import argparse
+import pytest
+import numpy as np
+
 import genesis as gs
+from genesis.utils.misc import ti_to_torch
+
+from .utils import assert_allclose
 
 
 RET_SUCCESS = 42
 
+FILE_PATH = pathlib.Path(__file__)
+MODULE_ROOT_DIR = FILE_PATH.parents[1]
+MODULE = ".".join((FILE_PATH.parent.name, FILE_PATH.stem))
+
+
+@pytest.mark.parametrize("batch_shape", [(2, 3, 5), ()])
+@pytest.mark.parametrize(
+    "ti_type_spec, arg_shape",
+    [
+        (("field", "scalar"), ()),
+        (("field", "vector"), (7,)),
+        (("field", "matrix"), (7, 1)),
+        (("field", "matrix"), (7, 11)),
+        (("ndarray", "scalar"), ()),
+        (("ndarray", "vector"), (7,)),
+        (("ndarray", "matrix"), (7, 1)),
+        (("ndarray", "matrix"), (7, 11)),
+    ],
+)
+def test_to_torch(ti_type_spec, batch_shape, arg_shape):
+    import gstaichi as ti
+
+    for _ in range(10):
+        TI_TYPE_MAP = {
+            ("field", "scalar"): ti.field,
+            ("field", "vector"): ti.Vector.field,
+            ("field", "matrix"): ti.Matrix.field,
+            ("ndarray", "scalar"): ti.ndarray,
+            ("ndarray", "vector"): ti.Vector.ndarray,
+            ("ndarray", "matrix"): ti.Matrix.ndarray,
+        }
+
+        np_arg = np.asarray(np.random.rand(*batch_shape, *arg_shape), dtype=np.float32)
+        ti_arg = TI_TYPE_MAP[ti_type_spec](*arg_shape, dtype=ti.f32, shape=batch_shape)
+        ti_arg.from_numpy(np_arg)
+        assert_allclose(ti_to_torch(ti_arg), ti_arg.to_numpy(), tol=gs.EPS)
+
+        # Restart taichi runtime
+        arch_idx = int(ti.cfg.arch)
+        debug = ti.cfg.debug
+        ti.reset()
+        ti.init(arch=ti._lib.core.Arch(arch_idx), debug=debug)
+        gc.collect()
+
 
 def gs_static_child(args: list[str]):
     parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--enable-multi-contact", action="store_true")
     parser.add_argument("--expected-num-contacts", type=int, required=True)
     parser.add_argument("--expected-use-src-ll-cache", type=int, required=True)
     parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
-    parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args(args)
 
-    gs.init(
-        backend=getattr(gs, args.test_backend),
-        precision="32",
-    )
+    gs.init(backend=getattr(gs, args.backend), precision="32")
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1, 1, 0.5),
             camera_lookat=(0.0, 0.0, 0.0),
         ),
-        rigid_options=gs.options.RigidOptions(enable_multi_contact=args.enable_multi_contact),
+        rigid_options=gs.options.RigidOptions(
+            enable_multi_contact=args.enable_multi_contact,
+        ),
         show_viewer=False,
     )
     scene.add_entity(
@@ -67,6 +116,8 @@ def gs_static_child(args: list[str]):
 
 
 @pytest.mark.required
+# Disable genesis initialization at worker level
+@pytest.mark.parametrize("backend", [None])
 # should not affect expected_num_contacts
 @pytest.mark.parametrize("use_ndarray", [False, True])
 # should not affect expected_num_contacts
@@ -75,13 +126,13 @@ def gs_static_child(args: list[str]):
 # should not affect expected_num_contacts
 @pytest.mark.parametrize("enable_pure", [False, True])
 @pytest.mark.parametrize(
-    "enable_multicontact,expected_num_contacts",
+    "enable_multicontact, expected_num_contacts",
     [
         (False, 1),
         (True, 4),
     ],
 )
-def test_gs_static(
+def test_static(
     enable_multicontact: bool,
     expected_num_contacts: int,
     enable_pure: bool,
@@ -89,11 +140,18 @@ def test_gs_static(
     use_ndarray: bool,
     tmp_path: pathlib.Path,
 ) -> None:
+    if sys.platform == "darwin" and use_ndarray and test_backend == "gpu":
+        pytest.skip(
+            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up "
+            "to 31 kernel parameters, which is not enough for most solvers."
+        )
+
     for it in range(3):
         # we iterate to make sure stuff is really being read from cache
         cmd_line = [
             sys.executable,
-            __file__,
+            "-m",
+            MODULE,
             gs_static_child.__name__,
             "--expected-num-contacts",
             str(expected_num_contacts),
@@ -101,7 +159,7 @@ def test_gs_static(
             "1" if enable_pure and use_ndarray else "0",
             "--expected-src-ll-cache-hit",
             "1" if enable_pure and use_ndarray and it > 0 else "0",
-            "--test-backend",
+            "--backend",
             test_backend,
         ]
         if enable_multicontact:
@@ -113,7 +171,7 @@ def test_gs_static(
         env = dict(os.environ)
         env.update(env_changes)
 
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
         if proc.returncode != RET_SUCCESS:
             print("============================")
             print("it", it)
@@ -127,16 +185,18 @@ def test_gs_static(
 
 def gs_num_envs_child(args: list[str]):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
+    parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
+    parser.add_argument("--n_envs", type=int, required=True)
     parser.add_argument("--expected-use-src-ll-cache", action="store_true")
     parser.add_argument("--expected-src-ll-cache-hit", action="store_true")
     parser.add_argument("--expected-fe-ll-cache-hit", action="store_true")
-    parser.add_argument("--num-env", type=int, required=True)
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.test_backend), precision="32")
+    gs.init(backend=getattr(gs, args.backend), precision="32")
 
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -146,8 +206,8 @@ def gs_num_envs_child(args: list[str]):
             pos=(0.0, 0.0, 0.18),
         )
     )
+    scene.build(n_envs=args.n_envs, env_spacing=(0.5, 0.5))
 
-    scene.build(n_envs=args.num_env, env_spacing=(0.5, 0.5))
     scene.rigid_solver.collider.detection()
     gs.ti.sync()
 
@@ -161,27 +221,30 @@ def gs_num_envs_child(args: list[str]):
 
 
 @pytest.mark.required
+# Disable genesis initialization at worker level
+@pytest.mark.parametrize("backend", [None])
 @pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
 # note that using `backend` instead of `test_backend`, breaks genesis pytest...
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
 @pytest.mark.parametrize("use_ndarray", [False, True])
-def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
-    if sys.platform == "darwin" and test_backend == "gpu" and use_ndarray:
+def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
+    if sys.platform == "darwin" and use_ndarray and test_backend == "gpu":
         pytest.skip(
-            "fast cache not supported on mac gpus when using ndarray, because mac gpu only supports up to 31 kernel"
-            " parameters, and we need more than that."
+            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up "
+            "to 31 kernel parameters, which is not enough for most solvers."
         )
 
-    # change num_env each time, and check effect on reading from cache
-    for it, num_env in enumerate([3, 5, 7]):
+    # change n_envs each time, and check effect on reading from cache
+    for it, n_envs in enumerate([3, 5, 7]):
         cmd_line = [
             sys.executable,
-            __file__,
+            "-m",
+            MODULE,
             gs_num_envs_child.__name__,
-            "--test-backend",
+            "--backend",
             test_backend,
-            "--num-env",
-            str(num_env),
+            "--n_envs",
+            str(n_envs),
         ]
         env = dict(os.environ)
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
@@ -203,10 +266,10 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
             cmd_line += ["--expected-use-src-ll-cache"]
         if expected_src_ll_cache_hit:
             cmd_line += ["--expected-src-ll-cache-hit"]
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
         if proc.returncode != RET_SUCCESS:
             print("============================")
-            print("it", it, "num_env", num_env)
+            print("it", it, "n_envs", n_envs)
             print("cmd_line", cmd_line)
             print("env", env)
             print("stderr", proc.stderr)
@@ -215,60 +278,52 @@ def test_gs_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tm
 
 
 def change_scene(args: list[str]):
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--n_obj", type=int, required=True)
-    parser.add_argument("--n_env", type=int, required=True)
+    parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
+    parser.add_argument("--n_objs", type=int, required=True)
+    parser.add_argument("--n_envs", type=int, required=True)
     parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
-    parser.add_argument("--test-backend", type=str, choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.test_backend), precision="32")
+    gs.init(backend=getattr(gs, args.backend), precision="32")
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1, 1, 0.5),
             camera_lookat=(0.0, 0.0, 0.0),
         ),
-        rigid_options=gs.options.RigidOptions(),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=False,
     )
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
-
-    for i_obj in range(args.n_obj):
+    for i_obj in range(args.n_objs):
         cube = scene.add_entity(
             gs.morphs.Box(
                 size=(0.4, 0.4, 0.4),
                 pos=(0.0, 0.5 * i_obj, 0.8),
             )
         )
-    if args.n_env > 0:
-        scene.build(n_envs=args.n_env)
-    else:
-        scene.build()
+    scene.build(n_envs=args.n_envs)
 
     for i in range(500):
         scene.step()
-    # ti_field_to_torch does not work with ndarray now
-    # qpos = scene.sim.rigid_solver.get_qpos()
-    qpos = scene.sim.rigid_solver.qpos.to_numpy()
 
-    z = qpos.reshape(args.n_obj, 7, max(1, args.n_env))[:, 2, :]
+    qpos = scene.sim.rigid_solver.get_qpos()
+    if args.n_envs > 0:
+        assert qpos.ndim == 2
+        assert qpos.shape[0] == args.n_envs
+    else:
+        assert qpos.ndim == 1
+    assert qpos.shape[-1] == args.n_objs * 7
 
-    # workaround to get current file's path, and import from .utils
-    current_file_path = pathlib.Path(__file__)
-    sys.path.append(current_file_path.parent)
-    from utils import assert_allclose
-
-    sys.path.remove(current_file_path.parent)
-
+    z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
     assert_allclose(z, 0.2, atol=1e-2, err_msg=f"zs {z} is not close to 0.2.")
-
-    assert qpos.shape[0] == args.n_obj * 7
-    assert qpos.shape[1] == max(args.n_env, 1)
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
@@ -277,11 +332,13 @@ def change_scene(args: list[str]):
 
 
 @pytest.mark.required
+# Disable genesis initialization at worker level
+@pytest.mark.parametrize("backend", [None])
 @pytest.mark.parametrize(
     "list_n_objs_n_envs",
     [
         [(1, 1), (2, 2), (3, 3)],
-        # [(3, 0), (1, 1), (2, 2)],  # FIXME:this does not work with gpu, needs to investigate. (cache key cahnges)
+        # [(3, 0), (1, 1), (2, 2)],  # FIXME: This does not work with gpu, needs to investigate (cache key changes).
     ],
 )
 @pytest.mark.parametrize("enable_pure", [True])  # should not affect result
@@ -292,39 +349,40 @@ def test_ndarray_no_compile(
 ) -> None:
     if sys.platform == "darwin" and test_backend == "gpu":
         pytest.skip(
-            "fast cache not supported on mac gpus when using ndarray, because mac gpu only supports up to 31 kernel"
-            " parameters, and we need more than that."
+            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up "
+            "to 31 kernel parameters, which is not enough for most solvers."
         )
 
-    for it in range(len(list_n_objs_n_envs)):
-        # we iterate to make sure stuff is really being read from cache
-        n_objs, n_envs = list_n_objs_n_envs[it]
+    # Iterate to make sure stuff is really being read from cache
+    for i, (n_objs, n_envs) in enumerate(list_n_objs_n_envs):
         cmd_line = [
             sys.executable,
-            __file__,
+            "-m",
+            MODULE,
             change_scene.__name__,
-            "--n_obj",
+            "--n_objs",
             str(n_objs),
-            "--n_env",
+            "--n_envs",
             str(n_envs),
             "--expected-src-ll-cache-hit",
-            "1" if enable_pure and it > 0 else "0",
-            "--test-backend",
+            "1" if enable_pure and i > 0 else "0",
+            "--backend",
             test_backend,
         ]
         env = dict(os.environ)
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
         env["GS_USE_NDARRAY"] = "1"  # test ndarray
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
+
+        # Display error message only in case of failure
         if proc.returncode != RET_SUCCESS:
-            print(proc.stdout)  # needs to do this to see error messages
+            print(proc.stdout)
             print("-" * 100)
             print(proc.stderr)
         assert proc.returncode == RET_SUCCESS
 
 
-# The following lines are critical for the test to work. If they are missing, the test will
-# incorrectly pass, without doing anything.
+# The following lines are critical for the test to work
 if __name__ == "__main__":
     globals()[sys.argv[1]](sys.argv[2:])

@@ -4,7 +4,6 @@ import genesis as gs
 
 
 def main():
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
@@ -21,7 +20,7 @@ def main():
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             plane_reflection=True,
-            rendered_envs_idx=list(range(args.num_env)),
+            rendered_envs_idx=list(range(args.n_envs)),
             env_separate_rigid=args.sep,
             show_world_frame=True,
             show_link_frame=True,
@@ -55,7 +54,7 @@ def main():
         GUI=True,
     )
     ########################## build ##########################
-    scene.build(n_envs=args.num_env, env_spacing=(0.5, 0.5))
+    scene.build(n_envs=args.n_envs, env_spacing=(0.5, 0.5))
 
     if args.record:
         cam_0.start_recording()
@@ -66,7 +65,7 @@ def main():
         color, depth, seg, normal = cam_0.render(
             rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
         )
-        print(f"Step {i}:", args.num_env, color.shape, depth.shape, seg.shape, normal.shape)
+        print(f"Step {i}:", args.n_envs, color.shape, depth.shape, seg.shape, normal.shape)
 
     if args.record:
         cam_0.stop_recording(save_to_filename="video.mp4")
