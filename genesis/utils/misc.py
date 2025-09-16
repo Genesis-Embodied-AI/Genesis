@@ -2,6 +2,7 @@ import ctypes
 import datetime
 import functools
 import logging
+import math
 import platform
 import random
 import types
@@ -321,35 +322,42 @@ def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
 
 
-def concat_with_tensor(
-    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dtype: torch.dtype | None = None, dim: int = 0
-):
+def concat_with_tensor(tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dim: int = 0):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
     if not isinstance(value, torch.Tensor):
-        value = torch.tensor([value], dtype=dtype or gs.tc_float, device=gs.device)
+        value = torch.tensor([value], dtype=tensor.dtype, device=tensor.device)
     if expand is not None:
         value = value.expand(*expand)
+    if dim < 0:
+        dim = tensor.ndim + dim
+    assert (
+        0 <= dim < tensor.ndim
+        and tensor.ndim == value.ndim
+        and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
+    )
     if tensor.numel() == 0:
         return value
     return torch.cat([tensor, value], dim=dim)
 
 
-def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] = lambda: gs.tc_float):
+def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] | None = None):
     """
     Helper method to create a tensor field for dataclasses.
 
     Parameters
     ----------
     shape : tuple
-        The shape of the tensor field.
+        The shape of the tensor field. It must have zero elements, otherwise it will trigger an exception.
     dtype_factory : Callable[[], torch.dtype], optional
         The factory function to create the dtype of the tensor field. Default is gs.tc_float.
         A factory is used because gs types may not be available at the time of field creation.
     """
+    assert not shape or math.prod(shape) == 0
 
     def _default_factory():
         nonlocal shape, dtype_factory
-        return torch.empty(shape, dtype=dtype_factory(), device=gs.device)
+        dtype = dtype_factory() if dtype_factory is not None else gs.tc_float
+        return torch.empty(shape, dtype=dtype, device=gs.device)
 
     return field(default_factory=_default_factory)
 
