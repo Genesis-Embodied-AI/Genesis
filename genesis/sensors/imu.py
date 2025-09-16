@@ -24,6 +24,7 @@ from .base_sensor import (
     Sensor,
     SensorOptions,
     SharedSensorMetadata,
+    _to_tuple,
 )
 from .sensor_manager import register_sensor
 
@@ -32,20 +33,6 @@ if TYPE_CHECKING:
 
 Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
-
-
-def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
-    """
-    Convert all input values to one flattened tuple, where each value is ensured to be a tuple of length_per_value.
-    """
-    full_tuple = ()
-    for value in values:
-        if isinstance(value, (int, float)):
-            value = (value,) * length_per_value
-        elif isinstance(value, torch.Tensor):
-            value = value.reshape((-1,))
-        full_tuple += tuple(value)
-    return full_tuple
 
 
 def _view_metadata_as_acc_gyro(metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -107,7 +94,7 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         The rotational offset of the IMU sensor from the RigidLink in degrees.
     acc_resolution : float, optional
         The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
-        Default is None, which means no quantization is applied.
+        Default is 0.0, which means no quantization is applied.
     acc_axes_skew : float | tuple[float, float, float] | Sequence[float]
         Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
         for each axis, and off-diagonal elements account for cross-axis misalignment effects.
@@ -122,7 +109,7 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         The standard deviation of the random walk, which acts as accumulated bias drift.
     gyro_resolution : float, optional
         The measurement resolution of the gyroscope (smallest increment of change in the sensor reading).
-        Default is None, which means no quantization is applied.
+        Default is 0.0, which means no quantization is applied.
     gyro_axes_skew : float | tuple[float, float, float] | Sequence[float]
         Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
     gyro_bias : tuple[float, float, float]
@@ -143,8 +130,8 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
-    acc_resolution: MaybeTuple3FType = 1e-6
-    gyro_resolution: MaybeTuple3FType = 1e-5
+    acc_resolution: MaybeTuple3FType = 0.0
+    gyro_resolution: MaybeTuple3FType = 0.0
     acc_axes_skew: MaybeMatrix3x3Type = 0.0
     gyro_axes_skew: MaybeMatrix3x3Type = 0.0
     acc_noise: MaybeTuple3FType = 0.0
@@ -180,7 +167,11 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
+class IMUSensor(
+    RigidSensorMixin[IMUSharedMetadata],
+    NoisySensorMixin[IMUSharedMetadata],
+    Sensor[IMUSharedMetadata],
+):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -249,7 +240,8 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
                     _get_skew_to_alignment_matrix(self._options.acc_axes_skew),
                     _get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
                 ],
-            ).expand(self._manager._sim._B, -1, -1, -1),
+            ),
+            expand=(self._manager._sim._B, 2, 3, 3),
             dim=1,
         )
 
@@ -260,12 +252,17 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         }
 
     @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @classmethod
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         """
         Update the current ground truth values for all IMU sensors.
         """
+        assert shared_metadata.solver is not None
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
@@ -288,7 +285,7 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
     @classmethod
     def _update_shared_cache(
         cls,
-        shared_metadata: dict[str, Any],
+        shared_metadata: IMUSharedMetadata,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
@@ -313,7 +310,3 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
