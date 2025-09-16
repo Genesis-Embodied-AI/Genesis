@@ -9,19 +9,22 @@ from .utils import rgb_array_to_png_bytes
 
 
 @pytest.mark.required
-def test_plotter(png_snapshot, show_viewer):
+def test_plotter(png_snapshot):
     """Test if the plotter recorders works."""
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+
     DT = 0.01
     STEPS = 10
     HISTORY_LENGTH = 5
 
-    import matplotlib
-
-    matplotlib.use("Agg")
+    # Force using Agg backend for repeatability
+    mpl_backend = mpl.get_backend()
+    plt.switch_backend("Agg")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=DT),
-        show_viewer=show_viewer,
+        show_viewer=False,
         show_FPS=False,
     )
 
@@ -48,7 +51,7 @@ def test_plotter(png_snapshot, show_viewer):
             history_length=HISTORY_LENGTH,
             window_size=(400, 300),
             hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
-            show_window=show_viewer,
+            show_window=False,
         ),
     )
 
@@ -63,6 +66,8 @@ def test_plotter(png_snapshot, show_viewer):
     assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
 
     scene.stop_recording()
+
+    plt.switch_backend(mpl_backend)
 
 
 @pytest.mark.required
