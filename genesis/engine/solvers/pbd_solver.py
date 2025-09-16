@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 import gstaichi as ti
 
 import genesis as gs
@@ -13,6 +14,7 @@ from genesis.engine.entities import (
     PBDParticleEntity,
 )
 from genesis.engine.states.solvers import PBDSolverState
+from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
 
 from .base_solver import Solver
@@ -29,6 +31,15 @@ class PBDSolver(Solver):
         ELASTIC = 1
         LIQUID = 2
         PARTICLE = 3  # non-physcis particles
+
+    @ti.dataclass
+    class ParticleAnimateByLinkInfo:
+        """
+        Index to and offset from the RigidLink that keyframe-animates this particle.
+        """
+
+        link_idx: ti.i32  # gs.ti_int not available before gs.init()
+        local_pos: ti.math.vec3  # gs.ti_vec3 causes uncomprehensible error !!
 
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
@@ -148,26 +159,23 @@ class PBDSolver(Solver):
             active=gs.ti_bool,
         )
 
-        self.particles_info = struct_particle_info.field(shape=self._n_particles, layout=ti.Layout.SOA)
-        self.particles_info_reordered = struct_particle_info.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        shared_shape = self._n_particles
+        batched_shape = self._batch_shape(shared_shape)
 
-        self.particles = struct_particle_state.field(shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA)
-        self.particles_reordered = struct_particle_state.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        self.particles_info = struct_particle_info.field(shape=shared_shape, layout=ti.Layout.SOA)
+        self.particles_info_reordered = struct_particle_info.field(shape=batched_shape, layout=ti.Layout.SOA)
 
-        self.particles_ng = struct_particle_state_ng.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
-        self.particles_ng_reordered = struct_particle_state_ng.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        self.particles = struct_particle_state.field(shape=batched_shape, layout=ti.Layout.SOA)
+        self.particles_reordered = struct_particle_state.field(shape=batched_shape, layout=ti.Layout.SOA)
 
-        self.particles_render = struct_particle_state_render.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        self.particle_animation_info = self.ParticleAnimateByLinkInfo.field(shape=batched_shape, layout=ti.Layout.SOA)
+        self.particle_animation_info.link_idx.fill(-1)
+        self.particle_animation_info.local_pos.fill(gs.ti_vec3(0.0, 0.0, 0.0))
+
+        self.particles_ng = struct_particle_state_ng.field(shape=batched_shape, layout=ti.Layout.SOA)
+        self.particles_ng_reordered = struct_particle_state_ng.field(shape=batched_shape, layout=ti.Layout.SOA)
+
+        self.particles_render = struct_particle_state_render.field(shape=batched_shape, layout=ti.Layout.SOA)
 
     def init_edge_fields(self):
         # edges information for stretch. edge: (v1, v2)
@@ -960,6 +968,28 @@ class PBDSolver(Solver):
         for i in range(3):
             self.particles[particle_idx, i_b].vel[i] = vel[i]
         self.particles[particle_idx, i_b].free = 0
+
+    @gs.assert_built
+    def set_animate_particles_by_link(
+        self,
+        particles_idx: NDArray[np.int32],
+        link_idx: int,
+        links_state: LinksState,
+        envs_idx: NDArray[np.int32] | None = None,
+    ) -> None:
+        envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
+        self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
+            particles_idx, link_idx, links_state, envs_idx
+        )
+
+    @gs.assert_built
+    def clear_animate_particles_by_link(
+        self,
+        particles_idx: NDArray[np.int32],
+        envs_idx: NDArray[np.int32] | None = None,
+    ) -> None:
+        envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
+        self._sim._coupler.kernel_pbd_rigid_clear_animate_particles_by_link(particles_idx, envs_idx)
 
     @gs.assert_built
     def release_particle(self, particle_idx, i_b):
