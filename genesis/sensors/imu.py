@@ -167,7 +167,11 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
 
 @register_sensor(IMUOptions, IMUSharedMetadata)
 @ti.data_oriented
-class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
+class IMUSensor(
+    RigidSensorMixin[IMUSharedMetadata],
+    NoisySensorMixin[IMUSharedMetadata],
+    Sensor[IMUSharedMetadata],
+):
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -236,7 +240,8 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
                     _get_skew_to_alignment_matrix(self._options.acc_axes_skew),
                     _get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
                 ],
-            ).expand(self._manager._sim._B, -1, -1, -1),
+            ),
+            expand=(self._manager._sim._B, 2, 3, 3),
             dim=1,
         )
 
@@ -247,12 +252,17 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         }
 
     @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @classmethod
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         """
         Update the current ground truth values for all IMU sensors.
         """
+        assert shared_metadata.solver is not None
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
@@ -275,7 +285,7 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
     @classmethod
     def _update_shared_cache(
         cls,
-        shared_metadata: dict[str, Any],
+        shared_metadata: IMUSharedMetadata,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
@@ -300,7 +310,3 @@ class IMUSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float

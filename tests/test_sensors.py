@@ -120,9 +120,11 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(80):
         scene.step()
 
-    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=tol)
+    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=5e-6)
     assert_allclose(
-        imu_biased.read()["lin_acc"], expand_batch_dim((BIAS[0], BIAS[1], BIAS[2] - GRAVITY), n_envs), tol=tol
+        imu_biased.read()["lin_acc"],
+        expand_batch_dim((BIAS[0], BIAS[1], BIAS[2] - GRAVITY), n_envs),
+        tol=5e-6,
     )
     assert_allclose(imu_biased.read()["ang_vel"], expand_batch_dim(BIAS, n_envs), tol=1e-5)
 

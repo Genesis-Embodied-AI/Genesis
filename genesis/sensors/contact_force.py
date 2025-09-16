@@ -44,13 +44,13 @@ def _kernel_get_contacts_forces(
         if contact_data_link_a == sensors_link_idx[i_s] or contact_data_link_b == sensors_link_idx[i_s]:
             j_s = i_s * 3  # per-sensor output dimension is 3
 
-            quat_a = ti.Vector.zero(ti.f32, 4)
-            quat_b = ti.Vector.zero(ti.f32, 4)
+            quat_a = ti.Vector.zero(gs.ti_float, 4)
+            quat_b = ti.Vector.zero(gs.ti_float, 4)
             for j in ti.static(range(4)):
                 quat_a[j] = links_quat[i_b, contact_data_link_a, j]
                 quat_b[j] = links_quat[i_b, contact_data_link_b, j]
 
-            force_vec = ti.Vector.zero(ti.f32, 3)
+            force_vec = ti.Vector.zero(gs.ti_float, 3)
             for j in ti.static(range(3)):
                 force_vec[j] = contact_forces[i_b, i_c, j]
 
@@ -89,7 +89,7 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: RigidSolver | None = None
-    expanded_links_idx: torch.Tensor = make_tensor_field((0, 1, 0), dtype_factory=lambda: gs.tc_int)
+    expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata)
@@ -104,11 +104,12 @@ class ContactSensor(Sensor):
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
+        link_start = self._shared_metadata.solver.entities[self._options.entity_idx].link_start
         self._shared_metadata.expanded_links_idx = concat_with_tensor(
             self._shared_metadata.expanded_links_idx,
-            self._options.entity_idx + self._options.link_idx_local,
-            expand=(self._manager._sim._B, 1, -1),
-            dim=-1,
+            link_start + self._options.link_idx_local,
+            expand=(1,),
+            dim=0,
         )
 
     def _get_return_format(self) -> tuple[int, ...]:
@@ -122,12 +123,13 @@ class ContactSensor(Sensor):
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: ContactSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
+        assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         if all_contacts["link_a"].numel() == 0:
             shared_ground_truth_cache.fill_(False)
         else:
             contact_links = torch.cat([all_contacts["link_a"], all_contacts["link_b"]], dim=-1)
-            is_contact = (contact_links[..., -1, None] == shared_metadata.expanded_links_idx).any(dim=-1)
+            is_contact = (contact_links.unsqueeze(-2) == shared_metadata.expanded_links_idx.unsqueeze(-1)).any(-1)
             shared_ground_truth_cache.copy_(is_contact)
 
     @classmethod
@@ -215,7 +217,11 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
 @ti.data_oriented
-class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
+class ContactForceSensor(
+    RigidSensorMixin[ContactForceSensorMetadata],
+    NoisySensorMixin[ContactForceSensorMetadata],
+    Sensor[ContactForceSensorMetadata],
+):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
@@ -249,6 +255,7 @@ class ContactForceSensor(RigidSensorMixin, NoisySensorMixin, Sensor):
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: ContactForceSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
+        assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         force, link_a, link_b = all_contacts["force"], all_contacts["link_a"], all_contacts["link_b"]
 

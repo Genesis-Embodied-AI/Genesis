@@ -39,7 +39,7 @@ class SensorManager:
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_cache_dtype()
 
-            for is_ground_truth in [False, True]:
+            for is_ground_truth in (False, True):
                 self._last_cache_cloned_step.setdefault((is_ground_truth, dtype), -1)
                 self._cloned_cache.setdefault((is_ground_truth, dtype), torch.zeros(0, dtype=dtype))
 
