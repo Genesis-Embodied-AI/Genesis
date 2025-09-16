@@ -117,7 +117,7 @@ def test_file_writers(tmp_path):
 
 
 @pytest.mark.required
-def test_video_writer(tmp_path, png_snapshot):
+def test_video_writer(tmp_path):
     """Test if the VideoFileWriter works with camera rendering."""
 
     scene = gs.Scene(
