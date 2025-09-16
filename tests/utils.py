@@ -491,6 +491,7 @@ def build_mujoco_sim(
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
     model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ISLAND
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
