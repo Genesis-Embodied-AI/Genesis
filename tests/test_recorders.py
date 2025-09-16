@@ -15,6 +15,10 @@ def test_plotter(png_snapshot, show_viewer):
     STEPS = 10
     HISTORY_LENGTH = 5
 
+    import matplotlib
+
+    matplotlib.use("Agg")
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=DT),
         show_viewer=show_viewer,

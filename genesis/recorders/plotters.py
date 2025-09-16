@@ -491,9 +491,14 @@ class MPLPlotter(BasePlotter):
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 
         if isinstance(self.fig.canvas, FigureCanvasAgg):
-            width, height = self.fig.canvas.get_width_height(physical=True)  # use physical for true buffer size
+            width, height = self.fig.canvas.get_width_height(physical=True)
             rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
-            return rgba_array_flat.reshape((height, width, 4))[..., :3]
+            rgb_array = rgba_array_flat.reshape((height, width, 4))[..., :3]
+            if (width, height) == tuple(self._options.window_size):
+                return rgb_array
+            img = Image.fromarray(rgb_array)
+            img = img.resize(self._options.window_size, resample=Image.BILINEAR)
+            return np.asarray(img)
         else:
             # Slower but more generic fallback only if necessary
             buffer = io.BytesIO()
