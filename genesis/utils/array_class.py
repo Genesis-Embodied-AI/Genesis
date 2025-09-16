@@ -2032,6 +2032,7 @@ cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: T
 @dataclasses.dataclass
 class StaticRigidSimCacheKey:
     para_level: int = cache_value()
+    use_gjk_collision: bool = cache_value()
     use_hibernation: bool = cache_value()
     batch_links_info: bool = cache_value()
     batch_dofs_info: bool = cache_value()
@@ -2056,11 +2057,25 @@ class StaticRigidSimCacheKey:
     n_equalities_candidate: int = cache_value()
     hibernation_thresh_acc: float = cache_value()
     hibernation_thresh_vel: float = cache_value()
+    # other config
+    has_nonconvex_nonterrain: bool = cache_value()
+    has_terrain: bool = cache_value()
 
 
 def get_static_rigid_sim_cache_key(solver):
+    is_convex = np.array([geom.is_convex for geom in solver.geoms], dtype=gs.np_int)
+    type = np.array([geom.type for geom in solver.geoms], dtype=gs.np_int)
+    has_nonconvex_nonterrain = bool(
+        np.logical_and(
+            is_convex == 0,
+            type != gs.GEOM_TYPE.TERRAIN,
+        ).any()
+    )
+    has_terrain = bool((type == gs.GEOM_TYPE.TERRAIN).any())
+
     kwargs = {
         "para_level": solver.sim._para_level,
+        "use_gjk_collision": getattr(solver._options, "use_gjk_collision", False),
         "use_hibernation": getattr(solver, "_use_hibernation", False),
         "batch_links_info": getattr(solver._options, "batch_links_info", False),
         "batch_dofs_info": getattr(solver._options, "batch_dofs_info", False),
@@ -2086,6 +2101,9 @@ def get_static_rigid_sim_cache_key(solver):
         "n_equalities_candidate": getattr(solver, "n_equalities_candidate", 0),
         "hibernation_thresh_acc": getattr(solver, "_hibernation_thresh_acc", 0.0),
         "hibernation_thresh_vel": getattr(solver, "_hibernation_thresh_vel", 0.0),
+        # other config
+        "has_nonconvex_nonterrain": has_nonconvex_nonterrain,
+        "has_terrain": has_terrain,
     }
     return StaticRigidSimCacheKey(**kwargs)
 
