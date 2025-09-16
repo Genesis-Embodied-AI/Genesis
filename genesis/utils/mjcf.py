@@ -667,7 +667,20 @@ def parse_geoms(mj, scale, surface, xml_path):
         for g_info in link_g_info.copy():
             group = g_info.pop("group")
             is_col = g_info["contype"] or g_info["conaffinity"]
-            if (has_visual_group and group in (1, 2) and is_col) or (not has_visual_group and is_all_col):
+            
+            # Fixed logic: ensure collision geometries always get visual duplicates
+            create_visual = False
+            
+            if is_col:
+                if has_visual_group:
+                    # If groups are defined, only create visual for geoms in visual groups (1 or 2)
+                    create_visual = group in (1, 2)
+                else:
+                    # If no groups defined, always create visual duplicates for collision geoms
+                    # This handles the case where we have a mix of collision and non-collision geoms
+                    create_visual = True
+            
+            if create_visual:
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
                 vmesh = gs.Mesh(
