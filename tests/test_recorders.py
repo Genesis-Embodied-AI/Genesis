@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
+from genesis.utils.image_exporter import as_grayscale_image
 
 from .utils import assert_allclose, rgb_array_to_png_bytes
 
@@ -155,46 +157,48 @@ def test_file_writers(tmp_path):
 @pytest.mark.required
 def test_video_writer(tmp_path):
     """Test if the VideoFileWriter works with camera rendering."""
+    STEPS = 10
 
     scene = gs.Scene(
         show_viewer=False,
         show_FPS=False,
     )
-
     scene.add_entity(morph=gs.morphs.Plane())
-    box = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.2),
+            pos=(0.0, 0.0, 1.0),
         ),
     )
-
     camera = scene.add_camera(
-        res=(64, 64),  # Small resolution for faster testing
+        res=(300, 200),  # Using weird resolution to trigger padding
         pos=(2.0, 2.0, 2.0),
         lookat=(0.0, 0.0, 0.2),
         GUI=False,
     )
-
-    video_file = tmp_path / "test_video.mp4"
-
-    def render_frame():
-        rgb_array, *_ = camera.render(rgb=True, depth=False, segmentation=False, normal=False)
-        return rgb_array
-
+    video_rgb_path = tmp_path / "test_rgb.mp4"
     scene.start_recording(
-        data_func=render_frame,
+        data_func=lambda: camera.render(rgb=True, depth=False, segmentation=False, normal=False)[0],
         rec_options=gs.recorders.VideoFile(
-            filename=str(video_file),
+            filename=str(video_rgb_path),
+            codec="libx264",
+            codec_options={"preset": "veryfast", "tune": "zerolatency"},
         ),
     )
-
+    video_depth_path = tmp_path / "test_depth.mp4"
+    scene.start_recording(
+        data_func=lambda: as_grayscale_image(camera.render(rgb=False, depth=True, segmentation=False, normal=False)[1]),
+        rec_options=gs.recorders.VideoFile(
+            filename=str(video_depth_path),
+        ),
+    )
     scene.build()
 
-    for _ in range(10):
+    for _ in range(STEPS):
         scene.step()
 
     scene.stop_recording()
 
-    assert video_file.exists(), "Recorded video file should exist"
-    assert video_file.stat().st_size > 0, "Recorded video file should not be empty"
+    for video_path in (video_rgb_path, video_depth_path):
+        assert video_path.exists(), "Recorded video file should exist"
+        assert video_path.stat().st_size > 0, "Recorded video file should not be empty"

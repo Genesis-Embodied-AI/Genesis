@@ -96,7 +96,7 @@ class RecorderManager:
         return self._is_built
 
 
-def register_recording(options_cls: "RecorderOptions"):
+def register_recording(options_cls: Type["RecorderOptions"]):
     def _impl(recorder_cls: Type["Recorder"]):
         RecorderManager.RECORDER_TYPES_MAP[options_cls] = recorder_cls
         return recorder_cls
