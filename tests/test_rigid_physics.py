@@ -1014,6 +1014,7 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
         links_invweight = robot.get_links_invweight()
         dofs_invweight = robot.get_dofs_invweight()
+        np.random.seed(0)
         qpos = np.random.rand(robot.n_dofs)
         robot.set_dofs_position(qpos)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
