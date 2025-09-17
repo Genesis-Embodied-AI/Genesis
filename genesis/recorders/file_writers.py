@@ -119,10 +119,10 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
 
 @register_recording(VideoFileWriterOptions)
 class VideoFileWriter(BaseFileWriter):
-    video_container: "av.container.OutputContainer | None"
-    video_stream: "av.video.stream.VideoStream | None"
-    video_frame: "av.video.frame.VideoFrame | None"
-    video_buffer: "np.ndarray | None"
+    video_container: "av.container.OutputContainer" | None
+    video_stream: "av.video.stream.VideoStream" | None
+    video_frame: "av.video.frame.VideoFrame" | None
+    video_buffer: "np.ndarray" | None
 
     def build(self):
         if not IS_PYAV_AVAILABLE:
