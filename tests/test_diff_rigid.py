@@ -12,7 +12,7 @@ from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 @pytest.mark.field_only
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_contact(backend):
+def test_diff_solver(backend):
     torch.manual_seed(0)
     rtol = 1e-4
 
