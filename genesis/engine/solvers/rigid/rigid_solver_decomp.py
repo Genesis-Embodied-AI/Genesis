@@ -5074,8 +5074,8 @@ def kernel_update_verts_for_geom(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     _B = geoms_state.verts_updated.shape[1]
     for i_b in range(_B):
@@ -5089,8 +5089,8 @@ def func_update_verts_for_geom(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     if not geoms_state.verts_updated[i_g, i_b]:
         if geoms_info.is_free[i_g]:
@@ -5123,6 +5123,29 @@ def func_update_all_verts(self):
         elif i_b == 0:
             self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                 self.verts_info.init_pos[i_v], g_pos, g_quat
+            )
+
+
+@ti.kernel
+def kernel_update_all_verts(
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+):
+    n_verts = verts_info.geom_idx.shape[0]
+    _B = geoms_state.pos.shape[1]
+    for i_v, i_b in ti.ndrange(n_verts, _B):
+        g_pos = geoms_state.pos[verts_info.geom_idx[i_v], i_b]
+        g_quat = geoms_state.quat[verts_info.geom_idx[i_v], i_b]
+        verts_state_idx = verts_info.verts_state_idx[i_v]
+        if verts_info.is_free[i_v]:
+            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], g_pos, g_quat
+            )
+        elif i_b == 0:
+            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], g_pos, g_quat
             )
 
 
