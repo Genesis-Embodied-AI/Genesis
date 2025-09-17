@@ -918,6 +918,8 @@ def T_to_trans_quat(T, *, out=None):
 
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
+    assert u.shape == v.shape
+
     if out is None:
         out_ = np.empty(u.shape, dtype=u.dtype)
     else:
@@ -942,7 +944,7 @@ def _np_quat_mul(u, v, out=None):
 
 def _tc_quat_mul(u, v, out=None):
     if out is None:
-        out = torch.empty(v.shape, dtype=v.dtype, device=v.device)
+        out = torch.empty(torch.broadcast_shapes(u.shape, v.shape), dtype=v.dtype, device=v.device)
 
     w1, x1, y1, z1 = u[..., 0], u[..., 1], u[..., 2], u[..., 3]
     w2, x2, y2, z2 = v[..., 0], v[..., 1], v[..., 2], v[..., 3]
@@ -966,7 +968,6 @@ def transform_quat_by_quat(v, u):
 
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
-    assert u.shape == v.shape, f"{u.shape=} and {v.shape=}"
     assert u.ndim >= 1
 
     if all(isinstance(e, torch.Tensor) for e in (u, v)):
