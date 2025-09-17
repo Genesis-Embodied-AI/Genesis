@@ -8,8 +8,9 @@ from genesis.utils.misc import ti_to_torch
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.precision("64")
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact(backend):
     torch.manual_seed(0)
     rtol = 1e-4
