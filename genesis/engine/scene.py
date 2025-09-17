@@ -279,6 +279,22 @@ class Scene(RBC):
         if not isinstance(renderer_options, RendererOptions):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
+        # Validate rigid_options against sim_options
+        if rigid_options.box_box_detection is None:
+            rigid_options.box_box_detection = not sim_options.requires_grad
+        elif rigid_options.box_box_detection and sim_options.requires_grad:
+            gs.raise_exception(
+                "`rigid_options.box_box_detection` cannot be True when `sim_options.requires_grad` is True."
+            )
+        if not rigid_options.use_gjk_collision and sim_options.requires_grad:
+            gs.raise_exception(
+                "`rigid_options.use_gjk_collision` cannot be False when `sim_options.requires_grad` is True."
+            )
+        if rigid_options.enable_mujoco_compatibility and sim_options.requires_grad:
+            gs.raise_exception(
+                "`rigid_options.enable_mujoco_compatibility` cannot be True when `sim_options.requires_grad` is True."
+            )
+
     @gs.assert_unbuilt
     def add_entity(
         self,
