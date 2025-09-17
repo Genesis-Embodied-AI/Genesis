@@ -29,7 +29,7 @@ IS_MATPLOTLIB_AVAILABLE = False
 try:
     import matplotlib as mpl
 
-    IS_MATPLOTLIB_AVAILABLE = True
+    IS_MATPLOTLIB_AVAILABLE = tuple(map(int, mpl.__version__.split("."))) >= (3, 7, 0)
 except ImportError:
     pass
 
@@ -387,7 +387,7 @@ class MPLPlotter(BasePlotter):
     def build(self):
         if not IS_MATPLOTLIB_AVAILABLE:
             gs.raise_exception(
-                "[MPLPlotter] matplotlib is not installed. Please install it with `pip install matplotlib`."
+                "[MPLPlotter] matplotlib is not installed. Please install it with `pip install matplotlib>=3.7.0`."
             )
         super().build()
 
@@ -436,11 +436,11 @@ class MPLPlotter(BasePlotter):
 
             self.lines[subplot_key] = subplot_lines
 
-            if len(channel_labels) > 1:
-                ax.legend(loc="upper right")
-
             ax.set_xlim(0, 10)
             ax.set_ylim(-1, 1)
+
+        # Legend must be outside, otherwise it will not play well with blitting
+        self.fig.legend(ncol=sum(map(len, self.lines.values())), loc="outside lower center")
 
         if self.show_window:
             self.fig.show()
@@ -490,6 +490,7 @@ class MPLPlotter(BasePlotter):
             # Restore background and update line data for this subplot
             self.fig.canvas.restore_region(self.backgrounds[subplot_idx])
 
+            # Update lines
             channel_labels = self.subplot_structure[subplot_key]
             for line, channel_label in zip(subplot_lines, channel_labels):
                 y_data = self.y_data[subplot_key][channel_label]
