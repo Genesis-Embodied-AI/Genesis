@@ -3,33 +3,31 @@ import datetime
 import functools
 import logging
 import math
+import os
 import platform
 import random
-import types
 import shutil
 import sys
-import os
+import types
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable, NoReturn, Optional, Type
 
-import numpy as np
 import cpuinfo
+import gstaichi as ti
+import numpy as np
 import psutil
 import pyglet
 import torch
-
-import gstaichi as ti
-from gstaichi.lang.util import is_ti_template, to_pytorch_type
-from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr, ndarray_to_ext_arr, ndarray_matrix_to_ext_arr
+from gstaichi._kernels import matrix_to_ext_arr, ndarray_matrix_to_ext_arr, ndarray_to_ext_arr, tensor_to_ext_arr
 from gstaichi.lang import impl
-from gstaichi.types import primitive_types
 from gstaichi.lang.exception import handle_exception_from_cpp
+from gstaichi.lang.util import is_ti_template, to_pytorch_type
+from gstaichi.types import primitive_types
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -312,7 +310,9 @@ def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
 
 
-def concat_with_tensor(tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dim: int = 0):
+def concat_with_tensor(
+    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dim: int = 0, flatten: bool = False
+):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
     if not isinstance(value, torch.Tensor):
         value = torch.tensor([value], dtype=tensor.dtype, device=tensor.device)
@@ -320,11 +320,14 @@ def concat_with_tensor(tensor: torch.Tensor, value, expand: tuple[int, ...] | No
         value = value.expand(*expand)
     if dim < 0:
         dim = tensor.ndim + dim
-    assert (
-        0 <= dim < tensor.ndim
-        and tensor.ndim == value.ndim
-        and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
-    )
+    if flatten:
+        value = value.flatten()
+    else:
+        assert (
+            0 <= dim < tensor.ndim
+            and tensor.ndim == value.ndim
+            and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
+        )
     if tensor.numel() == 0:
         return value
     return torch.cat([tensor, value], dim=dim)
