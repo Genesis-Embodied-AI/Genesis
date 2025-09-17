@@ -12,8 +12,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.constants import IMAGE_TYPE
 from genesis.repr_base import RBC
-from genesis.utils.misc import tensor_to_array
 from genesis.utils.image_exporter import as_grayscale_image
+from genesis.utils.misc import tensor_to_array
 
 
 class Camera(RBC):
@@ -171,10 +171,14 @@ class Camera(RBC):
             if self._env_idx not in self._visualizer._context.rendered_envs_idx:
                 gs.raise_exception("Environment index bound to the camera not in 'VisOptions.rendered_envs_idx'.")
 
-        if self._is_batched and self._env_idx is None:
-            batch_size = (len(self._visualizer._context.rendered_envs_idx),)
+        if self._is_batched:
+            if self._env_idx is None:
+                batch_size = (len(self._visualizer._context.rendered_envs_idx),)
+            else:
+                batch_size = (1,)
         else:
             batch_size = ()
+
         self._pos = torch.empty((*batch_size, 3), dtype=gs.tc_float, device=gs.device)
         self._lookat = torch.empty((*batch_size, 3), dtype=gs.tc_float, device=gs.device)
         self._up = torch.empty((*batch_size, 3), dtype=gs.tc_float, device=gs.device)
@@ -608,19 +612,19 @@ class Camera(RBC):
             pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
             if pos.ndim > (1 + self._is_batched) or pos.shape[-1] != 3:
                 gs.raise_exception(f"Pos shape {pos.shape} does not match (N, 3)")
-            if self._is_batched and pos.ndim == 1:
+            if self._is_batched and self._env_idx is None and pos.ndim == 1:
                 pos = pos.expand((n_envs, 3))
         if lookat is not None:
             lookat = torch.as_tensor(lookat, dtype=gs.tc_float, device=gs.device)
             if lookat.ndim > (1 + self._is_batched) or lookat.shape[-1] != 3:
                 gs.raise_exception(f"Lookat shape {lookat.shape} does not match (N, 3)")
-            if self._is_batched and lookat.ndim == 1:
+            if self._is_batched and self._env_idx is None and lookat.ndim == 1:
                 lookat = lookat.expand((n_envs, 3))
         if up is not None:
             up = torch.as_tensor(up, dtype=gs.tc_float, device=gs.device)
             if up.ndim > (1 + self._is_batched) or up.shape[-1] != 3:
                 gs.raise_exception(f"Up shape {up.shape} does not match (N, 3)")
-            if self._is_batched and up.ndim == 1:
+            if self._is_batched and self._env_idx is None and up.ndim == 1:
                 up = up.expand((n_envs, 3))
         if transform is not None:
             if any(data is not None for data in (pos, lookat, up)):
@@ -628,11 +632,12 @@ class Camera(RBC):
             transform = torch.as_tensor(transform, dtype=gs.tc_float, device=gs.device)
             if transform.ndim > (2 + self._is_batched) or transform.shape[-2:] != (4, 4):
                 gs.raise_exception(f"Transform shape {transform.shape} does not match (N, 4, 4)")
-            if self._is_batched and transform.ndim == 2:
+            if self._is_batched and self._env_idx is None and transform.ndim == 2:
                 transform = transform.expand((n_envs, 4, 4))
+
         if self._is_batched:
             for data in (transform, pos, lookat, up):
-                if data is not None and len(data) != n_envs:
+                if data is not None and self._env_idx is None and len(data) != n_envs:
                     gs.raise_exception(f"Input data inconsistent with 'envs_idx'.")
 
         # Compute redundant quantities
@@ -721,7 +726,6 @@ class Camera(RBC):
 
     def get_pos(self, envs_idx=None):
         """The current position of the camera."""
-        assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         pos = self._pos[envs_idx]
         if self._batch_renderer is None:
@@ -730,7 +734,6 @@ class Camera(RBC):
 
     def get_lookat(self, envs_idx=None):
         """The current lookat point of the camera."""
-        assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         lookat = self._lookat[envs_idx]
         if self._batch_renderer is None:
@@ -739,13 +742,11 @@ class Camera(RBC):
 
     def get_up(self, envs_idx=None):
         """The current up vector of the camera."""
-        assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         return self._up[envs_idx]
 
     def get_quat(self, envs_idx=None):
         """The current quaternion of the camera."""
-        assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         return self._quat[envs_idx]
 
@@ -753,7 +754,6 @@ class Camera(RBC):
         """
         The current transform matrix of the camera.
         """
-        assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         transform = self._transform[envs_idx]
         if self._batch_renderer is None:
