@@ -1,11 +1,8 @@
-import pyglet
-
 import genesis as gs
 from genesis.repr_base import RBC
 
 from .camera import Camera
 from .rasterizer import Rasterizer
-
 
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
@@ -37,28 +34,15 @@ class Visualizer(RBC):
 
         # Rasterizer context is shared by viewer and rasterizer
         try:
-            from .viewer import Viewer
             from .rasterizer_context import RasterizerContext
+            from .viewer import Viewer
 
         except Exception as e:
             gs.raise_exception_from("Rendering not working on this machine.", e)
         self._context = RasterizerContext(vis_options)
 
-        # try to connect to display
         try:
-            if pyglet.version < "2.0":
-                display = pyglet.canvas.Display()
-                screen = display.get_default_screen()
-                screen_scale = 1.0
-            else:
-                display = pyglet.display.get_display()
-                screen = display.get_default_screen()
-                try:
-                    screen_scale = screen.get_scale()
-                except NotImplementedError:
-                    # Probably some headless screen
-                    screen_scale = 1.0
-            screen_height, screen_width = screen.height, screen.width
+            screen_height, _, screen_scale = gs.utils.try_get_display_size()
             self._has_display = True
         except Exception as e:
             if show_viewer:

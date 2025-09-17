@@ -1,16 +1,26 @@
 import csv
 import os
+from pathlib import Path
 from collections import defaultdict
 
-import cv2
 import numpy as np
 import torch
+from pydantic import Field
 
 import genesis as gs
 from genesis.utils import tensor_to_array
 
 from .base_recorder import Recorder, RecorderOptions
 from .recorder_manager import register_recording
+
+
+IS_PYAV_AVAILABLE = False
+try:
+    import av
+
+    IS_PYAV_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class BaseFileWriterOptions(RecorderOptions):
@@ -41,11 +51,17 @@ class BaseFileWriter(Recorder):
         super().build()
         self.counter = 0
 
+        os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
+        self._initialize_writer()
+
     def reset(self, envs_idx=None):
-        # envs_idx is ignored
+        super().reset(envs_idx)
+
+        # no envs specific saving supported
         if self._options.save_on_reset:
             self.cleanup()
             self.counter += 1
+            self._initialize_writer()
 
     def _get_filename(self):
         if self._options.save_on_reset:
@@ -53,110 +69,145 @@ class BaseFileWriter(Recorder):
             return f"{path}_{self.counter}{ext}"
         return self._options.filename
 
+    def _initialize_writer(self):
+        pass
+
 
 class VideoFileWriterOptions(BaseFileWriterOptions):
     """
-    Stream video frames to file using cv2.VideoWriter.
+    Stream video frames to file using PyAV.
 
-    The cv2 writer streams data directly to the file instead of buffering it in memory.
-    Incoming data should either be grayscale [H, W] or color [H, W, RGB] where values are uint8 (0, 255).
+    The PyAV writer streams data directly to the file instead of buffering it in memory. Incoming data should either be
+    grayscale [H, W] or color [H, W, RGB] where values are uint8 (0, 255).
 
     Parameters
     ----------
     filename : str
-        The path of the output video file ending in ".mp4" or ".avi".
-    fps : float, optional
+        The path of the output video file ending in ".mp4".
+    name : str
+        The name of the video. Note that it may be different from filename. If empty, then filename will be used as a
+        fallback. Default to "".
+    fps : int, optional
         Frames per second for the video. Defaults to the data collection Hz ("real-time").
-    fourcc : str, optional
-        The codec to use for the video file. Defaults to "h264" for .mp4 files.
-        Supported encodings: .mp4 -> "avc1", "mp4v", "h264"; .avi -> "XVID", "MJPG"
+    codec : str, optional
+        The codec to use for the video file. Defaults to "libx264".
+    bitrate: float
+        The bitrate of the video. This higher the better the quality of the video.
+        Defaults to 1.0.
+    codec_options: dict[str, str]
+        Additional low-level codec options that will be pass to ffmpeg. Empty by default.
     save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
+        Whether to save the data on reset. If True, a counter will be added to the filename and incremented on each
+        reset. Defaults to False.
     """
 
-    FOURCC_MAP: dict[str, tuple[str, ...]] = {
-        ".mp4": ("h264", "avc1", "mp4v"),
-        ".avi": ("XVID", "MJPG"),
-    }
-
-    fps: float | None = None
-    fourcc: str = "h264"
+    fps: int | None = None
+    name: str = ""
+    codec: str = "libx264"
+    bitrate: float = 1.0
+    codec_options: dict[str, str] = Field(default_factory=dict)
 
     def validate(self):
         super().validate()
-        is_valid_ext = False
-        for ext, codecs in self.FOURCC_MAP.items():
-            if self.filename.endswith(ext):
-                if self.fourcc in codecs:
-                    is_valid_ext = True
-                    break
-                else:
-                    gs.raise_exception(
-                        f"[{type(self).__name__}] '{self.fourcc}' is not a supported video codec for {ext}, "
-                        f"expected one of {codecs}"
-                    )
-        if not is_valid_ext:
-            gs.raise_exception(
-                f"[{type(self).__name__}] Video filename must end with one of {tuple(self.FOURCC_MAP.keys())}."
-            )
+
+        if not self.codec in av.codecs_available:
+            gs.raise_exception(f"[{type(self).__name__}] Codec '{self._options.codec}' not supported.")
+
+        if not self.filename.endswith(".mp4"):
+            gs.raise_exception(f"[{type(self).__name__}] Video filename must have '.mp4' extension.")
 
 
 @register_recording(VideoFileWriterOptions)
 class VideoFileWriter(BaseFileWriter):
+    video_container: av.container.OutputContainer | None
+    video_stream: av.video.stream.VideoStream | None
+    video_frame: av.video.frame.VideoFrame | None
+    video_buffer: np.ndarray | None
 
     def build(self):
-        super().build()
-        self.video_writer: cv2.VideoWriter | None = None
-        self.fps = (
-            1.0 / (self._steps_per_sample * self._manager._step_dt) if self._options.fps is None else self._options.fps
+        if not IS_PYAV_AVAILABLE:
+            gs.raise_exception("PyAV is not installed. Please install it with `pip install av`.")
+
+        self.video_container = None
+        self.video_stream = None
+        self.video_frame = None
+        self.video_buffer = None
+
+        self.fps = int(
+            round(
+                1.0 / (self._steps_per_sample * self._manager._step_dt)
+                if self._options.fps is None
+                else self._options.fps
+            )
         )
 
-        # lazy init these values when processing the first frame
-        self.width, self.height = 0, 0
-        self.is_color: bool | None = None
+        super().build()
 
-        os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
+    def _initialize_writer(self):
+        video_path = self._get_filename()
+        video_name = self._options.name or Path(video_path).stem
+
+        # Create ffmpeg video container
+        self.video_container = av.open(video_path, mode="w")
+        self.video_container.metadata["title"] = video_name
 
     def _initialize_data(self, data):
         assert isinstance(data, (np.ndarray, torch.Tensor))
-        self.is_color = data.ndim == 3 and data.shape[-1] == 3
-        if not self.is_color and data[0].ndim != 2:
+        is_color = data.ndim == 3 and data.shape[-1] == 3
+        if isinstance(data, np.ndarray):
+            is_dtype_int = np.issubdtype(data.dtype, np.integer)
+        else:
+            is_dtype_int = not torch.is_floating_point(data)
+        if data.ndim != 2 + is_color or not is_dtype_int:
             gs.raise_exception(f"[{type(self).__name__}] Data must be either grayscale [H, W] or color [H, W, RGB]")
-        self.height, self.width, *_ = data.shape
+        height, width, *_ = data.shape
 
-    def _initialize_writer(self):
-        filename = self._get_filename()
-        self.video_writer = cv2.VideoWriter(
-            filename,
-            cv2.VideoWriter_fourcc(*self._options.fourcc),
-            self.fps,
-            (self.width, self.height),
-            self.is_color,
-        )
-        if not self.video_writer.isOpened():
-            gs.raise_exception(f'[{type(self).__name__}] Failed to open video writer for "{filename}"')
+        # Create ffmpeg video stream
+        self.video_stream = self.video_container.add_stream(self._options.codec, rate=self.fps)
+        assert isinstance(self.video_stream, av.video.stream.VideoStream)
+        self.video_stream.width, self.video_stream.height = (width, height)
+        self.video_stream.pix_fmt = "yuv420p"
+        self.video_stream.bit_rate = int(self._options.bitrate * (8 * 1024**2))
+        self.video_stream.codec_context.options = self._options.codec_options
+
+        # Create frame storage once for efficiency
+        if is_color:
+            self.video_frame = av.VideoFrame(width, height, "rgb24")
+            frame_plane = self.video_frame.planes[0]
+            self.video_buffer = np.asarray(memoryview(frame_plane)).reshape((-1, frame_plane.line_size // 3, 3))
+        else:
+            self.video_frame = av.VideoFrame(width, height, "gray8")
+            frame_plane = self.video_frame.planes[0]
+            self.video_buffer = np.asarray(memoryview(frame_plane)).reshape((-1, frame_plane.line_size))
 
     def process(self, data, cur_time):
-        if self.is_color is None:
+        if self.video_buffer is None:
             self._initialize_data(data)
-        if self.video_writer is None:
-            self._initialize_writer()
 
         if isinstance(data, torch.Tensor):
             data = tensor_to_array(data)
         data = data.astype(np.uint8)
 
-        if self.is_color:
-            data = np.flip(data, axis=-1)  # convert from RGB to BGR
-
-        self.video_writer.write(data)
+        # Write frame
+        self.video_buffer[: data.shape[0], : data.shape[1]] = data
+        for packet in self.video_stream.encode(self.video_frame):
+            self.video_container.mux(packet)
 
     def cleanup(self):
-        if self.video_writer is not None:
-            self.video_writer.release()
+        if self.video_container is not None:
+            # Finalize video recording.
+            # Note that 'video_stream' may be None if 'process' what never called.
+            if self.video_stream is not None:
+                for packet in self.video_stream.encode(None):
+                    self.video_container.mux(packet)
+            self.video_container.close()
+
             gs.logger.info(f'Video saved to "~<{self._options.filename}>~".')
-            self.video_writer = None
+
+            self.video_container = None
+            self.video_stream = None
+            self.video_frame = None
+            self.video_buffer = None
 
     @property
     def run_in_thread(self) -> bool:
@@ -197,13 +248,6 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
 
 @register_recording(CSVFileWriterOptions)
 class CSVFileWriter(BaseFileWriter):
-
-    def build(self):
-        super().build()
-
-        os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
-        self._initialize_writer()
-
     def _initialize_writer(self):
         self.wrote_data = False
         self.file_handle = open(self._get_filename(), "w", encoding="utf-8", newline="")
@@ -258,12 +302,6 @@ class CSVFileWriter(BaseFileWriter):
                 self.file_handle.close()
                 os.remove(self._get_filename())  # delete empty file
 
-    def reset(self, envs_idx=None):
-        # envs_idx is ignored
-        super().reset(envs_idx)
-        if self._options.save_on_reset:
-            self._initialize_writer()
-
     @property
     def run_in_thread(self) -> bool:
         return True
@@ -292,10 +330,10 @@ class NPZFileWriterOptions(BaseFileWriterOptions):
 
 @register_recording(NPZFileWriterOptions)
 class NPZFileWriter(BaseFileWriter):
-
     def build(self):
-        super().build()
         self.all_data: dict[str, list] = defaultdict(list)
+
+        super().build()
 
     def process(self, data, cur_time):
         self.all_data["timestamp"].append(cur_time)
