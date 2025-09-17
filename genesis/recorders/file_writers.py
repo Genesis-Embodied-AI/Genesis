@@ -119,19 +119,14 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
 
 @register_recording(VideoFileWriterOptions)
 class VideoFileWriter(BaseFileWriter):
-    video_container: av.container.OutputContainer | None
-    video_stream: av.video.stream.VideoStream | None
-    video_frame: av.video.frame.VideoFrame | None
-    video_buffer: np.ndarray | None
-
     def build(self):
         if not IS_PYAV_AVAILABLE:
             gs.raise_exception("PyAV is not installed. Please install it with `pip install av`.")
 
-        self.video_container = None
-        self.video_stream = None
-        self.video_frame = None
-        self.video_buffer = None
+        self.video_container: av.container.OutputContainer | None = None
+        self.video_stream: av.video.stream.VideoStream | None = None
+        self.video_frame: av.video.frame.VideoFrame | None = None
+        self.video_buffer: np.ndarray | None = None
 
         self.fps = int(
             round(
