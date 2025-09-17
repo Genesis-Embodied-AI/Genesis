@@ -285,6 +285,8 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
     kwargs = {
         "geom_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "geom_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
+        "normal": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
+        "pos": V(dtype=gs.ti_vec3, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
         "penetration": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
         "friction": V(dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
         "sol_params": V_VEC(7, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
@@ -292,22 +294,6 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
         "link_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "link_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
     }
-
-    if use_ndarray:
-        # FIXME: needs_grad is not supported for ndarray vector
-        kwargs.update(
-            {
-                "normal": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
-                "pos": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_)),
-            }
-        )
-    else:
-        kwargs.update(
-            {
-                "normal": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
-                "pos": V_VEC(3, dtype=gs.ti_float, shape=f_batch(max_contact_pairs_), needs_grad=requires_grad),
-            }
-        )
 
     if use_ndarray:
         return StructContactData(**kwargs)
