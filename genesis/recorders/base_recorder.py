@@ -195,7 +195,6 @@ class Recorder(Generic[T]):
         """
         timestep = min(0.1, timeout) if timeout is not None else 0.1
         if self._data_queue is not None:
-
             if timeout is not None:
                 start_time = time.time()
 

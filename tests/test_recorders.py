@@ -5,7 +5,7 @@ import pytest
 
 import genesis as gs
 
-from .utils import rgb_array_to_png_bytes
+from .utils import assert_allclose, rgb_array_to_png_bytes
 
 
 @pytest.fixture
@@ -27,18 +27,26 @@ def mpl_agg_backend():
 
 
 @pytest.mark.required
-def test_plotter(png_snapshot, mpl_agg_backend):
+def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
     """Test if the plotter recorders works."""
     DT = 0.01
     STEPS = 10
     HISTORY_LENGTH = 5
+
+    # FIXME: Hijack video writter to keep track of all the frames that are being recorded
+    buffers = []
+
+    def process(self, data, cur_time):
+        nonlocal buffers
+        buffers.append((data, cur_time))
+
+    monkeypatch.setattr("genesis.recorders.file_writers.VideoFileWriter.process", process)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=DT),
         show_viewer=False,
         show_FPS=False,
     )
-
     scene.add_entity(
         morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)),
         material=gs.materials.Rigid(rho=1000.0),
@@ -62,6 +70,7 @@ def test_plotter(png_snapshot, mpl_agg_backend):
             history_length=HISTORY_LENGTH,
             window_size=(400, 300),
             hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
+            save_to_filename=str(tmp_path / "video.mp4"),
             show_window=False,
         ),
     )
@@ -73,10 +82,16 @@ def test_plotter(png_snapshot, mpl_agg_backend):
 
     if plotter.run_in_thread:
         plotter.sync()
+
     assert call_count == STEPS // 2
     assert len(plotter.x_data) == HISTORY_LENGTH
     assert np.isclose(plotter.x_data[-1], STEPS * DT, atol=gs.EPS)
     assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
+
+    assert len(buffers) == 5
+    assert_allclose([cur_time for data, cur_time in buffers], np.arange(STEPS + 1)[::2][1:] * DT, tol=gs.EPS)
+    for rgb_diff in np.diff([data for data, cur_time in buffers], axis=0):
+        assert rgb_diff.max() > 10.0
 
     # Intentionally do not stop the recording to test the destructor
     # scene.stop_recording()

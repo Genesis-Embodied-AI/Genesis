@@ -1,7 +1,10 @@
 import io
 import itertools
+import threading
+import time
 from collections import defaultdict
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -91,12 +94,42 @@ class BasePlotter(Recorder):
         if self._options.labels is not None:
             self._setup_plot_structure(self._options.labels)
 
+        self.video_writer = None
+        if self._options.save_to_filename:
+
+            def _get_video_frame_buffer(plotter):
+                from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+                # Make sure that all the data in the pipe has been processed before rendering anything
+                if not plotter._frames_buffer:
+                    if plotter._data_queue is not None and not plotter._data_queue.empty():
+                        while not plotter._frames_buffer:
+                            time.sleep(0.1)
+
+                return plotter._frames_buffer.pop(0)
+
+            self.video_writer = self._manager.add_recorder(
+                data_func=partial(_get_video_frame_buffer, self),
+                rec_options=gs.recorders.VideoFile(
+                    filename=self._options.save_to_filename,
+                    hz=self._options.hz,
+                ),
+            )
+        self._frames_buffer: list[np.ndarray] = []
+
     def reset(self, envs_idx=None):
         super().reset(envs_idx)
 
         # no envs specific resetting supported
         self.x_data.clear()
         self.y_data.clear()
+
+    def cleanup(self):
+        """Clean up resources."""
+        if self.video_writer is not None:
+            self.video_writer.stop()
+            self._frames_buffer.clear()
+            self.video_writer = None
 
     def _setup_plot_structure(self, labels_or_data: dict[str, Any] | Any):
         """Set up the plot structure based on labels or first data sample."""
@@ -123,8 +156,8 @@ class BasePlotter(Recorder):
                 labels_or_data = [f"data_{i}" for i in range(len(labels_or_data))]
             self.subplot_structure = {"main": tuple(labels_or_data)}
 
-    def _process_data(self, data, cur_time) -> dict[str, Any]:
-        """Common data processing logic shared by all plotters."""
+    def process(self, data, cur_time):
+        """Process new data point and update plot."""
         if self.subplot_structure is None:
             self._setup_plot_structure(data)
 
@@ -139,10 +172,10 @@ class BasePlotter(Recorder):
             data = _data_to_array(data)
             processed_data = {"main": data}
 
-        # update time data
+        # Update time data
         self.x_data.append(cur_time)
 
-        # update y data for each subplot
+        # Update y data for each subplot
         for subplot_key, subplot_data in processed_data.items():
             channel_labels = self.subplot_structure[subplot_key]
             if len(subplot_data) != len(channel_labels):
@@ -156,7 +189,7 @@ class BasePlotter(Recorder):
                 if i < len(subplot_data):
                     self.y_data[subplot_key][channel_label].append(float(subplot_data[i]))
 
-        # maintain rolling history window
+        # Maintain rolling history window
         if len(self.x_data) > self._options.history_length:
             self.x_data.pop(0)
             for subplot_key in self.y_data:
@@ -166,7 +199,29 @@ class BasePlotter(Recorder):
                     except IndexError:
                         break  # empty, nothing to do.
 
-        return processed_data
+        # Update plot
+        self._update_plot()
+
+        # Render frame if necessary
+        if self._options.save_to_filename:
+            self._frames_buffer.append(self.get_image_array())
+
+    def _update_plot(self):
+        """
+        Update plot.
+        """
+        raise NotImplementedError
+
+    def get_image_array(self):
+        """
+        Capture the plot image as a video frame.
+
+        Returns
+        -------
+        image_array : np.ndarray
+            The RGB image as a numpy array.
+        """
+        raise NotImplementedError
 
 
 class PyQtPlotterOptions(BasePlotterOptions):
@@ -223,12 +278,6 @@ class PyQtPlotter(BasePlotter):
         self.widget = pg.GraphicsLayoutWidget(show=self.show_window, title=self._options.title)
         self.widget.resize(*self._options.window_size)
 
-        if self._options.save_to_filename:
-            self.video_writer = self._manager.add_recorder(
-                data_func=self.get_image_array,
-                rec_options=gs.recorders.VideoFile(filename=self._options.save_to_filename, hz=self._options.hz),
-            )
-
         gs.logger.info("[PyQtPlotter] created PyQtGraph window")
 
         # create plots for each subplot
@@ -254,9 +303,7 @@ class PyQtPlotter(BasePlotter):
 
             self.curves[subplot_key] = subplot_curves
 
-    def process(self, data, cur_time):
-        self._process_data(data, cur_time)
-
+    def _update_plot(self):
         # update all curves
         for subplot_key, curves in self.curves.items():
             channel_labels = self.subplot_structure[subplot_key]
@@ -268,6 +315,8 @@ class PyQtPlotter(BasePlotter):
             self.app.processEvents()
 
     def cleanup(self):
+        super().cleanup()
+
         if self.widget:
             try:
                 self.widget.close()
@@ -299,7 +348,7 @@ class PyQtPlotter(BasePlotter):
         ptr = qimage.bits()
         ptr.setsize(qimage.byteCount())
 
-        return np.array(ptr).reshape(qimage.height(), qimage.width(), 3)
+        return np.array(ptr).reshape((qimage.height(), qimage.width(), 3))
 
 
 class MPLPlotterOptions(BasePlotterOptions):
@@ -348,6 +397,8 @@ class MPLPlotter(BasePlotter):
         self.axes: list[plt.Axes] = []
         self.lines: dict[str, list[plt.Line2D]] = {}
         self.backgrounds: list[Any] = []
+
+        self._lock = threading.Lock()
 
         gs.logger.info("[MPLPlotter] created Matplotlib window")
 
@@ -398,21 +449,9 @@ class MPLPlotter(BasePlotter):
         for ax in self.axes:
             self.backgrounds.append(self.fig.canvas.copy_from_bbox(ax.bbox))
 
-        if self._options.save_to_filename:
-            self.video_writer = self._manager.add_recorder(
-                data_func=self.get_image_array,
-                rec_options=gs.recorders.VideoFile(
-                    filename=self._options.save_to_filename,
-                    hz=self._options.hz,
-                ),
-            )
-
-    def process(self, data, cur_time):
-        """Process new data point and update plot using blitting."""
-        # Use common data processing logic
-        self._process_data(data, cur_time)
-
+    def _update_plot(self):
         # Update each subplot
+        self._lock.acquire()
         for subplot_idx, (subplot_key, subplot_lines) in enumerate(self.lines.items()):
             ax = self.axes[subplot_idx]
 
@@ -461,26 +500,29 @@ class MPLPlotter(BasePlotter):
             self.fig.canvas.blit(ax.bbox)
 
         self.fig.canvas.flush_events()
+        self._lock.release()
 
     def cleanup(self):
         """Clean up Matplotlib resources."""
-        # logger may not be available during destruction
+        super().cleanup()
+
+        # Logger may not be available anymore
         logger_exists = hasattr(gs, "logger")
 
-        if self.fig:
+        if self.fig is not None:
             try:
                 import matplotlib.pyplot as plt
 
                 plt.close(self.fig)
                 if logger_exists:
-                    gs.logger.debug("[MPLPlotter] closed Matplotlib window")
+                    gs.logger.debug("[MPLPlotter] Closed Matplotlib window")
             except Exception as e:
                 if logger_exists:
                     gs.logger.warning(f"[MPLPlotter] Error closing window: {e}")
             finally:
-                self.fig = None
                 self.lines.clear()
                 self.backgrounds.clear()
+                self.fig = None
 
     @property
     def run_in_thread(self) -> bool:
@@ -497,19 +539,31 @@ class MPLPlotter(BasePlotter):
         """
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 
+        self._lock.acquire()
         if isinstance(self.fig.canvas, FigureCanvasAgg):
+            # Must force rendering manually
+            # FIXME: Check if necessary
+            # FigureCanvasAgg.draw(self.fig.canvas)
+
+            # Read internal buffer
             width, height = self.fig.canvas.get_width_height(physical=True)
             rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
             rgb_array = rgba_array_flat.reshape((height, width, 4))[..., :3]
-            if (width, height) == tuple(self._options.window_size):
-                return rgb_array
-            img = Image.fromarray(rgb_array)
-            img = img.resize(self._options.window_size, resample=Image.BILINEAR)
-            return np.asarray(img)
+
+            # Rescale image if necessary
+            if (width, height) != tuple(self._options.window_size):
+                img = Image.fromarray(rgb_array)
+                img = img.resize(self._options.window_size, resample=Image.BILINEAR)
+                rgb_array = np.asarray(img)
+            else:
+                rgb_array = rgb_array.copy()
         else:
             # Slower but more generic fallback only if necessary
             buffer = io.BytesIO()
-            self.fig.savefig(buffer, format="png", dpi="figure", transparent=False, bbox_inches="tight")
+            self.fig.canvas.print_figure(buffer, format="png", dpi="figure")
             buffer.seek(0)
             img = Image.open(buffer)
-            return np.asarray(img.convert("RGB"))
+            rgb_array = np.asarray(img.convert("RGB"))
+        self._lock.release()
+
+        return rgb_array

@@ -78,6 +78,7 @@ class RecorderManager:
     def step(self, global_step: int):
         """
         Increment the step count and process data from each recording configuration.
+
         In threaded mode, data is put in queues. In non-threaded mode, data is processed synchronously.
         """
         if not self._is_recording:
