@@ -426,7 +426,7 @@ class ConstraintSolver:
             self._solver.equalities_info,
             self.constraint_state,
             self._solver.links_state,
-            self._solver.rigid_global_info,
+            self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._solver._static_rigid_sim_cache_key,
         )
@@ -446,7 +446,7 @@ class ConstraintSolver:
             envs_idx,
             self._solver.equalities_info,
             self.constraint_state,
-            self._solver.rigid_global_info,
+            self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._solver._static_rigid_sim_cache_key,
         )

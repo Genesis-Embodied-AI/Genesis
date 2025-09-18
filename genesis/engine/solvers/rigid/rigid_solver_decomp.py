@@ -2439,6 +2439,7 @@ class RigidSolver(Solver):
             propellers_revs,
             propellers_spin,
             self.vgeoms_state,
+            self._rigid_global_info,
             self._static_rigid_sim_config,
         )
 
@@ -6930,6 +6931,7 @@ def kernel_update_drone_propeller_vgeoms(
     propellers_revs: ti.types.ndarray(),
     propellers_spin: ti.types.ndarray(),
     vgeoms_state: array_class.VGeomsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
     """

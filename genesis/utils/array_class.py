@@ -2129,6 +2129,9 @@ def get_static_rigid_sim_cache_key(solver):
     return StaticRigidSimCacheKey(**kwargs)
 
 
+# =========================================== DataManager ===========================================
+
+
 @ti.data_oriented
 class DataManager:
     def __init__(self, solver):
