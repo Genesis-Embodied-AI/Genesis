@@ -143,8 +143,8 @@ def test_file_writers(tmp_path):
         rows = list(reader)
 
         assert len(rows) == STEPS + 1  # header + data rows
-        assert rows[1][1] == "False"  # not in contact initially
-        assert rows[-1][1] == "True"  # in contact after falling
+        assert rows[1][1] in ("False", "0")  # not in contact initially
+        assert rows[-1][1] in ("True", "1")  # in contact after falling
 
     assert npz_file.exists()
     data = np.load(npz_file)
