@@ -4300,6 +4300,7 @@ def kernel_step_2(
             geoms_state=geoms_state,
             collider_state=collider_state,
             unused__rigid_global_info=rigid_global_info,
+            rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             contact_island_state=contact_island_state,
         )
@@ -5185,6 +5186,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     geoms_state: array_class.GeomsState,
     collider_state: array_class.ColliderState,
     unused__rigid_global_info: array_class.RigidGlobalInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
 ) -> None:
@@ -5210,8 +5212,8 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                         continue
 
                     for i_d in range(entities_info.dof_start[entity_idx], entities_info.dof_end[entity_idx]):
-                        max_acc = static_rigid_sim_config.hibernation_thresh_acc
-                        max_vel = static_rigid_sim_config.hibernation_thresh_vel
+                        max_acc = rigid_global_info.hibernation_thresh_acc[0]
+                        max_vel = rigid_global_info.hibernation_thresh_vel[0]
                         if ti.abs(dofs_state.acc[i_d, i_b]) > max_acc or ti.abs(dofs_state.vel[i_d, i_b]) > max_vel:
                             are_all_entities_okay_for_hibernation = False
                             break

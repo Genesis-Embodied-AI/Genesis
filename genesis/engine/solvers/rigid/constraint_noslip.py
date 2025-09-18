@@ -82,7 +82,7 @@ def kernel_noslip(
 
         scale = 1.0 / (rigid_global_info.meaninertia[i_b] * ti.max(1.0, n_dofs))
 
-        for i_iter in range(static_rigid_sim_config.noslip_iterations):
+        for i_iter in range(rigid_global_info.noslip_iterations[0]):
 
             improvement = gs.ti_float(0.0)
             if i_iter == 0:
@@ -162,7 +162,7 @@ def kernel_noslip(
                     improvement -= cost_change
             improvement *= scale
 
-            if improvement < static_rigid_sim_config.noslip_tolerance:
+            if improvement < rigid_global_info.noslip_tolerance[0]:
                 break
 
 

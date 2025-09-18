@@ -426,13 +426,14 @@ class ConstraintSolver:
             self._solver.equalities_info,
             self.constraint_state,
             self._solver.links_state,
+            self._solver.rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._solver._static_rigid_sim_cache_key,
         )
         if overflow:
             gs.logger.warning(
                 "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({self._static_rigid_sim_config.n_equalities_candidate}). Please increase the value of "
+                f"({self.rigid_global_info.n_equalities_candidate.to_numpy()[0]}). Please increase the value of "
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
@@ -445,6 +446,7 @@ class ConstraintSolver:
             envs_idx,
             self._solver.equalities_info,
             self.constraint_state,
+            self._solver.rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._solver._static_rigid_sim_cache_key,
         )
@@ -1418,8 +1420,8 @@ def func_solve(
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
         if constraint_state.n_constraints[i_b] > 0:
-            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * static_rigid_sim_config.tolerance
-            for it in range(static_rigid_sim_config.iterations):
+            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[0]
+            for it in range(rigid_global_info.iterations[0]):
                 func_solve_body(
                     i_b,
                     entities_info=entities_info,
@@ -1572,7 +1574,7 @@ def func_linesearch(
         snorm += constraint_state.search[jd, i_b] ** 2
     snorm = ti.sqrt(snorm)
     scale = 1.0 / (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs))
-    gtol = static_rigid_sim_config.tolerance * static_rigid_sim_config.ls_tolerance * snorm / scale
+    gtol = rigid_global_info.tolerance[0] * rigid_global_info.ls_tolerance[0] * snorm / scale
     slopescl = scale / snorm
     constraint_state.gtol[i_b] = gtol
 
@@ -1615,9 +1617,7 @@ def func_linesearch(
             direction = (p1_deriv_0 < 0) * 2 - 1
             p2update = 0
             p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-            while (
-                p1_deriv_0 * direction <= -gtol and constraint_state.ls_its[i_b] < static_rigid_sim_config.ls_iterations
-            ):
+            while p1_deriv_0 * direction <= -gtol and constraint_state.ls_its[i_b] < rigid_global_info.ls_iterations[0]:
                 p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
                 p2update = 1
 
@@ -1630,7 +1630,7 @@ def func_linesearch(
                     done = True
                     break
             if not done:
-                if constraint_state.ls_its[i_b] >= static_rigid_sim_config.ls_iterations:
+                if constraint_state.ls_its[i_b] >= rigid_global_info.ls_iterations[0]:
                     constraint_state.ls_result[i_b] = 3
                     ls_slope = ti.abs(p1_deriv_0) * slopescl
                     res_alpha = p1_alpha
@@ -1855,7 +1855,7 @@ def func_solve_body(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * static_rigid_sim_config.tolerance
+        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[0]
         improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
         gradient = gs.ti_float(0.0)
         for i_d in range(n_dofs):
@@ -2155,6 +2155,7 @@ def kernel_add_weld_constraint(
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
     links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ) -> ti.i32:
@@ -2164,7 +2165,7 @@ def kernel_add_weld_constraint(
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == static_rigid_sim_config.n_equalities_candidate:
+        if i_e == rigid_global_info.n_equalities_candidate[0]:
             overflow = True
         else:
             shared_pos = links_state.pos[link1_idx, i_b]
@@ -2206,13 +2207,14 @@ def kernel_delete_weld_constraint(
     envs_idx: ti.types.ndarray(),
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        for i_e in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
+        for i_e in range(rigid_global_info.n_equalities[0], constraint_state.ti_n_equalities[i_b]):
             if (
                 equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
                 and equalities_info.eq_obj1id[i_e, i_b] == link1_idx

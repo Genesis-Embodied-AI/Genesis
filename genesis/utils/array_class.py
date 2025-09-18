@@ -40,7 +40,18 @@ class StructRigidGlobalInfo:
     meaninertia: V_ANNOTATION
     mass_parent_mask: V_ANNOTATION
     gravity: V_ANNOTATION
+    # moved from static_rigid_sim_config
     substep_dt: V_ANNOTATION
+    iterations: V_ANNOTATION
+    tolerance: V_ANNOTATION
+    ls_iterations: V_ANNOTATION
+    ls_tolerance: V_ANNOTATION
+    noslip_iterations: V_ANNOTATION
+    noslip_tolerance: V_ANNOTATION
+    n_equalities: V_ANNOTATION
+    n_equalities_candidate: V_ANNOTATION
+    hibernation_thresh_acc: V_ANNOTATION
+    hibernation_thresh_vel: V_ANNOTATION
 
 
 def get_rigid_global_info(solver):
@@ -48,6 +59,27 @@ def get_rigid_global_info(solver):
 
     substep_dt = V(dtype=gs.ti_float, shape=solver._batch_shape())
     substep_dt.fill(solver._substep_dt)
+    iterations = V(dtype=gs.ti_int, shape=(1,))
+    iterations.fill(getattr(solver._options, "iterations", 10))
+    tolerance = V(dtype=gs.ti_float, shape=(1,))
+    tolerance.fill(getattr(solver._options, "tolerance", 1e-6))
+    ls_iterations = V(dtype=gs.ti_int, shape=(1,))
+    ls_iterations.fill(getattr(solver._options, "ls_iterations", 10))
+    ls_tolerance = V(dtype=gs.ti_float, shape=(1,))
+    ls_tolerance.fill(getattr(solver._options, "ls_tolerance", 1e-6))
+
+    noslip_iterations = V(dtype=gs.ti_int, shape=(1,))
+    noslip_iterations.fill(getattr(solver._options, "noslip_iterations", 0))
+    noslip_tolerance = V(dtype=gs.ti_float, shape=(1,))
+    noslip_tolerance.fill(getattr(solver._options, "noslip_tolerance", 1e-6))
+    n_equalities = V(dtype=gs.ti_int, shape=(1,))
+    n_equalities.fill(getattr(solver, "_n_equalities", 0))
+    n_equalities_candidate = V(dtype=gs.ti_int, shape=(1,))
+    n_equalities_candidate.fill(getattr(solver, "n_equalities_candidate", 0))
+    hibernation_thresh_acc = V(dtype=gs.ti_float, shape=(1,))
+    hibernation_thresh_acc.fill(getattr(solver, "_hibernation_thresh_acc", 0.0))
+    hibernation_thresh_vel = V(dtype=gs.ti_float, shape=(1,))
+    hibernation_thresh_vel.fill(getattr(solver, "_hibernation_thresh_vel", 0.0))
 
     # Basic fields
     kwargs = {
@@ -69,7 +101,18 @@ def get_rigid_global_info(solver):
         "meaninertia": V(dtype=gs.ti_float, shape=solver._batch_shape()),
         "mass_parent_mask": V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         "gravity": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
+        # moved from static_rigid_sim_config
         "substep_dt": substep_dt,
+        "iterations": iterations,
+        "tolerance": tolerance,
+        "ls_iterations": ls_iterations,
+        "ls_tolerance": ls_tolerance,
+        "noslip_iterations": noslip_iterations,
+        "noslip_tolerance": noslip_tolerance,
+        "n_equalities": n_equalities,
+        "n_equalities_candidate": n_equalities_candidate,
+        "hibernation_thresh_acc": hibernation_thresh_acc,
+        "hibernation_thresh_vel": hibernation_thresh_vel,
     }
 
     if use_ndarray:
@@ -176,7 +219,7 @@ def get_constraint_state(constraint_solver, solver):
             "Consider reducing the number of constraints or the number of degrees of freedom."
         )
 
-    if solver._static_rigid_sim_config.noslip_iterations > 0:
+    if solver._options.noslip_iterations > 0:
         if len_constraints_ * len_constraints_ * f_batch()[0] > 2 * 10**9:
             gs.logger.warning(
                 f"efc_AR shape {len_constraints_}x{len_constraints_}x{f_batch()[0]} is very large. Consider manually "
@@ -2048,17 +2091,6 @@ class StaticRigidSimCacheKey:
     integrator: int = cache_value()
     sparse_solve: bool = cache_value()
     solver_type: int = cache_value()
-    # dynamic properties
-    iterations: int = cache_value()
-    tolerance: float = cache_value()
-    ls_iterations: int = cache_value()
-    ls_tolerance: float = cache_value()
-    noslip_iterations: int = cache_value()
-    noslip_tolerance: float = cache_value()
-    n_equalities: int = cache_value()
-    n_equalities_candidate: int = cache_value()
-    hibernation_thresh_acc: float = cache_value()
-    hibernation_thresh_vel: float = cache_value()
     # other config
     has_nonconvex_nonterrain: bool = cache_value()
     has_terrain: bool = cache_value()
@@ -2090,18 +2122,6 @@ def get_static_rigid_sim_cache_key(solver):
         "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
         "sparse_solve": getattr(solver._options, "sparse_solve", False),
         "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
-        # dynamic properties
-        # TODO: we should store those properties into field/ndarray to avoid recompilation when they are changed
-        "iterations": getattr(solver._options, "iterations", 10),
-        "tolerance": getattr(solver._options, "tolerance", 1e-6),
-        "ls_iterations": getattr(solver._options, "ls_iterations", 10),
-        "ls_tolerance": getattr(solver._options, "ls_tolerance", 1e-6),
-        "noslip_iterations": getattr(solver._options, "noslip_iterations", 0),
-        "noslip_tolerance": getattr(solver._options, "noslip_tolerance", 1e-6),
-        "n_equalities": getattr(solver, "_n_equalities", 0),
-        "n_equalities_candidate": getattr(solver, "n_equalities_candidate", 0),
-        "hibernation_thresh_acc": getattr(solver, "_hibernation_thresh_acc", 0.0),
-        "hibernation_thresh_vel": getattr(solver, "_hibernation_thresh_vel", 0.0),
         # other config
         "has_nonconvex_nonterrain": has_nonconvex_nonterrain,
         "has_terrain": has_terrain,
