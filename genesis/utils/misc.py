@@ -17,6 +17,7 @@ from typing import Any, Callable, NoReturn, Optional, Type
 import numpy as np
 import cpuinfo
 import psutil
+import pyglet
 import torch
 
 import gstaichi as ti
@@ -360,6 +361,48 @@ def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], t
         return torch.empty(shape, dtype=dtype, device=gs.device)
 
     return field(default_factory=_default_factory)
+
+
+def try_get_display_size() -> tuple[int | None, int | None, float | None]:
+    """
+    Try to connect to display if it exists and get the screen size.
+
+    If there is no display, this function will throw an exception.
+
+    Returns
+    -------
+    screen_height : int | None
+        The height of the screen in pixels.
+    screen_width : int | None
+        The width of the screen in pixels.
+    screen_scale : float | None
+        The scale of the screen.
+    """
+    if pyglet.version < "2.0":
+        display = pyglet.canvas.Display()
+        screen = display.get_default_screen()
+        screen_scale = 1.0
+    else:
+        display = pyglet.display.get_display()
+        screen = display.get_default_screen()
+        try:
+            screen_scale = screen.get_scale()
+        except NotImplementedError:
+            # Probably some headless screen
+            screen_scale = 1.0
+
+    return screen.height, screen.width, screen_scale
+
+
+def has_display() -> bool:
+    """
+    Check if a display is connected.
+    """
+    try:
+        try_get_display_size()
+        return True
+    except Exception:
+        return False
 
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------

@@ -26,7 +26,7 @@ class RecorderManager:
         self._is_built = False
 
     @gs.assert_unbuilt
-    def add_recorder(self, data_func: Callable[[], Any], rec_options: "RecorderOptions"):
+    def add_recorder(self, data_func: Callable[[], Any], rec_options: "RecorderOptions") -> "Recorder":
         """
         Automatically read and process data. See RecorderOptions for more details.
 
@@ -36,10 +36,17 @@ class RecorderManager:
             A function with no arguments that returns the data to be recorded.
         rec_options: RecorderOptions
             The options for the recorder which determines how the data is recorded and processed.
+
+        Returns
+        -------
+        recorder : Recorder
+            The created recorder object.
         """
         rec_options.validate()
         recorder_cls = RecorderManager.RECORDER_TYPES_MAP[type(rec_options)]
-        self._recorders.append(recorder_cls(self, rec_options, data_func))
+        recorder = recorder_cls(self, rec_options, data_func)
+        self._recorders.append(recorder)
+        return recorder
 
     @gs.assert_unbuilt
     def build(self):
@@ -64,17 +71,14 @@ class RecorderManager:
     @gs.assert_built
     def reset(self, envs_idx=None):
         for recorder in self._recorders:
-            recorder.sync()
             recorder.reset(envs_idx)
             recorder.start()
-
-    def destroy(self):
-        self._recorders.clear()
 
     @gs.assert_built
     def step(self, global_step: int):
         """
         Increment the step count and process data from each recording configuration.
+
         In threaded mode, data is put in queues. In non-threaded mode, data is processed synchronously.
         """
         if not self._is_recording:
@@ -92,7 +96,7 @@ class RecorderManager:
         return self._is_built
 
 
-def register_recording(options_cls: "RecorderOptions"):
+def register_recording(options_cls: Type["RecorderOptions"]):
     def _impl(recorder_cls: Type["Recorder"]):
         RecorderManager.RECORDER_TYPES_MAP[options_cls] = recorder_cls
         return recorder_cls

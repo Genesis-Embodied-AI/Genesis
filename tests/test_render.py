@@ -1,16 +1,14 @@
-import io
+import enum
 import itertools
 import os
 import re
 import sys
 import time
-import enum
 
 import numpy as np
 import pyglet
 import pytest
 import torch
-from PIL import Image
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -19,8 +17,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, assert_array_equal, get_hf_dataset
-
+from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -975,7 +972,4 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
         pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
     )
 
-    img = Image.fromarray(rgb_arr)
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    assert buffer.getvalue() == png_snapshot
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
