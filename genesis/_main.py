@@ -97,12 +97,6 @@ def get_motors_info(robot):
     return motors_dof_idx, motors_dof_name
 
 
-def clean():
-    print("Cleaned up all genesis and gstaichi cache files...")
-    gs.utils.misc.clean_cache_files()
-    _ti_core.clean_offline_cache_files(os.path.abspath(impl.default_cfg().offline_cache_file_path))
-
-
 def _start_gui(motors_name, motors_position_limit, motors_position, stop_event):
     def on_close():
         nonlocal after_id
@@ -237,9 +231,7 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "clean":
-        clean()
-    elif args.command == "view":
+    if args.command == "view":
         view(args.filename, args.collision, args.rotate, args.scale, args.link_frame)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
