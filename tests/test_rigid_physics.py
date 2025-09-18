@@ -982,11 +982,9 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml", "urdf/go2/urdf/go2.urdf"])
 def test_robot_scale_and_dofs_armature(xml_path, tol):
-    if sys.platform == "darwin" and gs.backend != gs.cpu:
-        pytest.xfail("This test is not unreliable on Apple Metal for some reason...")
-
     attr_orig = {}
     for scale in (1.0, 0.2, 5.0):
         scene = gs.Scene(
@@ -1050,13 +1048,17 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
             scale_ratio_min, scale_ratio_max = scale**3, scale**5
         else:
             scale_ratio_min, scale_ratio_max = scale**5, scale**3
-        assert torch.all(scale_ratio_min * links_invweight - tol < attr_orig["links_invweight"])
-        assert torch.all(attr_orig["links_invweight"] < scale_ratio_max * links_invweight + tol)
+
+        # FIXME: The tolerance must be very high when using 32bits precision. This means that our computation
+        # of the inverse mass matrix has poor numerical robustness due to ill conditioning of the mass matrix.
+        # This is concerning as it would impact the numerical stability of constraint solving, and by extension
+        # of the entire rigid body dynamics.
+        tol_ = tol if gs.backend == gs.cpu else 2e-3
+        assert torch.all(scale_ratio_min * links_invweight - tol_ < attr_orig["links_invweight"])
+        assert torch.all(attr_orig["links_invweight"] < scale_ratio_max * links_invweight + tol_)
         dofs_invweight = robot.get_dofs_invweight()
-        # FIXME: It is necessary to significantly increase the tolerance on gpu backend for some reason...
-        tol_ = tol if gs.backend == gs.cpu else 5e-4
         assert torch.all(scale_ratio_min * dofs_invweight - tol_ < attr_orig["dofs_invweight"])
-        assert torch.all(attr_orig["dofs_invweight"] < scale_ratio_max * dofs_invweight + tol)
+        assert torch.all(attr_orig["dofs_invweight"] < scale_ratio_max * dofs_invweight + tol_)
 
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
         robot.set_dofs_position(dofs_lower_bound)
