@@ -1583,6 +1583,31 @@ def transform_inertia_by_T(inertia_tensor, T, mass):
     return R @ inertia_tensor @ R.T + translation_inertia
 
 
+def spherical_to_cartesian(theta: np.ndarray, phi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Convert spherical coordinates to Cartesian coordinates.
+
+    Parameters
+    ----------
+    theta : np.ndarray
+        Horizontal angles in radians.
+    phi : np.ndarray
+        Vertical angles in radians.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Cartesian coordinates (x, y, z) where x=forward, y=left, z=up.
+    """
+    cos_phi = np.cos(phi)
+
+    x = np.cos(theta) * cos_phi  # forward
+    y = np.sin(theta) * cos_phi  # left
+    z = np.sin(phi)  # up
+
+    return x, y, z
+
+
 def slerp(q0, q1, t):
     """
     Perform spherical linear interpolation between two quaternions.
