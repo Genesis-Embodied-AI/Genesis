@@ -253,6 +253,7 @@ class ConstraintSolver:
             entities_info=self._solver.entities_info,
             constraint_state=self.constraint_state,
             rigid_global_info=self._solver._rigid_global_info,
+            dynamic_rigid_sim_config=self._solver._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
@@ -262,6 +263,7 @@ class ConstraintSolver:
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             rigid_global_info=self._solver._rigid_global_info,
+            dynamic_rigid_sim_config=self._solver._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
@@ -294,6 +296,7 @@ class ConstraintSolver:
             entities_info=self._solver.entities_info,
             rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
+            dynamic_rigid_sim_config=self._solver._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
@@ -311,6 +314,7 @@ class ConstraintSolver:
             entities_info=self._solver.entities_info,
             rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
+            dynamic_rigid_sim_config=self._solver._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
@@ -426,6 +430,7 @@ class ConstraintSolver:
             self._solver.equalities_info,
             self.constraint_state,
             self._solver.links_state,
+            self._solver._dynamic_rigid_sim_config,
             self._solver._static_rigid_sim_config,
             self._solver._static_rigid_sim_cache_key,
         )
@@ -1408,6 +1413,7 @@ def func_solve(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
@@ -1426,6 +1432,7 @@ def func_solve(
                     dofs_state=dofs_state,
                     rigid_global_info=rigid_global_info,
                     constraint_state=constraint_state,
+                    dynamic_rigid_sim_config=dynamic_rigid_sim_config,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
                 if constraint_state.improved[i_b] < 1:
@@ -1798,6 +1805,7 @@ def func_solve_body(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     n_dofs = constraint_state.qacc.shape[0]
@@ -1852,6 +1860,7 @@ def func_solve_body(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             constraint_state=constraint_state,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -1972,6 +1981,7 @@ def func_update_gradient(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     n_dofs = constraint_state.grad.shape[0]
@@ -1988,6 +1998,7 @@ def func_update_gradient(
             i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -2044,6 +2055,7 @@ def func_init_solver(
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
@@ -2139,6 +2151,7 @@ def func_init_solver(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             constraint_state=constraint_state,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -2155,6 +2168,7 @@ def kernel_add_weld_constraint(
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
     links_state: array_class.LinksState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ) -> ti.i32:
@@ -2192,7 +2206,7 @@ def kernel_add_weld_constraint(
 
             equalities_info.eq_data[i_e, i_b][10] = 1.0
             equalities_info.sol_params[i_e, i_b] = ti.Vector(
-                [2 * static_rigid_sim_config.substep_dt, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
+                [2 * dynamic_rigid_sim_config.substep_dt[i_b], 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
             )
 
             constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1

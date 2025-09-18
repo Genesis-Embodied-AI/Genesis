@@ -12,6 +12,7 @@ def kernel_build_efc_AR_b(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
@@ -39,6 +40,7 @@ def kernel_build_efc_AR_b(
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
+                dynamic_rigid_sim_config=dynamic_rigid_sim_config,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
@@ -172,6 +174,7 @@ def kernel_dual_finish(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
@@ -196,6 +199,7 @@ def kernel_dual_finish(
             i_b=i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -269,6 +273,7 @@ def func_cost_change(
 def compute_A_diag(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
@@ -288,6 +293,7 @@ def compute_A_diag(
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
+                dynamic_rigid_sim_config=dynamic_rigid_sim_config,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
