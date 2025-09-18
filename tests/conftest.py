@@ -523,8 +523,8 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             buffer = BytesIO()
             buffer.write(data)
             buffer.seek(0)
-            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
-        img_delta = np.abs(img_arrays[1].astype(np.float32) - img_arrays[0].astype(np.float32)).astype(np.uint8)
+            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.int32))
+        img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
         if (
             np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
             and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size

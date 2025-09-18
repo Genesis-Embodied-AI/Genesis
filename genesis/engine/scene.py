@@ -45,7 +45,7 @@ from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
-    from genesis.recorders import RecorderOptions
+    from genesis.recorders import Recorder, RecorderOptions
     from genesis.sensors import SensorOptions
 
 
@@ -212,13 +212,7 @@ class Scene(RBC):
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
     def __del__(self):
-        if getattr(self, "_recorder_manager", None) is not None:
-            self._recorder_manager.destroy()
-            self._recorder_manager = None
-
-        if getattr(self, "_visualizer", None) is not None:
-            self._visualizer.destroy()
-            self._visualizer = None
+        self.destroy()
 
     def _validate_options(
         self,
@@ -278,6 +272,16 @@ class Scene(RBC):
 
         if not isinstance(renderer_options, RendererOptions):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
+
+    def destroy(self):
+        if getattr(self, "_recorder_manager", None) is not None:
+            if self._recorder_manager.is_recording:
+                self._recorder_manager.stop()
+            self._recorder_manager = None
+
+        if getattr(self, "_visualizer", None) is not None:
+            self._visualizer.destroy()
+            self._visualizer = None
 
     @gs.assert_unbuilt
     def add_entity(
@@ -564,7 +568,7 @@ class Scene(RBC):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt
-    def start_recording(self, data_func: Callable, rec_options: "RecorderOptions"):
+    def start_recording(self, data_func: Callable, rec_options: "RecorderOptions") -> "Recorder":
         """
         Automatically read and process data. See RecorderOptions for more details.
 
@@ -577,6 +581,11 @@ class Scene(RBC):
             A function with no arguments that returns the data to be recorded.
         rec_options : RecorderOptions
             The options for the recording.
+
+        Returns
+        -------
+        recorder : Recorder
+            The created recorder object.
         """
         return self._recorder_manager.add_recorder(data_func, rec_options)
 
