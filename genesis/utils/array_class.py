@@ -40,10 +40,14 @@ class StructRigidGlobalInfo:
     meaninertia: V_ANNOTATION
     mass_parent_mask: V_ANNOTATION
     gravity: V_ANNOTATION
+    substep_dt: V_ANNOTATION
 
 
 def get_rigid_global_info(solver):
     f_batch = solver._batch_shape
+
+    substep_dt = V(dtype=gs.ti_float, shape=solver._batch_shape())
+    substep_dt.fill(solver._substep_dt)
 
     # Basic fields
     kwargs = {
@@ -65,6 +69,7 @@ def get_rigid_global_info(solver):
         "meaninertia": V(dtype=gs.ti_float, shape=solver._batch_shape()),
         "mass_parent_mask": V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         "gravity": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
+        "substep_dt": substep_dt,
     }
 
     if use_ndarray:
@@ -2104,38 +2109,6 @@ def get_static_rigid_sim_cache_key(solver):
     return StaticRigidSimCacheKey(**kwargs)
 
 
-# =========================================== DynamicRigidSimConfig ===========================================
-
-
-@dataclasses.dataclass
-class StructDynamicRigidSimConfig:
-    substep_dt: V_ANNOTATION
-
-
-def get_dynamic_rigid_sim_config(solver):
-    substep_dt = V(dtype=gs.ti_float, shape=solver._batch_shape())
-    substep_dt.fill(solver._substep_dt)
-
-    kwargs = {
-        "substep_dt": substep_dt,
-    }
-
-    if use_ndarray:
-        return StructDynamicRigidSimConfig(**kwargs)
-    else:
-
-        @ti.data_oriented
-        class ClassDynamicRigidSimConfig:
-            def __init__(self):
-                for k, v in kwargs.items():
-                    setattr(self, k, v)
-
-        return ClassDynamicRigidSimConfig()
-
-
-# =========================================== DataManager ===========================================
-
-
 @ti.data_oriented
 class DataManager:
     def __init__(self, solver):
@@ -2200,4 +2173,3 @@ ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
 ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState
-DynamicRigidSimConfig = ti.template() if not use_ndarray else StructDynamicRigidSimConfig
