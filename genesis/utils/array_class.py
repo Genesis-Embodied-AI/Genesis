@@ -1998,8 +1998,6 @@ def get_entities_info(solver):
 
 
 # =========================================== EntitiesState ===========================================
-
-
 @dataclasses.dataclass
 class StructEntitiesState:
     hibernated: V_ANNOTATION
@@ -2046,7 +2044,6 @@ class StaticRigidSimCacheKey:
     sparse_solve: bool = cache_value()
     solver_type: int = cache_value()
     # dynamic properties
-    substep_dt: float = cache_value()
     iterations: int = cache_value()
     tolerance: float = cache_value()
     ls_iterations: int = cache_value()
@@ -2090,7 +2087,6 @@ def get_static_rigid_sim_cache_key(solver):
         "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
         # dynamic properties
         # TODO: we should store those properties into field/ndarray to avoid recompilation when they are changed
-        "substep_dt": getattr(solver, "_substep_dt", 1e-2),
         "iterations": getattr(solver._options, "iterations", 10),
         "tolerance": getattr(solver._options, "tolerance", 1e-6),
         "ls_iterations": getattr(solver._options, "ls_iterations", 10),
@@ -2106,6 +2102,35 @@ def get_static_rigid_sim_cache_key(solver):
         "has_terrain": has_terrain,
     }
     return StaticRigidSimCacheKey(**kwargs)
+
+
+# =========================================== DynamicRigidSimConfig ===========================================
+
+
+@dataclasses.dataclass
+class StructDynamicRigidSimConfig:
+    substep_dt: V_ANNOTATION
+
+
+def get_dynamic_rigid_sim_config(solver):
+    substep_dt = V(dtype=gs.ti_float, shape=solver._batch_shape())
+    substep_dt.fill(solver._substep_dt)
+
+    kwargs = {
+        "substep_dt": substep_dt,
+    }
+
+    if use_ndarray:
+        return StructDynamicRigidSimConfig(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassDynamicRigidSimConfig:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassDynamicRigidSimConfig()
 
 
 # =========================================== DataManager ===========================================
@@ -2175,3 +2200,4 @@ ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
 ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState
+DynamicRigidSimConfig = ti.template() if not use_ndarray else StructDynamicRigidSimConfig

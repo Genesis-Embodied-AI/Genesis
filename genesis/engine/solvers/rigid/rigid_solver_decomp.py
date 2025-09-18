@@ -258,7 +258,6 @@ class RigidSolver(Solver):
             sparse_solve=getattr(self._options, "sparse_solve", False),
             solver_type=getattr(self._options, "constraint_solver", gs.constraint_solver.CG),
             # dynamic properties
-            substep_dt=self._substep_dt,
             iterations=getattr(self._options, "iterations", 10),
             tolerance=getattr(self._options, "tolerance", 1e-6),
             ls_iterations=getattr(self._options, "ls_iterations", 10),
@@ -270,6 +269,8 @@ class RigidSolver(Solver):
             hibernation_thresh_acc=getattr(self, "_hibernation_thresh_acc", 0.0),
             hibernation_thresh_vel=getattr(self, "_hibernation_thresh_vel", 0.0),
         )
+
+        self._dynamic_rigid_sim_config = array_class.get_dynamic_rigid_sim_config(self)
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -348,6 +349,7 @@ class RigidSolver(Solver):
             dofs_info=self.dofs_info,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
+            dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             decompose=True,
@@ -968,6 +970,7 @@ class RigidSolver(Solver):
             entities_state=self.entities_state,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
+            dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
@@ -975,7 +978,13 @@ class RigidSolver(Solver):
         # timer.stamp("kernel_step_1")
 
         if isinstance(self.sim.coupler, SAPCoupler):
-            self.update_qvel()
+            update_qvel(
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+            )
         else:
             self._func_constraint_force()
             # timer.stamp("constraint_force")
@@ -992,6 +1001,7 @@ class RigidSolver(Solver):
                 geoms_state=self.geoms_state,
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
+                dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
@@ -1057,6 +1067,7 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
+            dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
             static_rigid_sim_config=self._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
@@ -1286,44 +1297,6 @@ class RigidSolver(Solver):
             torque, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
         )
 
-    @ti.kernel
-    def update_qvel(self):
-        if ti.static(self._use_hibernation):
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_d_ in range(self.n_awake_dofs[i_b]):
-                    i_d = self.awake_dofs[i_d_, i_b]
-                    self.dofs_state.vel_prev[i_d, i_b] = self.dofs_state.vel[i_d, i_b]
-                    self.dofs_state.vel[i_d, i_b] = (
-                        self.dofs_state.vel[i_d, i_b] + self.dofs_state.acc[i_d, i_b] * self._substep_dt
-                    )
-        else:
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                self.dofs_state.vel_prev[i_d, i_b] = self.dofs_state.vel[i_d, i_b]
-                self.dofs_state.vel[i_d, i_b] = (
-                    self.dofs_state.vel[i_d, i_b] + self.dofs_state.acc[i_d, i_b] * self._substep_dt
-                )
-
-    @ti.kernel
-    def update_qacc_from_qvel_delta(self):
-        if ti.static(self._use_hibernation):
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(self._B):
-                for i_d_ in range(self.n_awake_dofs[i_b]):
-                    i_d = self.awake_dofs[i_d_, i_b]
-                    self.dofs_state.acc[i_d, i_b] = (
-                        self.dofs_state.vel[i_d, i_b] - self.dofs_state.vel_prev[i_d, i_b]
-                    ) / self._substep_dt
-                    self.dofs_state.vel[i_d, i_b] = self.dofs_state.vel_prev[i_d, i_b]
-        else:
-            ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(self.n_dofs, self._B):
-                self.dofs_state.acc[i_d, i_b] = (
-                    self.dofs_state.vel[i_d, i_b] - self.dofs_state.vel_prev[i_d, i_b]
-                ) / self._substep_dt
-                self.dofs_state.vel[i_d, i_b] = self.dofs_state.vel_prev[i_d, i_b]
-
     def substep_pre_coupling(self, f):
         if self.is_active():
             self.substep()
@@ -1335,7 +1308,13 @@ class RigidSolver(Solver):
         from genesis.engine.couplers import SAPCoupler
 
         if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
-            self.update_qacc_from_qvel_delta()
+            update_qacc_from_qvel_delta(
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+            )
             kernel_step_2(
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
@@ -1349,6 +1328,7 @@ class RigidSolver(Solver):
                 geoms_state=self.geoms_state,
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
+                dynamic_rigid_sim_config=self._dynamic_rigid_sim_config,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
@@ -2468,6 +2448,7 @@ class RigidSolver(Solver):
             propellers_revs,
             propellers_spin,
             self.vgeoms_state,
+            self._dynamic_rigid_sim_config,
             self._static_rigid_sim_config,
         )
 
@@ -2628,6 +2609,62 @@ class RigidSolver(Solver):
         return gs.List(equality for entity in self._entities for equality in entity.equalities)
 
 
+@ti.kernel
+def update_qacc_from_qvel_delta(
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
+    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
+):
+    n_dofs = dofs_state.ctrl_mode.shape[0]
+    _B = dofs_state.ctrl_mode.shape[1]
+    if ti.static(static_rigid_sim_config.use_hibernation):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            for i_d_ in range(rigid_global_info.n_awake_dofs[i_b]):
+                i_d = rigid_global_info.awake_dofs[i_d_, i_b]
+                dofs_state.acc[i_d, i_b] = (
+                    dofs_state.vel[i_d, i_b] - dofs_state.vel_prev[i_d, i_b]
+                ) / dynamic_rigid_sim_config.substep_dt[i_b]
+                dofs_state.vel[i_d, i_b] = dofs_state.vel_prev[i_d, i_b]
+    else:
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            dofs_state.acc[i_d, i_b] = (
+                dofs_state.vel[i_d, i_b] - dofs_state.vel_prev[i_d, i_b]
+            ) / dynamic_rigid_sim_config.substep_dt[i_b]
+            dofs_state.vel[i_d, i_b] = dofs_state.vel_prev[i_d, i_b]
+
+
+@ti.kernel
+def update_qvel(
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
+    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
+):
+    _B = dofs_state.vel.shape[1]
+    n_dofs = dofs_state.vel.shape[0]
+    if ti.static(static_rigid_sim_config.use_hibernation):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            for i_d_ in range(static_rigid_sim_cache_key.n_awake_dofs[i_b]):
+                i_d = rigid_global_info.awake_dofs[i_d_, i_b]
+                dofs_state.vel_prev[i_d, i_b] = dofs_state.vel[i_d, i_b]
+                dofs_state.vel[i_d, i_b] = (
+                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * dynamic_rigid_sim_config.substep_dt[i_b]
+                )
+    else:
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            dofs_state.vel_prev[i_d, i_b] = dofs_state.vel[i_d, i_b]
+            dofs_state.vel[i_d, i_b] = (
+                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * dynamic_rigid_sim_config.substep_dt[i_b]
+            )
+
+
 @ti.kernel(pure=gs.use_pure)
 def kernel_compute_mass_matrix(
     # taichi variables
@@ -2637,6 +2674,7 @@ def kernel_compute_mass_matrix(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     decompose: ti.template(),
@@ -2649,6 +2687,7 @@ def kernel_compute_mass_matrix(
         dofs_info=dofs_info,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
     if decompose:
@@ -2658,6 +2697,7 @@ def kernel_compute_mass_matrix(
             dofs_state=dofs_state,
             dofs_info=dofs_info,
             rigid_global_info=rigid_global_info,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -3231,6 +3271,7 @@ def kernel_forward_dynamics(
     entities_info: array_class.EntitiesInfo,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     contact_island_state: array_class.ContactIslandState,
@@ -3245,6 +3286,7 @@ def kernel_forward_dynamics(
         entities_info=entities_info,
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
         contact_island_state=contact_island_state,
     )
@@ -3291,6 +3333,7 @@ def func_compute_mass_matrix(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     _B = links_state.pos.shape[1]
@@ -3371,14 +3414,14 @@ def func_compute_mass_matrix(
                     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                         rigid_global_info.mass_mat[i_d, i_d, i_b] += (
-                            dofs_info.damping[I_d] * static_rigid_sim_config.substep_dt
+                            dofs_info.damping[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
                         )
                         if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                             dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                         ):
                             # qM += d qfrc_actuator / d qvel
                             rigid_global_info.mass_mat[i_d, i_d, i_b] += (
-                                dofs_info.kv[I_d] * static_rigid_sim_config.substep_dt
+                                dofs_info.kv[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
                             )
     else:
         # crb initialize
@@ -3448,12 +3491,16 @@ def func_compute_mass_matrix(
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_d, i_b in ti.ndrange(n_dofs, _B):
                 I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.damping[I_d] * static_rigid_sim_config.substep_dt
+                rigid_global_info.mass_mat[i_d, i_d, i_b] += (
+                    dofs_info.damping[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
+                )
                 if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                     dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                 ):
                     # qM += d qfrc_actuator / d qvel
-                    rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * static_rigid_sim_config.substep_dt
+                    rigid_global_info.mass_mat[i_d, i_d, i_b] += (
+                        dofs_info.kv[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
+                    )
 
 
 @ti.func
@@ -3463,6 +3510,7 @@ def func_factor_mass(
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     """
@@ -3489,14 +3537,14 @@ def func_factor_mass(
                         if ti.static(implicit_damping):
                             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                             rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                                dofs_info.damping[I_d] * static_rigid_sim_config.substep_dt
+                                dofs_info.damping[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
                             )
                             if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                 if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                     dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                 ):
                                     rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                                        dofs_info.kv[I_d] * static_rigid_sim_config.substep_dt
+                                        dofs_info.kv[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
                                     )
 
                     for i_d_ in range(n_dofs):
@@ -3529,14 +3577,14 @@ def func_factor_mass(
                     if ti.static(implicit_damping):
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                         rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                            dofs_info.damping[I_d] * static_rigid_sim_config.substep_dt
+                            dofs_info.damping[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
                         )
                         if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                             if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                 dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                             ):
                                 rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                                    dofs_info.kv[I_d] * static_rigid_sim_config.substep_dt
+                                    dofs_info.kv[I_d] * dynamic_rigid_sim_config.substep_dt[i_b]
                                 )
 
                 for i_d_ in range(n_dofs):
@@ -3563,6 +3611,7 @@ def func_solve_mass_batched(
     i_b: ti.int32,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
 
@@ -3623,6 +3672,7 @@ def func_solve_mass(
     out: array_class.V_ANNOTATION,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     _B = out.shape[1]
@@ -3634,6 +3684,7 @@ def func_solve_mass(
             i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -3963,6 +4014,7 @@ def func_forward_dynamics(
     entities_info: array_class.EntitiesInfo,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
 ):
@@ -3974,6 +4026,7 @@ def func_forward_dynamics(
         dofs_info=dofs_info,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
     func_factor_mass(
@@ -3982,6 +4035,7 @@ def func_forward_dynamics(
         dofs_state=dofs_state,
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
     func_torque_and_passive_force(
@@ -4025,6 +4079,7 @@ def func_forward_dynamics(
         dofs_state=dofs_state,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
@@ -4117,6 +4172,7 @@ def kernel_step_1(
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
@@ -4150,6 +4206,7 @@ def kernel_step_1(
         entities_info=entities_info,
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
         contact_island_state=contact_island_state,
     )
@@ -4161,6 +4218,7 @@ def func_implicit_damping(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
 
@@ -4197,6 +4255,7 @@ def func_implicit_damping(
         dofs_state=dofs_state,
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
     func_solve_mass(
@@ -4204,6 +4263,7 @@ def func_implicit_damping(
         out=dofs_state.acc,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
@@ -4230,6 +4290,7 @@ def kernel_step_2(
     geoms_state: array_class.GeomsState,
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
@@ -4255,6 +4316,7 @@ def kernel_step_2(
             dofs_info=dofs_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
+            dynamic_rigid_sim_config=dynamic_rigid_sim_config,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -4262,6 +4324,7 @@ def kernel_step_2(
         dofs_state=dofs_state,
         links_info=links_info,
         joints_info=joints_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
     )
@@ -5836,6 +5899,7 @@ def func_compute_qacc(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     _B = dofs_state.ctrl_mode.shape[1]
@@ -5846,6 +5910,7 @@ def func_compute_qacc(
         out=dofs_state.acc_smooth,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
+        dynamic_rigid_sim_config=dynamic_rigid_sim_config,
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
@@ -5870,6 +5935,7 @@ def func_integrate(
     dofs_state: array_class.DofsState,
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -5883,7 +5949,7 @@ def func_integrate(
             for i_d_ in range(rigid_global_info.n_awake_dofs[i_b]):
                 i_d = rigid_global_info.awake_dofs[i_d_, i_b]
                 dofs_state.vel[i_d, i_b] = (
-                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * static_rigid_sim_config.substep_dt
+                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * dynamic_rigid_sim_config.substep_dt[i_b]
                 )
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -5917,7 +5983,7 @@ def func_integrate(
                                     dofs_state.vel[dof_start + 5, i_b],
                                 ]
                             )
-                            * static_rigid_sim_config.substep_dt
+                            * dynamic_rigid_sim_config.substep_dt[i_b]
                         )
                         qrot = gu.ti_rotvec_to_quat(ang)
                         rot = gu.ti_transform_quat_by_quat(qrot, rot)
@@ -5935,7 +6001,7 @@ def func_integrate(
                                 dofs_state.vel[dof_start + 2, i_b],
                             ]
                         )
-                        pos = pos + vel * static_rigid_sim_config.substep_dt
+                        pos = pos + vel * dynamic_rigid_sim_config.substep_dt[i_b]
                         for j in ti.static(range(3)):
                             rigid_global_info.qpos[q_start + j, i_b] = pos[j]
                         for j in ti.static(range(4)):
@@ -5959,7 +6025,7 @@ def func_integrate(
                                     dofs_state.vel[dof_start + 5, i_b],
                                 ]
                             )
-                            * static_rigid_sim_config.substep_dt
+                            * dynamic_rigid_sim_config.substep_dt[i_b]
                         )
                         qrot = gu.ti_rotvec_to_quat(ang)
                         rot = gu.ti_transform_quat_by_quat(qrot, rot)
@@ -5970,14 +6036,14 @@ def func_integrate(
                         for j in range(q_end - q_start):
                             rigid_global_info.qpos[q_start + j, i_b] = (
                                 rigid_global_info.qpos[q_start + j, i_b]
-                                + dofs_state.vel[dof_start + j, i_b] * static_rigid_sim_config.substep_dt
+                                + dofs_state.vel[dof_start + j, i_b] * dynamic_rigid_sim_config.substep_dt[i_b]
                             )
 
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(n_dofs, _B):
             dofs_state.vel[i_d, i_b] = (
-                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * static_rigid_sim_config.substep_dt
+                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * dynamic_rigid_sim_config.substep_dt[i_b]
             )
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -6009,7 +6075,7 @@ def func_integrate(
                         dofs_state.vel[dof_start + 2, i_b],
                     ]
                 )
-                pos = pos + vel * static_rigid_sim_config.substep_dt
+                pos = pos + vel * dynamic_rigid_sim_config.substep_dt[i_b]
                 for j in ti.static(range(3)):
                     rigid_global_info.qpos[q_start + j, i_b] = pos[j]
             if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
@@ -6030,7 +6096,7 @@ def func_integrate(
                             dofs_state.vel[dof_start + rot_offset + 2, i_b],
                         ]
                     )
-                    * static_rigid_sim_config.substep_dt
+                    * dynamic_rigid_sim_config.substep_dt[i_b]
                 )
                 qrot = gu.ti_rotvec_to_quat(ang)
                 rot = gu.ti_transform_quat_by_quat(qrot, rot)
@@ -6040,7 +6106,7 @@ def func_integrate(
                 for j in range(q_end - q_start):
                     rigid_global_info.qpos[q_start + j, i_b] = (
                         rigid_global_info.qpos[q_start + j, i_b]
-                        + dofs_state.vel[dof_start + j, i_b] * static_rigid_sim_config.substep_dt
+                        + dofs_state.vel[dof_start + j, i_b] * dynamic_rigid_sim_config.substep_dt[i_b]
                     )
 
 
@@ -6903,6 +6969,7 @@ def kernel_update_drone_propeller_vgeoms(
     propellers_revs: ti.types.ndarray(),
     propellers_spin: ti.types.ndarray(),
     vgeoms_state: array_class.VGeomsState,
+    dynamic_rigid_sim_config: array_class.DynamicRigidSimConfig,
     static_rigid_sim_config: ti.template(),
 ):
     """
@@ -6910,7 +6977,7 @@ def kernel_update_drone_propeller_vgeoms(
     """
     _B = propellers_revs.shape[1]
     for i, b in ti.ndrange(n_propellers, _B):
-        rad = propellers_revs[i, b] * propellers_spin[i] * static_rigid_sim_config.substep_dt * np.pi / 30
+        rad = propellers_revs[i, b] * propellers_spin[i] * dynamic_rigid_sim_config.substep_dt[b] * np.pi / 30
         vgeoms_state.quat[propellers_vgeom_idxs[i], b] = gu.ti_transform_quat_by_quat(
             gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad], dt=gs.ti_float)),
             vgeoms_state.quat[propellers_vgeom_idxs[i], b],
