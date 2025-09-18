@@ -243,7 +243,12 @@ def get_cache_dir():
     cache_dir = os.environ.get("GS_CACHE_FILE_PATH")
     if cache_dir is not None:
         return cache_dir
-    return os.path.join(os.path.expanduser("~"), ".cache", "genesis")
+    root_cache_dir = None
+    if get_platform() == "Linux":
+        root_cache_dir = os.environ.get("XDG_CACHE_HOME")
+    if root_cache_dir is None:
+        root_cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(root_cache_dir, "genesis")
 
 
 def get_gsd_cache_dir():
@@ -276,15 +281,6 @@ def get_exr_cache_dir():
 
 def get_usd_cache_dir():
     return os.path.join(get_cache_dir(), "usd")
-
-
-def clean_cache_files():
-    folder = gs.utils.misc.get_cache_dir()
-    try:
-        shutil.rmtree(folder)
-    except:
-        pass
-    os.makedirs(folder)
 
 
 def assert_gs_tensor(x):

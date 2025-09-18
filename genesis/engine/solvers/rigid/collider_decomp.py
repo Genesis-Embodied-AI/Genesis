@@ -509,8 +509,7 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     return matres
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def collider_kernel_reset(
     envs_idx: ti.types.ndarray(),
     static_rigid_sim_config: ti.template(),
@@ -530,8 +529,7 @@ def collider_kernel_reset(
 
 
 # only used with hibernation ??
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def kernel_collider_clear(
     envs_idx: ti.types.ndarray(),
     links_state: array_class.LinksState,
@@ -584,8 +582,7 @@ def kernel_collider_clear(
             collider_state.n_contacts[i_b] = 0
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def collider_kernel_get_contacts(
     is_padded: ti.template(),
     iout: ti.types.ndarray(),
@@ -1163,8 +1160,7 @@ def func_check_collision_valid(
     return is_valid
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def func_broad_phase(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1410,8 +1406,7 @@ def func_broad_phase(
                                     break
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1516,8 +1511,7 @@ def func_narrow_phase_convex_vs_convex(
                         )
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1571,8 +1565,7 @@ def func_narrow_phase_convex_specializations(
                     )
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1624,8 +1617,7 @@ def func_narrow_phase_any_vs_terrain(
                     )
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def func_narrow_phase_nonconvex_vs_nonterrain(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,

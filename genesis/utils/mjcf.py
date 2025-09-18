@@ -659,15 +659,22 @@ def parse_geoms(mj, scale, surface, xml_path):
             "when calling `scene.add_entity`."
         )
 
-    # Parse geometry group if available.
-    # Duplicate collision geometries as visual for bodies not having dedicated visual geometries as a fallback.
+    # Parse geometry group if available
     for link_g_info in links_g_info:
         has_visual_group = any(g_info["group"] > 0 for g_info in link_g_info)
-        is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
         for g_info in link_g_info.copy():
-            group = g_info.pop("group")
-            is_col = g_info["contype"] or g_info["conaffinity"]
-            if (has_visual_group and group in (1, 2) and is_col) or (not has_visual_group and is_all_col):
+            # Duplicate collision geometries as visual in accordance with Mujoco logics
+            create_visual = False
+            if g_info["contype"] or g_info["conaffinity"]:
+                if has_visual_group:
+                    # If groups are defined, only create visual for geoms in visual groups (1 or 2)
+                    create_visual = g_info["group"] in (1, 2)
+                else:
+                    # If no groups defined, always create visual duplicates for collision geoms.
+                    # This handles the case where we have a mix of collision and non-collision geoms.
+                    create_visual = True
+
+            if create_visual:
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
                 vmesh = gs.Mesh(
