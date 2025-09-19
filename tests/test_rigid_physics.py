@@ -1999,6 +1999,7 @@ def test_terrain_generation(show_viewer):
     )
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
+            pos=(0.0, 0.0, 0.0),
             n_subterrains=(2, 2),
             subterrain_size=(6.0, 6.0),
             horizontal_scale=0.25,
@@ -2021,11 +2022,17 @@ def test_terrain_generation(show_viewer):
     for _ in range(400):
         scene.step()
 
+    # Get the position of the balls that are still on the terrain
+    balls_pos = ball.get_pos()
+    balls_pos = balls_pos[
+        (balls_pos[:, 0] > 0.0) & (balls_pos[:, 0] < 12.0) & (balls_pos[:, 1] > 0.0) & (balls_pos[:, 1] < 12.0)
+    ]
+
     # Make sure that at least one ball is as minimum height, and some are signficantly higher
     height_field = terrain.geoms[0].metadata["height_field"]
     height_field_min = terrain.terrain_scale[1] * height_field.min()
     height_field_max = terrain.terrain_scale[1] * height_field.max()
-    height_balls = ball.get_pos()[:, 2]
+    height_balls = balls_pos[:, 2]
     height_balls_min = height_balls.min() - 0.1
     height_balls_max = height_balls.max() - 0.1
     assert_allclose(height_balls_min, height_field_min, atol=2e-3)

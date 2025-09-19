@@ -59,6 +59,8 @@ def random_uniform_terrain(
     """
     if downsampled_scale is None:
         downsampled_scale = terrain.horizontal_scale
+    scaled_width = terrain.width * terrain.horizontal_scale
+    scaled_length = terrain.length * terrain.horizontal_scale
 
     # switch parameters to discrete units
     min_height = int(min_height / terrain.vertical_scale)
@@ -69,19 +71,19 @@ def random_uniform_terrain(
     height_field_downsampled = np.random.choice(
         heights_range,
         (
-            int(terrain.width * terrain.horizontal_scale / downsampled_scale),
-            int(terrain.length * terrain.horizontal_scale / downsampled_scale),
+            int(scaled_width / downsampled_scale),
+            int(scaled_length / downsampled_scale),
         ),
     )
 
-    x = np.linspace(0, terrain.width * terrain.horizontal_scale, height_field_downsampled.shape[0])
-    y = np.linspace(0, terrain.length * terrain.horizontal_scale, height_field_downsampled.shape[1])
+    x = np.linspace(0, scaled_width, height_field_downsampled.shape[0])
+    y = np.linspace(0, scaled_length, height_field_downsampled.shape[1])
 
-    f = interpolate.RegularGridInterpolator((y, x), height_field_downsampled, method="linear")
+    f = interpolate.RectBivariateSpline(x, y, height_field_downsampled)
 
-    x_upsampled = np.linspace(0, terrain.width * terrain.horizontal_scale, terrain.width)
-    y_upsampled = np.linspace(0, terrain.length * terrain.horizontal_scale, terrain.length)
-    z_upsampled = np.rint(f((y_upsampled, x_upsampled)))
+    x_upsampled = np.linspace(0, scaled_width, terrain.width)
+    y_upsampled = np.linspace(0, scaled_length, terrain.length)
+    z_upsampled = np.rint(f(x_upsampled, y_upsampled))
 
     terrain.height_field_raw += z_upsampled
     return terrain
