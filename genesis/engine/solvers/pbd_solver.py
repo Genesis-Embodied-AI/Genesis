@@ -393,9 +393,9 @@ class PBDSolver(Solver):
                         self.particles[i_p, i_b].vel
                         - f_air_resistance / self.particles_info[i_p].mass * self._substep_dt
                     )
-            self.particles[i_p, i_b].pos = (
-                self.particles[i_p, i_b].pos + self.particles[i_p, i_b].vel * self._substep_dt
-            )
+                self.particles[i_p, i_b].pos = (
+                    self.particles[i_p, i_b].pos + self.particles[i_p, i_b].vel * self._substep_dt
+                )
 
     @ti.kernel
     def _kernel_solve_stretch(self, f: ti.i32):
