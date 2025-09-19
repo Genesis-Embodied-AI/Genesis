@@ -499,14 +499,29 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
     """Test segmentation rendering."""
     scene = gs.Scene(
+        # Using implicit solver to allow for larger timestep without failure on GPU backend
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
+        ),
+        # Disable many physics features to speed-up compilation
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        coupler_options=gs.options.LegacyCouplerOptions(
+            rigid_mpm=False,
+            rigid_sph=False,
+            rigid_pbd=False,
+            rigid_fem=False,
+            mpm_sph=False,
+            mpm_pbd=False,
+            fem_mpm=False,
+            fem_sph=False,
         ),
         vis_options=gs.options.VisOptions(
             segmentation_level=segmentation_level,
         ),
-        show_viewer=False,
         renderer=renderer,
+        show_viewer=False,
     )
 
     robot = scene.add_entity(
@@ -531,17 +546,15 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         )
 
     ducks = []
-    spacing = 0.5
-    for i, pack in enumerate(materials):
+    for i, (material, vis_mode) in enumerate(materials):
         col_idx, row_idx = i // 3 - 1, i % 3 - 1
-        material, vis_mode = pack
         ducks.append(
             scene.add_entity(
                 material=material,
                 morph=gs.morphs.Mesh(
                     file="meshes/duck.obj",
                     scale=0.1,
-                    pos=(col_idx * spacing, row_idx * spacing, 0.5),
+                    pos=(col_idx * 0.5, row_idx * 0.5, 0.5),
                 ),
                 surface=gs.surfaces.Default(
                     color=np.random.rand(3),
@@ -551,7 +564,8 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         )
 
     camera = scene.add_camera(
-        res=(512, 512),
+        # Using very low resolution to speed up rendering
+        res=(128, 128),
         pos=(2.0, 0.0, 2.0),
         lookat=(0, 0, 0.5),
         fov=40,

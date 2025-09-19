@@ -220,6 +220,7 @@ class ParticleEntity(Entity):
         # Compute supports for rendering vverts using neighboring particles
         kdtree = KDTree(self._particles)
         _, support_idxs = kdtree.query(self._vverts, k=self.solver._n_vvert_supports)
+        support_idxs = support_idxs.astype(gs.np_int)
         support_idxs = np.clip(support_idxs, 0, len(self._particles) - 1)
         all_ps = self._particles[support_idxs]
         Ps = all_ps[:, :-1].swapaxes(-2, -1) - np.expand_dims(all_ps[:, -1], axis=-1)
