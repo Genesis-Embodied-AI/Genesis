@@ -675,7 +675,6 @@ class PBDSolver(Solver):
                             self.sh.slot_start[slot_idx, i_b],
                             self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                         ):
-
                             pos_j = self.particles_reordered[j, i_b].pos
                             v_ij = (self.particles_reordered[j, i_b].pos - self.particles_reordered[j, i_b].ipos) - (
                                 self.particles_reordered[i_p, i_b].pos - self.particles_reordered[i_p, i_b].ipos
@@ -959,7 +958,7 @@ class PBDSolver(Solver):
             self.particles[i_p, i_b].free = False
 
     @ti.kernel
-    def _kernel_releases_particle(self, particles_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
+    def _kernel_release_particle(self, particles_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
         for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]

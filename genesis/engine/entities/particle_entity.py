@@ -783,8 +783,10 @@ class ParticleEntity(Entity):
 
         cur_particles = self.get_particles_pos(envs_idx)
         distances = torch.linalg.norm(cur_particles - pos.unsqueeze(1), dim=-1)
-        closest_idx = torch.argmin(distances, dim=-1)
-        return closest_idx.to(dtype=gs.tc_int)
+        closest_idx = torch.argmin(distances, dim=-1).to(dtype=gs.tc_int)
+        if self._scene.n_envs == 0:
+            closest_idx = closest_idx.squeeze(0)
+        return closest_idx
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

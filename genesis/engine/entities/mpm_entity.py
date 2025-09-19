@@ -363,6 +363,8 @@ class MPMEntity(ParticleEntity):
         self.solver._kernel_get_particles_pos(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, poss
         )
+        if self._scene.n_envs == 0:
+            poss = poss.squeeze(0)
         return poss
 
     @gs.assert_built
@@ -387,6 +389,8 @@ class MPMEntity(ParticleEntity):
         self.solver._kernel_get_particles_vel(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, vels
         )
+        if self._scene.n_envs == 0:
+            vels = vels.squeeze(0)
         return vels
 
     @gs.assert_built
@@ -404,6 +408,8 @@ class MPMEntity(ParticleEntity):
         self.solver._kernel_get_particles_active(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, actives
         )
+        if self._scene.n_envs == 0:
+            actives = actives.squeeze(0)
         return actives
 
     @assert_muscle
@@ -472,6 +478,8 @@ class MPMEntity(ParticleEntity):
         self.solver._kernel_get_particles_actu(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, actus
         )
+        if self._scene.n_envs == 0:
+            actus = actus.squeeze(0)
         return actus
 
     @assert_muscle

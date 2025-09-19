@@ -147,6 +147,8 @@ class PBDTetEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         poss = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
+        if self._scene.n_envs == 0:
+            poss = poss.squeeze(0)
         return poss
 
     @gs.assert_built
@@ -162,6 +164,8 @@ class PBDTetEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         vels = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
+        if self._scene.n_envs == 0:
+            vels = vels.squeeze(0)
         return vels
 
     @gs.assert_built
@@ -175,6 +179,8 @@ class PBDTetEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         actives = torch.empty((len(envs_idx), self.n_particles), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)
+        if self._scene.n_envs == 0:
+            actives = actives.squeeze(0)
         return actives
 
     @gs.assert_built
@@ -207,7 +213,7 @@ class PBDTetEntity(ParticleEntity):
         """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        self.solver.release_particles(particles_idx_local + self._particle_start, envs_idx)
+        self.solver._kernel_release_particle(particles_idx_local + self._particle_start, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
