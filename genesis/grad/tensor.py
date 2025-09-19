@@ -101,7 +101,7 @@ class Tensor(torch.Tensor):
 
     def assert_contiguous(self):
         if not self.is_contiguous():
-            gs.raise_exception("Tensor not contiguogs.")
+            gs.raise_exception("Tensor not contiguous.")
 
     def assert_sceneless(self):
         if self.scene is not None:

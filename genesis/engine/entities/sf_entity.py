@@ -21,13 +21,11 @@ class SFParticleEntity(ParticleEntity):
             scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False
         )
 
-    def process_input(self, in_backward=False):
-        # TODO: implement this
+    def _add_particles_to_solver(self):
+        # Nothing to add here because particles in SF are purely for visualization
         pass
 
-    def _add_to_solver_(self):
-        # particles in SF is purely for visualization
-        # it doesn't make sense to add here
+    def process_input(self, in_backward=False):
         pass
 
     def sample(self):
@@ -35,4 +33,4 @@ class SFParticleEntity(ParticleEntity):
 
     def update_particles(self, particles):
         self._particles = particles
-        self._n_particles = particles.shape[0]
+        self._n_particles = len(particles)

@@ -267,7 +267,9 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     if all(e.size == 0 for e in args):
         return
 
-    np.testing.assert_allclose(*map(np.squeeze, args), atol=atol, rtol=rtol, err_msg=err_msg)
+    args = np.broadcast_arrays(*map(np.squeeze, args))
+
+    np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
 def assert_array_equal(actual, desired, *, err_msg=""):

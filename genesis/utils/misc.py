@@ -288,21 +288,14 @@ def assert_gs_tensor(x):
         gs.raise_exception("Only accepts genesis.Tensor.")
 
 
-def to_gs_tensor(x):
+def to_gs_tensor(x, dtype: torch.dtype | None = None):
     if isinstance(x, gs.Tensor):
-        return x
-
-    elif isinstance(x, list):
-        return gs.from_numpy(np.array(x))
-
-    elif isinstance(x, np.ndarray):
-        return gs.from_numpy(x)
-
+        tensor = x
     elif isinstance(x, torch.Tensor):
-        return gs.Tensor(x)
-
+        tensor = gs.Tensor(x)
     else:
-        gs.raise_exception("Only accepts genesis.Tensor, torch.Tensor, np.ndarray or List.")
+        tensor = gs.from_numpy(np.asarray(x))
+    return tensor.to(dtype=dtype, device=gs.device)
 
 
 def tensor_to_cpu(x):
