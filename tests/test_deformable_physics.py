@@ -15,7 +15,6 @@ pytestmark = [
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
-@pytest.mark.parametrize("backend", [gs.cpu])
 def test_muscle(n_envs, muscle_material, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
