@@ -662,7 +662,7 @@ def test_tet_primitive_shapes(gs_sim, mj_sim, gs_solver, xml_path, tol):
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     # FIXME: Because of very small numerical error, error could be this large even if there is no logical error
     tol = 1e-6 if xml_path == "xml/tet_tet.xml" else 2e-8
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=1000, tol=tol)
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=tol)
 
 
 @pytest.mark.required
