@@ -99,7 +99,7 @@ class ConstraintSolver:
         # self.quad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, 3)))
 
         # self.candidates = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(12))
-        # self.ls_its = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        # self.ls_it = ti.field(gs.ti_float, shape=self._solver._batch_shape())
         # self.ls_result = ti.field(gs.ti_int, shape=self._solver._batch_shape())
 
         # if self._solver_type == gs.constraint_solver.CG:
@@ -149,7 +149,7 @@ class ConstraintSolver:
         self.quad_gauss = cs.quad_gauss
         self.quad = cs.quad
         self.candidates = cs.candidates
-        self.ls_its = cs.ls_its
+        self.ls_it = cs.ls_it
         self.ls_result = cs.ls_result
         if self._solver_type == gs.constraint_solver.CG:
             self.cg_prev_grad = cs.cg_prev_grad
@@ -433,7 +433,7 @@ class ConstraintSolver:
         if overflow:
             gs.logger.warning(
                 "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({self.rigid_global_info.n_equalities_candidate.to_numpy()[0]}). Please increase the value of "
+                f"({self.rigid_global_info.n_equalities_candidate.to_numpy()}). Please increase the value of "
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
@@ -1420,8 +1420,8 @@ def func_solve(
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
         if constraint_state.n_constraints[i_b] > 0:
-            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[0]
-            for it in range(rigid_global_info.iterations[0]):
+            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
+            for it in range(rigid_global_info.iterations[None]):
                 func_solve_body(
                     i_b,
                     entities_info=entities_info,
@@ -1540,7 +1540,7 @@ def func_ls_point_fn(
     if deriv_1 <= 0.0:
         deriv_1 = gs.EPS
 
-    constraint_state.ls_its[i_b] = constraint_state.ls_its[i_b] + 1
+    constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
 
     return alpha, cost, deriv_0, deriv_1
 
@@ -1574,11 +1574,11 @@ def func_linesearch(
         snorm += constraint_state.search[jd, i_b] ** 2
     snorm = ti.sqrt(snorm)
     scale = 1.0 / (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs))
-    gtol = rigid_global_info.tolerance[0] * rigid_global_info.ls_tolerance[0] * snorm / scale
+    gtol = rigid_global_info.tolerance[None] * rigid_global_info.ls_tolerance[None] * snorm / scale
     slopescl = scale / snorm
     constraint_state.gtol[i_b] = gtol
 
-    constraint_state.ls_its[i_b] = 0
+    constraint_state.ls_it[i_b] = 0
     constraint_state.ls_result[i_b] = 0
     ls_slope = gs.ti_float(1.0)
 
@@ -1617,7 +1617,9 @@ def func_linesearch(
             direction = (p1_deriv_0 < 0) * 2 - 1
             p2update = 0
             p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-            while p1_deriv_0 * direction <= -gtol and constraint_state.ls_its[i_b] < rigid_global_info.ls_iterations[0]:
+            while (
+                p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]
+            ):
                 p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
                 p2update = 1
 
@@ -1630,7 +1632,7 @@ def func_linesearch(
                     done = True
                     break
             if not done:
-                if constraint_state.ls_its[i_b] >= rigid_global_info.ls_iterations[0]:
+                if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
                     constraint_state.ls_result[i_b] = 3
                     ls_slope = ti.abs(p1_deriv_0) * slopescl
                     res_alpha = p1_alpha
@@ -1654,7 +1656,7 @@ def func_linesearch(
                         i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state
                     )
 
-                    while constraint_state.ls_its[i_b] < static_rigid_sim_config.ls_iterations:
+                    while constraint_state.ls_it[i_b] < static_rigid_sim_config.ls_iterations:
                         pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = func_ls_point_fn(
                             i_b, (p1_alpha + p2_alpha) * 0.5, constraint_state
                         )
@@ -1855,7 +1857,7 @@ def func_solve_body(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[0]
+        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
         improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
         gradient = gs.ti_float(0.0)
         for i_d in range(n_dofs):
@@ -2165,7 +2167,7 @@ def kernel_add_weld_constraint(
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == rigid_global_info.n_equalities_candidate[0]:
+        if i_e == rigid_global_info.n_equalities_candidate[None]:
             overflow = True
         else:
             shared_pos = links_state.pos[link1_idx, i_b]
@@ -2214,7 +2216,7 @@ def kernel_delete_weld_constraint(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        for i_e in range(rigid_global_info.n_equalities[0], constraint_state.ti_n_equalities[i_b]):
+        for i_e in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
             if (
                 equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
                 and equalities_info.eq_obj1id[i_e, i_b] == link1_idx
