@@ -195,7 +195,7 @@ def get_device(backend: gs_backend, device_idx: Optional[int] = None):
         total_mem = device_property.total_memory / 1024**3
     elif backend == gs_backend.metal:
         if not torch.backends.mps.is_available():
-            gs.raise_exception("metal device not available")
+            gs.raise_exception("Torch metal backend not available.")
         # on mac, cpu and gpu are in the same physical hardware and sharing memory
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
         device = torch.device("mps", device_idx)
@@ -212,7 +212,7 @@ def get_device(backend: gs_backend, device_idx: Optional[int] = None):
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
             logger = getattr(gs, "logger", None) or LOGGER
-            logger.warning("No Intel XPU device available. Falling back to CPU for torch device.")
+            logger.warning("Torch GPU backend not available. Falling back to CPU device.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
     else:  # backend == gs_backend.gpu:
         if torch.cuda.is_available():

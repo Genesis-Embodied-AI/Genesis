@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 
+import gstaichi as ti
 import pytest
 import numpy as np
 
@@ -15,10 +16,38 @@ from .utils import assert_allclose
 
 
 RET_SUCCESS = 42
+RET_SKIP = 43
 
 FILE_PATH = pathlib.Path(__file__)
 MODULE_ROOT_DIR = FILE_PATH.parents[1]
 MODULE = ".".join((FILE_PATH.parent.name, FILE_PATH.stem))
+
+
+def _initialize_genesis(backend: gs.constants.backend | str):
+    if isinstance(backend, str):
+        backend = getattr(gs.constants.backend, backend)
+
+    # Skip if requested backend is not available
+    try:
+        gs.utils.get_device(backend)
+    except gs.GenesisException:
+        print(f"Backend '{backend}' not available on this machine", file=sys.stderr)
+        sys.exit(RET_SKIP)
+
+    # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_USE_NDARRAY") == "1":
+        print(
+            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
+            "31 kernel parameters, which is not enough for most solvers.",
+            file=sys.stderr,
+        )
+        sys.exit(RET_SKIP)
+
+    gs.init(backend=backend, precision="32")
+
+    if backend != gs.cpu and gs.backend == gs.cpu:
+        print("No GPU available on this machine", file=sys.stderr)
+        sys.exit(RET_SKIP)
 
 
 @pytest.mark.parametrize("batch_shape", [(2, 3, 5), ()])
@@ -70,7 +99,7 @@ def gs_static_child(args: list[str]):
     parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.backend), precision="32")
+    _initialize_genesis(backend=args.backend)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -140,12 +169,6 @@ def test_static(
     use_ndarray: bool,
     tmp_path: pathlib.Path,
 ) -> None:
-    if sys.platform == "darwin" and use_ndarray and test_backend == "gpu":
-        pytest.skip(
-            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up "
-            "to 31 kernel parameters, which is not enough for most solvers."
-        )
-
     for it in range(3):
         # we iterate to make sure stuff is really being read from cache
         cmd_line = [
@@ -172,7 +195,9 @@ def test_static(
         env.update(env_changes)
 
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
-        if proc.returncode != RET_SUCCESS:
+        if proc.returncode == RET_SKIP:
+            pytest.skip(proc.stderr)
+        elif proc.returncode != RET_SUCCESS:
             print("============================")
             print("it", it)
             for k, v in env_changes.items():
@@ -192,7 +217,7 @@ def gs_num_envs_child(args: list[str]):
     parser.add_argument("--expected-fe-ll-cache-hit", action="store_true")
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.backend), precision="32")
+    _initialize_genesis(backend=args.backend)
 
     scene = gs.Scene(
         show_viewer=False,
@@ -224,17 +249,11 @@ def gs_num_envs_child(args: list[str]):
 # Disable genesis initialization at worker level
 @pytest.mark.parametrize("backend", [None])
 @pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
-# note that using `backend` instead of `test_backend`, breaks genesis pytest...
+# Note that using `backend` instead of `test_backend`, breaks genesis pytest...
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
 @pytest.mark.parametrize("use_ndarray", [False, True])
 def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
-    if sys.platform == "darwin" and use_ndarray and test_backend == "gpu":
-        pytest.skip(
-            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up "
-            "to 31 kernel parameters, which is not enough for most solvers."
-        )
-
-    # change n_envs each time, and check effect on reading from cache
+    # Change n_envs each time, and check effect on reading from cache
     for it, n_envs in enumerate([3, 5, 7]):
         cmd_line = [
             sys.executable,
@@ -267,7 +286,9 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
         if expected_src_ll_cache_hit:
             cmd_line += ["--expected-src-ll-cache-hit"]
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
-        if proc.returncode != RET_SUCCESS:
+        if proc.returncode == RET_SKIP:
+            pytest.skip(proc.stderr)
+        elif proc.returncode != RET_SUCCESS:
             print("============================")
             print("it", it, "n_envs", n_envs)
             print("cmd_line", cmd_line)
@@ -287,7 +308,7 @@ def change_scene(args: list[str]):
     parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
     args = parser.parse_args(args)
 
-    gs.init(backend=getattr(gs, args.backend), precision="32")
+    _initialize_genesis(backend=args.backend)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -347,12 +368,6 @@ def change_scene(args: list[str]):
 def test_ndarray_no_compile(
     enable_pure: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
-    if sys.platform == "darwin" and test_backend == "gpu":
-        pytest.skip(
-            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up "
-            "to 31 kernel parameters, which is not enough for most solvers."
-        )
-
     # Iterate to make sure stuff is really being read from cache
     for i, (n_objs, n_envs) in enumerate(list_n_objs_n_envs):
         cmd_line = [
@@ -371,12 +386,14 @@ def test_ndarray_no_compile(
         ]
         env = dict(os.environ)
         env["GS_BETA_PURE"] = "1" if enable_pure else "0"
-        env["GS_USE_NDARRAY"] = "1"  # test ndarray
+        env["GS_USE_NDARRAY"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
 
         # Display error message only in case of failure
-        if proc.returncode != RET_SUCCESS:
+        if proc.returncode == RET_SKIP:
+            pytest.skip(proc.stderr)
+        elif proc.returncode != RET_SUCCESS:
             print(proc.stdout)
             print("-" * 100)
             print(proc.stderr)
