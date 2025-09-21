@@ -301,5 +301,5 @@ class ContactForceSensor(
         # clip for max force
         shared_cache_per_sensor.clamp_(max=shared_metadata.max_force)
         # set to 0 for undetectable force
-        shared_cache_per_sensor[shared_cache_per_sensor < shared_metadata.min_force] = 0.0
+        shared_cache_per_sensor[torch.abs(shared_cache_per_sensor) < shared_metadata.min_force] = 0.0
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)

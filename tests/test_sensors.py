@@ -21,6 +21,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     GRAVITY = -10.0
     DT = 1e-2
     BIAS = (0.1, 0.2, 0.3)
+    DELAY_STEPS = 2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -51,7 +52,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     imu_delayed = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
-            delay=DT * 2,
+            delay=DT * DELAY_STEPS,
         )
     )
     imu_noisy = scene.add_sensor(
@@ -100,8 +101,19 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     imu_noisy.set_bias([0.01, 0.01, 0.01, 0.02, 0.02, 0.02])
     imu_noisy.set_jitter(0.001)
 
-    # box collides with ground
-    for _ in range(30):
+    for _ in range(10 - DELAY_STEPS):
+        scene.step()
+
+    true_imu_delayed_reading = imu_delayed.read_ground_truth()
+
+    for _ in range(DELAY_STEPS):
+        scene.step()
+
+    assert_array_equal(imu_delayed.read()["lin_acc"], true_imu_delayed_reading["lin_acc"])
+    assert_array_equal(imu_delayed.read()["ang_vel"], true_imu_delayed_reading["ang_vel"])
+
+    # let box collide with ground
+    for _ in range(20):
         scene.step()
 
     assert_array_equal(imu_biased.read_ground_truth()["lin_acc"], imu_delayed.read_ground_truth()["lin_acc"])

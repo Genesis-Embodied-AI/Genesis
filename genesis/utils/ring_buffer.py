@@ -18,8 +18,8 @@ class TensorRingBuffer:
     buffer : torch.Tensor | None, optional
         The buffer tensor where all the data is stored. If not provided, a new tensor is allocated.
     idx : torch.Tensor, optional
-        The index reference to the current position in the ring buffer as a mutable 0D torch.Tensor of integer dtype.
-        If not provided, it is initialized to 0.
+        The index reference to the most recently updated position in the ring buffer as a mutable 0D torch.Tensor of
+        integer dtype. If not provided, it is initialized to -1.
     """
 
     def __init__(
@@ -37,7 +37,7 @@ class TensorRingBuffer:
             self.buffer = buffer
         self.N = N
         if idx is None:
-            self._idx = torch.tensor(0, dtype=torch.int64, device=gs.device)
+            self._idx = torch.tensor(-1, dtype=torch.int64, device=gs.device)
         else:  # torch.Tensor
             assert idx.ndim == 0 and idx.dtype in (torch.int32, torch.int64)
             self._idx = idx.to(device=gs.device)
@@ -52,8 +52,8 @@ class TensorRingBuffer:
         tensor : torch.Tensor
             The tensor to copy into the ring buffer.
         """
-        self.buffer[self._idx].copy_(tensor)
         self._idx[()] = (self._idx + 1) % self.N
+        self.buffer[self._idx].copy_(tensor)
 
     def at(
         self, idx: int | torch.Tensor, *others_idx: int | slice | torch.Tensor, copy: bool | None = None
