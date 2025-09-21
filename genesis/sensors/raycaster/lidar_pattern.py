@@ -1,13 +1,13 @@
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-import numpy as np
 import torch
 
 import genesis as gs
 from genesis.utils.geom import spherical_to_cartesian
 
-from .base_pattern import DynamicPatternGenerator, RaycastPattern, RaycastPatternGenerator, register_pattern
+from .base_pattern import RaycastPattern, RaycastPatternGenerator, register_pattern
 
 
 @dataclass
@@ -41,7 +41,9 @@ class GridPattern(RaycastPattern):
             raise ValueError(f"Resolution must be greater than 0. Received: '{self.resolution}'.")
 
     def get_return_shape(self) -> tuple[int, ...]:
-        return (math.ceil(self.size[0] / self.resolution), math.ceil(self.size[1] / self.resolution))
+        num_x = math.ceil(self.size[0] / self.resolution) + 1
+        num_y = math.ceil(self.size[1] / self.resolution) + 1
+        return (num_x, num_y)
 
 
 @register_pattern(GridPattern, "grid")
@@ -50,22 +52,27 @@ class GridPatternGenerator(RaycastPatternGenerator):
 
     def __init__(self, options: GridPattern):
         super().__init__(options)
-        self.x_coords = np.arange(-options.size[0] / 2, options.size[0] / 2 + 1e-9, options.resolution)
-        self.y_coords = np.arange(-options.size[1] / 2, options.size[1] / 2 + 1e-9, options.resolution)
+        self.x_coords = torch.arange(
+            -options.size[0] / 2, options.size[0] / 2 + 1e-9, options.resolution, dtype=gs.tc_float, device=gs.device
+        )
+        self.y_coords = torch.arange(
+            -options.size[1] / 2, options.size[1] / 2 + 1e-9, options.resolution, dtype=gs.tc_float, device=gs.device
+        )
         self.direction = torch.tensor(options.direction, dtype=gs.tc_float, device=gs.device)
 
     def get_ray_directions(self) -> torch.Tensor:
-        return self.direction.expand(*self._return_shape)
+        return self.direction.expand((*self._return_shape, 3))
 
     def get_ray_starts(self) -> torch.Tensor:
         if self.config.ordering == "xy":
-            grid_x, grid_y = np.meshgrid(self.x_coords, self.y_coords, indexing="xy")
+            grid_x, grid_y = torch.meshgrid(self.x_coords, self.y_coords, indexing="xy")
         else:
-            grid_x, grid_y = np.meshgrid(self.x_coords, self.y_coords, indexing="ij")
+            grid_x, grid_y = torch.meshgrid(self.x_coords, self.y_coords, indexing="ij")
 
-        starts = torch.empty(self._return_shape, dtype=gs.tc_float, device=gs.device)
-        starts[:, 0] = grid_x.flatten()
-        starts[:, 1] = grid_y.flatten()
+        starts = torch.empty((*self._return_shape, 3), dtype=gs.tc_float, device=gs.device)
+        starts[..., 0] = grid_x
+        starts[..., 1] = grid_y
+        starts[..., 2] = 0.0
 
         return starts
 
@@ -77,14 +84,14 @@ class LidarAnglesPattern(RaycastPattern):
 
     Parameters
     ----------
-    vertical_angles : np.ndarray.
+    vertical_angles : Sequence[float]
         Array of elevation angles in degrees.
-    horizontal_angles : np.ndarray
+    horizontal_angles : Sequence[float]
         Array of azimuth angles in degrees.
     """
 
-    vertical_angles: np.typing.NDArray
-    horizontal_angles: np.typing.NDArray
+    vertical_angles: Sequence[float]
+    horizontal_angles: Sequence[float]
 
     def get_return_shape(self) -> tuple[int, ...]:
         return (len(self.vertical_angles), len(self.horizontal_angles))
@@ -213,22 +220,29 @@ class SphericalPatternGenerator(RaycastPatternGenerator):
         torch.Tensor
             Ray directions with shape (n_scan_lines, n_points_per_line, 3).
         """
-        vertical_angles = np.linspace(
-            -self.config.fov_vertical / 2, self.config.fov_vertical / 2, self.config.n_scan_lines
+        vertical_angles = torch.linspace(
+            -self.config.fov_vertical / 2,
+            self.config.fov_vertical / 2,
+            self.config.n_scan_lines,
+            dtype=gs.tc_float,
+            device=gs.device,
         )
-        horizontal_angles = np.linspace(
-            -self.config.fov_horizontal / 2, self.config.fov_horizontal / 2, self.config.n_points_per_line
+        horizontal_angles = torch.linspace(
+            -self.config.fov_horizontal / 2,
+            self.config.fov_horizontal / 2,
+            self.config.n_points_per_line,
+            dtype=gs.tc_float,
+            device=gs.device,
         )
 
-        v_rad = np.deg2rad(vertical_angles)
-        h_rad = np.deg2rad(horizontal_angles)
-        h_angles, v_angles = np.meshgrid(h_rad, v_rad)
+        v_rad = torch.deg2rad(vertical_angles)
+        h_rad = torch.deg2rad(horizontal_angles)
+        h_angles, v_angles = torch.meshgrid(h_rad, v_rad, indexing="ij")
 
         x, y, z = spherical_to_cartesian(h_angles, v_angles)
-        ray_vectors = np.stack([x, y, z], axis=-1).astype(np.float32)
-        print("ray_vectors", ray_vectors.shape)
+        ray_vectors = torch.stack([x, y, z], dim=-1)
 
-        return torch.from_numpy(ray_vectors).to(device=gs.device, dtype=gs.tc_float)
+        return ray_vectors
 
 
 @dataclass
@@ -241,22 +255,22 @@ class SpinningLidarPattern(RaycastPattern):
     f_rot : float
         Rotation frequency in Hz. Defaults to 10 Hz.
     sample_rate : float
-        Sample rate in samples per second. Defaults to 1.0e6 samples per second.
+        Sample rate in samples per rotation. Defaults to 1.0e5.
     n_channels : int, optional
-        Number of vertical channels. Defaults to 64.
+        Number of vertical channels. Defaults to 32.
         Used along with `vertical_fov` to generate vertical angles if not provided.
     vertical_fov : tuple[float, float], optional
         Vertical field of view limits in degrees (min, max). Defaults to (-20.0, 20.0).
         Used along with `n_channels` to generate vertical angles if not provided.
-    vertical_angles: np.ndarray, optional
+    vertical_angles: Sequence[float], optional
         Vertical angles in degrees. Replaces `n_channels` and `vertical_fov` if provided.
     """
 
     f_rot: float = 10.0
-    sample_rate: float = 1.0e6
-    n_channels: int = 64
+    sample_rate: float = 1.0e5
+    n_channels: int = 32
     vertical_fov: tuple[float, float] = (-20.0, 20.0)
-    vertical_angles: np.ndarray | None = None
+    vertical_angles: Sequence[float] | None = None
 
     def get_return_shape(self) -> tuple[int, ...]:
         n_channels = len(self.vertical_angles) if self.vertical_angles is not None else self.n_channels
@@ -281,26 +295,30 @@ class SpinningLidarPatternGenerator(RaycastPatternGenerator):
         """
 
         if self.config.vertical_angles is not None:
-            phi = np.deg2rad(self.config.vertical_angles)
+            phi = torch.deg2rad(torch.tensor(self.config.vertical_angles, device=gs.device, dtype=gs.tc_float))
             n_channels = len(self.config.vertical_angles)
         else:
             n_channels = self.config.n_channels
-            phi_min, phi_max = np.deg2rad(self.config.vertical_fov)
-            phi = np.linspace(phi_min, phi_max, n_channels, dtype=np.float32)
+            phi_min, phi_max = torch.deg2rad(
+                torch.tensor(self.config.vertical_fov, dtype=gs.tc_float, device=gs.device)
+            )
+            phi = torch.linspace(phi_min, phi_max, n_channels, dtype=gs.tc_float, device=gs.device)
 
-        t = np.arange(0.0, 1.0 / self.config.f_rot, n_channels / self.config.sample_rate, dtype=np.float32)[:, None]
-        theta = (2.0 * np.pi * self.config.f_rot * t) % (2.0 * np.pi)
+        t = torch.arange(
+            0.0, 1.0 / self.config.f_rot, n_channels / self.config.sample_rate, dtype=gs.tc_float, device=gs.device
+        )[:, None]
+        theta = (2.0 * torch.pi * self.config.f_rot * t) % (2.0 * torch.pi)
 
-        theta_grid = theta + np.zeros((1, n_channels), dtype=np.float32)
-        phi_grid = np.zeros_like(theta, dtype=np.float32) + phi
+        theta_grid = theta + torch.zeros((1, n_channels), dtype=gs.tc_float, device=gs.device)
+        phi_grid = torch.zeros_like(theta, dtype=gs.tc_float) + phi
 
         theta_flat = theta_grid.reshape(-1)
         phi_flat = phi_grid.reshape(-1)
 
         x, y, z = spherical_to_cartesian(theta_flat, phi_flat)
-        dirs = np.stack([x, y, z], axis=1).astype(np.float32)
+        dirs = torch.stack([x, y, z], dim=1)
 
-        norms = np.linalg.norm(dirs, axis=1, keepdims=True)
-        dirs = dirs / np.maximum(norms, 1e-8)
+        norms = torch.linalg.norm(dirs, dim=1, keepdim=True)
+        dirs = dirs / torch.maximum(norms, torch.tensor(1e-8, device=gs.device))
 
-        return torch.from_numpy(dirs.reshape(1, -1, 3)).to(device=gs.device, dtype=gs.tc_float)
+        return dirs.reshape(1, -1, 3)

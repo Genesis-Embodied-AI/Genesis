@@ -98,8 +98,6 @@ class BasePlotter(Recorder):
         if self._options.save_to_filename:
 
             def _get_video_frame_buffer(plotter):
-                from matplotlib.backends.backend_agg import FigureCanvasAgg
-
                 # Make sure that all the data in the pipe has been processed before rendering anything
                 if not plotter._frames_buffer:
                     if plotter._data_queue is not None and not plotter._data_queue.empty():
@@ -400,8 +398,6 @@ class MPLPlotter(BasePlotter):
 
         self._lock = threading.Lock()
 
-        gs.logger.info("[MPLPlotter] created Matplotlib window")
-
         # create figure and subplots
         n_subplots = len(self.subplot_structure)
         dpi = mpl.rcParams.get("figure.dpi", 100)
@@ -444,6 +440,8 @@ class MPLPlotter(BasePlotter):
 
         if self.show_window:
             self.fig.show()
+            gs.logger.info("[MPLPlotter] created Matplotlib window")
+
         self.fig.canvas.draw()
 
         for ax in self.axes:

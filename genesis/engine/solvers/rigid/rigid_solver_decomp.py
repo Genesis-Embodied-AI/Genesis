@@ -5145,7 +5145,6 @@ def kernel_update_all_verts(
             )
 
 
-@gs.maybe_pure
 @ti.kernel
 def kernel_update_geom_aabbs(
     geoms_state: array_class.GeomsState,

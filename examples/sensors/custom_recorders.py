@@ -9,18 +9,9 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.recorders.base_recorder import Recorder, RecorderOptions
-from genesis.recorders.recorder_manager import register_recording
+from genesis.recorders import Recorder, RecorderOptions, register_recording
+from genesis.recorders.plotters import IS_MATPLOTLIB_AVAILABLE
 from genesis.utils import tensor_to_array
-
-IS_MATPLOTLIB_AVAILABLE = False
-try:
-    import matplotlib.pyplot as plt
-
-    IS_MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    pass
-
 
 COLORS = (
     (1.0, 0.2, 0.2, 1.0),
@@ -30,27 +21,27 @@ COLORS = (
 )
 
 
-class MPLImageViewerOptions(RecorderOptions):
+class MPLDepthImageViewerOptions(RecorderOptions):
     """Live visualization of image data using MatPlotLib."""
 
     pass
 
 
-@register_recording(MPLImageViewerOptions)
-class MPLImageViewer(Recorder):
+@register_recording(MPLDepthImageViewerOptions)
+class MPLDepthImageViewer(Recorder):
     """
-    Real-time image viewer using MatPlotLib for live image data visualization.
-
-    Uses efficient blitting for smooth real-time updates.
+    Live depth image viewer using MatPlotLib.
     """
 
     def build(self):
         if not IS_MATPLOTLIB_AVAILABLE:
             gs.raise_exception(
-                "[MPLImageViewer] matplotlib is not installed. Please install it with `pip install matplotlib`."
+                "[MPLDepthImageViewer] matplotlib is not installed. Please install it with `pip install matplotlib`."
             )
 
         super().build()
+
+        import matplotlib.pyplot as plt
 
         self.fig: plt.Figure | None = None
         self.ax: plt.Axes | None = None
@@ -59,10 +50,10 @@ class MPLImageViewer(Recorder):
         self.background = None
 
         plt.ion()
-        self.fig, self.ax = plt.subplots(num="Image Viewer")
-        self.ax.set_title("Image Data")
+        self.fig, self.ax = plt.subplots(num="Depth Image Viewer")
+        self.image_plot = self.ax.imshow(np.zeros((1, 1)), cmap="plasma", origin="upper", aspect="auto")
 
-        gs.logger.info("[MPLImageViewer] created Matplotlib image window")
+        gs.logger.info("[MPLDepthImageViewer] created Matplotlib window")
 
     def process(self, data, cur_time):
         """Process new image data and update display."""
@@ -80,30 +71,18 @@ class MPLImageViewer(Recorder):
             if img_data.shape[-1] == 1:
                 img_data = img_data.squeeze(-1)
 
-        if self.image_plot is None:
-            vmin, vmax = np.min(img_data), np.max(img_data)
-            self.image_plot = self.ax.imshow(
-                img_data, vmin=vmin, vmax=vmax, cmap="plasma", origin="upper", aspect="auto"
-            )
-            self.colorbar = self.fig.colorbar(self.image_plot, ax=self.ax)
-            self.ax.set_xlabel("Width")
-            self.ax.set_ylabel("Height")
+        vmin, vmax = np.min(img_data), np.max(img_data)
 
+        current_vmin, current_vmax = self.image_plot.get_clim()
+        if vmin != current_vmin or vmax != current_vmax:
+            self.image_plot.set_clim(vmin, vmax)
             self.fig.canvas.draw()
             self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-        else:
-            vmin, vmax = np.min(img_data), np.max(img_data)
 
-            current_vmin, current_vmax = self.image_plot.get_clim()
-            if vmin != current_vmin or vmax != current_vmax:
-                self.image_plot.set_clim(vmin, vmax)
-                self.fig.canvas.draw()
-                self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-
-            self.fig.canvas.restore_region(self.background)
-            self.image_plot.set_data(img_data)
-            self.ax.draw_artist(self.image_plot)
-            self.fig.canvas.blit(self.ax.bbox)
+        self.fig.canvas.restore_region(self.background)
+        self.image_plot.set_data(img_data)
+        self.ax.draw_artist(self.image_plot)
+        self.fig.canvas.blit(self.ax.bbox)
 
         self.fig.canvas.flush_events()
 
@@ -111,15 +90,16 @@ class MPLImageViewer(Recorder):
         """Clean up Matplotlib resources."""
         if self.fig:
             try:
+                import matplotlib.pyplot as plt
+
                 plt.close(self.fig)
-                gs.logger.debug("[MPLImageViewer] closed Matplotlib window")
+                gs.logger.debug("[MPLDepthImageViewer] closed Matplotlib window")
             except Exception as e:
-                gs.logger.warning(f"[MPLImageViewer] Error closing window: {e}")
+                gs.logger.warning(f"[MPLDepthImageViewer] Error closing window: {e}")
             finally:
                 self.fig = None
                 self.ax = None
                 self.image_plot = None
-                self.colorbar = None
                 self.background = None
 
     @property
@@ -198,4 +178,4 @@ class PointCloudDrawer(Recorder):
 
     @property
     def run_in_thread(self) -> bool:
-        return True
+        return gs.platform != "macOS"

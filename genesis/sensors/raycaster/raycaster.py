@@ -148,9 +148,8 @@ def kernel_update_aabbs(
     aabb_state: array_class.AABBState,
 ):
     _B = free_verts_state.pos.shape[1]
-    # n_faces = faces_info.geom_idx.shape[0]
     n_faces = map_lidar_faces.shape[0]
-    # step 1: update free verts
+
     for i_b, i_f_ in ti.ndrange(_B, n_faces):
         i_f = map_lidar_faces[i_f_]
         aabb_state.aabbs[i_b, i_f].min.fill(np.inf)
@@ -163,8 +162,7 @@ def kernel_update_aabbs(
                 pos_v = free_verts_state.pos[i_v, i_b]
                 aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                 aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
-
-        elif i_b == 0:  #
+        else:
             for i in ti.static(range(3)):
                 i_v = verts_info.verts_state_idx[faces_info.verts_idx[i_f][i]]
                 pos_v = fixed_verts_state.pos[i_v]
@@ -389,6 +387,11 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
                 geom_is_fixed = np.logical_not(self._shared_metadata.solver.geoms_info.is_free.to_numpy())
                 faces_geom = self._shared_metadata.solver.faces_info.geom_idx.to_numpy()
                 n_lidar_faces = np.sum(geom_is_fixed[faces_geom])
+                if n_lidar_faces == 0:
+                    gs.raise_exception(
+                        "No fixed geoms found in the scene. To use only_cast_fixed, "
+                        "at least some entities should have is_free=False."
+                    )
                 np_map_lidar_faces = np.where(geom_is_fixed[faces_geom])[0]
 
             self._shared_metadata.map_lidar_faces = ti.field(ti.i32, (n_lidar_faces))
@@ -414,17 +417,15 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
                 faces_info=self._shared_metadata.solver.faces_info,
                 aabb_state=self._shared_metadata.aabb,
             )
-
             self._shared_metadata.bvh = LBVH(self._shared_metadata.aabb)
             self._shared_metadata.bvh.build()
 
         self.pattern_generator = create_pattern_generator(self._options.pattern)
         self._shared_metadata.pattern_generators.append(self.pattern_generator)
-
         pos_offset = self._shared_metadata.offsets_pos[-1, :]
         quat_offset = self._shared_metadata.offsets_quat[..., -1, :]
         if self._shared_metadata.solver.n_envs > 0:
-            quat_offset = quat_offset[0]
+            quat_offset = quat_offset[0]  # all envs have same offset on build
 
         ray_starts = self.pattern_generator.get_ray_starts().reshape(-1, 3)
         ray_starts = transform_by_trans_quat(ray_starts, pos_offset, quat_offset)
@@ -466,7 +467,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
-
         if not shared_metadata.only_cast_fixed:
             rigid_solver_decomp.kernel_update_all_verts(
                 geoms_state=shared_metadata.solver.geoms_state,
@@ -507,9 +507,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             points_to_sensor_idx=shared_metadata.points_to_sensor_idx,
             is_world_frame=shared_metadata.return_world_frame,
             output_hits=shared_ground_truth_cache,
-            # .reshape(shared_ground_truth_cache.shape[0], 4, -1),
-            # .permute(0, 2, 1)
-            # .contiguous(),
         )
 
     @classmethod
@@ -630,8 +627,15 @@ class DepthCameraOptions(RaycasterOptions):
 
 @register_sensor(DepthCameraOptions, RaycasterSharedMetadata)
 class DepthCameraSensor(RaycasterSensor):
+    def read_image(self) -> torch.Tensor:
+        """
+        Read the depth image from the sensor.
 
-    def read(self):
-        data = super().read()
-        image = data["hit_ranges"].reshape(self._options.pattern.height, self._options.pattern.width)
-        return image
+        This method uses the hit distances from the underlying RaycasterSensor.read() method and reshapes into image.
+
+        Returns
+        -------
+        torch.Tensor
+            The depth image with shape (height, width).
+        """
+        return self.read()["hit_ranges"].reshape(self._options.pattern.height, self._options.pattern.width)

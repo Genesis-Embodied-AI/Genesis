@@ -322,12 +322,11 @@ def concat_with_tensor(
         dim = tensor.ndim + dim
     if flatten:
         value = value.flatten()
-    else:
-        assert (
-            0 <= dim < tensor.ndim
-            and tensor.ndim == value.ndim
-            and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
-        )
+    assert (
+        0 <= dim < tensor.ndim
+        and tensor.ndim == value.ndim
+        and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
+    )
     if tensor.numel() == 0:
         return value
     return torch.cat([tensor, value], dim=dim)
@@ -591,14 +590,14 @@ def ti_to_torch(
                 is_out_of_bounds = not (0 <= mask < _ti_data_shape[i])
             elif isinstance(mask, torch.Tensor):
                 if not mask.ndim <= 1:
-                    gs.raise_exception(f"Expecting 1D tensor for masks.")
+                    gs.raise_exception("Expecting 1D tensor for masks.")
                 # Resort on post-mortem analysis for bounds check because runtime would be to costly
                 is_out_of_bounds = None
             else:  # np.ndarray, list, tuple, range
                 try:
                     mask_start, mask_end = min(mask), max(mask)
                 except ValueError:
-                    gs.raise_exception(f"Expecting 1D tensor for masks.")
+                    gs.raise_exception("Expecting 1D tensor for masks.")
                 is_out_of_bounds = not (0 <= mask_start <= mask_end < _ti_data_shape[i])
             if is_out_of_bounds:
                 gs.raise_exception("Masks are out-of-range.")

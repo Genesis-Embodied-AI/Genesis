@@ -1583,27 +1583,27 @@ def transform_inertia_by_T(inertia_tensor, T, mass):
     return R @ inertia_tensor @ R.T + translation_inertia
 
 
-def spherical_to_cartesian(theta: np.ndarray, phi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Convert spherical coordinates to Cartesian coordinates.
 
     Parameters
     ----------
-    theta : np.ndarray
+    theta : torch.Tensor
         Horizontal angles in radians.
-    phi : np.ndarray
+    phi : torch.Tensor
         Vertical angles in radians.
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray, np.ndarray]
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
         Cartesian coordinates (x, y, z) where x=forward, y=left, z=up.
     """
-    cos_phi = np.cos(phi)
+    cos_phi = torch.cos(phi)
 
-    x = np.cos(theta) * cos_phi  # forward
-    y = np.sin(theta) * cos_phi  # left
-    z = np.sin(phi)  # up
+    x = torch.cos(theta) * cos_phi  # forward
+    y = torch.sin(theta) * cos_phi  # left
+    z = torch.sin(phi)  # up
 
     return x, y, z
 

@@ -1,53 +1,21 @@
 import argparse
-import threading
 
 import numpy as np
-from custom_recorders import MPLImageViewerOptions, PointCloudDrawerOptions
+from custom_recorders import MPLDepthImageViewerOptions, PointCloudDrawerOptions
 from pynput import keyboard
 
 import genesis as gs
 from genesis.sensors.raycaster.camera_pattern import DepthCameraPattern
-from genesis.sensors.raycaster.lidar_pattern import (
-    SphericalPattern,
-    SpinningLidarPattern,
-)
+from genesis.sensors.raycaster.lidar_pattern import GridPattern, SphericalPattern, SpinningLidarPattern
 from genesis.utils.geom import euler_to_quat
+from genesis.utils.keyboard import KeyboardDevice
 
 KEY_DPOS = 0.05
 KEY_DANGLE = 0.1
 
 
-class KeyboardDevice:
-    def __init__(self):
-        self.pressed_keys = set()
-        self.lock = threading.Lock()
-        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-
-    def start(self):
-        self.listener.start()
-
-    def stop(self):
-        self.listener.stop()
-        self.listener.join()
-
-    def on_press(self, key: keyboard.Key):
-        with self.lock:
-            self.pressed_keys.add(key)
-
-    def on_release(self, key: keyboard.Key):
-        with self.lock:
-            self.pressed_keys.discard(key)
-
-
-def build_scene(show_viewer: bool = True) -> gs.Scene:
+def build_scene(show_viewer: bool, is_free: bool) -> gs.Scene:
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.02, substeps=2, gravity=(0.0, 0.0, -9.81)),
-        rigid_options=gs.options.RigidOptions(
-            dt=0.02,
-            gravity=(0.0, 0.0, -9.81),
-            enable_collision=True,
-            constraint_solver=gs.constraint_solver.Newton,
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(6.0, 6.0, 4.0),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -58,7 +26,7 @@ def build_scene(show_viewer: bool = True) -> gs.Scene:
         show_FPS=False,
     )
 
-    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Plane(is_free=is_free))
 
     # create ring of obstacles to visualize raycaster sensor hits
     inner_radius = 3.0
@@ -66,14 +34,14 @@ def build_scene(show_viewer: bool = True) -> gs.Scene:
         angle = 2 * np.pi * i / 8
         x = inner_radius * np.cos(angle)
         y = inner_radius * np.sin(angle)
-        scene.add_entity(gs.morphs.Cylinder(height=1.5, radius=0.3, pos=(x, y, 0.75), fixed=True))
+        scene.add_entity(gs.morphs.Cylinder(height=1.5, radius=0.3, pos=(x, y, 0.75), is_free=is_free))
 
     outer_radius = 5.0
     for i in range(6):
         angle = 2 * np.pi * i / 6 + np.pi / 6
         x = outer_radius * np.cos(angle)
         y = outer_radius * np.sin(angle)
-        scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0), fixed=True))
+        scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0), is_free=is_free))
 
     return scene
 
@@ -105,26 +73,30 @@ def create_robot_with_lidar(scene, args):
 
     if args.use_box:
         robot = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), **robot_kwargs))
+        pos_offset = (0.0, 0.0, 0.2)
     else:
         robot = scene.add_entity(gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf", **robot_kwargs))
+        pos_offset = (0.3, 0.0, 0.1)
 
     sensor_kwargs = dict(
         entity_idx=robot.idx,
-        pos_offset=(0.3, 0.0, 0.0),
+        pos_offset=pos_offset,
         euler_offset=(0.0, 0.0, 0.0),
         return_world_frame=True,
+        only_cast_fixed=args.fixed,
     )
 
     if args.pattern == "depth":
         sensor = scene.add_sensor(gs.sensors.DepthCamera(pattern=DepthCameraPattern(), **sensor_kwargs))
         return robot, sensor
-
-    if args.pattern == "livox":
-        pattern_cfg = "avia"
-    elif args.pattern == "spinning":
-        pattern_cfg = SpinningLidarPattern()
-    else:
+    elif args.pattern == "spherical":
         pattern_cfg = SphericalPattern()
+    elif args.pattern == "grid":
+        pattern_cfg = GridPattern()
+    else:
+        if args.pattern != "spinning":
+            gs.logger.warning(f"Unrecognized raycaster pattern: {args.pattern}. Using 'spinning' instead.")
+        pattern_cfg = SpinningLidarPattern()
 
     sensor = scene.add_sensor(gs.sensors.Lidar(pattern=pattern_cfg, **sensor_kwargs))
     return robot, sensor
@@ -133,12 +105,19 @@ def create_robot_with_lidar(scene, args):
 def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: KeyboardDevice, is_depth: bool = False):
     if is_depth:
         scene.start_recording(
-            data_func=(lambda: sensor.read()[0]) if n_envs > 0 else sensor.read,
-            rec_options=MPLImageViewerOptions(hz=30),
+            data_func=(lambda: sensor.read_image()[0]) if n_envs > 0 else sensor.read_image,
+            rec_options=MPLDepthImageViewerOptions(),
         )
     else:
+
+        def get_points_func():
+            points = sensor.read()["hit_points"]
+            if n_envs > 0:
+                points = points[0]  # Only return the first environment's points
+            return points.reshape(-1, 3)
+
         scene.start_recording(
-            data_func=(lambda: sensor.read()["hit_points"][0]) if n_envs > 0 else (lambda: sensor.read()["hit_points"]),
+            data_func=get_points_func,
             rec_options=PointCloudDrawerOptions(
                 hz=30,
                 sphere_radius=0.02,
@@ -149,8 +128,15 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
 
     scene.build(n_envs=n_envs)
 
-    print("\nKeyboard Controls:")
-    print("↑/↓/←/→: Move XY, n/m: Up/Down, u/o: Roll CCW/CW, i/k: Pitch Up/Down, j/l: Yaw CCW/CW, r: Reset, esc: Quit")
+    print("Keyboard Controls:")
+    # Avoid using same keys as interactive viewer keyboard controls
+    print("[↑/↓/←/→]: Move XY")
+    print("[j/k]: Down/Up")
+    print("[n/m]: Roll CCW/CW")
+    print("[,/.]: Pitch Up/Down")
+    print("[o/p]: Yaw CCW/CW")
+    print("[\\]: Reset")
+    print("[esc]: Quit")
 
     init_pos = np.array([0.0, 0.0, 0.35], dtype=np.float32)
     init_euler = np.array([0.0, 0.0, 0.0], dtype=np.float32)
@@ -169,7 +155,7 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
             pressed = kb.pressed_keys.copy()
             if keyboard.Key.esc in pressed:
                 break
-            if keyboard.KeyCode.from_char("r") in pressed:
+            if keyboard.KeyCode.from_char("\\") in pressed:
                 target_pos[:] = init_pos
                 target_euler[:] = init_euler
 
@@ -181,22 +167,22 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
                 target_pos[1] -= KEY_DPOS
             if keyboard.Key.left in pressed:
                 target_pos[1] += KEY_DPOS
-            if keyboard.KeyCode.from_char("n") in pressed:
-                target_pos[2] += KEY_DPOS
-            if keyboard.KeyCode.from_char("m") in pressed:
-                target_pos[2] -= KEY_DPOS
-
-            if keyboard.KeyCode.from_char("u") in pressed:
-                target_euler[0] += KEY_DANGLE  # roll CCW around +X
-            if keyboard.KeyCode.from_char("o") in pressed:
-                target_euler[0] -= KEY_DANGLE  # roll CW around +X
-            if keyboard.KeyCode.from_char("i") in pressed:
-                target_euler[1] += KEY_DANGLE  # pitch up around +Y
-            if keyboard.KeyCode.from_char("k") in pressed:
-                target_euler[1] -= KEY_DANGLE  # pitch down around +Y
             if keyboard.KeyCode.from_char("j") in pressed:
+                target_pos[2] -= KEY_DPOS
+            if keyboard.KeyCode.from_char("k") in pressed:
+                target_pos[2] += KEY_DPOS
+
+            if keyboard.KeyCode.from_char("n") in pressed:
+                target_euler[0] += KEY_DANGLE  # roll CCW around +X
+            if keyboard.KeyCode.from_char("m") in pressed:
+                target_euler[0] -= KEY_DANGLE  # roll CW around +X
+            if keyboard.KeyCode.from_char(",") in pressed:
+                target_euler[1] += KEY_DANGLE  # pitch up around +Y
+            if keyboard.KeyCode.from_char(".") in pressed:
+                target_euler[1] -= KEY_DANGLE  # pitch down around +Y
+            if keyboard.KeyCode.from_char("o") in pressed:
                 target_euler[2] += KEY_DANGLE  # yaw CCW around +Z
-            if keyboard.KeyCode.from_char("l") in pressed:
+            if keyboard.KeyCode.from_char("p") in pressed:
                 target_euler[2] -= KEY_DANGLE  # yaw CW around +Z
 
             apply_pose_to_all_envs(target_pos, euler_to_quat(target_euler))
@@ -208,8 +194,6 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
     finally:
         gs.logger.info("Simulation finished.")
 
-        scene.stop_recording()
-
 
 def main():
     parser = argparse.ArgumentParser(description="Genesis LiDAR/Depth Camera Visualization with Keyboard Teleop")
@@ -217,10 +201,24 @@ def main():
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--use-box", action="store_true", help="Use Box as robot instead of Go2")
     parser.add_argument(
+        "-f",
+        "--fixed",
+        action="store_true",
+        help="Load obstacles as fixed and cast only against fixed objects (is_free=False)",
+        default=True,
+    )
+    parser.add_argument(
+        "-nf",
+        "--no-fixed",
+        action="store_false",
+        dest="fixed",
+        help="Load obstacles as dynamic (is_free=True), raycaster will update BVH every step",
+    )
+    parser.add_argument(
         "--pattern",
         type=str,
-        default="depth",
-        choices=["spherical", "spinning", "depth"],
+        default="spinning",
+        choices=["spherical", "spinning", "depth", "grid"],
         help="Sensor pattern type",
     )
 
@@ -231,7 +229,7 @@ def main():
     kb = KeyboardDevice()
     kb.start()
 
-    scene = build_scene(show_viewer=True)
+    scene = build_scene(show_viewer=True, is_free=not args.fixed)
     robot, lidar = create_robot_with_lidar(scene, args)
 
     run(scene, robot, lidar, n_envs=args.n_envs, kb=kb, is_depth=args.pattern == "depth")
