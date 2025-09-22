@@ -381,6 +381,13 @@ class PBDSolver(Solver):
     @ti.kernel
     def _kernel_apply_external_force(self, f: ti.i32, t: ti.f32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
+            if i_p < 1:
+                print(
+                    "update pos",
+                    self.particles[i_p, i_b].free,
+                    self.particles[i_p, i_b].pos,
+                    self.particles[i_p, i_b].vel,
+                )
             if self.particles[i_p, i_b].free:
                 # gravity
                 self.particles[i_p, i_b].vel = self.particles[i_p, i_b].vel + self._gravity[i_b] * self._substep_dt
@@ -739,6 +746,8 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[i_p, i_b].active:
                 reordered_idx = self.particles_ng[i_p, i_b].reordered_idx
+                if i_p < 1:
+                    print("copy particles_reordered", i_p, self.particles_reordered[reordered_idx, i_b].vel)
                 self.particles[i_p, i_b] = self.particles_reordered[reordered_idx, i_b]
 
     # ------------------------------------------------------------------------------------
