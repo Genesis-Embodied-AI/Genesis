@@ -7,28 +7,29 @@ import sys
 import time
 import threading
 from threading import Event, RLock, Semaphore, Thread
+from typing import Optional, TYPE_CHECKING
 
-import imageio
+import cv2
 import numpy as np
 import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-from genesis.vis.rasterizer_context import RasterizerContext
 
-# Importing Tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
+# Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
+root = None
 if sys.platform.startswith("darwin"):
-    from tkinter import Tk
-    from tkinter import filedialog as filedialog
+    try:
+        from tkinter import Tk
 
-    root = Tk()
-    root.withdraw()
-else:
-    root = None
+        root = Tk()
+        root.withdraw()
+    except Exception:
+        # Some minimal Python install may not provide a working tkinter interface even if it is a standard library
+        pass
 
 import pyglet
-from pyglet import clock
 
 from .camera import IntrinsicsCamera, OrthographicCamera, PerspectiveCamera
 from .constants import (
@@ -50,6 +51,9 @@ from .node import Node
 from .renderer import Renderer
 from .shader_program import ShaderProgram, ShaderProgramCache
 from .trackball import Trackball
+
+if TYPE_CHECKING:
+    from genesis.vis.rasterizer_context import RasterizerContext
 
 
 pyglet.options["shadow_window"] = False
@@ -191,7 +195,7 @@ class Viewer(pyglet.window.Window):
 
     def __init__(
         self,
-        context: RasterizerContext,
+        context: "RasterizerContext",
         viewport_size=None,
         render_flags=None,
         viewer_flags=None,
@@ -213,12 +217,18 @@ class Viewer(pyglet.window.Window):
         self._scene = context._scene
         self._viewport_size = viewport_size
         self._render_lock = RLock()
-        self._offscreen_result_semaphore = Semaphore(0)
-        self._offscreen_event = Event()
         self._initialized_event = Event()
         self._is_active = False
+        self._exception = None
+        self._thread: Optional[Thread] = None
         self._run_in_thread = run_in_thread
         self._seg_node_map = context.seg_node_map
+
+        self._offscreen_event = Event()
+        self._offscreen_pending_render = None
+        self._offscreen_pending_close = None
+        self._offscreen_semaphore = Semaphore(0)
+        self._offscreen_result = None
 
         self._video_saver = None
 
@@ -337,8 +347,8 @@ class Viewer(pyglet.window.Window):
         # Set defaults as needed
         if zfar is None:
             zfar = max(self.scene.scale * 10.0, DEFAULT_Z_FAR)
-        if znear is None or znear == 0:
-            if self.scene.scale == 0:
+        if znear is None or znear < 1e-6:
+            if self.scene.scale < 1e-6:
                 znear = DEFAULT_Z_NEAR
             else:
                 znear = min(self.scene.scale / 10.0, DEFAULT_Z_NEAR)
@@ -347,7 +357,7 @@ class Viewer(pyglet.window.Window):
             self._default_persp_cam = PerspectiveCamera(yfov=np.pi / 3.0, znear=znear, zfar=zfar)
         if self._default_orth_cam is None:
             xmag = ymag = self.scene.scale
-            if self.scene.scale == 0:
+            if self.scene.scale < 1e-6:
                 xmag = ymag = 1.0
             self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
         if self._default_camera_pose is None:
@@ -382,9 +392,6 @@ class Viewer(pyglet.window.Window):
         )
         self._is_active = True
 
-        self.pending_offscreen_camera = None
-        self.offscreen_result = None
-
         # Starting the viewer would raise an exception if the OpenGL context is invalid for some reason. This exception
         # must be caught in order to implement some fallback mechanism. One may want to start the viewer from the main
         # thread while the running loop would be running on a background thread. However, this approach is not possible
@@ -397,10 +404,11 @@ class Viewer(pyglet.window.Window):
             self._thread.start()
             self._initialized_event.wait()
             if not self._is_active:
-                # TODO: For simplicity, the actual exception is not reported for now
+                if self._exception:
+                    raise self._exception
+                # Just to be extra careful, this fallback should never be triggered in practice.
                 raise OpenGL.error.Error("Invalid OpenGL context.")
         else:
-            self._thread = None
             if self.auto_start:
                 self.start()
 
@@ -431,7 +439,7 @@ class Viewer(pyglet.window.Window):
         """bool : `True` if the viewer is active, or `False` if it has
         been closed.
         """
-        return self._is_active
+        return self._is_active and (not self._run_in_thread or self._thread.is_alive())
 
     @property
     def run_in_thread(self):
@@ -600,7 +608,10 @@ class Viewer(pyglet.window.Window):
 
         # Delete renderer
         if self._renderer is not None:
-            self._renderer.delete()
+            try:
+                self._renderer.delete()
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
+                pass
         self._renderer = None
 
         # Force clean-up of OpenGL context data
@@ -613,36 +624,53 @@ class Viewer(pyglet.window.Window):
             super().on_close()
             try:
                 pyglet.app.exit()
-            except:
+            except Exception:
                 pass
 
-        self._offscreen_result_semaphore.release()
+        self._offscreen_semaphore.release()
+
+    def close_offscreen(self, render_target):
+        if not self.is_active:
+            gs.raise_exception("Viewer already closed.")
+
+        self._offscreen_pending_close = (render_target,)
+        if self._run_in_thread:
+            # Send offscreen request
+            self._offscreen_event.set()
+            # Wait for offscreen
+            self._offscreen_semaphore.acquire()
+        else:
+            # Force close renderer synchronously
+            self._event_loop_step_offscreen()
 
     def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
+        if not self.is_active:
+            gs.raise_exception("Viewer already closed.")
+
         if rgb and seg:
             gs.raise_exception("RGB and segmentation map cannot be rendered in the same forward pass.")
         self.render_flags["rgb"] = rgb
         self.render_flags["seg"] = seg
         self.render_flags["depth"] = depth
-        self.pending_offscreen_camera = (camera_node, render_target, normal)
+        self._offscreen_pending_render = (camera_node, render_target, normal)
         if self._run_in_thread:
-            # send_offscreen_request
+            # Send offscreen request
             self._offscreen_event.set()
-            # wait_for_offscreen
-            self._offscreen_result_semaphore.acquire()
+            # Wait for offscreen
+            self._offscreen_semaphore.acquire()
         else:
             # Force offscreen rendering synchronously
-            self.draw_offscreen()
+            self._event_loop_step_offscreen()
         self.render_flags["rgb"] = True
         self.render_flags["seg"] = False
         self.render_flags["depth"] = False
-        return self.offscreen_result
+        return self._offscreen_result
 
     def wait_until_initialized(self):
         self._initialized_event.wait()
 
-    def draw_offscreen(self):
-        if self.pending_offscreen_camera is None:
+    def _event_loop_step_offscreen(self):
+        if self._offscreen_pending_render is None and self._offscreen_pending_close is None:
             return
 
         if self._run_in_thread:
@@ -651,21 +679,35 @@ class Viewer(pyglet.window.Window):
         # Make OpenGL context current
         self.switch_to()
 
-        # Update the context if not already done before
-        self._renderer.jit.update_buffer(self.gs_context.buffer)
-        self.gs_context.buffer.clear()
+        if self._offscreen_pending_close is not None:
+            # Extract request right away
+            target, = self._offscreen_pending_close
+            self._offscreen_pending_close = None
 
-        self.offscreen_results = []
-        self.render_flags["offscreen"] = True
-        camera, target, normal = self.pending_offscreen_camera
-        self.clear()
-        retval = self._render(camera, target, normal)
-        self.offscreen_result = retval if retval else (None, None)
-        self.pending_offscreen_camera = None
-        self.render_flags["offscreen"] = False
-        self._offscreen_result_semaphore.release()
+            # Delete renderer.
+            # Note that it must be done here, because calling this method involve OpenGL routines that cannot cross
+            # thread boundaries, otherwise it will cause segmentation fault.
+            target.delete()
+
+        if self._offscreen_pending_render is not None:
+            # Extract request right away
+            camera, target, normal = self._offscreen_pending_render
+            self._offscreen_pending_render = None
+
+            # Update context, just in case is not already done before
+            self._renderer.jit.update_buffer(self.gs_context.buffer)
+            self.gs_context.buffer.clear()
+
+            # Render current frame from camera viewpoint
+            self._offscreen_results = []
+            self.render_flags["offscreen"] = True
+            self.clear()
+            retval = self._render(camera, target, normal)
+            self._offscreen_result = retval if retval else (None, None)
+            self.render_flags["offscreen"] = False
 
         if self._run_in_thread:
+            self._offscreen_semaphore.release()
             self.render_lock.release()
 
     def on_draw(self):
@@ -1042,15 +1084,11 @@ class Viewer(pyglet.window.Window):
         if save_dir is None:
             save_dir = os.getcwd()
 
-        # Importing tkinter is very slow and not used very often. Let's delay import.
         try:
+            # Importing tkinter is very slow and not used very often. Let's delay import.
             from tkinter import Tk
-            from tkinter import filedialog as filedialog
-        except ImportError:
-            from Tkinter import Tk
-            from Tkinter import tkFileDialog as filedialog
+            from tkinter import tkFileDialog as filedialog
 
-        try:
             if root is None:
                 root = Tk()
                 root.withdraw()
@@ -1058,8 +1096,8 @@ class Viewer(pyglet.window.Window):
                 root, initialdir=save_dir, title="Select file save location", filetypes=filetypes
             )
             filename = dialog.show()
-        except Exception:
-            gs.logger.warning("Failed to open file save location dialog.")
+        except Exception as e:
+            gs.logger.warning(f"Failed to open file save location dialog: {e}")
             return None
 
         if not filename:
@@ -1071,7 +1109,7 @@ class Viewer(pyglet.window.Window):
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)
             data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
-            imageio.imwrite(filename, img_arr)
+            cv2.imwrite(filename, np.flip(data, axis=-1))
 
     def _record(self):
         """Save another frame for the GIF."""
@@ -1186,42 +1224,53 @@ class Viewer(pyglet.window.Window):
         return retval
 
     def start(self, auto_refresh=True):
-        # Try multiple configs starting with target OpenGL version
-        # and multisampling and removing these options if exception
-        # Note: multisampling not available on all hardware
-        from pyglet.gl import Config
-
+        # Try multiple configs starting with target OpenGL version and multisampling enabled, then removing these
+        # options if not supported.
         confs = [
-            Config(
-                sample_buffers=1,
-                samples=4,
+            pyglet.gl.Config(
                 depth_size=24,
-                double_buffer=True,
+                double_buffer=True,  # Double buffering to avoid flickering
                 major_version=TARGET_OPEN_GL_MAJOR,
                 minor_version=TARGET_OPEN_GL_MINOR,
             ),
-            Config(
-                depth_size=24,
-                double_buffer=True,
-                major_version=TARGET_OPEN_GL_MAJOR,
-                minor_version=TARGET_OPEN_GL_MINOR,
-            ),
-            Config(
-                sample_buffers=1,
-                samples=4,
+            pyglet.gl.Config(
                 depth_size=24,
                 double_buffer=True,
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,
             ),
-            Config(depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR),
         ]
+        if "PYTEST_VERSION" not in os.environ:
+            # MSAA must be disabled in headless mode for consistency across all platform because it behaves differently
+            # depending on the rendering driver and there is no reliable way to control it. Although MSAAx2 is supported
+            # by all drivers (incl. CPU-based), CPU-based Apple Cocoa using bilinear interpolation for rescaling instead
+            # of nearest neighbors, and there is no way to tweak this behavior.
+            confs = [
+                pyglet.gl.Config(
+                    sample_buffers=1,    # Enable multi-sampling (MSAA)
+                    samples=2,
+                    depth_size=24,
+                    double_buffer=True,
+                    major_version=TARGET_OPEN_GL_MAJOR,
+                    minor_version=TARGET_OPEN_GL_MINOR,
+                ),
+                confs[0],
+                pyglet.gl.Config(
+                    sample_buffers=1,
+                    samples=2,
+                    depth_size=24,
+                    double_buffer=True,
+                    major_version=MIN_OPEN_GL_MAJOR,
+                    minor_version=MIN_OPEN_GL_MINOR,
+                ),
+                confs[1],
+            ]
         for conf in confs:
             # Keep the window invisible for now. It will be displayed only if everything is working fine.
             # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
             # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
             try:
-                super(Viewer, self).__init__(
+                super().__init__(
                     config=conf,
                     visible=False,
                     resizable=True,
@@ -1234,20 +1283,28 @@ class Viewer(pyglet.window.Window):
 
         if not self.context:
             raise RuntimeError("Unable to initialize an OpenGL 3+ context")
-        clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
+        pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
-        # Model the complete scene once, to make sure that everything is fine.
+        # Run the entire rendering pipeline once, to make sure that everything is fine.
         try:
             self.refresh()
-        except OpenGL.error.Error:
-            # Invalid OpenGL context. Closing before raising.
-            self.close()
-            raise
+        except (OpenGL.error.Error, RuntimeError) as e:
+            # Invalid OpenGL context and crossing threading boundaries. Closing before anything else.
+            self.on_close()
 
-        # At this point, we are all set to display the graphical window, finally!
-        self.set_visible(True)
+            if self._run_in_thread:
+                # Reporting the exception for the main thread to raise it
+                self._exception = e
+                return
+            else:
+                # Raise the exception right away
+                raise
+
+        # At this point, we are all set to display the graphical window if requested, finally!
+        if not pyglet.options["headless"]:
+            self.set_visible(True)
         self.activate()
 
         if auto_refresh:
@@ -1280,7 +1337,7 @@ class Viewer(pyglet.window.Window):
 
         time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
         while self._offscreen_event.wait(time_next_frame - time.time()):
-            self.draw_offscreen()
+            self._event_loop_step_offscreen()
             self._offscreen_event.clear()
 
         pyglet.clock.tick()

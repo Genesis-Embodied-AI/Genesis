@@ -81,13 +81,14 @@ class Mesh(RBC):
         """
         if self._mesh.vertices.shape[0] > 3:
             self._mesh = trimesh.convex.convex_hull(self._mesh)
+            self._metadata["convexified"] = True
         self.clear_visuals()
 
     def decimate(self, decimate_face_num, decimate_aggressiveness, convexify):
         """
         Decimate the mesh.
         """
-        if self._mesh.vertices.shape[0] > 3 and self._mesh.faces.shape[0] > decimate_face_num:
+        if self._mesh.vertices.shape[0] > 3 and len(self._mesh.faces) > decimate_face_num:
             self._mesh.process(validate=True)
             self._mesh = trimesh.Trimesh(
                 *fast_simplification.simplify(
@@ -96,8 +97,9 @@ class Mesh(RBC):
                     target_count=decimate_face_num,
                     agg=decimate_aggressiveness,
                     lossless=(decimate_aggressiveness == 0),
-                )
+                ),
             )
+            self._metadata["decimated"] = True
 
             # need to run convexify again after decimation, because sometimes decimating a convex-mesh can make it non-convex...
             if convexify:
@@ -176,6 +178,7 @@ class Mesh(RBC):
             try:
                 positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
             except gs.GenesisException:
+                gs.logger.warning("Failed to sample particles using 'pbs-32'. Falling back to 'random'.")
                 sampler = "random"
 
         if sampler in ("random", "regular"):

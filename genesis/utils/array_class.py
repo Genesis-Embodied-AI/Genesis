@@ -1,10 +1,11 @@
-from typing import Callable
 import dataclasses
-import os
 import inspect
-from typing import Any, Type, cast
+import os
+from functools import partial
+from typing import Any, Callable, Type, cast
 
 import gstaichi as ti
+from gstaichi.lang._fast_caching import FIELD_METADATA_CACHE_VALUE, args_hasher
 
 import genesis as gs
 import numpy as np
@@ -39,10 +40,46 @@ class StructRigidGlobalInfo:
     meaninertia: V_ANNOTATION
     mass_parent_mask: V_ANNOTATION
     gravity: V_ANNOTATION
+    # moved from static_rigid_sim_config
+    substep_dt: V_ANNOTATION
+    iterations: V_ANNOTATION
+    tolerance: V_ANNOTATION
+    ls_iterations: V_ANNOTATION
+    ls_tolerance: V_ANNOTATION
+    noslip_iterations: V_ANNOTATION
+    noslip_tolerance: V_ANNOTATION
+    n_equalities: V_ANNOTATION
+    n_equalities_candidate: V_ANNOTATION
+    hibernation_thresh_acc: V_ANNOTATION
+    hibernation_thresh_vel: V_ANNOTATION
 
 
 def get_rigid_global_info(solver):
     f_batch = solver._batch_shape
+
+    substep_dt = V(dtype=gs.ti_float, shape=f_batch())
+    substep_dt.fill(solver._substep_dt)
+    iterations = V(dtype=gs.ti_int, shape=())
+    iterations.fill(getattr(solver._options, "iterations", 10))
+    tolerance = V(dtype=gs.ti_float, shape=())
+    tolerance.fill(getattr(solver._options, "tolerance", 1e-6))
+    ls_iterations = V(dtype=gs.ti_int, shape=())
+    ls_iterations.fill(getattr(solver._options, "ls_iterations", 10))
+    ls_tolerance = V(dtype=gs.ti_float, shape=())
+    ls_tolerance.fill(getattr(solver._options, "ls_tolerance", 1e-6))
+
+    noslip_iterations = V(dtype=gs.ti_int, shape=())
+    noslip_iterations.fill(getattr(solver._options, "noslip_iterations", 0))
+    noslip_tolerance = V(dtype=gs.ti_float, shape=())
+    noslip_tolerance.fill(getattr(solver._options, "noslip_tolerance", 1e-6))
+    n_equalities = V(dtype=gs.ti_int, shape=())
+    n_equalities.fill(getattr(solver, "_n_equalities", 0))
+    n_equalities_candidate = V(dtype=gs.ti_int, shape=())
+    n_equalities_candidate.fill(getattr(solver, "n_equalities_candidate", 0))
+    hibernation_thresh_acc = V(dtype=gs.ti_float, shape=())
+    hibernation_thresh_acc.fill(getattr(solver, "_hibernation_thresh_acc", 0.0))
+    hibernation_thresh_vel = V(dtype=gs.ti_float, shape=())
+    hibernation_thresh_vel.fill(getattr(solver, "_hibernation_thresh_vel", 0.0))
 
     # Basic fields
     kwargs = {
@@ -52,18 +89,30 @@ def get_rigid_global_info(solver):
         "awake_entities": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
         "n_awake_links": V(dtype=gs.ti_int, shape=f_batch()),
         "awake_links": V(dtype=gs.ti_int, shape=f_batch(solver.n_links)),
-        "qpos0": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
-        "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
+        "qpos0": V(dtype=gs.ti_float, shape=f_batch(solver.n_qs_)),
+        "qpos": V(dtype=gs.ti_float, shape=f_batch(solver.n_qs_)),
         "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
         "envs_offset": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
         "geoms_init_AABB": V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
-        "mass_mat": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
-        "mass_mat_L": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
-        "mass_mat_D_inv": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,))),
-        "_mass_mat_mask": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_)),
-        "meaninertia": V(dtype=gs.ti_float, shape=solver._batch_shape()),
+        "mass_mat": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_))),
+        "mass_mat_L": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_))),
+        "mass_mat_D_inv": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_,))),
+        "_mass_mat_mask": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
+        "meaninertia": V(dtype=gs.ti_float, shape=f_batch()),
         "mass_parent_mask": V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         "gravity": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
+        # moved from static_rigid_sim_config
+        "substep_dt": substep_dt,
+        "iterations": iterations,
+        "tolerance": tolerance,
+        "ls_iterations": ls_iterations,
+        "ls_tolerance": ls_tolerance,
+        "noslip_iterations": noslip_iterations,
+        "noslip_tolerance": noslip_tolerance,
+        "n_equalities": n_equalities,
+        "n_equalities_candidate": n_equalities_candidate,
+        "hibernation_thresh_acc": hibernation_thresh_acc,
+        "hibernation_thresh_vel": hibernation_thresh_vel,
     }
 
     if use_ndarray:
@@ -128,6 +177,8 @@ class StructConstraintState:
     efc_D: V_ANNOTATION
     efc_frictionloss: V_ANNOTATION
     efc_force: V_ANNOTATION
+    efc_b: V_ANNOTATION
+    efc_AR: V_ANNOTATION
     active: V_ANNOTATION
     prev_active: V_ANNOTATION
     qfrc_constraint: V_ANNOTATION
@@ -144,7 +195,7 @@ class StructConstraintState:
     quad_gauss: V_ANNOTATION
     quad: V_ANNOTATION
     candidates: V_ANNOTATION
-    ls_its: V_ANNOTATION
+    ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
     # Optional CG fields
     cg_prev_grad: V_ANNOTATION
@@ -161,57 +212,71 @@ def get_constraint_state(constraint_solver, solver):
     len_constraints = constraint_solver.len_constraints
     len_constraints_ = constraint_solver.len_constraints_
 
-    jac_shape = solver._batch_shape((len_constraints_, solver.n_dofs_))
+    jac_shape = f_batch((len_constraints_, solver.n_dofs_))
     if (jac_shape[0] * jac_shape[1] * jac_shape[2]) > np.iinfo(np.int32).max:
         raise ValueError(
             f"Jacobian shape {jac_shape} is too large for int32. "
             "Consider reducing the number of constraints or the number of degrees of freedom."
         )
 
+    if solver._options.noslip_iterations > 0:
+        if len_constraints_**2 * f_batch()[0] > 2e9:
+            gs.logger.warning(
+                f"efc_AR shape {len_constraints_}x{len_constraints_}x{f_batch()[0]} is very large. Consider manually "
+                f"set a smaller 'max_collision_pairs' in RigidOptions to reduce the size of reserved memory. "
+            )
+        efc_AR_shape = f_batch((len_constraints_, len_constraints_))
+        efc_b_shape = f_batch(len_constraints_)
+    else:
+        efc_AR_shape = 1
+        efc_b_shape = 1
+
     kwargs = {
         "n_constraints": V(dtype=gs.ti_int, shape=f_batch()),
-        "ti_n_equalities": V(gs.ti_int, shape=solver._batch_shape()),
-        "jac": V(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
-        "diag": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "aref": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "jac_relevant_dofs": V(gs.ti_int, shape=solver._batch_shape((len_constraints_, solver.n_dofs_))),
-        "jac_n_relevant_dofs": V(gs.ti_int, shape=solver._batch_shape(len_constraints_)),
-        "n_constraints_equality": V(gs.ti_int, shape=solver._batch_shape()),
-        "n_constraints_frictionloss": V(gs.ti_int, shape=solver._batch_shape()),
-        "improved": V(gs.ti_int, shape=solver._batch_shape()),
-        "Jaref": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "Ma": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "Ma_ws": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "grad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "Mgrad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "search": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "efc_D": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "efc_frictionloss": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "efc_force": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "active": V(dtype=gs.ti_bool, shape=solver._batch_shape(len_constraints_)),
-        "prev_active": V(dtype=gs.ti_int, shape=solver._batch_shape(len_constraints_)),
-        "qfrc_constraint": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "qacc": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "qacc_ws": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "qacc_prev": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "cost_ws": V(gs.ti_float, shape=solver._batch_shape()),
-        "gauss": V(gs.ti_float, shape=solver._batch_shape()),
-        "cost": V(gs.ti_float, shape=solver._batch_shape()),
-        "prev_cost": V(gs.ti_float, shape=solver._batch_shape()),
-        "gtol": V(gs.ti_float, shape=solver._batch_shape()),
-        "mv": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "jv": V(dtype=gs.ti_float, shape=solver._batch_shape(len_constraints_)),
-        "quad_gauss": V(dtype=gs.ti_float, shape=solver._batch_shape(3)),
-        "quad": V(dtype=gs.ti_float, shape=solver._batch_shape((len_constraints_, 3))),
-        "candidates": V(dtype=gs.ti_float, shape=solver._batch_shape(12)),
-        "ls_its": V(gs.ti_float, shape=solver._batch_shape()),
-        "ls_result": V(gs.ti_int, shape=solver._batch_shape()),
-        "cg_prev_grad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "cg_prev_Mgrad": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
-        "cg_beta": V(gs.ti_float, shape=solver._batch_shape()),
-        "cg_pg_dot_pMg": V(gs.ti_float, shape=solver._batch_shape()),
-        "nt_H": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
-        "nt_vec": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "ti_n_equalities": V(gs.ti_int, shape=f_batch()),
+        "jac": V(dtype=gs.ti_float, shape=f_batch((len_constraints_, solver.n_dofs_))),
+        "diag": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "aref": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "jac_relevant_dofs": V(gs.ti_int, shape=f_batch((len_constraints_, solver.n_dofs_))),
+        "jac_n_relevant_dofs": V(gs.ti_int, shape=f_batch(len_constraints_)),
+        "n_constraints_equality": V(gs.ti_int, shape=f_batch()),
+        "n_constraints_frictionloss": V(gs.ti_int, shape=f_batch()),
+        "improved": V(gs.ti_int, shape=f_batch()),
+        "Jaref": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "Ma": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "Ma_ws": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "grad": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "Mgrad": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "search": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "efc_D": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "efc_frictionloss": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "efc_force": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "efc_b": V(dtype=gs.ti_float, shape=efc_b_shape),
+        "efc_AR": V(dtype=gs.ti_float, shape=efc_AR_shape),
+        "active": V(dtype=gs.ti_bool, shape=f_batch(len_constraints_)),
+        "prev_active": V(dtype=gs.ti_int, shape=f_batch(len_constraints_)),
+        "qfrc_constraint": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "qacc": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "qacc_ws": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "qacc_prev": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "cost_ws": V(gs.ti_float, shape=f_batch()),
+        "gauss": V(gs.ti_float, shape=f_batch()),
+        "cost": V(gs.ti_float, shape=f_batch()),
+        "prev_cost": V(gs.ti_float, shape=f_batch()),
+        "gtol": V(gs.ti_float, shape=f_batch()),
+        "mv": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "jv": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "quad_gauss": V(dtype=gs.ti_float, shape=f_batch(3)),
+        "quad": V(dtype=gs.ti_float, shape=f_batch((len_constraints_, 3))),
+        "candidates": V(dtype=gs.ti_float, shape=f_batch(12)),
+        "ls_it": V(gs.ti_float, shape=f_batch()),
+        "ls_result": V(gs.ti_int, shape=f_batch()),
+        "cg_prev_grad": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "cg_prev_Mgrad": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
+        "cg_beta": V(gs.ti_float, shape=f_batch()),
+        "cg_pg_dot_pMg": V(gs.ti_float, shape=f_batch()),
+        "nt_H": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_))),
+        "nt_vec": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
     }
 
     # Add solver-specific fields
@@ -343,6 +408,90 @@ def get_contact_cache(solver):
 
 
 @dataclasses.dataclass
+class StructAggList:
+    curr: V_ANNOTATION
+    n: V_ANNOTATION
+    start: V_ANNOTATION
+
+
+def get_agg_list(solver):
+    f_batch = solver._batch_shape
+    n_entities = solver.n_entities
+    kwargs = {
+        "curr": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+        "n": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+        "start": V(dtype=gs.ti_int, shape=f_batch(n_entities)),
+    }
+
+    if use_ndarray:
+        return StructAggList(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassAggList:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassAggList()
+
+
+@dataclasses.dataclass
+class StructContactIslandState:
+    ci_edges: V_ANNOTATION
+    edge_id: V_ANNOTATION
+    constraint_list: V_ANNOTATION
+    constraint_id: V_ANNOTATION
+    entity_edge: StructAggList
+    island_col: StructAggList
+    island_hibernated: V_ANNOTATION
+    island_entity: StructAggList
+    entity_id: V_ANNOTATION
+    n_edges: V_ANNOTATION
+    n_islands: V_ANNOTATION
+    n_stack: V_ANNOTATION
+    entity_island: V_ANNOTATION
+    stack: V_ANNOTATION
+    entity_idx_to_next_entity_idx_in_hibernated_island: V_ANNOTATION
+
+
+def get_contact_island_state(solver, collider):
+    f_batch = solver._batch_shape
+    max_contact_pairs = collider._collider_info._max_contact_pairs[None]
+    max_contact_pairs = max(max_contact_pairs, 1)  # can't create 0-sized fields
+
+    kwargs = {
+        "ci_edges": V(dtype=gs.ti_int, shape=f_batch((max_contact_pairs, 2))),
+        "edge_id": V(dtype=gs.ti_int, shape=f_batch((max_contact_pairs * 2))),
+        "constraint_list": V(dtype=gs.ti_int, shape=f_batch((max_contact_pairs))),
+        "constraint_id": V(dtype=gs.ti_int, shape=f_batch((max_contact_pairs * 2))),
+        "entity_edge": get_agg_list(solver),
+        "island_col": get_agg_list(solver),
+        "island_hibernated": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities)),
+        "island_entity": get_agg_list(solver),
+        "entity_id": V(dtype=gs.ti_int, shape=f_batch((solver.n_entities))),
+        "n_edges": V(dtype=gs.ti_int, shape=solver._B),
+        "n_islands": V(dtype=gs.ti_int, shape=solver._B),
+        "n_stack": V(dtype=gs.ti_int, shape=solver._B),
+        "entity_island": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities)),
+        "stack": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities)),
+        "entity_idx_to_next_entity_idx_in_hibernated_island": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities)),
+    }
+
+    if use_ndarray:
+        return StructContactIslandState(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassContactIslandState:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassContactIslandState()
+
+
+@dataclasses.dataclass
 class StructColliderState:
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
@@ -442,7 +591,10 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
     terrain_hf_shape = 1
     if collider_static_config.has_terrain:
         links_idx = solver.geoms_info.link_idx.to_numpy()[solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
-        entity = solver._entities[solver.links_info.entity_idx.to_numpy()[links_idx[0]]]
+        entity_idx = solver.links_info.entity_idx.to_numpy()[links_idx[0]]
+        if isinstance(entity_idx, np.ndarray):
+            entity_idx = entity_idx[0]
+        entity = solver._entities[entity_idx]
         terrain_hf_shape = entity.terrain_hf.shape
 
     kwargs = {
@@ -1126,6 +1278,7 @@ class StructDofsState:
     act_length: V_ANNOTATION
     pos: V_ANNOTATION
     vel: V_ANNOTATION
+    vel_prev: V_ANNOTATION
     acc: V_ANNOTATION
     acc_smooth: V_ANNOTATION
     qf_smooth: V_ANNOTATION
@@ -1215,7 +1368,7 @@ class StructLinksState:
     cd_ang: V_ANNOTATION
     cd_vel: V_ANNOTATION
     mass_sum: V_ANNOTATION
-    COM: V_ANNOTATION
+    root_COM: V_ANNOTATION  # COM of the kinematic tree
     mass_shift: V_ANNOTATION
     i_pos_shift: V_ANNOTATION
     cacc_ang: V_ANNOTATION
@@ -1252,7 +1405,7 @@ def get_links_state(solver):
         "cd_ang": V(dtype=gs.ti_vec3, shape=shape),
         "cd_vel": V(dtype=gs.ti_vec3, shape=shape),
         "mass_sum": V(dtype=gs.ti_float, shape=shape),
-        "COM": V(dtype=gs.ti_vec3, shape=shape),
+        "root_COM": V(dtype=gs.ti_vec3, shape=shape),
         "mass_shift": V(dtype=gs.ti_float, shape=shape),
         "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape),
         "cacc_ang": V(dtype=gs.ti_vec3, shape=shape),
@@ -1780,7 +1933,7 @@ def get_vgeoms_info(solver):
         return ClassVgeomsInfo()
 
 
-# =========================================== VgeomsState ===========================================
+# =========================================== VGeomsState ===========================================
 
 
 @dataclasses.dataclass
@@ -1859,6 +2012,7 @@ class StructEntitiesInfo:
     geom_end: V_ANNOTATION
     n_geoms: V_ANNOTATION
     gravity_compensation: V_ANNOTATION
+    is_local_collision_mask: V_ANNOTATION
 
 
 def get_entities_info(solver):
@@ -1891,8 +2045,6 @@ def get_entities_info(solver):
 
 
 # =========================================== EntitiesState ===========================================
-
-
 @dataclasses.dataclass
 class StructEntitiesState:
     hibernated: V_ANNOTATION
@@ -1915,6 +2067,65 @@ def get_entities_state(solver):
                     setattr(self, k, v)
 
         return ClassEntitiesState()
+
+
+# =========================================== StaticRigidSimConfig ===========================================
+
+cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: True})
+
+
+@dataclasses.dataclass
+class StaticRigidSimCacheKey:
+    para_level: int = cache_value()
+    use_gjk_collision: bool = cache_value()
+    use_hibernation: bool = cache_value()
+    batch_links_info: bool = cache_value()
+    batch_dofs_info: bool = cache_value()
+    batch_joints_info: bool = cache_value()
+    enable_mujoco_compatibility: bool = cache_value()
+    enable_multi_contact: bool = cache_value()
+    enable_adjacent_collision: bool = cache_value()
+    enable_collision: bool = cache_value()
+    box_box_detection: bool = cache_value()
+    integrator: int = cache_value()
+    sparse_solve: bool = cache_value()
+    solver_type: int = cache_value()
+    # other config
+    has_nonconvex_nonterrain: bool = cache_value()
+    has_terrain: bool = cache_value()
+
+
+def get_static_rigid_sim_cache_key(solver):
+    is_convex = np.array([geom.is_convex for geom in solver.geoms], dtype=gs.np_int)
+    type = np.array([geom.type for geom in solver.geoms], dtype=gs.np_int)
+    has_nonconvex_nonterrain = bool(
+        np.logical_and(
+            is_convex == 0,
+            type != gs.GEOM_TYPE.TERRAIN,
+        ).any()
+    )
+    has_terrain = bool((type == gs.GEOM_TYPE.TERRAIN).any())
+
+    kwargs = {
+        "para_level": solver.sim._para_level,
+        "use_gjk_collision": getattr(solver._options, "use_gjk_collision", False),
+        "use_hibernation": getattr(solver, "_use_hibernation", False),
+        "batch_links_info": getattr(solver._options, "batch_links_info", False),
+        "batch_dofs_info": getattr(solver._options, "batch_dofs_info", False),
+        "batch_joints_info": getattr(solver._options, "batch_joints_info", False),
+        "enable_mujoco_compatibility": getattr(solver, "_enable_mujoco_compatibility", False),
+        "enable_multi_contact": getattr(solver, "_enable_multi_contact", True),
+        "enable_adjacent_collision": getattr(solver, "_enable_adjacent_collision", False),
+        "enable_collision": getattr(solver, "_enable_collision", False),
+        "box_box_detection": getattr(solver, "_box_box_detection", False),
+        "integrator": getattr(solver, "_integrator", gs.integrator.implicitfast),
+        "sparse_solve": getattr(solver._options, "sparse_solve", False),
+        "solver_type": getattr(solver._options, "constraint_solver", gs.constraint_solver.CG),
+        # other config
+        "has_nonconvex_nonterrain": has_nonconvex_nonterrain,
+        "has_terrain": has_terrain,
+    }
+    return StaticRigidSimCacheKey(**kwargs)
 
 
 # =========================================== DataManager ===========================================
@@ -1983,3 +2194,4 @@ SupportFieldInfo = ti.template() if not use_ndarray else StructSupportFieldInfo
 ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
+ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState

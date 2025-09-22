@@ -268,7 +268,7 @@ class LegacyCoupler(RBC):
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
 
                 pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
-                mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._p_vol_scale
+                mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._particle_volume_scale
 
                 # external force fields
                 for i_ff in ti.static(range(len(self.mpm_solver._ffs))):
@@ -455,7 +455,9 @@ class LegacyCoupler(RBC):
                         new_vel_fem_sv = vel_fem_sv
                         for mpm_offset in ti.static(ti.grouped(self.mpm_solver.stencil_range())):
                             mpm_grid_I = mpm_base - self.mpm_solver.grid_offset + mpm_offset
-                            mpm_grid_mass = self.mpm_solver.grid[f, mpm_grid_I, i_b].mass / self.mpm_solver.p_vol_scale
+                            mpm_grid_mass = (
+                                self.mpm_solver.grid[f, mpm_grid_I, i_b].mass / self.mpm_solver.particle_volume_scale
+                            )
 
                             mpm_weight = gs.ti_float(1.0)
                             for d in ti.static(range(3)):
@@ -667,7 +669,7 @@ class LegacyCoupler(RBC):
 
                 link_lin_vel = links_state.cd_vel[link_idx, i_env]
                 link_ang_vel = links_state.cd_ang[link_idx, i_env]
-                link_com_in_world = links_state.COM[link_idx, i_env]
+                link_com_in_world = links_state.i_pos[link_idx, i_env] + links_state.root_COM[link_idx, i_env]
 
                 # calculate target pos and vel of the particle
                 local_pos = pdb.particle_animation_info[i_p, i_env].local_pos

@@ -239,7 +239,7 @@ class SAPCoupler(RBC):
                 self._init_equality_constraint()
 
         if self._enable_rigid_fem_contact:
-            self.rigid_fem_contact = RigidFemTetContactHanlder(self.sim)
+            self.rigid_fem_contact = RigidFemTetContactHandler(self.sim)
             self.contact_handlers.append(self.rigid_fem_contact)
 
         self._init_sap_fields()
@@ -279,9 +279,14 @@ class SAPCoupler(RBC):
             self.rigid_tri_bvh = LBVH(self.rigid_tri_aabb, max_n_query_result_per_aabb)
 
     def _init_equality_constraint(self):
+        # TODO: Handling dynamically registered weld constraints would requiere passing 'constraint_state' as input.
+        # This is not a big deal for now since only joint equality constraints are support by this coupler.
         self.equality_constraint = RigidConstraintHandler(self.sim)
         self.equality_constraint.build_constraints(
-            self.rigid_solver.equalities_info, self.rigid_solver.joints_info, self.rigid_solver._static_rigid_sim_config
+            self.rigid_solver.equalities_info,
+            self.rigid_solver.joints_info,
+            self.rigid_solver._static_rigid_sim_config,
+            self.rigid_solver._static_rigid_sim_cache_key,
         )
 
     def _init_sap_fields(self):
@@ -1640,6 +1645,7 @@ class RigidConstraintHandler(BaseConstraintHandler):
         equalities_info: array_class.EqualitiesInfo,
         joints_info: array_class.JointsInfo,
         static_rigid_sim_config: ti.template(),
+        static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     ):
         self.n_constraints[None] = 0
         self.Jt.fill(0.0)
@@ -1978,7 +1984,7 @@ class RigidContactHandler(BaseContactHandler):
                     cdof_vel = self.rigid_solver.dofs_state.cdof_vel[i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = self.contact_pairs[i_p].contact_pos - self.rigid_solver.links_state.COM[link, i_b]
+                    t_pos = self.contact_pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
                     _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
 
                     diff = vel
@@ -2836,7 +2842,7 @@ class RigidFloorVertContactHandler(RigidContactHandler):
 
 
 @ti.data_oriented
-class RigidFemTetContactHanlder(RigidFEMContactHandler):
+class RigidFemTetContactHandler(RigidFEMContactHandler):
     """
     Class for handling self-contact between tetrahedral elements in a simulation using hydroelastic model.
 

@@ -132,7 +132,7 @@ def ti_quat_to_R(quat):
 @ti.func
 def ti_quat_to_xyz(quat):
     """
-    Convert a quaternion into roll, pitch, and yaw angles.
+    Convert a quaternion into intrinsic x-y-z Euler angles.
     """
     roll = gs.ti_float(0.0)
     pitch = gs.ti_float(0.0)
@@ -147,13 +147,16 @@ def ti_quat_to_xyz(quat):
         q_xx, q_xy, q_xz = q_x * q_xs, q_x * q_ys, q_x * q_zs
         q_yy, q_yz, q_zz = q_y * q_ys, q_y * q_zs, q_z * q_zs
 
-        siny_cosp = q_wz - q_xy
-        cosy_cosp = 1.0 - (q_yy + q_zz)
-        cosp = ti.sqrt(cosy_cosp**2 + siny_cosp**2)
+        sinycosp = q_wz - q_xy
+        cosycosp = 1.0 - (q_yy + q_zz)
+        cosp = ti.sqrt(cosycosp**2 + sinycosp**2)
 
-        roll = ti.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
         pitch = ti.atan2(q_xz + q_wy, cosp)
-        yaw = ti.atan2(siny_cosp, cosy_cosp)
+        if cosp > gs.EPS:
+            roll = ti.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
+            yaw = ti.atan2(sinycosp, cosycosp)
+        else:
+            yaw = ti.atan2(q_wz + q_xy, 1.0 - (q_xx + q_zz))
 
     return ti.Vector([roll, pitch, yaw], dt=gs.ti_float)
 
@@ -634,8 +637,12 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
         assert out.shape == (*quat.shape[:-1], 3)
         out_ = out
 
-    s = 2.0 / np.sum(np.square(quat), -1)
-    q_w, q_x, q_y, q_z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+    # Flatten batch dimensions
+    quat_2d = quat.reshape((-1, 4))
+    out_2d = out_.reshape((-1, 3))
+
+    s = 2.0 / np.sum(np.square(quat_2d), -1)
+    q_w, q_x, q_y, q_z = quat_2d[:, 0], quat_2d[:, 1], quat_2d[:, 2], quat_2d[:, 3]
     q_xs, q_ys, q_zs = q_x * s, q_y * s, q_z * s
     q_wx, q_wy, q_wz = q_w * q_xs, q_w * q_ys, q_w * q_zs
     q_xx, q_xy, q_xz = q_x * q_xs, q_x * q_ys, q_x * q_zs
@@ -643,19 +650,28 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
 
     if rpy:
         sinp = q_wy - q_xz
-        sinr_cosp = q_wx + q_yz
-        siny_cosp = q_wz + q_xy
+        sinrcosp = q_wx + q_yz
+        sinycosp = q_wz + q_xy
     else:
         sinp = q_xz + q_wy
-        sinr_cosp = q_wx - q_yz
-        siny_cosp = q_wz - q_xy
+        sinrcosp = q_wx - q_yz
+        sinycosp = q_wz - q_xy
     cosr_cosp = 1.0 - (q_xx + q_yy)
-    cosy_cosp = 1.0 - (q_yy + q_zz)
-    cosp = np.sqrt(cosy_cosp**2 + siny_cosp**2)
+    cosycosp = 1.0 - (q_yy + q_zz)
+    cosp = np.sqrt(cosycosp**2 + sinycosp**2)
 
-    out_[..., 0] = np.arctan2(sinr_cosp, cosr_cosp)
-    out_[..., 1] = np.arctan2(sinp, cosp)
-    out_[..., 2] = np.arctan2(siny_cosp, cosy_cosp)
+    out_2d[:, 0] = np.arctan2(sinrcosp, cosr_cosp)
+    out_2d[:, 1] = np.arctan2(sinp, cosp)
+    out_2d[:, 2] = np.arctan2(sinycosp, cosycosp)
+
+    cosp_mask = cosp < gs.EPS
+    if rpy:
+        sinycosp_sinrsinpcosy = q_wz[cosp_mask] - q_xy[cosp_mask]
+    else:
+        sinycosp_sinrsinpcosy = q_wz[cosp_mask] + q_xy[cosp_mask]
+    cospcosy_sinrsinpsiny = 1.0 - (q_xx[cosp_mask] + q_zz[cosp_mask])
+    out_2d[cosp_mask, 0] = 0.0
+    out_2d[cosp_mask, 2] = np.arctan2(sinycosp_sinrsinpcosy, cospcosy_sinrsinpsiny)
 
     return out_
 
@@ -679,24 +695,36 @@ def _tc_quat_to_xyz(quat, rpy=False, out=None):
     # https://gitlab.com/libeigen/eigen/-/blob/master/Eigen/src/Core/MathFunctionsImpl.h#L149
     if rpy:
         sinp = q_wy - q_xz
-        sinr_cosp = q_wx + q_yz
-        siny_cosp = q_wz + q_xy
+        sinrcosp = q_wx + q_yz
+        sinycosp = q_wz + q_xy
     else:
         sinp = q_xz + q_wy
-        sinr_cosp = q_wx - q_yz
-        siny_cosp = q_wz - q_xy
+        sinrcosp = q_wx - q_yz
+        sinycosp = q_wz - q_xy
     cosr_cosp = 1.0 - (q_xx + q_yy)
-    cosy_cosp = 1.0 - (q_yy + q_zz)
-    cosp = torch.sqrt(cosy_cosp**2 + siny_cosp**2)
+    cosycosp = 1.0 - (q_yy + q_zz)
+    cosp = torch.sqrt(cosycosp**2 + sinycosp**2)
 
     # Roll (x-axis rotation)
-    out[..., 0] = torch.atan2(sinr_cosp, cosr_cosp)
+    out[..., 0] = torch.atan2(sinrcosp, cosr_cosp)
 
     # Pitch (y-axis rotation)
     out[..., 1] = torch.atan2(sinp, cosp)
 
     # Yaw (z-axis rotation)
-    out[..., 2] = torch.atan2(siny_cosp, cosy_cosp)
+    out[..., 2] = torch.atan2(sinycosp, cosycosp)
+
+    # Special treatment of nearly singular rotations
+    cosp_mask = cosp < gs.EPS
+    if cosp_mask.any():
+        if rpy:
+            sinycosp_sinrsinpcosy = q_wz[cosp_mask] - q_xy[cosp_mask]
+        else:
+            sinycosp_sinrsinpcosy = q_wz[cosp_mask] + q_xy[cosp_mask]
+        cospcosy_sinrsinpsiny = 1.0 - (q_xx[cosp_mask] + q_zz[cosp_mask])
+
+        out[..., 0].masked_fill_(cosp_mask, 0.0)
+        out[cosp_mask, 2] = torch.arctan2(sinycosp_sinrsinpcosy, cospcosy_sinrsinpsiny)
 
     return out
 
@@ -890,6 +918,8 @@ def T_to_trans_quat(T, *, out=None):
 
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
+    assert u.shape == v.shape
+
     if out is None:
         out_ = np.empty(u.shape, dtype=u.dtype)
     else:
@@ -914,7 +944,7 @@ def _np_quat_mul(u, v, out=None):
 
 def _tc_quat_mul(u, v, out=None):
     if out is None:
-        out = torch.empty(v.shape, dtype=v.dtype, device=v.device)
+        out = torch.empty(torch.broadcast_shapes(u.shape, v.shape), dtype=v.dtype, device=v.device)
 
     w1, x1, y1, z1 = u[..., 0], u[..., 1], u[..., 2], u[..., 3]
     w2, x2, y2, z2 = v[..., 0], v[..., 1], v[..., 2], v[..., 3]
@@ -938,7 +968,6 @@ def transform_quat_by_quat(v, u):
 
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
-    assert u.shape == v.shape, f"{u.shape=} and {v.shape=}"
     assert u.ndim >= 1
 
     if all(isinstance(e, torch.Tensor) for e in (u, v)):

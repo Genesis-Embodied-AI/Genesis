@@ -214,8 +214,10 @@ class Scene(object):
             for mesh_node in self.mesh_nodes:
                 mesh = mesh_node.mesh
                 if any(primitive.is_floor for primitive in mesh.primitives):
-                    continue
-                corners_local = trimesh.bounds.corners(mesh.bounds)
+                    # Only take into account the centroid for floor plane
+                    corners_local = mesh.centroid[np.newaxis]
+                else:
+                    corners_local = trimesh.bounds.corners(mesh.bounds)
                 pose = self.get_pose(mesh_node)
                 corners_world = corners_local @ pose[:3, :3].T + pose[:3, 3]
                 corners.append(corners_world)

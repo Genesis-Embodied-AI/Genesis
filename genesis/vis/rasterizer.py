@@ -1,4 +1,3 @@
-import gc
 import os
 import sys
 
@@ -26,10 +25,17 @@ class Rasterizer(RBC):
             return
 
         if self._offscreen:
-            # if environment variable is set, use the platform specified, otherwise some platform-specific default
+            # Select PyOpenGL backend for `pyrender.OffscreenRenderer`.
+            # If env variable is set, use specified platform if supported, otherwise some platform-specific default.
             platform = os.environ.get("PYOPENGL_PLATFORM", "egl" if gs.platform == "Linux" else "pyglet")
+            if platform not in ("osmesa", "pyglet", "egl"):
+                gs.logger.warning(f"PYOPENGL_PLATFORM='{platform}' not supported. Falling back to 'pyglet'.")
+                platform = "pyglet"
             if sys.platform == "win32" and platform == "osmesa":
-                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is not supported on Windows OS.")
+                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' not supported on Windows OS. Falling back to 'pyglet'.")
+                platform = "pyglet"
+
+            # Start the viewer
             self._renderer = pyrender.OffscreenRenderer(
                 pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
             )
@@ -55,7 +61,10 @@ class Rasterizer(RBC):
     def remove_camera(self, camera):
         self._context.removenode(self._camera_nodes[camera.uid])
         del self._camera_nodes[camera.uid]
-        self._camera_targets[camera.uid].delete()
+        if self._offscreen:
+            self._camera_targets[camera.uid].delete()
+        else:
+            self._viewer.close_offscreen(self._camera_targets[camera.uid])
         del self._camera_targets[camera.uid]
 
     def render_camera(self, camera, rgb=True, depth=False, segmentation=False, normal=False):
@@ -140,9 +149,12 @@ class Rasterizer(RBC):
         for node in self._camera_nodes.values():
             self._context.remove_node(node)
         self._camera_nodes.clear()
-        for renderer in self._camera_targets.values():
+        for camera_target in self._camera_targets.values():
             try:
-                renderer.delete()
+                if self._offscreen:
+                    camera_target.delete()
+                elif self._viewer is not None:
+                    self._viewer.close_offscreen(camera_target)
             except OSError:
                 pass
         self._camera_targets.clear()
@@ -155,7 +167,6 @@ class Rasterizer(RBC):
                 pass
             del self._renderer
             self._renderer = None
-            gc.collect()
 
     @property
     def viewer(self):

@@ -1,6 +1,7 @@
+import sys
+
 import numpy as np
 import pytest
-import torch
 import igl
 
 import genesis as gs
@@ -9,7 +10,13 @@ from genesis.utils.misc import tensor_to_array
 from .utils import assert_allclose, get_hf_dataset
 
 
-@pytest.fixture(scope="session")
+pytestmark = [
+    pytest.mark.field_only,
+]
+
+
+# Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
+@pytest.fixture(scope="function")
 def fem_material():
     """Fixture for common FEM material properties"""
     return gs.materials.FEM.Muscle(
@@ -18,6 +25,36 @@ def fem_material():
         rho=1000.0,
         model="stable_neohookean",
     )
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated")
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic()
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated_soft():
+    """Fixture for common FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated_rough():
+    """Fixture for rough FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
+
+
+@pytest.fixture(scope="function")
+def fem_material_linear_corotated_soft_rough():
+    """Fixture for soft rough FEM linear material properties"""
+    return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
 
 
 @pytest.mark.required
@@ -143,7 +180,7 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
     # Verify whether surface faces in the visualizer mesh matches the surface faces of the FEM entity
     rasterizer_context = scene.visualizer.context
     static_nodes = rasterizer_context.static_nodes
-    fem_node_mesh = static_nodes[fem.uid].mesh
+    fem_node_mesh = static_nodes[(0, fem.uid)].mesh
 
     (fem_node_primitive,) = fem_node_mesh.primitives
     fem_node_vertices = fem_node_primitive.positions
@@ -199,12 +236,6 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
         f"Mesh with maxvolume=0.01 generated {len(fem2.elems)} elements; "
         f"expected more than {len(fem1.elems)} elements without a volume limit."
     )
-
-
-@pytest.fixture(scope="session")
-def fem_material_linear():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic()
 
 
 # @pytest.mark.required
@@ -300,15 +331,12 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
         )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated")
-
-
-# FIXME: Compilation is crashing on Apple Metal backend
 @pytest.mark.required
-def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, show_viewer):
+def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, backend, show_viewer):
+    # FIXME: Fix GsTaichi bug on Apple Metal due to SpirV compilation failure
+    if sys.platform == "darwin" and backend == gs.backend.gpu:
+        pytest.xfail("This test is broken on Mac OS because of a bug in GsTaichi.")
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -358,15 +386,9 @@ def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_line
         )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated_soft():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
-
-
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
-def test_fem_sphere_box_self(fem_material_linear_corotated, fem_material_linear_corotated_soft, show_viewer):
+def test_fem_sphere_box_self(fem_material_linear_corotated, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1 / 60,
@@ -797,12 +819,6 @@ def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer
     )
 
 
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated_rough():
-    """Fixture for rough FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
-
-
 # @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
@@ -887,12 +903,6 @@ def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewe
     assert_allclose(
         new_pos, old_pos, atol=5e-4, err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}."
     )
-
-
-@pytest.fixture(scope="session")
-def fem_material_linear_corotated_soft_rough():
-    """Fixture for soft rough FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
 
 
 # @pytest.mark.required

@@ -257,7 +257,6 @@ def parse_link(mj, i_l, scale):
             j_info["dofs_motion_vel"] = np.eye(6, 3)
             j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
             j_info["dofs_stiffness"] = np.zeros(6)
-
             j_info["init_qpos"][:3] *= scale
         elif gs_type == gs.JOINT_TYPE.SPHERICAL:
             if mj_is_limited:
@@ -281,7 +280,6 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_motion_vel"] = np.array([mj_axis])
                 j_info["dofs_limit"] = np.array([mj_limit]) * scale
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
-
                 j_info["init_qpos"] *= scale
 
         # Parsing actuator parameters
@@ -360,14 +358,19 @@ def parse_link(mj, i_l, scale):
 
         j_infos.append(j_info)
 
-    # Applying scale
-    l_info["pos"] *= scale
-    l_info["inertial_pos"] *= scale
-    l_info["inertial_mass"] *= scale**3
-    l_info["inertial_i"] *= scale**5
-    l_info["invweight"] /= scale**3
-    for j_info in j_infos:
-        j_info["pos"] *= scale
+    # Applying scale if necessary.
+    # Note that the mass matrix of a poly-articulated robot does not scale trivially as it is a copnfiguration-depends
+    # mixing of s ** 3 factor for masses and s ** 5 factor for inertia tensors. As a result, it is much simpler to
+    # consider invweight indefined, which will trigger recomputation at build time.
+    if abs(1.0 - scale) > gs.EPS:
+        l_info["pos"] *= scale
+        l_info["inertial_pos"] *= scale
+        l_info["inertial_mass"] *= scale**3
+        l_info["inertial_i"] *= scale**5
+        l_info["invweight"][:] = -1.0
+        for j_info in j_infos:
+            j_info["pos"] *= scale
+            j_info["dofs_invweight"][:] = -1.0
 
     return l_info, j_infos
 
@@ -656,15 +659,22 @@ def parse_geoms(mj, scale, surface, xml_path):
             "when calling `scene.add_entity`."
         )
 
-    # Parse geometry group if available.
-    # Duplicate collision geometries as visual for bodies not having dedicated visual geometries as a fallback.
+    # Parse geometry group if available
     for link_g_info in links_g_info:
         has_visual_group = any(g_info["group"] > 0 for g_info in link_g_info)
-        is_all_col = all(g_info["contype"] or g_info["conaffinity"] for g_info in link_g_info)
         for g_info in link_g_info.copy():
-            group = g_info.pop("group")
-            is_col = g_info["contype"] or g_info["conaffinity"]
-            if (has_visual_group and group in (1, 2) and is_col) or (not has_visual_group and is_all_col):
+            # Duplicate collision geometries as visual in accordance with Mujoco logics
+            create_visual = False
+            if g_info["contype"] or g_info["conaffinity"]:
+                if has_visual_group:
+                    # If groups are defined, only create visual for geoms in visual groups (1 or 2)
+                    create_visual = g_info["group"] in (1, 2)
+                else:
+                    # If no groups defined, always create visual duplicates for collision geoms.
+                    # This handles the case where we have a mix of collision and non-collision geoms.
+                    create_visual = True
+
+            if create_visual:
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
                 vmesh = gs.Mesh(

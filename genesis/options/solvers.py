@@ -248,6 +248,13 @@ class RigidOptions(Options):
         Number of line search iterations for the constraint solver. Defaults to 50.
     ls_tolerance : float, optional
         Tolerance for the line search. Defaults to 1e-2.
+    noslip_iterations : int, optional
+        Number of iterations for the noslip solver. Defaults to 0 (disabled).
+        noslip is a post-processing step after the main solver to suppress slip/drift.
+        Recommended to set this value to 5 for manipulation tasks or when slip/drift is a big problem.
+        This option should only be enabled if necessary because it is experimental and will slow down the simulation.
+    noslip_tolerance : float, optional
+        Tolerance for the noslip solver. Defaults to 1e-6.
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
     contact_resolve_time : float, optional
@@ -297,6 +304,8 @@ class RigidOptions(Options):
     tolerance: float = 1e-8
     ls_iterations: int = 50
     ls_tolerance: float = 1e-2
+    noslip_iterations: int = 0
+    noslip_tolerance: float = 1e-6
     sparse_solve: bool = False
     contact_resolve_time: Optional[float] = None
     constraint_timeconst: float = 0.01
@@ -363,8 +372,6 @@ class MPMOptions(Options):
     ----
     MPM is a hybrid lagrangian-eulerian method for simulating soft materials. In the eulerian phase, it uses a grid representation. The `upper_bound` and `lower_bound` specify the simulation domain, but a safety padding will be added to the actual grid boundary. Therefore, the actual boundary could be slightly tighter than the specified one. Note that the size of the domain affects the performance of the simulation, hence you should set it as tight as possible.
 
-    `use_sparse_grid` and `leaf_block_size` are advanced parameters for sparse computation. Don't touch them unless you know what you are doing.
-
     Parameters
     ----------
     dt : float, optional
@@ -382,9 +389,9 @@ class MPMOptions(Options):
     upper_bound : tuple, shape (3,), optional
         Upper bound of the simulation domain. Defaults to (1.0, 1.0, 1.0).
     use_sparse_grid : bool, optional
-        Whether to use sparse grid. Defaults to False. Don't touch unless you know what you are doing.
+        This option is deprecated.
     leaf_block_size : int, optional
-        Size of the leaf block for sparse mode. Defaults to 8.
+        This option is deprecated.
     """
 
     dt: Optional[float] = None
@@ -397,15 +404,13 @@ class MPMOptions(Options):
     lower_bound: tuple = (-1.0, -1.0, 0.0)
     upper_bound: tuple = (1.0, 1.0, 1.0)
 
-    # Sparse computation parameter. Don't touch unless you know what you are doing.
+    # Deprecated sparse computation parameter.
     use_sparse_grid: bool = False
-    leaf_block_size: int = (
-        8  # NOTE: taichi_elements uses 4, which in our case will hang and crash. Probably due to some memory access issue.
-    )
+    leaf_block_size: int = 8
 
     def __init__(self, **data):
         super().__init__(**data)
-        if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
+        if not np.all(np.asarray(self.upper_bound) > np.asarray(self.lower_bound)):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
         if self.particle_size is None:

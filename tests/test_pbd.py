@@ -1,12 +1,15 @@
-import uuid
-
-import numpy as np
 import pytest
 
 import genesis as gs
 
 
-@pytest.fixture(scope="session")
+pytestmark = [
+    pytest.mark.field_only,
+]
+
+
+# Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
+@pytest.fixture(scope="function")
 def pbd_material():
     """Fixture for common FEM material properties"""
     return gs.materials.PBD.Elastic()

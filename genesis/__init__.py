@@ -7,6 +7,7 @@ import logging as _logging
 import traceback
 from platform import system
 from contextlib import redirect_stdout
+from typing import Callable, TypeVar, ParamSpec
 
 # Import gstaichi while collecting its output without printing directly
 _ti_outputs = io.StringIO()
@@ -39,6 +40,17 @@ _initialized = False
 backend = None
 exit_callbacks = []
 global_scene_list = set()
+
+
+_P = ParamSpec("P")
+_R = TypeVar("R")
+
+
+def _noop(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+    return fn
+
+
+use_pure = os.environ.get("GS_BETA_PURE") == "1"
 
 
 ########################## init ##########################
@@ -105,6 +117,8 @@ def init(
     # get default device and compute total device memory
     global device
     device, device_name, total_mem, backend = get_device(backend)
+    if backend != gs.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
+        device, device_name, total_mem, _ = get_device(gs_backend.cpu)
 
     # dtype
     global ti_float
@@ -168,7 +182,7 @@ def init(
     ti_ivec4 = ti.types.vector(4, ti_int)
 
     global EPS
-    EPS = max(eps, np.finfo(np_float).eps)
+    EPS = float(max(eps, np.finfo(np_float).eps))
 
     taichi_kwargs = {}
     if gs.logger.level == _logging.CRITICAL:
@@ -198,6 +212,9 @@ def init(
             "increasing compilation time is not a concern."
         )
 
+    if os.environ.get("GS_BETA_PURE") == "1":
+        logger.info("Enabling pure kernels for fast cache loading.")
+
     if seed is not None:
         global SEED
         SEED = seed
@@ -208,7 +225,7 @@ def init(
 
     # It is necessary to disable Metal backend manually because it is not working at taichi-level due to a bug
     ti_arch = TI_ARCH[platform][backend]
-    if (backend == gs_backend.metal) and (os.environ.get("TI_ENABLE_METAL") == "0"):
+    if backend == gs_backend.metal and os.environ.get("TI_ENABLE_METAL") == "0":
         ti_arch = TI_ARCH[platform][gs_backend.cpu]
 
     # init gstaichi
@@ -231,9 +248,8 @@ def init(
         )
 
     # Make sure that gstaichi arch is matching requirement
-    ti_runtime = ti.lang.impl.get_runtime()
-    ti_arch = ti_runtime.prog.config().arch
-    if backend != gs.cpu and ti_arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
+    ti_config = ti.lang.impl.current_cfg()
+    if backend != gs.cpu and ti_config.arch in (ti._lib.core.Arch.arm64, ti._lib.core.Arch.x64):
         device, device_name, total_mem, backend = get_device(gs.cpu)
 
     _globalize_backend(backend)
@@ -276,7 +292,7 @@ def destroy():
     _initialized = False
 
     # Unregister at-exit callback that is not longer relevant.
-    # This is important when `init` / `destory` is called multiple times, which is typically the case for unit tests.
+    # This is important when `init` / `destroy` is called multiple times, which is typically the case for unit tests.
     atexit.unregister(destroy)
 
     # Display any buffered error message if logger is configured
@@ -292,9 +308,7 @@ def destroy():
     # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
-        if scene._visualizer is not None:
-            scene._visualizer.destroy()
-        del scene
+        scene.destroy()
     global_scene_list.clear()
 
     # Reset gstaichi

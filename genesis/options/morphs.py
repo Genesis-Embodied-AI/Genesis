@@ -429,10 +429,16 @@ class Plane(Primitive):
     conaffinity : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
         the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
+    plane_size: tuple, optional
+        The size of the plane in meters. Defaults to (1e3, 1e3).
+    tile_size: tuple, optional
+        The size of each texture tile. Defaults to (1, 1).
     """
 
     fixed: bool = True
     normal: tuple = (0, 0, 1)
+    plane_size: tuple = (1e3, 1e3)
+    tile_size: tuple = (1, 1)
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -478,11 +484,11 @@ class FileMorph(Morph):
     decimate_aggressiveness : int
         How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
         0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 5.
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
         **This is only used for RigidEntity.**
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
-        to a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
+        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
         sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
         module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
         and `False` for other deformable entities.
@@ -514,7 +520,7 @@ class FileMorph(Morph):
     scale: Union[float, tuple] = 1.0
     decimate: bool = True
     decimate_face_num: int = 500
-    decimate_aggressiveness: int = 5
+    decimate_aggressiveness: int = 2
     convexify: Optional[bool] = None
     decompose_nonconvex: Optional[bool] = None
     decompose_object_error_threshold: float = 0.15
@@ -727,10 +733,12 @@ class MJCF(FileMorph):
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
         Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity's baselink in meters. Defaults to (0.0, 0.0, 0.0).
+        The position of the entity in meters as a translational offset. Mathematically, 'pos' and 'euler' options
+        correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
+        original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity's baselink in degrees. This follows scipy's extrinsic x-y-z rotation convention.
-        Defaults to (0.0, 0.0, 0.0).
+        The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
+        convention. See 'pos' option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored.
         Defaults to None.
@@ -827,10 +835,12 @@ class URDF(FileMorph):
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
         Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+        The position of the entity in meters as a translational offset. Mathematically, 'pos' and 'euler' options
+        correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
+        original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
-        Defaults to (0.0, 0.0, 0.0).
+        The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
+        convention. See 'pos' option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
@@ -918,10 +928,12 @@ class Drone(FileMorph):
         The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along
         each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+        The position of the entity in meters as a translational offset. Mathematically, 'pos' and 'euler' options
+        correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
+        original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
-        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention. Defaults to
-        (0.0, 0.0, 0.0).
+        The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
+        convention. See 'pos' option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional

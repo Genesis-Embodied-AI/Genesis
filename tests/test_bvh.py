@@ -1,5 +1,3 @@
-import torch
-import gstaichi as ti
 import numpy as np
 import pytest
 
@@ -7,6 +5,11 @@ import genesis as gs
 from genesis.engine.bvh import LBVH, AABB
 
 from .utils import assert_allclose
+
+
+pytestmark = [
+    pytest.mark.field_only,
+]
 
 
 @pytest.fixture(scope="function")
@@ -24,12 +27,14 @@ def lbvh():
 
     lbvh = LBVH(aabb, max_n_query_result_per_aabb=32)
     lbvh.build()
+
     return lbvh
 
 
 @pytest.mark.required
 def test_morton_code(lbvh):
     morton_codes = lbvh.morton_codes.to_numpy()
+
     # Check that the morton codes are sorted
     for i_b in range(morton_codes.shape[0]):
         for i in range(1, morton_codes.shape[1]):
@@ -121,14 +126,15 @@ def test_build_tree(lbvh):
                 assert_allclose(parent_max, parent_max_expected, atol=1e-6, rtol=1e-5)
 
 
-@ti.kernel
-def query_kernel(lbvh: ti.template(), aabbs: ti.template()):
-    lbvh.query(aabbs)
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
+    import gstaichi as ti
+
+    @ti.kernel
+    def query_kernel(lbvh: ti.template(), aabbs: ti.template()):
+        lbvh.query(aabbs)
+
     aabbs = lbvh.aabbs
 
     # Query the tree

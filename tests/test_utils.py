@@ -3,7 +3,6 @@ from unittest.mock import patch
 import pytest
 import torch
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -11,9 +10,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
 
-from .utils import (
-    assert_allclose,
-)
+from .utils import assert_allclose
 
 
 TOL = 1e-7

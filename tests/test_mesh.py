@@ -1,6 +1,5 @@
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,7 +7,6 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
-import genesis.utils.mesh as mu
 import genesis.utils.usda as usda_utils
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
@@ -328,7 +326,6 @@ def test_usd_bake(usd_file, show_viewer):
             file=usd_file,
         ),
     )
-    scene.build()
 
 
 @pytest.mark.required
@@ -357,7 +354,6 @@ def test_urdf_with_existing_glb(tmp_path, show_viewer):
             file=urdf_path,
         ),
     )
-    scene.build()
 
 
 @pytest.mark.required
@@ -408,4 +404,89 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
             file=urdf_path,
         ),
     )
+
+
+@pytest.mark.required
+def test_urdf_mesh_processing(tmp_path, show_viewer):
+    stl_file = "1707/base_link.stl"
+    asset_path = get_hf_dataset(pattern=stl_file)
+    stl_path = os.path.join(asset_path, stl_file)
+
+    urdf_path = tmp_path / "model.urdf"
+    urdf_path.write_text(
+        f"""<robot name="shoe">
+              <link name="base">
+                <visual>
+                  <geometry><mesh filename="{stl_path}"/></geometry>
+                </visual>
+              </link>
+            </robot>
+         """
+    )
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    obj = scene.add_entity(
+        gs.morphs.Mesh(
+            file=stl_path,
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+        ),
+    )
+
+    tmesh_obj_col = obj.geoms[0].mesh.trimesh
+    tmesh_obj_vis = obj.vgeoms[0].vmesh.trimesh
+    tmesh_robot_vis = robot.vgeoms[0].vmesh.trimesh
+
+    assert len(tmesh_obj_col.vertices) != len(tmesh_obj_vis.vertices)
+    assert len(tmesh_obj_vis.vertices) == len(tmesh_robot_vis.vertices)
+    assert len(tmesh_obj_vis.faces) == len(tmesh_robot_vis.faces)
+
+    tmesh = trimesh.Trimesh(vertices=tmesh_obj_vis.vertices, faces=tmesh_obj_vis.faces, process=True)
+    assert len(tmesh.vertices) != len(tmesh_obj_vis.vertices)
+
+
+@pytest.mark.required
+def test_2_channels_luminance_alpha_textures(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = get_hf_dataset(pattern="fridge/*")
+    fridge = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/fridge/fridge.urdf",
+            fixed=True,
+        )
+    )
+
+
+@pytest.mark.required
+@pytest.mark.field_only
+def test_splashsurf_surface_reconstruction(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    water = scene.add_entity(
+        material=gs.materials.SPH.Liquid(),
+        morph=gs.morphs.Box(
+            pos=(0.15, 0.15, 0.22),
+            size=(0.25, 0.25, 0.4),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.6, 1.0, 1.0),
+            vis_mode="recon",
+        ),
+    )
+    cam = scene.add_camera(
+        pos=(1.3, 1.3, 0.8),
+        lookat=(0.0, 0.0, 0.2),
+        GUI=show_viewer,
+    )
     scene.build()
+    cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)

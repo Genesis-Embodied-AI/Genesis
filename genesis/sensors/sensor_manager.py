@@ -5,9 +5,7 @@ import torch
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
-    from genesis.options.sensors import SensorOptions
-
-    from .base_sensor import Sensor, SharedSensorMetadata
+    from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
 
 
 class SensorManager:
@@ -21,11 +19,11 @@ class SensorManager:
         self._cache: dict[Type[torch.dtype], torch.Tensor] = {}
         self._buffered_data: dict[Type[torch.dtype], TensorRingBuffer] = {}
         self._cache_slices_by_type: dict[Type["Sensor"], slice] = {}
-
+        self._should_update_cache_by_type: dict[Type["Sensor"], bool] = {}
         self._last_cache_cloned_step: dict[tuple[bool, Type[torch.dtype]], int] = {}
         self._cloned_cache: dict[tuple[bool, Type[torch.dtype]], torch.Tensor] = {}
 
-    def create_sensor(self, sensor_options: "SensorOptions"):
+    def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate(self._sim.scene)
         sensor_cls, metadata_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         self._sensors_by_type.setdefault(sensor_cls, [])
@@ -41,17 +39,20 @@ class SensorManager:
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_cache_dtype()
 
-            for is_ground_truth in [False, True]:
+            for is_ground_truth in (False, True):
                 self._last_cache_cloned_step.setdefault((is_ground_truth, dtype), -1)
                 self._cloned_cache.setdefault((is_ground_truth, dtype), torch.zeros(0, dtype=dtype))
 
             cache_size_per_dtype.setdefault(dtype, 0)
             cls_cache_start_idx = cache_size_per_dtype[dtype]
 
+            update_ground_truth_only = True
             for sensor in sensors:
+                update_ground_truth_only &= sensor._options.update_ground_truth_only
                 sensor._cache_idx = cache_size_per_dtype[dtype]
                 cache_size_per_dtype[dtype] += sensor._cache_size
-                max_buffer_len = max(max_buffer_len, sensor._read_delay_steps + 1)
+                max_buffer_len = max(max_buffer_len, sensor._delay_ts + 1)
+            self._should_update_cache_by_type[sensor_cls] = not update_ground_truth_only
 
             cls_cache_end_idx = cache_size_per_dtype[dtype]
             self._cache_slices_by_type[sensor_cls] = slice(cls_cache_start_idx, cls_cache_end_idx)
@@ -66,20 +67,34 @@ class SensorManager:
             dtype = sensor_cls._get_cache_dtype()
             for sensor in sensors:
                 sensor.build()
+                sensor._is_built = True
 
     def step(self):
         for sensor_cls in self._sensors_by_type.keys():
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             sensor_cls._update_shared_ground_truth_cache(
-                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][cache_slice]
+                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice]
             )
-            sensor_cls._update_shared_cache(
-                self._sensors_metadata[sensor_cls],
-                self._ground_truth_cache[dtype][cache_slice],
-                self._cache[dtype][cache_slice],
-                self._buffered_data[dtype][cache_slice],
-            )
+            if self._should_update_cache_by_type[sensor_cls]:
+                sensor_cls._update_shared_cache(
+                    self._sensors_metadata[sensor_cls],
+                    self._ground_truth_cache[dtype][:, cache_slice],
+                    self._cache[dtype][:, cache_slice],
+                    self._buffered_data[dtype][:, cache_slice],
+                )
+
+    def reset(self, envs_idx=None):
+        envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
+        for dtype in self._buffered_data.keys():
+            self._ground_truth_cache[dtype][envs_idx] = 0.0
+            self._cache[dtype][envs_idx] = 0.0
+            self._buffered_data[dtype].buffer[:, envs_idx] = 0.0
+        for key in self._last_cache_cloned_step.keys():
+            self._cloned_cache[key] = 0.0
+            self._last_cache_cloned_step[key] = -1  # do not use cached data
+        for sensor_cls in self._sensors_by_type.keys():
+            sensor_cls.reset(self._sensors_metadata[sensor_cls], envs_idx)
 
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
         dtype = sensor._get_cache_dtype()
