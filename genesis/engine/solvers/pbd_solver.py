@@ -381,13 +381,6 @@ class PBDSolver(Solver):
     @ti.kernel
     def _kernel_apply_external_force(self, f: ti.i32, t: ti.f32):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if i_p < 1:
-                print(
-                    "update pos",
-                    self.particles[i_p, i_b].free,
-                    self.particles[i_p, i_b].pos,
-                    self.particles[i_p, i_b].vel,
-                )
             if self.particles[i_p, i_b].free:
                 # gravity
                 self.particles[i_p, i_b].vel = self.particles[i_p, i_b].vel + self._gravity[i_b] * self._substep_dt
@@ -408,9 +401,11 @@ class PBDSolver(Solver):
                         self.particles[i_p, i_b].vel
                         - f_air_resistance / self.particles_info[i_p].mass * self._substep_dt
                     )
-                self.particles[i_p, i_b].pos = (
-                    self.particles[i_p, i_b].pos + self.particles[i_p, i_b].vel * self._substep_dt
-                )
+
+            # attached particles are not free but still need to update position to follow the link
+            self.particles[i_p, i_b].pos = (
+                self.particles[i_p, i_b].pos + self.particles[i_p, i_b].vel * self._substep_dt
+            )
 
     @ti.kernel
     def _kernel_solve_stretch(self, f: ti.i32):
@@ -746,8 +741,6 @@ class PBDSolver(Solver):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[i_p, i_b].active:
                 reordered_idx = self.particles_ng[i_p, i_b].reordered_idx
-                if i_p < 1:
-                    print("copy particles_reordered", i_p, self.particles_reordered[reordered_idx, i_b].vel)
                 self.particles[i_p, i_b] = self.particles_reordered[reordered_idx, i_b]
 
     # ------------------------------------------------------------------------------------
@@ -942,7 +935,6 @@ class PBDSolver(Solver):
         links_state: LinksState,
         envs_idx: NDArray[np.int32] | None = None,
     ) -> None:
-        print("set_animate_particles_by_link")
         envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
             particles_idx, link_idx, links_state, envs_idx

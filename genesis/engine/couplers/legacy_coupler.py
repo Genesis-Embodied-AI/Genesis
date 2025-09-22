@@ -623,7 +623,7 @@ class LegacyCoupler(RBC):
                 local_pos = ti_inv_transform_by_trans_quat(world_pos, link_pos, link_quat)
 
                 # set particle to be animated (not free) and store animation info
-                pdb.particles[i_p, i_env].free = ti.int32(0)  # optional
+                pdb.particles[i_p, i_env].free = False
                 pdb.particle_animation_info[i_p, i_env].link_idx = link_idx
                 pdb.particle_animation_info[i_p, i_env].local_pos = local_pos
 
@@ -641,7 +641,7 @@ class LegacyCoupler(RBC):
             for i_p_ in range(particles_idx.shape[0]):
                 i_p = particles_idx[i_p_]
 
-                pdb.particles[i_p, i_env].free = ti.int32(1)
+                pdb.particles[i_p, i_env].free = True
                 pdb.particle_animation_info[i_p, i_env].link_idx = -1
                 pdb.particle_animation_info[i_p, i_env].local_pos = ti.math.vec3([0.0, 0.0, 0.0])
 
@@ -669,7 +669,7 @@ class LegacyCoupler(RBC):
 
                 link_lin_vel = links_state.cd_vel[link_idx, i_env]
                 link_ang_vel = links_state.cd_ang[link_idx, i_env]
-                link_com_in_world = links_state.root_COM[link_idx, i_env]
+                link_com_in_world = links_state.root_COM[link_idx, i_env] + links_state.i_pos[link_idx, i_env]
 
                 # calculate target pos and vel of the particle
                 local_pos = pdb.particle_animation_info[i_p, i_env].local_pos
@@ -685,10 +685,6 @@ class LegacyCoupler(RBC):
                 corrective_vel = pos_correction * clamped_inv_dt
                 old_vel = pdb.particles_reordered[i_rp, i_env].vel
                 pdb.particles_reordered[i_rp, i_env].vel = corrective_vel + target_world_vel
-                print("target_world_pos", target_world_pos, link_com_in_world)
-                print(
-                    "pdb.particles_reordered[i_rp, i_env].vel", i_p, old_vel, pdb.particles_reordered[i_rp, i_env].vel
-                )
 
     @ti.func
     def _func_pbd_collide_with_rigid_geom(self, i, pos, vel, mass, normal_prev, geom_idx, batch_idx):
