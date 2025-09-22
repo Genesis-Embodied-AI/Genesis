@@ -4,11 +4,11 @@ import numpy as np
 from pynput import keyboard
 
 import genesis as gs
-from genesis.sensors.raycaster.patterns import DepthCameraPattern, GridPattern, SphericalPattern, SpinningLidarPattern
+from genesis.sensors.raycaster.patterns import DepthCameraPattern, GridPattern, SphericalPattern
 from genesis.utils.geom import euler_to_quat
 from genesis.utils.keyboard import KeyboardDevice
 
-KEY_DPOS = 0.05
+KEY_DPOS = 0.1
 KEY_DANGLE = 0.1
 
 
@@ -88,14 +88,12 @@ def create_robot_with_lidar(scene, args):
     if args.pattern == "depth":
         sensor = scene.add_sensor(gs.sensors.DepthCamera(pattern=DepthCameraPattern(), **sensor_kwargs))
         return robot, sensor
-    elif args.pattern == "spherical":
-        pattern_cfg = SphericalPattern()
     elif args.pattern == "grid":
         pattern_cfg = GridPattern()
     else:
-        if args.pattern != "spinning":
-            gs.logger.warning(f"Unrecognized raycaster pattern: {args.pattern}. Using 'spinning' instead.")
-        pattern_cfg = SpinningLidarPattern()
+        if args.pattern != "spherical":
+            gs.logger.warning(f"Unrecognized raycaster pattern: {args.pattern}. Using 'spherical' instead.")
+        pattern_cfg = SphericalPattern()
 
     sensor = scene.add_sensor(gs.sensors.Lidar(pattern=pattern_cfg, **sensor_kwargs))
     return robot, sensor
@@ -202,8 +200,8 @@ def main():
     parser.add_argument(
         "--pattern",
         type=str,
-        default="spinning",
-        choices=["spherical", "spinning", "depth", "grid"],
+        default="spherical",
+        choices=["spherical", "depth", "grid"],
         help="Sensor pattern type",
     )
 

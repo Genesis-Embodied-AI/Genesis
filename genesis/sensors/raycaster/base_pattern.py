@@ -23,9 +23,9 @@ class RaycastPattern:
 class RaycastPatternGenerator:
     """Base class for raycast pattern generators."""
 
-    def __init__(self, config: RaycastPattern):
-        self.config: RaycastPattern = config
-        self._return_shape: tuple[int, ...] = self.config.get_return_shape()
+    def __init__(self, options: RaycastPattern):
+        self._options: RaycastPattern = options
+        self._return_shape: tuple[int, ...] = self._options.get_return_shape()
 
     def get_ray_directions(self) -> torch.Tensor:
         """

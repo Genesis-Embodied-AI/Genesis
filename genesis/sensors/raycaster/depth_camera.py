@@ -21,7 +21,7 @@ class DepthCameraOptions(RaycasterOptions):
         The mounting offset position of the sensor in the world frame. Defaults to (0.0, 0.0, 0.0).
     euler_offset : tuple[float, float, float], optional
         The mounting offset quaternion of the sensor in the world frame. Defaults to (0.0, 0.0, 0.0).
-    pattern: RaycasterPattern
+    pattern: DepthCameraPattern
         The raycasting pattern configuration for the sensor.
     min_range : float, optional
         The minimum sensing range in meters. Defaults to 0.0.

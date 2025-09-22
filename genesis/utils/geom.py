@@ -1596,8 +1596,8 @@ def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torc
 
     Returns
     -------
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-        Cartesian coordinates (x, y, z) where x=forward, y=left, z=up.
+    vectors : torch.Tensor
+        Vectors in cartesian coordinates as tensor of shape (..., 3).
     """
     cos_phi = torch.cos(phi)
 
@@ -1605,7 +1605,7 @@ def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torc
     y = torch.sin(theta) * cos_phi  # left
     z = torch.sin(phi)  # up
 
-    return x, y, z
+    return torch.stack([x, y, z], dim=-1)
 
 
 def slerp(q0, q1, t):

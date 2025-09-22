@@ -30,7 +30,7 @@ from ..base_sensor import (
     SensorOptions,
     SharedSensorMetadata,
 )
-from .patterns import RaycastPattern, RaycastPatternGenerator, create_pattern_generator
+from .base_pattern import RaycastPattern, RaycastPatternGenerator, create_pattern_generator
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
