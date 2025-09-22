@@ -4,8 +4,7 @@ import numpy as np
 from pynput import keyboard
 
 import genesis as gs
-from genesis.sensors.raycaster.camera_pattern import DepthCameraPattern
-from genesis.sensors.raycaster.lidar_pattern import GridPattern, SphericalPattern, SpinningLidarPattern
+from genesis.sensors.raycaster.patterns import DepthCameraPattern, GridPattern, SphericalPattern, SpinningLidarPattern
 from genesis.utils.geom import euler_to_quat
 from genesis.utils.keyboard import KeyboardDevice
 

@@ -1,7 +1,7 @@
 import csv
 import os
-from collections import defaultdict
 from pathlib import Path
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -12,6 +12,7 @@ from genesis.utils import tensor_to_array
 
 from .base_recorder import Recorder, RecorderOptions
 from .recorder_manager import register_recording
+
 
 IS_PYAV_AVAILABLE = False
 try:
@@ -109,7 +110,7 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
     def validate(self):
         super().validate()
 
-        if self.codec not in av.codecs_available:
+        if not self.codec in av.codecs_available:
             gs.raise_exception(f"[{type(self).__name__}] Codec '{self._options.codec}' not supported.")
 
         if not self.filename.endswith(".mp4"):
