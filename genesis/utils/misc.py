@@ -6,7 +6,6 @@ import math
 import os
 import platform
 import random
-import shutil
 import sys
 import types
 import weakref
@@ -28,6 +27,7 @@ from gstaichi.types import primitive_types
 
 import genesis as gs
 from genesis.constants import backend as gs_backend
+
 
 LOGGER = logging.getLogger(__name__)
 

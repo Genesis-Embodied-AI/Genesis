@@ -1,3 +1,4 @@
+import itertools
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,7 @@ from genesis.utils.geom import (
     transform_by_trans_quat,
 )
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.vis.rasterizer_context import RasterizerContext
 
 from ..base_sensor import (
     RigidSensorMetadataMixin,
@@ -37,6 +39,14 @@ from .camera_pattern import DepthCameraPattern
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
+
+
+DEBUG_COLORS = (
+    (1.0, 0.2, 0.2, 1.0),
+    (0.2, 1.0, 0.2, 1.0),
+    (0.2, 0.6, 1.0, 1.0),
+    (1.0, 1.0, 0.2, 1.0),
+)
 
 
 @ti.func
@@ -152,8 +162,8 @@ def kernel_update_aabbs(
 
     for i_b, i_f_ in ti.ndrange(_B, n_faces):
         i_f = map_lidar_faces[i_f_]
-        aabb_state.aabbs[i_b, i_f].min.fill(np.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-np.inf)
+        aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
+        aabb_state.aabbs[i_b, i_f].max.fill(-ti.math.inf)
 
         is_free = verts_info.is_free[faces_info.verts_idx[i_f][0]]
         if is_free:
@@ -334,6 +344,10 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
         The delay in seconds before the sensor data is read.
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth cache, and not the measured cache.
+    draw_debug : bool, optional
+        If True and the rasterizer visualization is active, spheres will be drawn at every hit point.
+    debug_sphere_radius: float, optional
+        The radius of each debug hit point sphere drawn in the scene. Defaults to 0.02.
     """
 
     pattern: RaycastPattern | str
@@ -342,6 +356,8 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
     no_hit_value: float | None = None
     return_world_frame: bool = False
     only_cast_fixed: bool = False
+
+    debug_sphere_radius: float = 0.02
 
 
 @dataclass
@@ -452,6 +468,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         no_hit_value = self._options.no_hit_value if self._options.no_hit_value is not None else self._options.max_range
         self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
 
+        if self._options.draw_debug:
+            self.debug_objects = [None] * self._manager._sim._B
+
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         shape = self._options.pattern.get_return_shape()
         return {
@@ -519,6 +538,24 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     ):
         buffered_data.append(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        """
+        Draw hit points as spheres in the scene.
+
+        Spheres will be different colors per environment.
+        """
+        data = self.read()["hit_points"].reshape(self._manager._sim._B, -1, 3)
+
+        for env_idx, color in zip(range(data.shape[0]), itertools.cycle(DEBUG_COLORS)):
+            points = data[env_idx]
+
+            if self.debug_objects[env_idx] is not None:
+                context.clear_debug_object(self.debug_objects[env_idx])
+
+            self.debug_objects[env_idx] = context.draw_debug_spheres(
+                points, radius=self._options.debug_sphere_radius, color=color
+            )
 
 
 class LidarOptions(RaycasterOptions):

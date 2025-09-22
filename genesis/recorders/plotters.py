@@ -4,8 +4,9 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import numpy as np
 import torch
@@ -34,10 +35,10 @@ except ImportError:
     pass
 
 
-COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y", "w"))
+COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y"))
 
 
-def _data_to_array(data: Any) -> np.ndarray:
+def _data_to_array(data: Sequence) -> np.ndarray:
     if isinstance(data, torch.Tensor):
         data = tensor_to_array(data)
     return np.atleast_1d(data)
@@ -45,23 +46,14 @@ def _data_to_array(data: Any) -> np.ndarray:
 
 class BasePlotterOptions(RecorderOptions):
     """
-    Base class for live line plot visualization of scalar data.
-
-    The recorded data_func should return scalar data (single scalar, a tuple of scalars, or a dict with string keys and
-    scalar or tuple of scalars as values).
+    Base class for plot visualization.
 
     Parameters
     ----------
     title: str
         The title of the plot.
-    labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
         The size of the window in pixels.
-    history_length: int
-        The maximum number of previous data to store.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
     show_window: bool | None
@@ -69,20 +61,60 @@ class BasePlotterOptions(RecorderOptions):
     """
 
     title: str = ""
-    labels: tuple[str, ...] | dict[str, tuple[str, ...]] | None = None
     window_size: tuple[int, int] = (800, 600)
-    history_length: int = 100
     save_to_filename: str | None = None
     show_window: bool | None = None
 
 
 class BasePlotter(Recorder):
+
+    def build(self):
+        super().build()
+        self.show_window = self._options.show_window if self._options.show_window is not None else has_display()
+
+    def process(self, data, cur_time):
+        pass  # allow super() calls
+
+    def cleanup(self):
+        pass  # allow super() calls
+
+
+@dataclass
+class LinePlotterMixinOptions:
+    """
+    Mixin class for live line plot visualization of scalar data.
+
+    The recorded data_func should return scalar data (single scalar, a tuple of scalars, or a dict with string keys and
+    scalar or tuple of scalars as values).
+
+    Parameters
+    ----------
+    labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
+    x_label: str, optional
+        Label for the horizontal axis.
+    y_label: str, optional
+        Label for the vertical axis.
+    history_length: int
+        The maximum number of previous data to store.
+    """
+
+    labels: tuple[str, ...] | dict[str, tuple[str, ...]] | None = None
+    x_label: str = ""
+    y_label: str = ""
+    history_length: int = 100
+
+
+LinePlotterOptionsMixinT = TypeVar("LinePlotterOptionsMixinT", bound=LinePlotterMixinOptions)
+
+
+class LinePlotterMixin(Generic[LinePlotterOptionsMixinT]):
     """Base class for real-time plotters with shared functionality."""
 
     def build(self):
         super().build()
-
-        self.show_window = self._options.show_window if self._options.show_window is not None else has_display()
 
         self.x_data: list[float] = []
         self.y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
@@ -93,6 +125,8 @@ class BasePlotter(Recorder):
 
         if self._options.labels is not None:
             self._setup_plot_structure(self._options.labels)
+        else:
+            self._setup_plot_structure(self._data_func())
 
         self.video_writer = None
         if self._options.save_to_filename:
@@ -129,7 +163,7 @@ class BasePlotter(Recorder):
             self._frames_buffer.clear()
             self.video_writer = None
 
-    def _setup_plot_structure(self, labels_or_data: dict[str, Any] | Any):
+    def _setup_plot_structure(self, labels_or_data: dict[str, Sequence] | Sequence):
         """Set up the plot structure based on labels or first data sample."""
         if isinstance(labels_or_data, dict):
             self.is_dict_data = True
@@ -156,8 +190,6 @@ class BasePlotter(Recorder):
 
     def process(self, data, cur_time):
         """Process new data point and update plot."""
-        if self.subplot_structure is None:
-            self._setup_plot_structure(data)
 
         if self.is_dict_data:
             processed_data = {}
@@ -222,43 +254,15 @@ class BasePlotter(Recorder):
         raise NotImplementedError
 
 
-class PyQtPlotterOptions(BasePlotterOptions):
+class BasePyQtPlotter(BasePlotter):
     """
-    Live line plot visualization of data using PyQtGraph.
-
-    Parameters
-    ----------
-    title: str
-        The title of the plot.
-    labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
-    window_size: tuple[int, int]
-        The size of the window in pixels.
-    history_length: int
-        The maximum number of previous data to store.
-    save_to_filename: str | None
-        If provided, the animation will be saved to a file with the given filename.
-    show_window: bool | None
-        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
-    """
-
-    pass
-
-
-@register_recording(PyQtPlotterOptions)
-class PyQtPlotter(BasePlotter):
-    """
-    Real-time plot using PyQt for live sensor data visualization.
-
-    Inherits common plotting functionality from BasePlotter.
+    Base class for PyQt based plotters.
     """
 
     def build(self):
         if not IS_PYQTGRAPH_AVAILABLE:
             gs.raise_exception(
-                "[PyQtPlotter] pyqtgraph is not installed. Please install it with `pip install pyqtgraph`."
+                f"{type(self).__name__} pyqtgraph is not installed. Please install it with `pip install pyqtgraph`."
             )
 
         super().build()
@@ -266,17 +270,91 @@ class PyQtPlotter(BasePlotter):
         self.app: pg.QtWidgets.QApplication | None = None
         self.widget: pg.GraphicsLayoutWidget | None = None
         self.plot_widgets: list[pg.PlotWidget] = []
-        self.curves: dict[str, list[pg.PlotCurveItem]] = {}
-
         if not pg.QtWidgets.QApplication.instance():
             self.app = pg.QtWidgets.QApplication([])
         else:
             self.app = pg.QtWidgets.QApplication.instance()
 
         self.widget = pg.GraphicsLayoutWidget(show=self.show_window, title=self._options.title)
+        if self.show_window:
+            gs.logger.info(f"[{type(self).__name__}] created PyQtGraph window")
         self.widget.resize(*self._options.window_size)
 
-        gs.logger.info("[PyQtPlotter] created PyQtGraph window")
+    def cleanup(self):
+        super().cleanup()
+
+        if self.widget:
+            try:
+                self.widget.close()
+                gs.logger.debug(f"[{type(self).__name__}] closed PyQtGraph window")
+            except Exception as e:
+                gs.logger.warning(f"[{type(self).__name__}] Error closing window: {e}")
+            finally:
+                self.widget = None
+                self.plot_widgets.clear()
+
+    @property
+    def run_in_thread(self) -> bool:
+        return True
+
+    def get_image_array(self):
+        """
+        Capture the plot image as a video frame.
+
+        Returns
+        -------
+        image_array : np.ndarray
+            The RGB image as a numpy array.
+        """
+        pixmap = self.widget.grab()
+        qimage = pixmap.toImage()
+
+        qimage = qimage.convertToFormat(pg.QtGui.QImage.Format_RGB888)
+        ptr = qimage.bits()
+        ptr.setsize(qimage.byteCount())
+
+        return np.array(ptr).reshape((qimage.height(), qimage.width(), 3))
+
+
+class PyQtLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
+    """
+    Live line plot visualization of data using PyQtGraph.
+
+    Parameters
+    ----------
+    title: str
+        The title of the plot.
+    window_size: tuple[int, int]
+        The size of the window in pixels.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
+    labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
+    x_label: str, optional
+        Label for the horizontal axis.
+    y_label: str, optional
+        Label for the vertical axis.
+    history_length: int
+        The maximum number of previous data to store.
+    """
+
+    pass
+
+
+@register_recording(PyQtLinePlotterOptions)
+class PyQtLinePlotter(LinePlotterMixin[PyQtLinePlotterOptions], BasePyQtPlotter):
+    """
+    Real-time plot using PyQt for live sensor data visualization.
+    """
+
+    def build(self):
+        super().build()
+
+        self.curves: dict[str, list[pg.PlotCurveItem]] = {}
 
         # create plots for each subplot
         for subplot_idx, (subplot_key, channel_labels) in enumerate(self.subplot_structure.items()):
@@ -285,8 +363,8 @@ class PyQtPlotter(BasePlotter):
                 self.widget.nextRow()
 
             plot_widget = self.widget.addPlot(title=subplot_key if self.is_dict_data else self._options.title)
-            plot_widget.setLabel("left", "Value")
-            plot_widget.setLabel("bottom", "Time")
+            plot_widget.setLabel("bottom", self._options.x_label)
+            plot_widget.setLabel("left", self._options.y_label)
             plot_widget.showGrid(x=True, y=True, alpha=0.3)
             plot_widget.addLegend()
 
@@ -315,20 +393,59 @@ class PyQtPlotter(BasePlotter):
     def cleanup(self):
         super().cleanup()
 
-        if self.widget:
+        self.curves.clear()
+
+
+class BaseMPLPlotter(BasePlotter):
+    """
+    Base class for matplotlib based plotters.
+    """
+
+    def build(self):
+        if not IS_MATPLOTLIB_AVAILABLE:
+            gs.raise_exception(
+                f"{type(self).__name__} matplotlib is not installed. Please install it with `pip install matplotlib>=3.7.0`."
+            )
+
+        super().build()
+
+        import matplotlib.pyplot as plt
+
+        self.fig: plt.Figure | None = None
+        self._lock = threading.Lock()
+
+        # matplotlib figsize uses inches
+        dpi = mpl.rcParams.get("figure.dpi", 100)
+        self.figsize = (self._options.window_size[0] / dpi, self._options.window_size[1] / dpi)
+
+    def _show_fig(self):
+        if self.show_window:
+            self.fig.show()
+            gs.logger.info(f"[{type(self).__name__}] created matplotlib window")
+
+    def cleanup(self):
+        """Clean up matplotlib resources."""
+        super().cleanup()
+
+        # Logger may not be available anymore
+        logger_exists = hasattr(gs, "logger")
+
+        if self.fig is not None:
             try:
-                self.widget.close()
-                gs.logger.debug("[PyQtPlotter] closed PyQtGraph window")
+                import matplotlib.pyplot as plt
+
+                plt.close(self.fig)
+                if logger_exists:
+                    gs.logger.debug(f"[{type(self).__name__}] Closed matplotlib window")
             except Exception as e:
-                gs.logger.warning(f"[PyQtPlotter] Error closing window: {e}")
+                if logger_exists:
+                    gs.logger.warning(f"[{type(self).__name__}] Error closing window: {e}")
             finally:
-                self.widget = None
-                self.plot_widgets.clear()
-                self.curves.clear()
+                self.fig = None
 
     @property
     def run_in_thread(self) -> bool:
-        return True
+        return not self.show_window or gs.platform != "macOS"
 
     def get_image_array(self):
         """
@@ -339,91 +456,100 @@ class PyQtPlotter(BasePlotter):
         image_array : np.ndarray
             The RGB image as a numpy array.
         """
-        pixmap = self.widget.grab()
-        qimage = pixmap.toImage()
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-        qimage = qimage.convertToFormat(pg.QtGui.QImage.Format_RGB888)
-        ptr = qimage.bits()
-        ptr.setsize(qimage.byteCount())
+        self._lock.acquire()
+        if isinstance(self.fig.canvas, FigureCanvasAgg):
+            # Read internal buffer
+            width, height = self.fig.canvas.get_width_height(physical=True)
+            rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
+            rgb_array = rgba_array_flat.reshape((height, width, 4))[..., :3]
 
-        return np.array(ptr).reshape((qimage.height(), qimage.width(), 3))
+            # Rescale image if necessary
+            if (width, height) != tuple(self._options.window_size):
+                img = Image.fromarray(rgb_array)
+                img = img.resize(self._options.window_size, resample=Image.BILINEAR)
+                rgb_array = np.asarray(img)
+            else:
+                rgb_array = rgb_array.copy()
+        else:
+            # Slower but more generic fallback only if necessary
+            buffer = io.BytesIO()
+            self.fig.canvas.print_figure(buffer, format="png", dpi="figure")
+            buffer.seek(0)
+            img = Image.open(buffer)
+            rgb_array = np.asarray(img.convert("RGB"))
+        self._lock.release()
+
+        return rgb_array
 
 
-class MPLPlotterOptions(BasePlotterOptions):
+class MPLLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
     """
-    Live line plot visualization of data using MatPlotLib.
+    Live line plot visualization of data using matplotlib.
 
     Parameters
     ----------
     title: str
         The title of the plot.
-    labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
     window_size: tuple[int, int]
         The size of the window in pixels.
-    history_length: int
-        The maximum number of previous data to store.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
     show_window: bool | None
         Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
+    labels: tuple[str] | dict[str, tuple[str]] | None
+        The labels for the plot. The length of the labels should match the length of the data.
+        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
+        The keys will be used as subplot titles and the values will be used as labels within each subplot.
+    x_label: str, optional
+        Label for the horizontal axis.
+    y_label: str, optional
+        Label for the vertical axis.
+    history_length: int
+        The maximum number of previous data to store.
     """
 
     pass
 
 
-@register_recording(MPLPlotterOptions)
-class MPLPlotter(BasePlotter):
+@register_recording(MPLLinePlotterOptions)
+class MPLLinePlotter(LinePlotterMixin[MPLLinePlotterOptions], BaseMPLPlotter):
     """
-    Real-time plot using MatPlotLib for live sensor data visualization.
+    Real-time plot using matplotlib for live sensor data visualization.
 
     Inherits common plotting functionality from BasePlotter.
     """
 
     def build(self):
-        if not IS_MATPLOTLIB_AVAILABLE:
-            gs.raise_exception(
-                "[MPLPlotter] matplotlib is not installed. Please install it with `pip install matplotlib>=3.7.0`."
-            )
         super().build()
 
         import matplotlib.pyplot as plt
 
-        self.fig: plt.Figure | None = None
         self.axes: list[plt.Axes] = []
         self.lines: dict[str, list[plt.Line2D]] = {}
         self.backgrounds: list[Any] = []
 
-        self._lock = threading.Lock()
-
-        # create figure and subplots
+        # Create figure and subplots
         n_subplots = len(self.subplot_structure)
-        dpi = mpl.rcParams.get("figure.dpi", 100)
-        # matplotlib figsize uses inches
-        figsize = (self._options.window_size[0] / dpi, self._options.window_size[1] / dpi)
-
         if n_subplots == 1:
-            self.fig, ax = plt.subplots(figsize=figsize)
+            self.fig, ax = plt.subplots(figsize=self.figsize)
             self.axes = [ax]
         else:
-            self.fig, axes = plt.subplots(n_subplots, 1, figsize=figsize, sharex=True, constrained_layout=True)
+            self.fig, axes = plt.subplots(n_subplots, 1, figsize=self.figsize, sharex=True, constrained_layout=True)
             self.axes = axes if isinstance(axes, (list, tuple, np.ndarray)) else [axes]
         self.fig.suptitle(self._options.title)
 
-        # create lines for each subplot
+        # Create lines for each subplot
         for subplot_idx, (subplot_key, channel_labels) in enumerate(self.subplot_structure.items()):
             ax = self.axes[subplot_idx]
-            ax.set_xlabel("Time")
-            ax.set_ylabel("Value")
+            ax.set_xlabel(self._options.x_label)
+            ax.set_ylabel(self._options.y_label)
             ax.grid(True, alpha=0.3)
 
-            # set subplot title if we have multiple subplots
             if self.is_dict_data and n_subplots > 1:
                 ax.set_title(subplot_key)
 
-            # create lines for this subplot
             subplot_lines = []
 
             for color, channel_label in zip(COLORS, channel_labels):
@@ -432,24 +558,19 @@ class MPLPlotter(BasePlotter):
 
             self.lines[subplot_key] = subplot_lines
 
-            ax.set_xlim(0, 10)
-            ax.set_ylim(-1, 1)
-
         # Legend must be outside, otherwise it will not play well with blitting
         self.fig.legend(ncol=sum(map(len, self.lines.values())), loc="outside lower center")
-
-        if self.show_window:
-            self.fig.show()
-            gs.logger.info("[MPLPlotter] created Matplotlib window")
-
         self.fig.canvas.draw()
 
         for ax in self.axes:
             self.backgrounds.append(self.fig.canvas.copy_from_bbox(ax.bbox))
 
+        self._show_fig()
+
     def _update_plot(self):
-        # Update each subplot
         self._lock.acquire()
+
+        # Update each subplot
         for subplot_idx, (subplot_key, subplot_lines) in enumerate(self.lines.items()):
             ax = self.axes[subplot_idx]
 
@@ -502,67 +623,84 @@ class MPLPlotter(BasePlotter):
         self._lock.release()
 
     def cleanup(self):
-        """Clean up Matplotlib resources."""
         super().cleanup()
 
-        # Logger may not be available anymore
-        logger_exists = hasattr(gs, "logger")
+        self.lines.clear()
+        self.backgrounds.clear()
 
-        if self.fig is not None:
-            try:
-                import matplotlib.pyplot as plt
 
-                plt.close(self.fig)
-                if logger_exists:
-                    gs.logger.debug("[MPLPlotter] Closed Matplotlib window")
-            except Exception as e:
-                if logger_exists:
-                    gs.logger.warning(f"[MPLPlotter] Error closing window: {e}")
-            finally:
-                self.lines.clear()
-                self.backgrounds.clear()
-                self.fig = None
+class MPLImagePlotterOptions(BasePlotterOptions):
+    """
+    Live visualization of image data using matplotlib.
 
-    @property
-    def run_in_thread(self) -> bool:
-        return gs.platform != "macOS"
+    Parameters
+    ----------
+    title: str
+        The title of the plot.
+    window_size: tuple[int, int]
+        The size of the window in pixels.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
+    """
 
-    def get_image_array(self):
-        """
-        Capture the plot image as a video frame.
+    pass
 
-        Returns
-        -------
-        image_array : np.ndarray
-            The RGB image as a numpy array.
-        """
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-        self._lock.acquire()
-        if isinstance(self.fig.canvas, FigureCanvasAgg):
-            # Must force rendering manually
-            # FIXME: Check if necessary
-            # FigureCanvasAgg.draw(self.fig.canvas)
+@register_recording(MPLImagePlotterOptions)
+class MPLImagePlotter(BaseMPLPlotter):
+    """
+    Live image viewer using matplotlib.
+    """
 
-            # Read internal buffer
-            width, height = self.fig.canvas.get_width_height(physical=True)
-            rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
-            rgb_array = rgba_array_flat.reshape((height, width, 4))[..., :3]
+    def build(self):
+        super().build()
 
-            # Rescale image if necessary
-            if (width, height) != tuple(self._options.window_size):
-                img = Image.fromarray(rgb_array)
-                img = img.resize(self._options.window_size, resample=Image.BILINEAR)
-                rgb_array = np.asarray(img)
-            else:
-                rgb_array = rgb_array.copy()
+        import matplotlib.pyplot as plt
+
+        self.image_plot = None
+        self.background = None
+
+        self.fig, self.ax = plt.subplots(figsize=self.figsize)
+        self.fig.tight_layout(pad=0)
+        self.ax.set_axis_off()
+        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        self.image_plot = self.ax.imshow(np.zeros((1, 1)), cmap="plasma", origin="upper", aspect="auto")
+        self._show_fig()
+
+    def process(self, data, cur_time):
+        """Process new image data and update display."""
+        if isinstance(data, torch.Tensor):
+            img_data = tensor_to_array(data)
         else:
-            # Slower but more generic fallback only if necessary
-            buffer = io.BytesIO()
-            self.fig.canvas.print_figure(buffer, format="png", dpi="figure")
-            buffer.seek(0)
-            img = Image.open(buffer)
-            rgb_array = np.asarray(img.convert("RGB"))
-        self._lock.release()
+            img_data = np.asarray(data)
 
-        return rgb_array
+        if img_data.ndim == 3 and img_data.shape[0] == 1:
+            img_data = img_data[0]  # remove batch dimension
+        # TODO: color images?
+        # elif img_data.ndim == 3 and img_data.shape[-1] in [1, 3, 4]:
+        elif img_data.ndim == 3 and img_data.shape[-1] == 1:
+            img_data = img_data.squeeze(-1)
+
+        vmin, vmax = np.min(img_data), np.max(img_data)
+
+        current_vmin, current_vmax = self.image_plot.get_clim()
+        if vmin != current_vmin or vmax != current_vmax:
+            self.image_plot.set_clim(vmin, vmax)
+            self.fig.canvas.draw()
+            self.background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+
+        self.fig.canvas.restore_region(self.background)
+        self.image_plot.set_data(img_data)
+        self.ax.draw_artist(self.image_plot)
+        self.fig.canvas.blit(self.ax.bbox)
+
+        self.fig.canvas.flush_events()
+
+    def cleanup(self):
+        super().cleanup()
+
+        self.ax = None
+        self.image_plot = None
+        self.background = None

@@ -1,7 +1,6 @@
 import argparse
 
 import numpy as np
-from custom_recorders import MPLDepthImageViewerOptions, PointCloudDrawerOptions
 from pynput import keyboard
 
 import genesis as gs
@@ -84,6 +83,7 @@ def create_robot_with_lidar(scene, args):
         euler_offset=(0.0, 0.0, 0.0),
         return_world_frame=True,
         only_cast_fixed=args.fixed,
+        draw_debug=True,
     )
 
     if args.pattern == "depth":
@@ -106,24 +106,7 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
     if is_depth:
         scene.start_recording(
             data_func=(lambda: sensor.read_image()[0]) if n_envs > 0 else sensor.read_image,
-            rec_options=MPLDepthImageViewerOptions(),
-        )
-    else:
-
-        def get_points_func():
-            points = sensor.read()["hit_points"]
-            if n_envs > 0:
-                points = points[0]  # Only return the first environment's points
-            return points.reshape(-1, 3)
-
-        scene.start_recording(
-            data_func=get_points_func,
-            rec_options=PointCloudDrawerOptions(
-                hz=30,
-                sphere_radius=0.02,
-                draw_debug_spheres=scene.draw_debug_spheres,
-                clear_debug_object=scene.clear_debug_object,
-            ),
+            rec_options=gs.recorders.MPLImagePlot(),
         )
 
     scene.build(n_envs=n_envs)
@@ -145,6 +128,9 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
     target_euler = init_euler.copy()
 
     def apply_pose_to_all_envs(pos_np: np.ndarray, quat_np: np.ndarray):
+        if n_envs > 0:
+            pos_np = np.expand_dims(pos_np, axis=0).repeat(n_envs, axis=0)
+            quat_np = np.expand_dims(quat_np, axis=0).repeat(n_envs, axis=0)
         robot.set_pos(pos_np, zero_velocity=False)
         robot.set_quat(quat_np, zero_velocity=False)
 
@@ -197,7 +183,7 @@ def run(scene: gs.Scene, robot, sensor: gs.sensors.Lidar, n_envs: int, kb: Keybo
 
 def main():
     parser = argparse.ArgumentParser(description="Genesis LiDAR/Depth Camera Visualization with Keyboard Teleop")
-    parser.add_argument("--n-envs", type=int, default=0, help="Number of environments to replicate")
+    parser.add_argument("-B", "--n_envs", type=int, default=0, help="Number of environments to replicate")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--use-box", action="store_true", help="Use Box as robot instead of Go2")
     parser.add_argument(

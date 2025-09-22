@@ -269,7 +269,7 @@ def test_lidar_grid_pattern_distance(show_viewer, tol, n_envs, is_fixed):
 
     # TODO: There is some bug with BVH. When adding only plane + box, scene.build() never finishes.
     # LBVH.compute_bounds() gets stuck in infinite loop, need to check _kernel_compute_bounds_one_layer
-    for i in range(2):
+    for i in range(2):  # Adding only 1 also results in getting stuck
         scene.add_entity(
             gs.morphs.Cylinder(height=0.35, radius=0.1, pos=(10.0, (i + 2) * 2.0, 0.0), is_free=not is_fixed)
         )

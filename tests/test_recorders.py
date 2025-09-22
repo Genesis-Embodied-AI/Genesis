@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 import genesis as gs
-from genesis.utils.misc import tensor_to_array
 from genesis.utils.image_exporter import as_grayscale_image
 
 from .utils import assert_allclose, rgb_array_to_png_bytes
@@ -66,7 +65,7 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
 
     plotter = scene.start_recording(
         data_func=dummy_data_func,
-        rec_options=gs.recorders.MPLPlot(
+        rec_options=gs.recorders.MPLLinePlot(
             labels={"a": ("x", "y", "z"), "b": ("u", "v")},
             title="Test MPLPlotter",
             history_length=HISTORY_LENGTH,
