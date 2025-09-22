@@ -32,23 +32,14 @@ class DepthCameraOptions(RaycasterOptions):
     only_cast_fixed : bool, optional
         Whether to only cast rays on fixed geoms. Defaults to False. This is a shared option, so the value of this
         option for the **first** lidar sensor will be the behavior for **all** Lidar sensors.
-    resolution: float, optional
-        The resolution of the range measurement. Defaults to 1e-3.
-    noise: float, optional
-        The standard deviation of the noise added to the range measurement.
-    bias : float, optional
-        The bias added to the range measurement.
-    random_walk_std : float, optional
-        The standard deviation of the random walk added to the range measurement.
     delay : float, optional
         The delay in seconds before the sensor data is read.
-    jitter : float, optional
-        The time jitter standard deviation in seconds before the sensor data is read.
-    interpolate_for_delay : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth cache, and not the measured cache.
+    draw_debug : bool, optional
+        If True and the rasterizer visualization is active, spheres will be drawn at every hit point.
+    debug_sphere_radius: float, optional
+        The radius of each debug hit point sphere drawn in the scene. Defaults to 0.02.
     """
 
     def validate(self, scene):
