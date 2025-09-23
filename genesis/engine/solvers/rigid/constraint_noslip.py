@@ -6,8 +6,7 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def kernel_build_efc_AR_b(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -57,8 +56,7 @@ def kernel_build_efc_AR_b(
             constraint_state.efc_b[i_c, i_b] = v
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def kernel_noslip(
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -84,8 +82,7 @@ def kernel_noslip(
 
         scale = 1.0 / (rigid_global_info.meaninertia[i_b] * ti.max(1.0, n_dofs))
 
-        for i_iter in range(static_rigid_sim_config.noslip_iterations):
-
+        for i_iter in range(rigid_global_info.noslip_iterations[None]):
             improvement = gs.ti_float(0.0)
             if i_iter == 0:
                 for i_c in range(constraint_state.n_constraints[i_b]):
@@ -164,12 +161,11 @@ def kernel_noslip(
                     improvement -= cost_change
             improvement *= scale
 
-            if improvement < static_rigid_sim_config.noslip_tolerance:
+            if improvement < rigid_global_info.noslip_tolerance[None]:
                 break
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def kernel_dual_finish(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -268,8 +264,7 @@ def func_cost_change(
     return change
 
 
-@gs.maybe_pure
-@ti.kernel
+@ti.kernel(pure=gs.use_pure)
 def compute_A_diag(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,

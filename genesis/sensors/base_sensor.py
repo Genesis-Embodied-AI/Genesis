@@ -15,7 +15,7 @@ from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
-    from genesis.recorders.base_recorder import RecorderOptions
+    from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
 
     from .sensor_manager import SensorManager
@@ -220,7 +220,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
     @gs.assert_unbuilt
-    def start_recording(self, rec_options: "RecorderOptions"):
+    def start_recording(self, rec_options: "RecorderOptions") -> "Recorder":
         """
         Automatically read and process sensor data. See RecorderOptions for more details.
 
@@ -232,7 +232,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         rec_options : RecorderOptions
             The options for the recording.
         """
-        self._manager._sim._scene._recorder_manager.add_recorder(self.read, rec_options)
+        return self._manager._sim._scene._recorder_manager.add_recorder(self.read, rec_options)
 
     @property
     def is_built(self) -> bool:

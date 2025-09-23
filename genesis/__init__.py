@@ -50,10 +50,7 @@ def _noop(fn: Callable[_P, _R]) -> Callable[_P, _R]:
     return fn
 
 
-if os.environ.get("GS_BETA_PURE") == "1":
-    maybe_pure: Callable[[Callable[_P, _R]], Callable[_P, _R]] = ti.pure
-else:
-    maybe_pure = _noop
+use_pure = os.environ.get("GS_BETA_PURE") == "1"
 
 
 ########################## init ##########################
@@ -311,8 +308,7 @@ def destroy():
     # Destroy all scenes
     global global_scene_list
     for scene in global_scene_list:
-        if scene.visualizer is not None:
-            scene.visualizer.destroy()
+        scene.destroy()
     global_scene_list.clear()
 
     # Reset gstaichi

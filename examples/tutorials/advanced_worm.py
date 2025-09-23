@@ -1,4 +1,6 @@
-import numpy as np
+import math
+
+import torch
 import genesis as gs
 
 
@@ -61,43 +63,38 @@ scene.build(n_envs=3)
 
 
 ########################## set muscle ##########################
-def set_muscle_by_pos(robot):
-    if isinstance(robot.material, gs.materials.MPM.Muscle):
-        pos = robot.get_state().pos[0]
-        n_units = robot.n_particles
-    elif isinstance(robot.material, gs.materials.FEM.Muscle):
-        pos = robot.get_state().pos[0, robot.get_el2v()].mean(1)
-        n_units = robot.n_elements
-    else:
-        raise NotImplementedError
+if isinstance(worm.material, gs.materials.MPM.Muscle):
+    pos = worm.get_state().pos[0]
+    n_units = worm.n_particles
+elif isinstance(worm.material, gs.materials.FEM.Muscle):
+    pos = worm.get_state().pos[0, worm.get_el2v()].mean(dim=1)
+    n_units = worm.n_elements
+else:
+    raise NotImplementedError
 
-    pos = pos.cpu().numpy()
-    pos_max, pos_min = pos.max(0), pos.min(0)
-    pos_range = pos_max - pos_min
+pos_max, pos_min = pos.max(dim=0), pos.min(dim=0)
+pos_range = pos_max - pos_min
 
-    lu_thresh, fh_thresh = 0.3, 0.6
-    muscle_group = np.zeros((n_units,), dtype=int)
-    mask_upper = pos[:, 2] > (pos_min[2] + pos_range[2] * lu_thresh)
-    mask_fore = pos[:, 1] < (pos_min[1] + pos_range[1] * fh_thresh)
-    muscle_group[mask_upper & mask_fore] = 0  # upper fore body
-    muscle_group[mask_upper & ~mask_fore] = 1  # upper hind body
-    muscle_group[~mask_upper & mask_fore] = 2  # lower fore body
-    muscle_group[~mask_upper & ~mask_fore] = 3  # lower hind body
+lu_thr, fh_thr = 0.3, 0.6
+muscle_group = torch.zeros((n_units,), dtype=gs.tc_int, device=gs.device)
+mask_upper = pos[:, 2] > (pos_min[2] + pos_range[2] * lu_thr)
+mask_fore = pos[:, 1] < (pos_min[1] + pos_range[1] * fh_thr)
+muscle_group[mask_upper & mask_fore] = 0  # upper fore body
+muscle_group[mask_upper & ~mask_fore] = 1  # upper hind body
+muscle_group[~mask_upper & mask_fore] = 2  # lower fore body
+muscle_group[~mask_upper & ~mask_fore] = 3  # lower hind body
 
-    muscle_direction = np.array([[0, 1, 0]] * n_units, dtype=float)
+muscle_direction = (0.0, 1.0, 0.0)
 
-    robot.set_muscle(
-        muscle_group=muscle_group,
-        muscle_direction=muscle_direction,
-    )
+worm.set_muscle(
+    muscle_group=muscle_group,
+    muscle_direction=muscle_direction,
+)
 
-
-set_muscle_by_pos(worm)
 
 ########################## run ##########################
 scene.reset()
 for i in range(1000):
-    actu = np.array([0, 0, 0, 1.0 * (0.5 + np.sin(0.005 * np.pi * i))])
-
+    actu = (0.0, 0.0, 0.0, 1.0 * (0.5 + math.sin(0.005 * math.pi * i)))
     worm.set_actuation(actu)
     scene.step()

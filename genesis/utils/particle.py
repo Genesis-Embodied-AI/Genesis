@@ -78,8 +78,8 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
 def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     """
     Physics-based particle sampler using the method proposed by Kugelstadt et al. [2021].
+
     References: https://splishsplash.readthedocs.io/en/latest/VolumeSampling.html
-    If this sampler fails, it returns `None`.
     """
     assert "pbs" in sampler
 
