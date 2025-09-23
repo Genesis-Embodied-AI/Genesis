@@ -655,7 +655,15 @@ def test_urdf_rope(
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("gjk_collision", [True])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_tet_primitive_shapes(gs_sim, mj_sim, gs_solver, xml_path, tol):
+def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path, tol):
+    # FIXME: Fix GsTaichi bug for ndarrays
+    if (
+        os.environ.get("GS_USE_NDARRAY") == "1"
+        and gs_integrator == gs.integrator.Euler
+        and gs_solver == gs.constraint_solver.CG
+    ):
+        pytest.xfail("This test is broken for ndarrays, probably due to a bug in gstaichi...")
+
     # Make sure it is possible to set the configuration vector without failure
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
