@@ -247,7 +247,7 @@ class MPMEntity(ParticleEntity):
             self._tgt["actu"].assert_contiguous()
             self._tgt["actu"].assert_sceneless()
             particles_idx_local = self._sanitize_particles_idx_local(None, self._scene._envs_idx)
-            self._set_particles_actu(self._tgt["actu"], particles_idx_local)
+            self.set_particles_actu(self._tgt["actu"], particles_idx_local)
 
         super().process_input(in_backward)
 
@@ -255,15 +255,12 @@ class MPMEntity(ParticleEntity):
         """
         Process gradients for buffered inputs and backpropagate using custom kernels.
         """
+        if isinstance(self.material, gs.materials.MPM.Muscle):
+            _tgt_actu = self._tgt_buffer["actu"].pop()
+            if _tgt_actu is not None and _tgt_actu.requires_grad:
+                _tgt_actu._backward_from_ti(self._set_particles_actu_grad)
+
         super().process_input_grad()
-
-        _tgt_actu = self._tgt_buffer["actu"].pop()
-        if _tgt_actu is not None and _tgt_actu.requires_grad:
-            _tgt_actu._backward_from_ti(self._set_particles_actu_grad)
-
-        # manually zero the grad since manually setting state breaks gradient flow
-        if _tgt_vel is None and _tgt_pos is None and _tgt_actu is not None:
-            self._reset_grad()
 
     @gs.assert_built
     def get_state(self):
@@ -342,7 +339,7 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
@@ -351,10 +348,9 @@ class MPMEntity(ParticleEntity):
         )
 
     @gs.assert_built
-    def _set_particles_pos_grad(self, poss_grad, envs_idx=None):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+    def _set_particles_pos_grad(self, poss_grad):
         self.solver._kernel_set_particles_pos_grad(
-            self._sim.cur_substep_local, self._particle_start, self._n_particles, envs_idx, poss_grad
+            self._sim.cur_substep_local, self._particle_start, self._n_particles, poss_grad
         )
 
     def get_particles_pos(self, envs_idx=None, *, unsafe=False):
@@ -368,7 +364,7 @@ class MPMEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
@@ -377,10 +373,9 @@ class MPMEntity(ParticleEntity):
         )
 
     @gs.assert_built
-    def _set_particles_vel_grad(self, vels_grad, envs_idx=None):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+    def _set_particles_vel_grad(self, vels_grad):
         self.solver._kernel_set_particles_vel_grad(
-            self._sim.cur_substep_local, self._particle_start, self._n_particles, envs_idx, vels_grad
+            self._sim.cur_substep_local, self._particle_start, self._n_particles, vels_grad
         )
 
     def get_particles_vel(self, envs_idx=None, *, unsafe=False):
@@ -394,7 +389,7 @@ class MPMEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
@@ -414,7 +409,7 @@ class MPMEntity(ParticleEntity):
 
     @assert_muscle
     @assert_active
-    def set_particles_actu(self, actus, envs_idx=None, *, unsafe=False):
+    def set_actuation(self, actus, envs_idx=None, *, unsafe=False):
         """
         Set actuation values for each muscle group individually.
 
@@ -432,12 +427,9 @@ class MPMEntity(ParticleEntity):
             "actu", "actuation", (self.material.n_groups,), gs.tc_float, actus, envs_idx, unsafe=True
         )
 
-    def set_actuation(self, actus, envs_idx=None, *, unsafe=False):
-        self.set_particles_actu(actus, envs_idx, unsafe=unsafe)
-
     @assert_muscle
     @gs.assert_built
-    def _set_particles_actu(self, actus, particles_idx_local, envs_idx=None, *, unsafe=False):
+    def set_particles_actu(self, actus, particles_idx_local, envs_idx=None, *, unsafe=False):
         """
         Set particle actuation values.
 
@@ -456,7 +448,7 @@ class MPMEntity(ParticleEntity):
         )
 
     @gs.assert_built
-    def _set_particles_actu_grad(self, actu_grad, envs_idx=None):
+    def _set_particles_actu_grad(self, actu_grad):
         """
         Set gradients for particle actuation values.
 
@@ -464,12 +456,9 @@ class MPMEntity(ParticleEntity):
         ----------
         actu_grad : gs.Tensor
             A tensor containing gradients for actuation inputs.
-        envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self.solver._kernel_set_particles_actu_grad(
-            self._sim.cur_substep_local, self._particle_start, self._n_particles, envs_idx, actu_grad
+            self._sim.cur_substep_local, self._particle_start, self._n_particles, actu_grad
         )
 
     def get_particles_actu(self, envs_idx=None, *, unsafe=False):

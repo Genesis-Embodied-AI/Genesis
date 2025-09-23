@@ -243,8 +243,8 @@ class MPMSolver(Solver):
     def add_material(self, material):
         # Register material update methods if and only if the provided material is not already registered
         for material_i in self._materials:
-            if material == add_material:
-                material._idx = add_material._idx
+            if material == material_i:
+                material._idx = material_i._idx
                 break
         else:
             material._idx = len(self._materials_idx)
@@ -741,7 +741,7 @@ class MPMSolver(Solver):
 
             self.particles_ng[f, i_p, i_b].active = ti.cast(active, gs.ti_bool)
             for i in ti.static(range(3)):
-                self.particles[f, i_p, i_b].pos[i] = pos[i_p, i]
+                self.particles[f, i_p, i_b].pos[i] = pos[i_p_, i]
 
             self.particles[f, i_p, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
             self.particles[f, i_p, i_b].F = ti.Matrix.identity(gs.ti_float, 3)
@@ -757,7 +757,7 @@ class MPMSolver(Solver):
         envs_idx: ti.types.ndarray(),
         poss: ti.types.ndarray(),
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
 
@@ -776,14 +776,12 @@ class MPMSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        envs_idx: ti.types.ndarray(),
         poss_grad: ti.types.ndarray(),  # shape [B, n_particles, 3]
     ):
-        for i_p_, i_b_ in ti.ndrange(n_particles, envs_idx.shape[0]):
+        for i_p_, i_b in ti.ndrange(n_particles, self._B):
             i_p = i_p_ + particle_start
-            i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
-                poss_grad[i_b_, i_p_, i] = self.particles.grad[f, i_p, i_b].pos[i]
+                poss_grad[i_b, i_p_, i] = self.particles.grad[f, i_p, i_b].pos[i]
 
     @ti.kernel
     def _kernel_get_particles_pos(
@@ -808,7 +806,7 @@ class MPMSolver(Solver):
         envs_idx: ti.types.ndarray(),
         vels: ti.types.ndarray(),  # shape [B, n_particles, 3]
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
@@ -820,14 +818,12 @@ class MPMSolver(Solver):
         f: ti.i32,
         particle_start: ti.i32,
         n_particles: ti.i32,
-        envs_idx: ti.types.ndarray(),
         vels_grad: ti.types.ndarray(),  # shape [B, n_particles, 3]
     ):
-        for i_p_, i_b_ in ti.ndrange(n_particles, envs_idx.shape[0]):
+        for i_p_, i_b in ti.ndrange(n_particles, self._B):
             i_p = i_p_ + particle_start
-            i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
-                vels_grad[i_b_, i_p_, i] = self.particles.grad[f, i_p, i_b].vel[i]
+                vels_grad[i_b, i_p_, i] = self.particles.grad[f, i_p, i_b].vel[i]
 
     @ti.kernel
     def _kernel_get_particles_vel(
@@ -852,7 +848,7 @@ class MPMSolver(Solver):
         envs_idx: ti.types.ndarray(),
         actives: ti.types.ndarray(),  # shape [B, n_particles]
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles_ng[f, i_p, i_b].active = actives[i_b_, i_p_]
@@ -880,7 +876,7 @@ class MPMSolver(Solver):
         envs_idx: ti.types.ndarray(),
         actus: ti.types.ndarray(),  # shape [B, n_particles, n_groups]
     ):
-        for i_p_, i_g, i_b_ in ti.ndrange(particles_idx.shape[0], n_groups, envs_idx.shape[0]):
+        for i_p_, i_g, i_b_ in ti.ndrange(particles_idx.shape[1], n_groups, envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             if self.particles_info[i_p].muscle_group == i_g:
@@ -940,7 +936,7 @@ class MPMSolver(Solver):
     @ti.kernel
     def _kernel_set_particles_free(self, particles_idx: ti.types.ndarray(), free: ti.types.ndarray()):
         for i_p_ in range(particles_idx.shape[0]):
-            i_p = particles_idx[i_b_, i_p_]
+            i_p = particles_idx[i_p_]
             self.particles_info[i_p].free = free[i_p_]
 
     @ti.kernel

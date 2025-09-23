@@ -147,7 +147,7 @@ class ParticleEntity(Entity):
     def _sanitize_particles_tensor(
         self, element_shape, dtype, tensor, particles_idx=None, envs_idx=None, *, batched=True
     ):
-        n_particles = len(particles_idx) if particles_idx is not None else self._n_particles
+        n_particles = particles_idx.shape[-1] if particles_idx is not None else self._n_particles
         if batched:
             batch_shape = (len(envs_idx), n_particles)
         else:
@@ -456,7 +456,7 @@ class ParticleEntity(Entity):
         """
         if in_backward:
             # use negative index because buffer length might not be full
-            index = self._sim.cur_step_local - self._sim.max_steps_local
+            index = self._sim.cur_step_local - self._sim._steps_local
             for key in self._tgt_keys:
                 self._tgt[key] = self._tgt_buffer[key][index]
         else:
@@ -470,19 +470,19 @@ class ParticleEntity(Entity):
         if self._tgt["pos"] is not None:
             self._tgt["pos"].assert_contiguous()
             self._tgt["pos"].assert_sceneless()
-            self._set_particles_pos(self._tgt["pos"], particles_idx_local)
+            self.set_particles_pos(self._tgt["pos"], particles_idx_local)
 
         if self._tgt["vel"] is not None:
             self._tgt["vel"].assert_contiguous()
             self._tgt["vel"].assert_sceneless()
-            self._set_particles_vel(self._tgt["vel"], particles_idx_local)
+            self.set_particles_vel(self._tgt["vel"], particles_idx_local)
 
         if self._tgt["act"] is not None:
             self._tgt["act"].assert_contiguous()
             self._tgt["act"].assert_sceneless()
             act_values = torch.tensor((gs.ACTIVE, gs.INACTIVE), dtype=gs.tc_int, device=gs.device)
             assert torch.isin(self._tgt["act"], act_values).all()
-            self._set_particles_active(self._tgt["act"], particles_idx_local)
+            self.set_particles_active(self._tgt["act"], particles_idx_local)
 
         for key in self._tgt_keys:
             self._tgt[key] = None
@@ -522,52 +522,34 @@ class ParticleEntity(Entity):
 
     @assert_active
     def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx=None, *, unsafe=False):
-        if self.sim.requires_grad:
+        if self.sim.requires_grad and self.sim.cur_t > 0.0:
             gs.logger.warning(
-                f"Manually setting particle '{name}'. This is not recommended and could break gradient flow."
+                f"Manually setting particle '{name}'. This is not recommended because it breaks gradient flow."
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         self._tgt[key] = self._sanitize_particles_tensor(element_shape, dtype, tensor, envs_idx=envs_idx)
 
-    def set_com_pos(self, pos, envs_idx=None, *, unsafe=False):
+    def set_position(self, value, envs_idx=None, *, unsafe=False):
         """
-        Set the center of mass of the particles as a whole, wrt the initial configuration.
+        Set the position of all the particles individually, or the center of masswrt the initial configuration of the
+        particles as a whole.
 
         Parameters
         ----------
-        pos : torch.Tensor, shape ([N,] 3)
-            Desired position of the center of mass.
-        envs_idx : None | array_like, shape (N,), optional
-            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
-        """
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-
-        pos = to_gs_tensor(pos, dtype=gs.tc_float)
-        if pos.ndim == 1:
-            pos = pos.reshape((1, 1, 3)).expand((len(envs_idx), 1, 1))
-        elif pos.ndim == 2:
-            pos = pos.reshape((len(envs_idx), 1, 3))
-        if pos.ndim != 3:
-            gs.raise_exception(f"Invalid tensor shape ({pos.shape}).")
-
-        poss = self._init_particles_offset + pos
-        self._set_particles_target_state("pos", "position", (3,), gs.tc_float, poss, envs_idx, unsafe=True)
-
-    def set_particles_pos(self, poss, envs_idx=None, *, unsafe=False):
-        """
-        Set the position of all the particles individually.
-
-        Parameters
-        ----------
-        poss : array_like, shape ([M,] [n_particles,] 3)
+        value : array_like, shape ([M,] [n_particles,] 3)
             Tensor of particle positions.
         envs_idx : None | int | array_like, shape (M,), optional
             The indices of the environments to set. If None, all environments will be considered. Defaults to None.
         """
+        # Determine whether the position of all the particles has been specified, or only the center of mass
+        poss = to_gs_tensor(value, dtype=gs.tc_float)
+        if poss.ndim == 1 or (poss.ndim == 2 and poss.shape[0] != self._n_particles):
+            poss = self._init_particles_offset + poss.unsqueeze(-2)
+
         self._set_particles_target_state("pos", "position", (3,), gs.tc_float, poss, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the position of some particles.
 
@@ -583,7 +565,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def _set_particles_pos_grad(self, poss_grad, envs_idx):
+    def _set_particles_pos_grad(self, poss_grad):
         """
         Set gradients for particle positions at a given substep.
 
@@ -591,8 +573,6 @@ class ParticleEntity(Entity):
         ----------
         poss_grad : torch.Tensor, shape (M, n_particles, 3)
             The gradients for particle positions.
-        envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
         """
         raise NotImplementedError
 
@@ -613,7 +593,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_particles_vel(self, vels, envs_idx=None, *, unsafe=False):
+    def set_velocity(self, vels, envs_idx=None, *, unsafe=False):
         """
         Set the velocity of all the particles individually.
 
@@ -627,7 +607,7 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("vel", "velocity", (3,), gs.tc_float, vels, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the velocity of some particles.
 
@@ -643,7 +623,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def _set_particles_vel_grad(self, vels_grad, envs_idx):
+    def _set_particles_vel_grad(self, vels_grad):
         """
         Set gradients for particle velocities at a specific frame.
 
@@ -651,8 +631,6 @@ class ParticleEntity(Entity):
         ----------
         vels_grad : torch.Tensor, shape (M, n_particles, 3)
             The gradients for particle velocities.
-        envs_idx : torch.Tensor, shape (M,)
-            The indices of the environments to set.
         """
         raise NotImplementedError
 
@@ -673,7 +651,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_particles_active(self, actives, envs_idx=None, *, unsafe=False):
+    def set_active(self, actives, envs_idx=None, *, unsafe=False):
         """
         Set the activeness state of all the particles individually.
 
@@ -692,17 +670,17 @@ class ParticleEntity(Entity):
         Activate all particles of the entity in simulation, making them eligible for updates.
         """
         gs.logger.info(f"{self.__class__.__name__} <{self._uid}> activated.")
-        self.set_particles_active(gs.ACTIVE)
+        self.set_active(gs.ACTIVE)
 
     def deactivate(self):
         """
         Deactivate all particles of the entity in simulation, stopping them from receiving for updates.
         """
         gs.logger.info(f"{self.__class__.__name__} <{self._uid}> deactivated.")
-        self.set_particles_active(gs.INACTIVE)
+        self.set_active(gs.INACTIVE)
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the velocity of some particles.
 

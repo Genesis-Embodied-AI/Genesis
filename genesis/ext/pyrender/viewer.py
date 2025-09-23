@@ -631,7 +631,7 @@ class Viewer(pyglet.window.Window):
 
     def close_offscreen(self, render_target):
         if not self.is_active:
-            gs.raise_exception("Viewer already closed.")
+            return
 
         self._offscreen_pending_close = (render_target,)
         if self._run_in_thread:
@@ -1087,7 +1087,7 @@ class Viewer(pyglet.window.Window):
         try:
             # Importing tkinter is very slow and not used very often. Let's delay import.
             from tkinter import Tk
-            from tkinter import tkFileDialog as filedialog
+            from tkinter import filedialog
 
             if root is None:
                 root = Tk()

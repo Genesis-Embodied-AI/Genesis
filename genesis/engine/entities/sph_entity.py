@@ -143,13 +143,13 @@ class SPHEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_pos(particles_idx_local + self._particle_start, envs_idx, poss)
 
-    def get_particles_pos(self, envs_idx=None, *, unsafe=False):
+    def get_position(self, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         poss = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
         self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
@@ -158,7 +158,7 @@ class SPHEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
@@ -173,7 +173,7 @@ class SPHEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)

@@ -94,28 +94,24 @@ def main():
     for _ in range(2):
         scene.reset()
         init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)
+        stick.set_position(init_pos)
+        pos_obj1_init = gs.tensor([0.3, 0.3, 0.1], requires_grad=True)
+        obj1.set_position(pos_obj1_init)
+        v_obj1_init = gs.tensor([0.0, -1.0, 0.0], requires_grad=True)
+        obj1.set_velocity(v_obj1_init)
 
         # forward pass
         print("forward")
         timer = gs.tools.Timer()
-        stick.set_position(init_pos)
-        v_obj1_init = gs.tensor([0.0, -1.0, 0.0], requires_grad=True)
-        obj1.set_velocity(v_obj1_init)
-        pos_obj1_init = gs.tensor([0.3, 0.3, 0.1], requires_grad=True)
-        obj1.set_position(pos_obj1_init)
-        loss = 0
-
-        for i in range(horizon):
-            v_i = v_list[i]
-
+        loss = 0.0
+        for i, v_i in enumerate(v_list):
             # uncomment this to set an angular velocity
             # w_i = gs.tensor([2.0, 0.0, 0.0], requires_grad=True)
             # stick.set_velocity(vel=v_i, ang=w_i)
-
             stick.set_velocity(vel=v_i)
-            v_list.append(v_i)
 
             scene.step()
+
             # uncomment this to render images
             # img0 = cam_0.render()
             # img1 = cam_1.render()
