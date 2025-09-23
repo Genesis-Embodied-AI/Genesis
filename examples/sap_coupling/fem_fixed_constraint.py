@@ -1,21 +1,16 @@
 import argparse
-import numpy as np
+import math
+import torch
 import genesis as gs
 
 
 def main():
-
     parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
-    gs.init(backend=gs.gpu, precision="64")
-    show_viewer = args.vis
 
-    camera_pos = np.array([1.5, -1.5, 1.5], dtype=np.float32)
-    camera_lookat = (0, 0, 0.0)
-    camera_fov = 40
-    camera_up = np.array([0, 0, 1], dtype=np.float32)
-    res = (1920, 1080)
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")
 
     fem_material_linear_corotated = gs.materials.FEM.Elastic(
         model="linear_corotated",
@@ -31,48 +26,38 @@ def main():
             enable_vertex_constraints=True,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
-        show_viewer=show_viewer,
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=camera_pos,
-            camera_lookat=camera_lookat,
-            camera_fov=camera_fov,
-            camera_up=camera_up,
-            res=res,
+            camera_pos=(1.5, -1.5, 1.5),
+            camera_lookat=(-0.6, 0.8, 0),
             max_FPS=60,
         ),
+        show_viewer=args.vis,
     )
-
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"meshes/cube8.obj",
+            pos=(0.0, 0.0, 0.7),
             scale=0.1,
-            pos=np.array([0.0, 0.0, 0.35], dtype=np.float32),
         ),
         material=fem_material_linear_corotated,
     )
-
-    verts_idx = [0]
-    initial_target_poss = cube.init_positions[verts_idx]
-
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.0, 0.0, 0.1),
-            radius=0.1,
-        ),
-        material=fem_material_linear_corotated,
-    )
-
-    # Build the scene
     scene.build()
 
-    if show_viewer:
-        sphere_debug = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
-
-    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
+    verts_idx = [0]
 
     # Run simulation
-    for _ in range(200):
-        scene.step()
+    for i in range(150):
+        target_poss = cube.init_positions[verts_idx] + torch.tensor(
+            (0.15 * (math.cos(0.04 * i) - 1.0), 0.15 * math.sin(0.04 * i), 0.0)
+        )
+        cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=target_poss)
+        scene.step(update_visualizer=False)
+        if args.vis:
+            # FIXME: Non-persistent markers are apparently broken...
+            scene.visualizer.context.draw_debug_sphere(
+                pos=target_poss.squeeze(), radius=0.01, color=(1, 0, 1, 0.8), persistent=True
+            )
+            scene.visualizer.update(force=False, auto=True)
 
 
 if __name__ == "__main__":

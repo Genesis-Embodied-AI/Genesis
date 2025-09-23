@@ -4,23 +4,12 @@ import genesis as gs
 
 
 def main():
-
     parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
-    gs.init(backend=gs.gpu, precision="64")
-    show_viewer = args.vis
 
-    camera_pos = np.array([1.5, -1.5, 1.5], dtype=np.float32)
-    camera_lookat = (0, 0, 0.0)
-    camera_fov = 40
-    camera_up = np.array([0, 0, 1], dtype=np.float32)
-    res = (1920, 1080)
-
-    fem_material_linear_corotated = gs.materials.FEM.Elastic(
-        model="linear_corotated",
-    )
-    fem_material_linear_corotated_soft = gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4)
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -31,39 +20,36 @@ def main():
             use_implicit_solver=True,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
-        show_viewer=show_viewer,
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=camera_pos,
-            camera_lookat=camera_lookat,
-            camera_fov=camera_fov,
-            camera_up=camera_up,
-            res=res,
+            camera_pos=(1.5, -1.5, 1.5),
+            camera_lookat=(0, 0, 0),
             max_FPS=60,
         ),
+        show_viewer=args.vis,
     )
-
     sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.0, 0.0, 0.1),
             radius=0.1,
         ),
-        material=fem_material_linear_corotated_soft,
+        material=gs.materials.FEM.Elastic(
+            model="linear_corotated",
+            E=1e5,
+            nu=0.4,
+        ),
     )
-
-    scale = 0.1
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"meshes/cube8.obj",
-            scale=scale,
-            pos=(0.0, 0.0, scale * 4.0),
+            pos=(0.0, 0.0, 0.4),
+            scale=0.1,
         ),
-        material=fem_material_linear_corotated,
+        material=gs.materials.FEM.Elastic(
+            model="linear_corotated",
+        ),
     )
-
-    # Build the scene
     scene.build()
 
-    # Run simulation
     for _ in range(200):
         scene.step()
 
