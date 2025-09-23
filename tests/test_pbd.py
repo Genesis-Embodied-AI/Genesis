@@ -1,7 +1,9 @@
 import pytest
+import numpy as np
 
 import genesis as gs
 
+from .utils import assert_allclose
 
 pytestmark = [
     pytest.mark.field_only,
@@ -57,13 +59,13 @@ def test_cloth_attachment(show_viewer):
     scene.add_entity(gs.morphs.Plane(), rigid_material)
 
     box = scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.25, 0.25, 0.25), size=(0.25, 0.25, 0.25)),
+        morph=gs.morphs.Box(pos=(0.25, 0.25, 2.25), size=(0.25, 0.25, 0.25)),
         material=rigid_material,
     )
     cloth = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/cloth.obj",
-            pos=(0.25, 0.25, 0.25 + 0.125 + particle_size),
+            pos=(0.25, 0.25, 2.25 + 0.125 + particle_size),
             scale=0.5,
         ),
         material=gs.materials.PBD.Cloth(),
@@ -83,7 +85,7 @@ def test_cloth_attachment(show_viewer):
     cloth_pos0 = cloth.get_particles_pos().cpu().numpy()[:, particles_idx]
     link_pos0 = scene.rigid_solver.links[box_link_idx].get_pos().cpu().numpy()
 
-    for _ in range(50):
+    for _ in range(25):
         scene.step()
 
     # Check that the attached particles followed the link displacement per env
