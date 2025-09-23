@@ -670,9 +670,6 @@ def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     # FIXME: Because of very small numerical error, error could be this large even if there is no logical error
     tol = 1e-6 if xml_path == "xml/tet_tet.xml" else 2e-8
-    # FIXME: ubuntu-24.04-3.12-cpu-ndarray has larger error
-    if os.environ.get("GS_USE_NDARRAY") == "1":
-        tol = 1e-4
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=tol)
 
 
