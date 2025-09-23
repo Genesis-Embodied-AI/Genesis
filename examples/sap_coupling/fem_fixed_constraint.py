@@ -2,6 +2,7 @@ import argparse
 import math
 import torch
 import genesis as gs
+from huggingface_hub import snapshot_download
 
 
 def main():
@@ -33,9 +34,15 @@ def main():
         ),
         show_viewer=args.vis,
     )
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        revision="69200ef57811078f39c65f1d9e2df679b3b025d7",
+        allow_patterns="cube8.obj",
+    )
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=f"meshes/cube8.obj",
+            file=f"{asset_path}/cube8.obj",
             pos=(0.0, 0.0, 0.7),
             scale=0.1,
         ),

@@ -789,10 +789,8 @@ class Scene(RBC):
 
         if compile_kernels:
             with gs.logger.timer("Compiling simulation kernels..."):
-                self._sim._dummy = True
                 self._sim.step()
                 self._reset()
-                self._sim._dummy = False
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):

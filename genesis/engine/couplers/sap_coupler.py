@@ -316,6 +316,8 @@ class SAPCoupler(RBC):
         offset = 0
         for geom in self.rigid_solver.geoms:
             if geom.contype or geom.conaffinity:
+                if geom.type == gs.GEOM_TYPE.PLANE:
+                    raise gs.GenesisException("Primitive plane not supported as user-specified collision geometries.")
                 volume = geom.get_trimesh().volume
                 tet_cfg = {"nobisect": False, "maxvolume": volume / 100}
                 verts, elems = eu.split_all_surface_tets(
@@ -343,13 +345,13 @@ class SAPCoupler(RBC):
                 rigid_pressure_field.append(pressure_field_np)
         if len(rigid_volume_verts) == 0:
             gs.raise_exception("No rigid collision found.")
-        rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0)
-        rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0)
+        rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=np.float32)
+        rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0, dtype=np.float32)
         self.n_rigid_volume_verts = len(rigid_volume_verts_np)
         self.n_rigid_volume_elems = len(rigid_volume_elems_np)
-        rigid_volume_vert_geom_idxs_np = np.concatenate(rigid_volume_vert_geom_idxs, axis=0)
-        rigid_volume_elem_geom_idxs_np = np.concatenate(rigid_volume_elem_geom_idxs, axis=0)
-        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0)
+        rigid_volume_vert_geom_idxs_np = np.concatenate(rigid_volume_vert_geom_idxs, axis=0, dtype=np.float32)
+        rigid_volume_elem_geom_idxs_np = np.concatenate(rigid_volume_elem_geom_idxs, axis=0, dtype=np.float32)
+        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
         self.rigid_volume_verts_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_verts,))
         self.rigid_volume_verts_rest.from_numpy(rigid_volume_verts_np)
         self.rigid_volume_verts = ti.field(gs.ti_vec3, shape=(self._B, self.n_rigid_volume_verts))
@@ -599,7 +601,7 @@ class SAPCoupler(RBC):
         return has_contact, overflow
 
     def couple(self, i_step):
-        if self.has_contact or self.sim._dummy:
+        if self.has_contact:
             self.sap_solve(i_step)
             self.update_vel(i_step)
 
@@ -2246,7 +2248,7 @@ class RigidRigidContactHandler(RigidContactHandler):
                     cdof_vel = self.rigid_solver.dofs_state.cdof_vel[i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.COM[link, i_b]
+                    t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
                     _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
 
                     diff = vel
@@ -2264,7 +2266,7 @@ class RigidRigidContactHandler(RigidContactHandler):
                     cdof_vel = self.rigid_solver.dofs_state.cdof_vel[i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.COM[link, i_b]
+                    t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
                     _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
 
                     diff = vel
