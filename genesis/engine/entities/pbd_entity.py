@@ -111,8 +111,8 @@ class PBDTetEntity(ParticleEntity):
         """
         Sample and preprocess the mesh for the PBD tetrahedral entity.
 
-        Applies transformation from the morph, stores mesh vertices and faces,
-        and performs remeshing based on the particle size.
+        Applies transformation from the morph, stores mesh vertices and faces, and performs remeshing based on the
+        particle size.
         """
         # We don't use ParticleEntity.sample() because we need to maintain the remeshed self._mesh as well
         pos = np.asarray(self._morph.pos, dtype=gs.np_float)
@@ -135,7 +135,7 @@ class PBDTetEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
@@ -152,7 +152,7 @@ class PBDTetEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
@@ -169,7 +169,7 @@ class PBDTetEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
@@ -309,6 +309,8 @@ class PBD2DEntity(PBDTetEntity):
         self._mass = self._vmesh.area * self.material.rho
 
         self._particles = np.asarray(self._mesh.verts, dtype=gs.np_float)
+        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._morph.pos)
+
         self._edges = np.asarray(self._mesh.get_unique_edges(), dtype=gs.np_int)
 
         self._particle_mass = self._mass / len(self._particles)
@@ -445,6 +447,8 @@ class PBD3DEntity(PBDTetEntity):
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         particles, elems = self._mesh.tetrahedralize(tet_cfg)
         self._particles = particles.astype(gs.np_float, copy=False)
+        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._morph.pos)
+
         self._elems = elems.astype(gs.np_int, copy=False)
         self._edges = np.array(
             list(

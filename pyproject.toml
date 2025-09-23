@@ -61,7 +61,7 @@ dependencies = [
     "gs-madrona==0.0.5; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
-    # Surface reconstruction library for particle data from SPH simulations
+    # Surface reconstruction library for particle data from SPH simulations.
     # 0.13.0.0 changes removes enable_multi_threading argument an enable it by default
     # and AttributeError: 'builtins.MeshWithData' object has no attribute 'get_point_attribute'.
     # Did you mean: 'add_point_attribute'?

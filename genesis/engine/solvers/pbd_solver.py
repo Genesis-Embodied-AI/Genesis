@@ -877,7 +877,7 @@ class PBDSolver(Solver):
         envs_idx: ti.types.ndarray(),
         poss: ti.types.ndarray(),
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
@@ -905,7 +905,7 @@ class PBDSolver(Solver):
         envs_idx: ti.types.ndarray(),
         vels: ti.types.ndarray(),
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
@@ -932,7 +932,7 @@ class PBDSolver(Solver):
         envs_idx: ti.types.ndarray(),
         actives: ti.types.ndarray(),  # shape [B, n_particles]
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles_ng[i_p, i_b].active = actives[i_b_, i_p_]
@@ -952,14 +952,14 @@ class PBDSolver(Solver):
 
     @ti.kernel
     def _kernel_fix_particles(self, particles_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles[i_p, i_b].free = False
 
     @ti.kernel
     def _kernel_release_particle(self, particles_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[0], envs_idx.shape[0]):
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles[i_p, i_b].free = True
