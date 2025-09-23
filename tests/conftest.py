@@ -21,6 +21,7 @@ try:
     from tkinter import Tk
 
     root = Tk()
+    root.withdraw()
     root.destroy()
 except Exception:  # ImportError, TclError
     # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
@@ -377,33 +378,37 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
     logging_level = request.config.getoption("--log-cli-level")
     debug = request.config.getoption("--dev")
 
+    if not taichi_offline_cache:
+        monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+
     try:
-        if not taichi_offline_cache:
-            monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+        # Skip if requested backend is not available
+        try:
+            gs.utils.get_device(backend)
+        except gs.GenesisException:
+            pytest.skip(f"Backend '{backend}' not available on this machine")
 
         # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
         if os.environ.get("GS_USE_NDARRAY") == "1":
             for mark in request.node.iter_markers("field_only"):
                 if not mark.args or mark.args[0]:
                     pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
-            if os.environ.get("GS_BETA_PURE") == "1" and backend != gs.cpu and sys.platform == "darwin":
-                pytest.skip("fast cache not supported on mac gpus when using ndarray.")
+            if sys.platform == "darwin" and backend != gs.cpu:
+                pytest.skip(
+                    "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only "
+                    "supports up to 31 kernel parameters, which is not enough for most solvers."
+                )
 
-        try:
-            gs.utils.get_device(backend)
-        except gs.GenesisException:
-            pytest.skip(f"Backend '{backend}' not available on this machine")
         gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
         gc.collect()
 
         if gs.backend != gs.cpu:
             device_index = gs.device.index
             if device_index is not None and device_index not in _get_gpu_indices():
-                assert RuntimeError("Wrong CUDA GPU device.")
+                raise RuntimeError("Wrong CUDA GPU device.")
 
         import gstaichi as ti
 
-        ti_runtime = ti.lang.impl.get_runtime()
         ti_config = ti.lang.impl.current_cfg()
         if ti_config.arch == ti.metal and precision == "64":
             pytest.skip("Apple Metal GPU does not support 64bits precision.")
@@ -523,8 +528,8 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             buffer = BytesIO()
             buffer.write(data)
             buffer.seek(0)
-            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))))
-        img_delta = np.abs(img_arrays[1].astype(np.float32) - img_arrays[0].astype(np.float32)).astype(np.uint8)
+            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.int32))
+        img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
         if (
             np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
             and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size

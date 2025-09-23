@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==2.3.1",
+    "gstaichi==2.4.0",
     "pydantic>=2.7.1",
     "numpy>=1.26.4",
     "trimesh",
@@ -18,9 +18,7 @@ dependencies = [
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
-    # * Mujoco 3.3 made Native CCD an opt-out option instead of opt-in,
-    #   which requires setting the disableflags 'mjDSBL_NATIVECCD'.
-    "mujoco>=3.3.0,<3.4.0",
+    "mujoco>=3.2.5",
     "moviepy>=2.0.0",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
@@ -63,11 +61,11 @@ dependencies = [
     "gs-madrona==0.0.5; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
-    # Surface reconstruction library for particle data from SPH simulations
+    # Surface reconstruction library for particle data from SPH simulations.
     # 0.13.0.0 changes removes enable_multi_threading argument an enable it by default
-    # and AttributeError: 'builtins.MeshWithData' object has no attribute 'get_point_attribute'. 
+    # and AttributeError: 'builtins.MeshWithData' object has no attribute 'get_point_attribute'.
     # Did you mean: 'add_point_attribute'?
-    "pysplashsurf<=0.12.0.2", 
+    "pysplashsurf<=0.12.0.2",
 ]
 
 [project.optional-dependencies]
@@ -84,6 +82,14 @@ dev = [
     "huggingface_hub",
     "wandb",
     "ipython",
+    # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
+    #   which requires setting the disableflags 'mjDSBL_ISLAND'.
+    "mujoco>=3.3.6,<3.4.0",
+    # Used internally by 'MPLPlotter'
+    # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
+    "matplotlib>=3.7.0",
+    # Used internally by 'VideoFileWriter'
+    "av",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.

@@ -45,6 +45,7 @@ jobs:
       PY_COLORS: 1
       GS_CACHE_FILE_PATH: ".cache/genesis"
       GS_USE_NDARRAY: ${{ matrix.GS_USE_NDARRAY }}
+      GS_BETA_PURE: ${{ matrix.GS_USE_NDARRAY }} # we turn on beta pure for ndarray
       GS_TORCH_FORCE_CPU_DEVICE: "1"
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"

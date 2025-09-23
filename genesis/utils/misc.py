@@ -2,6 +2,7 @@ import ctypes
 import datetime
 import functools
 import logging
+import math
 import platform
 import random
 import types
@@ -16,6 +17,7 @@ from typing import Any, Callable, NoReturn, Optional, Type
 import numpy as np
 import cpuinfo
 import psutil
+import pyglet
 import torch
 
 import gstaichi as ti
@@ -193,7 +195,7 @@ def get_device(backend: gs_backend, device_idx: Optional[int] = None):
         total_mem = device_property.total_memory / 1024**3
     elif backend == gs_backend.metal:
         if not torch.backends.mps.is_available():
-            gs.raise_exception("metal device not available")
+            gs.raise_exception("Torch metal backend not available.")
         # on mac, cpu and gpu are in the same physical hardware and sharing memory
         _, device_name, total_mem, _ = get_device(gs_backend.cpu)
         device = torch.device("mps", device_idx)
@@ -210,7 +212,7 @@ def get_device(backend: gs_backend, device_idx: Optional[int] = None):
         else:  # pytorch tensors on cpu
             # logger may not be configured at this point
             logger = getattr(gs, "logger", None) or LOGGER
-            logger.warning("No Intel XPU device available. Falling back to CPU for torch device.")
+            logger.warning("Torch GPU backend not available. Falling back to CPU device.")
             device, device_name, total_mem, _ = get_device(gs_backend.cpu)
     else:  # backend == gs_backend.gpu:
         if torch.cuda.is_available():
@@ -241,7 +243,12 @@ def get_cache_dir():
     cache_dir = os.environ.get("GS_CACHE_FILE_PATH")
     if cache_dir is not None:
         return cache_dir
-    return os.path.join(os.path.expanduser("~"), ".cache", "genesis")
+    root_cache_dir = None
+    if get_platform() == "Linux":
+        root_cache_dir = os.environ.get("XDG_CACHE_HOME")
+    if root_cache_dir is None:
+        root_cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(root_cache_dir, "genesis")
 
 
 def get_gsd_cache_dir():
@@ -276,35 +283,19 @@ def get_usd_cache_dir():
     return os.path.join(get_cache_dir(), "usd")
 
 
-def clean_cache_files():
-    folder = gs.utils.misc.get_cache_dir()
-    try:
-        shutil.rmtree(folder)
-    except:
-        pass
-    os.makedirs(folder)
-
-
 def assert_gs_tensor(x):
     if not isinstance(x, gs.Tensor):
         gs.raise_exception("Only accepts genesis.Tensor.")
 
 
-def to_gs_tensor(x):
+def to_gs_tensor(x, dtype: torch.dtype | None = None):
     if isinstance(x, gs.Tensor):
-        return x
-
-    elif isinstance(x, list):
-        return gs.from_numpy(np.array(x))
-
-    elif isinstance(x, np.ndarray):
-        return gs.from_numpy(x)
-
+        tensor = x
     elif isinstance(x, torch.Tensor):
-        return gs.Tensor(x)
-
+        tensor = gs.Tensor(x)
     else:
-        gs.raise_exception("Only accepts genesis.Tensor, torch.Tensor, np.ndarray or List.")
+        tensor = gs.from_numpy(np.asarray(x))
+    return tensor.to(dtype=dtype, device=gs.device)
 
 
 def tensor_to_cpu(x):
@@ -321,37 +312,86 @@ def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
 
 
-def concat_with_tensor(
-    tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dtype: torch.dtype | None = None, dim: int = 0
-):
+def concat_with_tensor(tensor: torch.Tensor, value, expand: tuple[int, ...] | None = None, dim: int = 0):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
     if not isinstance(value, torch.Tensor):
-        value = torch.tensor([value], dtype=dtype or gs.tc_float, device=gs.device)
+        value = torch.tensor([value], dtype=tensor.dtype, device=tensor.device)
     if expand is not None:
         value = value.expand(*expand)
+    if dim < 0:
+        dim = tensor.ndim + dim
+    assert (
+        0 <= dim < tensor.ndim
+        and tensor.ndim == value.ndim
+        and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
+    )
     if tensor.numel() == 0:
         return value
     return torch.cat([tensor, value], dim=dim)
 
 
-def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] = lambda: gs.tc_float):
+def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] | None = None):
     """
     Helper method to create a tensor field for dataclasses.
 
     Parameters
     ----------
     shape : tuple
-        The shape of the tensor field.
+        The shape of the tensor field. It must have zero elements, otherwise it will trigger an exception.
     dtype_factory : Callable[[], torch.dtype], optional
         The factory function to create the dtype of the tensor field. Default is gs.tc_float.
         A factory is used because gs types may not be available at the time of field creation.
     """
+    assert not shape or math.prod(shape) == 0
 
     def _default_factory():
         nonlocal shape, dtype_factory
-        return torch.empty(shape, dtype=dtype_factory(), device=gs.device)
+        dtype = dtype_factory() if dtype_factory is not None else gs.tc_float
+        return torch.empty(shape, dtype=dtype, device=gs.device)
 
     return field(default_factory=_default_factory)
+
+
+def try_get_display_size() -> tuple[int | None, int | None, float | None]:
+    """
+    Try to connect to display if it exists and get the screen size.
+
+    If there is no display, this function will throw an exception.
+
+    Returns
+    -------
+    screen_height : int | None
+        The height of the screen in pixels.
+    screen_width : int | None
+        The width of the screen in pixels.
+    screen_scale : float | None
+        The scale of the screen.
+    """
+    if pyglet.version < "2.0":
+        display = pyglet.canvas.Display()
+        screen = display.get_default_screen()
+        screen_scale = 1.0
+    else:
+        display = pyglet.display.get_display()
+        screen = display.get_default_screen()
+        try:
+            screen_scale = screen.get_scale()
+        except NotImplementedError:
+            # Probably some headless screen
+            screen_scale = 1.0
+
+    return screen.height, screen.width, screen_scale
+
+
+def has_display() -> bool:
+    """
+    Check if a display is connected.
+    """
+    try:
+        try_get_display_size()
+        return True
+    except Exception:
+        return False
 
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------

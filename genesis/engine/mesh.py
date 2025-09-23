@@ -178,6 +178,7 @@ class Mesh(RBC):
             try:
                 positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
             except gs.GenesisException:
+                gs.logger.warning("Failed to sample particles using 'pbs-32'. Falling back to 'random'.")
                 sampler = "random"
 
         if sampler in ("random", "regular"):

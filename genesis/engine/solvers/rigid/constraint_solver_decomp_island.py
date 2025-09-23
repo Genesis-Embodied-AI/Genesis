@@ -86,7 +86,7 @@ class ConstraintSolverIsland:
         self.quad = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape((self.len_constraints_, 3)))
 
         self.candidates = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(12))
-        self.ls_its = ti.field(gs.ti_float, shape=self._solver._batch_shape())
+        self.ls_it = ti.field(gs.ti_float, shape=self._solver._batch_shape())
         self.ls_result = ti.field(gs.ti_int, shape=self._solver._batch_shape())
 
         self.contact_island = ContactIsland(self._collider)
@@ -669,13 +669,12 @@ class ConstraintSolverIsland:
         deriv_0 = 2 * alpha * tmp_quad_total2 + tmp_quad_total1
         deriv_1 = 2 * tmp_quad_total2 + gs.EPS * (ti.abs(tmp_quad_total2) < gs.EPS)
 
-        self.ls_its[i_b] = self.ls_its[i_b] + 1
+        self.ls_it[i_b] = self.ls_it[i_b] + 1
 
         return alpha, cost, deriv_0, deriv_1
 
     @ti.func
     def _func_linesearch(self, island, i_b):
-
         ## use adaptive linesearch tolerance
         snorm = gs.ti_float(0.0)
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
@@ -688,7 +687,7 @@ class ConstraintSolverIsland:
         gtol = self.tolerance * self.ls_tolerance * snorm
         ## use adaptive linesearch tolerance
 
-        self.ls_its[i_b] = 0
+        self.ls_it[i_b] = 0
         self.ls_result[i_b] = 0
         ls_slope = gs.ti_float(1.0)
 
@@ -721,7 +720,7 @@ class ConstraintSolverIsland:
                 direction = (p1_deriv_0 < 0) * 2 - 1
                 p2update = 0
                 p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-                while p1_deriv_0 * direction <= -gtol and self.ls_its[i_b] < self.ls_iterations:
+                while p1_deriv_0 * direction <= -gtol and self.ls_it[i_b] < self.ls_iterations:
                     p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
                     p2update = 1
 
@@ -735,7 +734,7 @@ class ConstraintSolverIsland:
                         break
                 if not done:
 
-                    if self.ls_its[i_b] >= self.ls_iterations:
+                    if self.ls_it[i_b] >= self.ls_iterations:
                         self.ls_result[i_b] = 3
                         ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
@@ -748,7 +747,6 @@ class ConstraintSolverIsland:
                         done = True
 
                     if not done:
-
                         p2_next_alpha, p2_next_cost, p2_next_deriv_0, p2_next_deriv_1 = (
                             p1_alpha,
                             p1_cost,
@@ -760,8 +758,7 @@ class ConstraintSolverIsland:
                             i_b, p1_alpha - p1_deriv_0 / p1_deriv_1
                         )
 
-                        while self.ls_its[i_b] < self.ls_iterations:
-
+                        while self.ls_it[i_b] < self.ls_iterations:
                             pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = self._func_ls_point_fn(
                                 i_b, (p1_alpha + p2_alpha) * 0.5
                             )
@@ -865,7 +862,6 @@ class ConstraintSolverIsland:
                 )
 
                 flag = 1
-
             elif p_deriv_0 > 0 and self.candidates[4 * i + 2, i_b] > 0 and p_deriv_0 > self.candidates[4 * i + 2, i_b]:
                 p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
                     self.candidates[4 * i + 0, i_b],
@@ -904,7 +900,6 @@ class ConstraintSolverIsland:
                 self.Jaref[i_c, i_b] = self.Jaref[i_c, i_b] + self.jv[i_c, i_b] * alpha
 
             if ti.static(self._solver_type == gs.constraint_solver.CG):
-
                 for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
                     i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                     i_e = self.contact_island.entity_id[i_e_, i_b]
@@ -934,7 +929,6 @@ class ConstraintSolverIsland:
                     i_e = self.contact_island.entity_id[i_e_, i_b]
                     for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                         self.search[i_d, i_b] = -self.Mgrad[i_d, i_b] + self.cg_beta[i_b] * self.search[i_d, i_b]
-
             elif ti.static(self._solver_type == gs.constraint_solver.Newton):
                 improvement = self.prev_cost[i_b] - self.cost[i_b]
                 if improvement > 0:
@@ -1017,7 +1011,6 @@ class ConstraintSolverIsland:
             self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
             for i_e in range(self._solver.n_entities):
                 self._solver._mass_mat_mask[i_e, i_b] = 1
-
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(island, i_b)
 

@@ -39,7 +39,7 @@ class SensorManager:
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_cache_dtype()
 
-            for is_ground_truth in [False, True]:
+            for is_ground_truth in (False, True):
                 self._last_cache_cloned_step.setdefault((is_ground_truth, dtype), -1)
                 self._cloned_cache.setdefault((is_ground_truth, dtype), torch.zeros(0, dtype=dtype))
 
@@ -51,7 +51,7 @@ class SensorManager:
                 update_ground_truth_only &= sensor._options.update_ground_truth_only
                 sensor._cache_idx = cache_size_per_dtype[dtype]
                 cache_size_per_dtype[dtype] += sensor._cache_size
-                max_buffer_len = max(max_buffer_len, sensor._delays_ts + 1)
+                max_buffer_len = max(max_buffer_len, sensor._delay_ts + 1)
             self._should_update_cache_by_type[sensor_cls] = not update_ground_truth_only
 
             cls_cache_end_idx = cache_size_per_dtype[dtype]

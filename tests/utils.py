@@ -1,4 +1,5 @@
 import platform
+import io
 import os
 import subprocess
 import time
@@ -31,7 +32,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "f9d031501cba5e279f1fc77d4f3b9ccd9156ccf7"
-HUGGINGFACE_SNAPSHOT_REVISION = "95daab32a96d5e91cb3bef9725ad601de463053f"
+HUGGINGFACE_SNAPSHOT_REVISION = "74f5b178fb96dfa17a05d98585af8e212db9b4e6"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -266,7 +267,9 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     if all(e.size == 0 for e in args):
         return
 
-    np.testing.assert_allclose(*map(np.squeeze, args), atol=atol, rtol=rtol, err_msg=err_msg)
+    args = np.broadcast_arrays(*map(np.squeeze, args))
+
+    np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
 def assert_array_equal(actual, desired, *, err_msg=""):
@@ -491,6 +494,7 @@ def build_mujoco_sim(
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
     model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+    model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ISLAND
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
@@ -1014,3 +1018,10 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         gs_sim.scene.step()
         # if gs_sim.scene.visualizer:
         #     gs_sim.scene.visualizer.update()
+
+
+def rgb_array_to_png_bytes(rgb_arr: np.ndarray) -> bytes:
+    img = Image.fromarray(rgb_arr)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
