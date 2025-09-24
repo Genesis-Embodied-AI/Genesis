@@ -610,7 +610,7 @@ def get_collider_state(solver, static_rigid_sim_config, n_possible_pairs, collid
         "n_contacts_hibernated": V(dtype=gs.ti_int, shape=_B),
         "first_time": V(dtype=gs.ti_int, shape=_B),
         "contact_cache": contact_cache,
-        "diff_contact_input": get_diff_contact_input(solver, max(1, max_contact_pairs if requires_grad else 1)),
+        "diff_contact_input": get_diff_contact_input(solver, max_contact_pairs if requires_grad else 1),
     }
 
     if use_ndarray:
