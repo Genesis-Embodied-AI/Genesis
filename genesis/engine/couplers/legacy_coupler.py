@@ -14,6 +14,8 @@ from genesis.utils.geom import ti_inv_transform_by_trans_quat, ti_transform_by_t
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
 
+CLAMPED_INV_DT = 50.0
+
 
 @ti.data_oriented
 class LegacyCoupler(RBC):
@@ -77,6 +79,16 @@ class LegacyCoupler(RBC):
             self.pbd_rigid_normal_reordered = ti.Vector.field(
                 3, dtype=gs.ti_float, shape=(self.pbd_solver.n_particles, self.pbd_solver._B, self.rigid_solver.n_geoms)
             )
+
+            struct_particle_attach_info = ti.types.struct(
+                link_idx=gs.ti_int,
+                local_pos=gs.ti_vec3,
+            )
+            pbd_batch_shape = self.pbd_solver._batch_shape(self.pbd_solver._n_particles)
+
+            self.particle_attach_info = struct_particle_attach_info.field(shape=pbd_batch_shape, layout=ti.Layout.SOA)
+            self.particle_attach_info.link_idx.fill(-1)
+            self.particle_attach_info.local_pos.fill(gs.ti_vec3(0.0, 0.0, 0.0))
 
         if self._mpm_sph:
             self.mpm_sph_stencil_size = int(np.floor(self.mpm_solver.dx / self.sph_solver.hash_grid_cell_size) + 2)
@@ -597,7 +609,7 @@ class LegacyCoupler(RBC):
                         )
 
     @ti.kernel
-    def kernel_pbd_rigid_set_animate_particles_by_link(
+    def kernel_attach_pbd_to_rigid_link(
         self,
         particles_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
@@ -610,22 +622,21 @@ class LegacyCoupler(RBC):
         Current position of the particle, relatively to the link, is stored and preserved.
         """
         pdb = self.pbd_solver
-        for i_env_ in range(envs_idx.shape[0]):
-            i_env = envs_idx[i_env_]
-            link_pos = links_state.pos[link_idx, i_env]
-            link_quat = links_state.quat[link_idx, i_env]
 
-            for i_p_ in range(particles_idx.shape[0]):
-                i_p = particles_idx[i_p_]
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
+            i_p = particles_idx[i_b_, i_p_]
+            i_b = envs_idx[i_b_]
+            link_pos = links_state.pos[link_idx, i_b]
+            link_quat = links_state.quat[link_idx, i_b]
 
-                # compute local offset from link to the particle
-                world_pos = pdb.particles[i_p, i_env].pos
-                local_pos = ti_inv_transform_by_trans_quat(world_pos, link_pos, link_quat)
+            # compute local offset from link to the particle
+            world_pos = pdb.particles[i_p, i_b].pos
+            local_pos = ti_inv_transform_by_trans_quat(world_pos, link_pos, link_quat)
 
-                # set particle to be animated (not free) and store animation info
-                pdb.particles[i_p, i_env].free = False
-                pdb.particle_animation_info[i_p, i_env].link_idx = link_idx
-                pdb.particle_animation_info[i_p, i_env].local_pos = local_pos
+            # set particle to be animated (not free) and store animation info
+            pdb.particles[i_p, i_b].free = False
+            self.particle_attach_info[i_p, i_b].link_idx = link_idx
+            self.particle_attach_info[i_p, i_b].local_pos = local_pos
 
     @ti.kernel
     def kernel_pbd_rigid_clear_animate_particles_by_link(
@@ -639,8 +650,8 @@ class LegacyCoupler(RBC):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             pdb.particles[i_p, i_b].free = True
-            pdb.particle_animation_info[i_p, i_b].link_idx = -1
-            pdb.particle_animation_info[i_p, i_b].local_pos = ti.math.vec3([0.0, 0.0, 0.0])
+            self.particle_attach_info[i_p, i_b].link_idx = -1
+            self.particle_attach_info[i_p, i_b].local_pos = ti.math.vec3([0.0, 0.0, 0.0])
 
     @ti.kernel
     def kernel_pbd_rigid_solve_animate_particles_by_link(self, clamped_inv_dt: ti.f32, links_state: LinksState):
@@ -657,10 +668,10 @@ class LegacyCoupler(RBC):
         """
         pdb = self.pbd_solver
         for i_p, i_env in ti.ndrange(pdb._n_particles, pdb._B):
-            if pdb.particle_animation_info[i_p, i_env].link_idx >= 0:
+            if self.particle_attach_info[i_p, i_env].link_idx >= 0:
 
                 # read link state
-                link_idx = pdb.particle_animation_info[i_p, i_env].link_idx
+                link_idx = self.particle_attach_info[i_p, i_env].link_idx
                 link_pos = links_state.pos[link_idx, i_env]
                 link_quat = links_state.quat[link_idx, i_env]
 
@@ -669,7 +680,7 @@ class LegacyCoupler(RBC):
                 link_com_in_world = links_state.root_COM[link_idx, i_env] + links_state.i_pos[link_idx, i_env]
 
                 # calculate target pos and vel of the particle
-                local_pos = pdb.particle_animation_info[i_p, i_env].local_pos
+                local_pos = self.particle_attach_info[i_p, i_env].local_pos
                 target_world_pos = ti_transform_by_trans_quat(local_pos, link_pos, link_quat)
 
                 world_arm = target_world_pos - link_com_in_world
@@ -766,7 +777,7 @@ class LegacyCoupler(RBC):
 
             # 1-way: animate particles by links
             full_step_inv_dt = 1.0 / self.pbd_solver._dt
-            clamped_inv_dt = min(full_step_inv_dt, 50.0)
+            clamped_inv_dt = min(full_step_inv_dt, CLAMPED_INV_DT)
             self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.links_state)
 
         if self.fem_solver.is_active():

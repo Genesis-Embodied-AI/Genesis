@@ -141,7 +141,6 @@ class PBDTetEntity(ParticleEntity):
         poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
-        self.solver._kernel_fix_particles(particles_idx, envs_idx)
 
     def get_particles_pos(self, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
@@ -159,6 +158,15 @@ class PBDTetEntity(ParticleEntity):
         particles_idx = particles_idx_local + self._particle_start
         self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
         self.solver._kernel_fix_particles(particles_idx, envs_idx)
+
+    @gs.assert_built
+    def fix_particles_to_link(self, link_idx, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        particles_idx = particles_idx_local + self._particle_start
+        self._sim._coupler.kernel_attach_pbd_to_rigid_link(
+            particles_idx, envs_idx, link_idx, self._scene.rigid_solver.links_state
+        )
 
     def get_particles_vel(self, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)

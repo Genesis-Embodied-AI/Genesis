@@ -48,9 +48,7 @@ def main():
     scene.add_entity(gs.morphs.Plane(), rigid_material)
 
     # create box
-    box_pos = [0.25, 0.25, 0.25]
-    box_size = [0.25, 0.25, 0.25]
-    box_morph = gs.morphs.Box(pos=box_pos, size=box_size)
+    box_morph = gs.morphs.Box(pos=[0.25, 0.25, 0.25], size=[0.25, 0.25, 0.25])
     box = scene.add_entity(box_morph, rigid_material)
 
     # create cloth
@@ -64,10 +62,10 @@ def main():
     ########################## build ##########################
     scene.build(n_envs=0)
 
-    particles_idx = np.array([0, 1, 2, 3, 4, 5, 6, 7])
+    particles_idx = [0, 1, 2, 3, 4, 5, 6, 7]
     box_link_idx = box.link_start
 
-    scene.pbd_solver.set_animate_particles_by_link(particles_idx, box_link_idx, scene.rigid_solver.links_state)
+    cloth.fix_particles_to_link(box_link_idx, particles_idx_local=particles_idx)
 
     box.set_dofs_velocity([-0.0, 1.0, 0.0], dofs_idx_local=[0, 1, 2])
 
@@ -82,16 +80,9 @@ def main():
         new_rot = gu.euler_to_quat((-30 * j, -40 * j, 70 * j))
         box.set_pos(new_pos)
         box.set_quat(new_rot)
-        import time
 
-        for i_horizon in range(args.horizon):
+        for _ in range(args.horizon):
             scene.step()
-            cloth_pos1 = cloth.get_particles_pos()[particles_idx]
-            # if j == 2:
-            #     from IPython import embed; embed()
-            #     # exit()
-            #     # cloth_pos1 = cloth.get_particles_pos()[:, particles_idx]
-            #     time.sleep(0.5)
 
 
 if __name__ == "__main__":

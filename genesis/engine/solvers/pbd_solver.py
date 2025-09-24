@@ -32,15 +32,6 @@ class PBDSolver(Solver):
         LIQUID = 2
         PARTICLE = 3  # non-physics particles
 
-    @ti.dataclass
-    class ParticleAnimateByLinkInfo:
-        """
-        Index to and offset from the RigidLink that keyframe-animates this particle.
-        """
-
-        link_idx: ti.i32  # gs.ti_int not available before gs.init()
-        local_pos: ti.math.vec3  # gs.ti_vec3 causes uncomprehensible error !!
-
     def __init__(self, scene, sim, options):
         super().__init__(scene, sim, options)
 
@@ -167,10 +158,6 @@ class PBDSolver(Solver):
 
         self.particles = struct_particle_state.field(shape=batched_shape, layout=ti.Layout.SOA)
         self.particles_reordered = struct_particle_state.field(shape=batched_shape, layout=ti.Layout.SOA)
-
-        self.particle_animation_info = self.ParticleAnimateByLinkInfo.field(shape=batched_shape, layout=ti.Layout.SOA)
-        self.particle_animation_info.link_idx.fill(-1)
-        self.particle_animation_info.local_pos.fill(gs.ti_vec3(0.0, 0.0, 0.0))
 
         self.particles_ng = struct_particle_state_ng.field(shape=batched_shape, layout=ti.Layout.SOA)
         self.particles_ng_reordered = struct_particle_state_ng.field(shape=batched_shape, layout=ti.Layout.SOA)
@@ -409,7 +396,7 @@ class PBDSolver(Solver):
 
     @ti.kernel
     def _kernel_solve_stretch(self, f: ti.i32):
-        for i_iter in ti.static(range(self._max_stretch_solver_iterations)):
+        for _ in ti.static(range(self._max_stretch_solver_iterations)):
             for i_e, i_b in ti.ndrange(self._n_edges, self._B):
                 v1 = self.edges_info[i_e].v1
                 v2 = self.edges_info[i_e].v2
@@ -934,9 +921,7 @@ class PBDSolver(Solver):
         envs_idx: NDArray[np.int32] | None = None,
     ) -> None:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
-            particles_idx, envs_idx, link_idx, links_state
-        )
+        self._sim._coupler.kernel_attach_pbd_to_rigid_link(particles_idx, envs_idx, link_idx, links_state)
 
     def _kernel_get_particles_vel(
         self,
@@ -982,6 +967,8 @@ class PBDSolver(Solver):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles[i_p, i_b].free = False
+            # zero out velocity
+            self.particles[i_p, i_b].vel.fill(0.0)
 
     @ti.kernel
     def _kernel_release_particle(self, particles_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):

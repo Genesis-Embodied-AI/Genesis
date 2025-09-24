@@ -119,6 +119,7 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
     particle_idx = cloth_2.find_closest_particle((-1, -1, 0))
     particle_pos_ref = (-0.5, -0.5, 0.05)
     cloth_2.set_particles_pos(particle_pos_ref, particle_idx)
+    cloth_2.fix_particles(particle_idx)
     for i in range(60):
         scene.step()
 
@@ -154,7 +155,7 @@ def test_cloth_attach_rigid_link(show_viewer):
     box_height = 2.25
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=2e-2, substeps=10),
+        sim_options=gs.options.SimOptions(dt=2e-2, substeps=10, gravity=(0.0, 0.0, 0.0)),
         pbd_options=gs.options.PBDOptions(particle_size=particle_size),
         show_viewer=show_viewer,
     )
@@ -179,9 +180,9 @@ def test_cloth_attach_rigid_link(show_viewer):
 
     scene.build(n_envs=2)
 
-    particles_idx = np.array([0, 1, 2, 3, 4, 5, 6, 7], dtype=np.int32)
+    particles_idx = [0, 1, 2, 3, 4, 5, 6, 7]
     box_link_idx = box.links[0].idx
-    scene.pbd_solver.set_animate_particles_by_link(particles_idx, box_link_idx, scene.rigid_solver.links_state)
+    cloth.fix_particles_to_link(box_link_idx, particles_idx_local=particles_idx)
 
     # leftward velocity for both envs on base linear DOFs [3,4,5]
     vel = np.array([[-0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], dtype=np.float32)
@@ -193,6 +194,11 @@ def test_cloth_attach_rigid_link(show_viewer):
     for _ in range(25):
         scene.step()
 
+    # wait for the box to stop
+    box.set_dofs_velocity(np.zeros_like(vel), dofs_idx_local=[0, 1, 2])
+    for _ in range(5):
+        scene.step()
+
     # Check that the attached particles followed the link displacement per env
     cloth_pos1 = cloth.get_particles_pos()[:, particles_idx]
     link_pos1 = scene.rigid_solver.links[box_link_idx].get_pos()
@@ -200,14 +206,12 @@ def test_cloth_attach_rigid_link(show_viewer):
     cloth_disp = cloth_pos1 - cloth_pos0
     link_disp = link_pos1 - link_pos0
     # broadcast link_disp to match cloth_disp shape
-    # link_disp = np.tile(link_disp[:, None, :], (1, len(particles_idx), 1))
-    link_disp = torch.tile(link_disp.unsqueeze(1), (1, len(particles_idx), 1))
-    print(cloth_disp.shape, link_disp.shape)
+    link_disp = link_disp.unsqueeze(1)
 
-    assert_allclose(cloth_disp, link_disp, atol=3e-2)
+    assert_allclose(cloth_disp, link_disp, atol=2e-5)
 
     # Release cloth and revert box's speed
-    box.set_dofs_velocity(-vel, dofs_idx_local=[0, 1, 2])
+    box.set_dofs_velocity(vel, dofs_idx_local=[0, 1, 2])
     cloth.release_particle(particles_idx)
     for i in range(25):
         scene.step()
@@ -217,7 +221,7 @@ def test_cloth_attach_rigid_link(show_viewer):
     link_pos2 = scene.rigid_solver.links[box_link_idx].get_pos()
     cloth_disp = cloth_pos2 - cloth_pos1
     link_disp = link_pos2 - link_pos1
-    link_disp = torch.tile(link_disp.unsqueeze(1), (1, len(particles_idx), 1))
+    link_disp = link_disp.unsqueeze(1)
 
     link_disp = link_disp.norm(dim=-1)
     cloth_disp = cloth_disp.norm(dim=-1)
