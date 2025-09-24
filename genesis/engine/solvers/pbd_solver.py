@@ -967,8 +967,6 @@ class PBDSolver(Solver):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             self.particles[i_p, i_b].free = False
-            # zero out velocity
-            self.particles[i_p, i_b].vel.fill(0.0)
 
     @ti.kernel
     def _kernel_release_particle(self, particles_idx: ti.types.ndarray(), envs_idx: ti.types.ndarray()):

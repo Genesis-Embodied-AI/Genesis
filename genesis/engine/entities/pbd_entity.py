@@ -157,7 +157,6 @@ class PBDTetEntity(ParticleEntity):
         vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
-        self.solver._kernel_fix_particles(particles_idx, envs_idx)
 
     @gs.assert_built
     def fix_particles_to_link(self, link_idx, particles_idx_local=None, envs_idx=None, *, unsafe=False):
@@ -192,7 +191,7 @@ class PBDTetEntity(ParticleEntity):
         return actives
 
     @gs.assert_built
-    def fix_particles(self, particles_idx_local, envs_idx=None, *, unsafe=False):
+    def fix_particles(self, particles_idx_local, envs_idx=None, zero_vel=True, *, unsafe=False):
         """
         Fix the position of some particles in the simulation.
 
@@ -202,7 +201,11 @@ class PBDTetEntity(ParticleEntity):
             Index of the particles relative to this entity.
         envs_idx : None | int | array_like, shape (M,), optional
             The indices of the environments to set. If None, all environments will be set. Defaults to None.
+        zero_vel : bool, optional
+            Whether to zero the velocity of the particles. Defaults to True.
         """
+        if zero_vel:
+            self.set_particles_vel(torch.zeros([3]), particles_idx_local, envs_idx, unsafe=unsafe)
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         self.solver._kernel_fix_particles(particles_idx_local + self._particle_start, envs_idx)
