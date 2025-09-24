@@ -446,12 +446,9 @@ class BaseMPLPlotter(BasePlotter):
         """Clean up matplotlib resources."""
         super().cleanup()
 
-        # Logger may not be available anymore
-        logger_exists = hasattr(gs, "logger")
+        self.lines.clear()
+        self.backgrounds.clear()
 
-        if self.fig is not None:
-            try:
-                import matplotlib.pyplot as plt
 
                 plt.close(self.fig)
                 if logger_exists:
@@ -466,12 +463,6 @@ class BaseMPLPlotter(BasePlotter):
         """
         Capture the plot image as a video frame.
 
-        Returns
-        -------
-        image_array : np.ndarray
-            The RGB image as a numpy array.
-        """
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
 
         self._lock.acquire()
         if isinstance(self.fig.canvas, FigureCanvasAgg):
@@ -480,21 +471,24 @@ class BaseMPLPlotter(BasePlotter):
             rgba_array_flat = np.frombuffer(self.fig.canvas.buffer_rgba(), dtype=np.uint8)
             rgb_array = rgba_array_flat.reshape((height, width, 4))[..., :3]
 
-            # Rescale image if necessary
-            if (width, height) != tuple(self._options.window_size):
-                img = Image.fromarray(rgb_array)
-                img = img.resize(self._options.window_size, resample=Image.BILINEAR)
-                rgb_array = np.asarray(img)
-            else:
-                rgb_array = rgb_array.copy()
+        import matplotlib.pyplot as plt
+
+        self.image_plot = None
+        self.background = None
+
+        self.fig, self.ax = plt.subplots(figsize=self.figsize)
+        self.fig.tight_layout(pad=0)
+        self.ax.set_axis_off()
+        self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        self.image_plot = self.ax.imshow(np.zeros((1, 1)), cmap="plasma", origin="upper", aspect="auto")
+        self._show_fig()
+
+    def process(self, data, cur_time):
+        """Process new image data and update display."""
+        if isinstance(data, torch.Tensor):
+            img_data = tensor_to_array(data)
         else:
-            # Slower but more generic fallback only if necessary
-            buffer = io.BytesIO()
-            self.fig.canvas.print_figure(buffer, format="png", dpi="figure")
-            buffer.seek(0)
-            img = Image.open(buffer)
-            rgb_array = np.asarray(img.convert("RGB"))
-        self._lock.release()
+            img_data = np.asarray(data)
 
         return rgb_array
 

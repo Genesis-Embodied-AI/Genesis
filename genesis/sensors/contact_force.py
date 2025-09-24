@@ -131,6 +131,9 @@ class ContactSensor(Sensor):
             self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
 
+        if self._options.draw_debug:
+            self.debug_object = None
+
     def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
 
@@ -297,6 +300,9 @@ class ContactForceSensor(
             self._shared_metadata.max_force,
             _to_tuple(self._options.max_force, length_per_value=3),
         )
+
+        if self._options.draw_debug:
+            self.debug_object = None
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
