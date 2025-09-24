@@ -422,21 +422,6 @@ class PBDSolver(Solver):
                 dp = -C / (w1 + w2 + alpha) * n / n.norm(gs.EPS) * self.edges_info[i_e].stretch_relaxation
                 self.particles[v1, i_b].dpos += dp * w1
                 self.particles[v2, i_b].dpos -= dp * w2
-                if (
-                    ti.math.isnan(self.particles[v1, i_b].dpos.norm())
-                    or ti.math.isnan(self.particles[v2, i_b].dpos.norm())
-                ) and i_iter == 0:
-                    print(
-                        "? stretch",
-                        v1,
-                        v2,
-                        n,
-                        w1,
-                        w2,
-                        alpha,
-                        self.particles[v1, i_b].dpos.norm(),
-                        self.particles[v2, i_b].dpos.norm(),
-                    )
 
             for i_p, i_b in ti.ndrange(self._n_particles, self._B):
                 if self.particles[i_p, i_b].free and self.particles_info[i_p].material_type != self.MATERIAL.PARTICLE:
