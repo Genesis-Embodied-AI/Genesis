@@ -950,7 +950,7 @@ class PBDSolver(Solver):
     ) -> None:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
-            particles_idx, link_idx, links_state, envs_idx
+            particles_idx, envs_idx, link_idx, links_state
         )
 
     def _kernel_get_particles_vel(

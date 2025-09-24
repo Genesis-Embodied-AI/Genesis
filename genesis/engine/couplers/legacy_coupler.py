@@ -599,10 +599,10 @@ class LegacyCoupler(RBC):
     @ti.kernel
     def kernel_pbd_rigid_set_animate_particles_by_link(
         self,
-        particles_idx: ti.types.ndarray(ndim=1),  # 1d array
+        particles_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
         link_idx: ti.i32,
         links_state: LinksState,
-        envs_idx: ti.types.ndarray(ndim=1),  # 1d array
     ) -> None:
         """
         Sets listed particles in listed environments to be animated by the link.
@@ -684,7 +684,7 @@ class LegacyCoupler(RBC):
                 pdb.particles_reordered[i_rp, i_env].vel = corrective_vel + target_world_vel
 
     @ti.func
-    def _func_pbd_collide_with_rigid_geom(self, i, pos, vel, mass, normal_prev, geom_idx, batch_idx):
+    def _func_pbd_collide_with_rigid_geom(self, i, pos_world, vel, mass, normal_prev, geom_idx, batch_idx):
         """
         Resolves collision when a particle is already in collision with a rigid object.
         This function assumes known normal_rigid and influence.
@@ -693,12 +693,12 @@ class LegacyCoupler(RBC):
             geoms_state=self.rigid_solver.geoms_state,
             geoms_info=self.rigid_solver.geoms_info,
             sdf_info=self.rigid_solver.sdf._sdf_info,
-            pos_world=pos,
+            pos_world=pos_world,
             geom_idx=geom_idx,
             batch_idx=batch_idx,
         )
         vel_rigid = self.rigid_solver._func_vel_at_point(
-            pos_world=pos,
+            pos_world=pos_world,
             link_idx=self.rigid_solver.geoms_info.link_idx[geom_idx],
             i_b=batch_idx,
             links_state=self.rigid_solver.links_state,
@@ -708,11 +708,11 @@ class LegacyCoupler(RBC):
             geoms_info=self.rigid_solver.geoms_info,
             collider_static_config=self.rigid_solver.collider._collider_static_config,
             sdf_info=self.rigid_solver.sdf._sdf_info,
-            pos_world=pos,
+            pos_world=pos_world,
             geom_idx=geom_idx,
             batch_idx=batch_idx,
         )
-        new_pos = pos
+        new_pos = pos_world
         new_vel = vel
         if signed_dist < self.pbd_solver.particle_size / 2:  # skip non-penetration particles
 
@@ -728,7 +728,7 @@ class LegacyCoupler(RBC):
             #################### rigid -> particle ####################
 
             energy_loss = 0.0  # value in [0, 1]
-            new_pos = pos + stiffness * contact_normal * (self.pbd_solver.particle_size / 2 - signed_dist)
+            new_pos = pos_world + stiffness * contact_normal * (self.pbd_solver.particle_size / 2 - signed_dist)
             prev_pos = self.pbd_solver.particles_reordered[i, batch_idx].ipos
             new_vel = (new_pos - prev_pos) / self.pbd_solver._substep_dt
 
@@ -737,7 +737,7 @@ class LegacyCoupler(RBC):
             force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
 
             self.rigid_solver._func_apply_external_force(
-                pos,
+                pos_world,
                 force,
                 self.rigid_solver.geoms_info.link_idx[geom_idx],
                 batch_idx,
