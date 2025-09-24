@@ -409,7 +409,7 @@ class PBDSolver(Solver):
 
     @ti.kernel
     def _kernel_solve_stretch(self, f: ti.i32):
-        for _ in ti.static(range(self._max_stretch_solver_iterations)):
+        for i_iter in ti.static(range(self._max_stretch_solver_iterations)):
             for i_e, i_b in ti.ndrange(self._n_edges, self._B):
                 v1 = self.edges_info[i_e].v1
                 v2 = self.edges_info[i_e].v2
@@ -422,6 +422,21 @@ class PBDSolver(Solver):
                 dp = -C / (w1 + w2 + alpha) * n / n.norm(gs.EPS) * self.edges_info[i_e].stretch_relaxation
                 self.particles[v1, i_b].dpos += dp * w1
                 self.particles[v2, i_b].dpos -= dp * w2
+                if (
+                    ti.math.isnan(self.particles[v1, i_b].dpos.norm())
+                    or ti.math.isnan(self.particles[v2, i_b].dpos.norm())
+                ) and i_iter == 0:
+                    print(
+                        "? stretch",
+                        v1,
+                        v2,
+                        n,
+                        w1,
+                        w2,
+                        alpha,
+                        self.particles[v1, i_b].dpos.norm(),
+                        self.particles[v2, i_b].dpos.norm(),
+                    )
 
             for i_p, i_b in ti.ndrange(self._n_particles, self._B):
                 if self.particles[i_p, i_b].free and self.particles_info[i_p].material_type != self.MATERIAL.PARTICLE:
@@ -567,9 +582,13 @@ class PBDSolver(Solver):
                         self.sh.slot_start[slot_idx, i_b],
                         self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                     ):
-                        if i_p != j and not (
-                            self.particles_info_reordered[i_p, i_b].material_type == self.MATERIAL.LIQUID
-                            and self.particles_info_reordered[j, i_b].material_type == self.MATERIAL.LIQUID
+                        if (
+                            i_p != j
+                            and (self.particles_reordered[i_p, i_b].free or self.particles_reordered[j, i_b].free)
+                            and not (
+                                self.particles_info_reordered[i_p, i_b].material_type == self.MATERIAL.LIQUID
+                                and self.particles_info_reordered[j, i_b].material_type == self.MATERIAL.LIQUID
+                            )
                         ):
                             self._func_solve_collision(i_p, j, i_b)
 
@@ -921,12 +940,6 @@ class PBDSolver(Solver):
             for i in ti.static(range(3)):
                 self.particles[i_p, i_b].vel[i] = vels[i_b_, i_p_, i]
 
-    @ti.kernel
-    def _kernel_set_particle_velocity(self, particle_idx: ti.i32, vel: ti.types.ndarray(), i_b: ti.i32):
-        for i in range(3):
-            self.particles[particle_idx, i_b].vel[i] = vel[i]
-        self.particles[particle_idx, i_b].free = 0
-
     @gs.assert_built
     def set_animate_particles_by_link(
         self,
@@ -935,19 +948,10 @@ class PBDSolver(Solver):
         links_state: LinksState,
         envs_idx: NDArray[np.int32] | None = None,
     ) -> None:
-        envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_pbd_rigid_set_animate_particles_by_link(
             particles_idx, link_idx, links_state, envs_idx
         )
-
-    @gs.assert_built
-    def clear_animate_particles_by_link(
-        self,
-        particles_idx: NDArray[np.int32],
-        envs_idx: NDArray[np.int32] | None = None,
-    ) -> None:
-        envs_idx: torch.Tensor = self._scene._sanitize_envs_idx(envs_idx)
-        self._sim._coupler.kernel_pbd_rigid_clear_animate_particles_by_link(particles_idx, envs_idx)
 
     def _kernel_get_particles_vel(
         self,

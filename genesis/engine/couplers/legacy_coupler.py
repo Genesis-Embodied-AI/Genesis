@@ -599,10 +599,10 @@ class LegacyCoupler(RBC):
     @ti.kernel
     def kernel_pbd_rigid_set_animate_particles_by_link(
         self,
-        particles_idx: ti.types.ndarray(),  # 1d array
+        particles_idx: ti.types.ndarray(ndim=1),  # 1d array
         link_idx: ti.i32,
         links_state: LinksState,
-        envs_idx: ti.types.ndarray(),  # 1d array
+        envs_idx: ti.types.ndarray(ndim=1),  # 1d array
     ) -> None:
         """
         Sets listed particles in listed environments to be animated by the link.
@@ -630,20 +630,17 @@ class LegacyCoupler(RBC):
     @ti.kernel
     def kernel_pbd_rigid_clear_animate_particles_by_link(
         self,
-        particles_idx: ti.types.ndarray(),  # 1d array
-        envs_idx: ti.types.ndarray(),  # 1d array
+        particles_idx: ti.types.ndarray(),
+        envs_idx: ti.types.ndarray(),
     ) -> None:
         """Detach listed particles from links, and simulate them freely."""
         pdb = self.pbd_solver
-        for i_env_ in range(envs_idx.shape[0]):
-            i_env = envs_idx[i_env_]
-
-            for i_p_ in range(particles_idx.shape[0]):
-                i_p = particles_idx[i_p_]
-
-                pdb.particles[i_p, i_env].free = True
-                pdb.particle_animation_info[i_p, i_env].link_idx = -1
-                pdb.particle_animation_info[i_p, i_env].local_pos = ti.math.vec3([0.0, 0.0, 0.0])
+        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
+            i_p = particles_idx[i_b_, i_p_]
+            i_b = envs_idx[i_b_]
+            pdb.particles[i_p, i_b].free = True
+            pdb.particle_animation_info[i_p, i_b].link_idx = -1
+            pdb.particle_animation_info[i_p, i_b].local_pos = ti.math.vec3([0.0, 0.0, 0.0])
 
     @ti.kernel
     def kernel_pbd_rigid_solve_animate_particles_by_link(self, clamped_inv_dt: ti.f32, links_state: LinksState):
@@ -719,28 +716,25 @@ class LegacyCoupler(RBC):
         new_vel = vel
         if signed_dist < self.pbd_solver.particle_size / 2:  # skip non-penetration particles
 
-            rvel = vel - vel_rigid
-            rvel_normal_magnitude = rvel.dot(contact_normal)  # negative if inward
-            _unused_rvel_tan = rvel - rvel_normal_magnitude * contact_normal
-            _unused_rvel_tan_norm = _unused_rvel_tan.norm(gs.EPS)
+            stiffness = 1.0  # value in [0, 1]
+
+            # we don't consider friction for now
+            # friction = 0.15
+            # rvel = vel - vel_rigid
+            # rvel_normal_magnitude = rvel.dot(contact_normal)  # negative if inward
+            # rvel_tan = rvel - rvel_normal_magnitude * contact_normal
+            # rvel_tan_norm = rvel_tan.norm(gs.EPS)
 
             #################### rigid -> particle ####################
-            stiffness = 1.0  # value in [0, 1]
-            _unused_friction = 0.15
-            _unused_energy_loss = 0.0  # value in [0, 1]
+
+            energy_loss = 0.0  # value in [0, 1]
             new_pos = pos + stiffness * contact_normal * (self.pbd_solver.particle_size / 2 - signed_dist)
             prev_pos = self.pbd_solver.particles_reordered[i, batch_idx].ipos
             new_vel = (new_pos - prev_pos) / self.pbd_solver._substep_dt
 
-            # why do we do this? is (original value of) vel different than (pos_world - prev_pos) / self.pbd_solver._substep_dt?
-            # delta_vel_dot_normal = (new_vel - vel).dot(contact_normal)
-            # delta_vel_along_normal = delta_vel_dot_normal * contact_normal
-
-            # vel = new_vel
-
             #################### particle -> rigid ####################
             delta_mv = mass * (new_vel - vel)
-            force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - _unused_energy_loss)
+            force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
 
             self.rigid_solver._func_apply_external_force(
                 pos,

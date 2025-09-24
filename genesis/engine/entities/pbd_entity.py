@@ -202,7 +202,7 @@ class PBDTetEntity(ParticleEntity):
     @gs.assert_built
     def release_particle(self, particles_idx_local, envs_idx=None, *, unsafe=False):
         """
-        Release some of the fixed particles, allowing them to move freely again.
+        Release some of the attached particles, allowing them to move freely again.
 
         Parameters
         ----------
@@ -214,6 +214,9 @@ class PBDTetEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
         self.solver._kernel_release_particle(particles_idx_local + self._particle_start, envs_idx)
+        self.solver._sim._coupler.kernel_pbd_rigid_clear_animate_particles_by_link(
+            particles_idx_local + self._particle_start, envs_idx
+        )
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
