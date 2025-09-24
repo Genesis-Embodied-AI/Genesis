@@ -44,7 +44,7 @@ def main():
         gs.sensors.IMU(
             entity_idx=franka.idx,
             link_idx_local=end_effector.idx_local,
-            pos_offset=(0.0, 0.0, 0.2),
+            pos_offset=(0.0, 0.0, 0.15),
             # noise parameters
             acc_axes_skew=(0.0, 0.01, 0.02),
             gyro_axes_skew=(0.03, 0.04, 0.05),

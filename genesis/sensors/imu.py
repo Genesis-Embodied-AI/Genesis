@@ -128,9 +128,13 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     draw_debug : bool, optional
         If True and the rasterizer visualization is active, an arrow for linear acceleration will be drawn.
     debug_acc_color : float, optional
-        The rgba color of the debug acceleration arrow. Defaults to (1.0, 0.0, 0.0, 0.5).
+        The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
     debug_acc_scale: float, optional
         The scale factor for the debug acceleration arrow. Defaults to 0.01.
+    debug_gyro_color : float, optional
+        The rgba color of the debug gyroscope arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
+    debug_gyro_scale: float, optional
+        The scale factor for the debug gyroscope arrow. Defaults to 0.01.
     """
 
     acc_resolution: MaybeTuple3FType = 0.0
@@ -144,8 +148,10 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     acc_random_walk: MaybeTuple3FType = 0.0
     gyro_random_walk: MaybeTuple3FType = 0.0
 
-    debug_acc_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.5)
+    debug_acc_color: tuple[float, float, float, float] = (0.0, 1.0, 1.0, 0.5)
     debug_acc_scale: float = 0.01
+    debug_gyro_color: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.5)
+    debug_gyro_scale: float = 0.01
 
     def validate(self, scene):
         super().validate(scene)
@@ -252,7 +258,7 @@ class IMUSensor(
         )
 
         if self._options.draw_debug:
-            self.debug_object = None
+            self.debug_objects = [None, None]
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
@@ -334,9 +340,15 @@ class IMUSensor(
         pos = self.link.get_pos(envs_idx=envs_idx).squeeze(0) + transform_by_quat(self.pos_offset, quat)
 
         data = self.read(envs_idx=envs_idx)
-        vec = data["lin_acc"].squeeze(0) * self._options.debug_acc_scale
-        vec = tensor_to_array(transform_by_quat(vec, transform_quat_by_quat(self.quat_offset, quat)))
+        acc_vec = data["lin_acc"].squeeze(0) * self._options.debug_acc_scale
+        gyro_vec = data["ang_vel"].squeeze(0) * self._options.debug_gyro_scale
+        # transform from local frame to world frame
+        offset_quat = transform_quat_by_quat(self.quat_offset, quat)
+        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
+        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat))
 
-        if self.debug_object is not None:
-            context.clear_debug_object(self.debug_object)
-        self.debug_object = context.draw_debug_arrow(pos=pos, vec=vec, color=self._options.debug_acc_color)
+        for debug_object in self.debug_objects:
+            if debug_object is not None:
+                context.clear_debug_object(debug_object)
+        self.debug_objects[0] = context.draw_debug_arrow(pos=pos, vec=acc_vec, color=self._options.debug_acc_color)
+        self.debug_objects[1] = context.draw_debug_arrow(pos=pos, vec=gyro_vec, color=self._options.debug_gyro_color)
