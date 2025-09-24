@@ -652,6 +652,8 @@ class MPLImagePlotterOptions(BasePlotterOptions):
 class MPLImagePlotter(BaseMPLPlotter):
     """
     Live image viewer using matplotlib.
+
+    The image data should be an array-like object with shape (H, W), (H, W, 1), (H, W, 3), or (H, W, 4).
     """
 
     def build(self):
@@ -675,13 +677,6 @@ class MPLImagePlotter(BaseMPLPlotter):
             img_data = tensor_to_array(data)
         else:
             img_data = np.asarray(data)
-
-        if img_data.ndim == 3 and img_data.shape[0] == 1:
-            img_data = img_data[0]  # remove batch dimension
-        # TODO: color images?
-        # elif img_data.ndim == 3 and img_data.shape[-1] in [1, 3, 4]:
-        elif img_data.ndim == 3 and img_data.shape[-1] == 1:
-            img_data = img_data.squeeze(-1)
 
         vmin, vmax = np.min(img_data), np.max(img_data)
 
