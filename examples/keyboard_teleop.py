@@ -17,10 +17,11 @@ import os
 import random
 import threading
 
-import genesis as gs
 import numpy as np
 from pynput import keyboard
 from scipy.spatial.transform import Rotation as R
+
+import genesis as gs
 
 
 class KeyboardDevice:

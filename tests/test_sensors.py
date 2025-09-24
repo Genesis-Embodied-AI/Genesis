@@ -248,3 +248,63 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
         tol=NOISE * 10,
         err_msg="ContactForceSensor should read bias and noise and -gravity (normal) force clipped by max_force.",
     )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("is_fixed", [False, True])
+def test_lidar_grid_pattern_ground_distance(show_viewer, tol, n_envs, is_fixed):
+    """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
+    EXPECTED_DISTANCE = 1.5  # Distance from sensor to floor
+    NUM_RAYS_XY = 4  # Total number of rays is NUM_RAYS_XY ** 2
+    BOX_SIZE = 0.1  # Size of the box to which the LiDAR is attached
+
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(gs.morphs.Plane(is_free=not is_fixed))
+
+    block = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, EXPECTED_DISTANCE + BOX_SIZE / 2.0),
+            fixed=True,
+        ),
+    )
+
+    grid_pattern = gs.sensors.raycaster.GridPattern(
+        resolution=1.0 / (NUM_RAYS_XY - 1.0),
+        size=(1.0, 1.0),
+        direction=(0.0, 0.0, -1.0),  # pointing downwards to ground
+    )
+
+    lidar = scene.add_sensor(
+        gs.sensors.Lidar(
+            pattern=grid_pattern,
+            entity_idx=block.idx,
+            pos_offset=(0.0, 0.0, -BOX_SIZE / 2.0),
+            return_world_frame=True,
+            only_cast_fixed=is_fixed,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    sensor_data = lidar.read()
+    hit_points = sensor_data["hit_points"]
+    distances = sensor_data["hit_ranges"]
+
+    expected_shape = (NUM_RAYS_XY, NUM_RAYS_XY) if n_envs == 0 else (n_envs, NUM_RAYS_XY, NUM_RAYS_XY)
+    assert distances.shape == expected_shape, f"Expected distances shape {expected_shape}, got {distances.shape}"
+
+    assert_allclose(hit_points[..., 2], 0.0, tol=tol, err_msg="LiDAR hit point should be at ground level (z≈0)")
+    assert_allclose(
+        distances,
+        EXPECTED_DISTANCE,
+        tol=tol,
+        err_msg=f"LiDAR should measure distance {EXPECTED_DISTANCE}m to ground plane",
+    )
