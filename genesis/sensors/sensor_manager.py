@@ -5,6 +5,8 @@ import torch
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
+    from genesis.vis.rasterizer_context import RasterizerContext
+
     from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
 
 
@@ -83,6 +85,11 @@ class SensorManager:
                     self._cache[dtype][:, cache_slice],
                     self._buffered_data[dtype][:, cache_slice],
                 )
+
+    def draw_debug(self, context: "RasterizerContext"):
+        for sensor in self.sensors:
+            if sensor._options.draw_debug:
+                sensor._draw_debug(context)
 
     def reset(self, envs_idx=None):
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)

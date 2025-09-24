@@ -1,23 +1,19 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import gstaichi as ti
 import numpy as np
 import torch
 
 import genesis as gs
-from genesis.utils.geom import (
-    inv_transform_by_trans_quat,
-    transform_quat_by_quat,
-)
-from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.utils.geom import inv_transform_by_trans_quat, transform_by_quat, transform_quat_by_quat
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
     MaybeTuple3FType,
     NoisySensorMetadataMixin,
     NoisySensorMixin,
     NoisySensorOptionsMixin,
-    NumericType,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     RigidSensorOptionsMixin,
@@ -30,6 +26,7 @@ from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.rasterizer_context import RasterizerContext
 
 Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
@@ -128,6 +125,12 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         Otherwise, the sensor data at the closest time step will be used. Default is False.
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth data, and not the measured data.
+    draw_debug : bool, optional
+        If True and the rasterizer visualization is active, an arrow for linear acceleration will be drawn.
+    debug_acc_color : float, optional
+        The rgba color of the debug acceleration arrow. Defaults to (1.0, 0.0, 0.0, 0.5).
+    debug_acc_scale: float, optional
+        The scale factor for the debug acceleration arrow. Defaults to 0.01.
     """
 
     acc_resolution: MaybeTuple3FType = 0.0
@@ -140,6 +143,9 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     gyro_bias: MaybeTuple3FType = 0.0
     acc_random_walk: MaybeTuple3FType = 0.0
     gyro_random_walk: MaybeTuple3FType = 0.0
+
+    debug_acc_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.5)
+    debug_acc_scale: float = 0.01
 
     def validate(self, scene):
         super().validate(scene)
@@ -245,6 +251,11 @@ class IMUSensor(
             dim=1,
         )
 
+        if self._options.draw_debug:
+            self.debug_object = None
+            self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
+            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
+
     def _get_return_format(self) -> dict[str, tuple[int, ...]]:
         return {
             "lin_acc": (3,),
@@ -310,3 +321,22 @@ class IMUSensor(
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        """
+        Draw debug arrow for the IMU acceleration.
+
+        Only draws for first environment.
+        """
+        envs_idx = 0 if self._manager._sim.n_envs > 0 else None
+
+        quat = self.link.get_quat(envs_idx=envs_idx).squeeze(0)
+        pos = self.link.get_pos(envs_idx=envs_idx).squeeze(0) + transform_by_quat(self.pos_offset, quat)
+
+        data = self.read(envs_idx=envs_idx)
+        vec = data["lin_acc"].squeeze(0) * self._options.debug_acc_scale
+        vec = tensor_to_array(transform_by_quat(vec, transform_quat_by_quat(self.quat_offset, quat)))
+
+        if self.debug_object is not None:
+            context.clear_debug_object(self.debug_object)
+        self.debug_object = context.draw_debug_arrow(pos=pos, vec=vec, color=self._options.debug_acc_color)

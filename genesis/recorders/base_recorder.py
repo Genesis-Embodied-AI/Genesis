@@ -1,12 +1,13 @@
 import queue
 import threading
 import time
-from typing import Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, TypeVar
 
 import genesis as gs
 from genesis.options import Options
 
-from .recorder_manager import RecorderManager
+if TYPE_CHECKING:
+    from .recorder_manager import RecorderManager
 
 T = TypeVar("T")
 
@@ -50,7 +51,7 @@ class Recorder(Generic[T]):
     done through the RecorderManager.
     """
 
-    def __init__(self, manager: RecorderManager, options: RecorderOptions, data_func: Callable[[], T]):
+    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
         self._options = options
         self._manager = manager
         self._data_func = data_func
