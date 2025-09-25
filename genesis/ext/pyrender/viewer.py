@@ -1224,6 +1224,13 @@ class Viewer(pyglet.window.Window):
         return retval
 
     def start(self, auto_refresh=True):
+        import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
+        try:
+            import pyglet.window.xlib
+            xlib_exceptions = (pyglet.window.xlib.XlibException,)
+        except ImportError:
+            xlib_exceptions = ()
+
         # Try multiple configs starting with target OpenGL version and multisampling enabled, then removing these
         # options if not supported.
         confs = [
@@ -1265,10 +1272,11 @@ class Viewer(pyglet.window.Window):
                 ),
                 confs[1],
             ]
-        for conf in confs:
+        while confs:
             # Keep the window invisible for now. It will be displayed only if everything is working fine.
             # This approach avoids "flickering" when creating and closing an invalid context. Besides, it avoids
             # "frozen" graphical window during compilation that would be interpreted as as bug by the end-user.
+            conf = confs.pop(0)
             try:
                 super().__init__(
                     config=conf,
@@ -1278,11 +1286,25 @@ class Viewer(pyglet.window.Window):
                     height=self._viewport_size[1],
                 )
                 break
-            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException):
-                pass
+            except xlib_exceptions as e:
+                # Trying again without UTF8 support as a fallback.
+                # See: https://github.com/pyglet/pyglet/issues/1024
+                if not pyglet.window.xlib._have_utf8:
+                    if self._run_in_thread:
+                        self._exception = e
+                        return
+                    else:
+                        raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
+                pyglet.window.xlib._have_utf8 = False
+                confs.insert(0, conf)
+            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException) as e:
+                if not confs:
+                    if self._run_in_thread:
+                        self._exception = e
+                        return
+                    else:
+                        raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
 
-        if not self.context:
-            raise RuntimeError("Unable to initialize an OpenGL 3+ context")
         pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
