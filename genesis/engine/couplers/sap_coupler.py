@@ -167,8 +167,10 @@ class SAPCoupler(RBC):
         self._linesearch_max_step_size = options.linesearch_max_step_size
         self._hydroelastic_stiffness = options.hydroelastic_stiffness
         self._point_contact_stiffness = options.point_contact_stiffness
-        if gs.ti_float is ti.f32:
-            gs.logger.warning("Beware SAPCoupler may be instable when using precision='32'.")
+        if gs.ti_float == ti.f32:
+            raise gs.GenesisException(
+                "SAPCoupler does not support 32bits precision. Please specify precision='64' when initializing Genesis."
+            )
         if options.fem_floor_contact_type == "tet":
             self._fem_floor_contact_type = FEMFloorContactType.TET
         elif options.fem_floor_contact_type == "vert":
