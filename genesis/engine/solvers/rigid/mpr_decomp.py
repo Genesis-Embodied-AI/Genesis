@@ -190,25 +190,26 @@ def support_driver(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     direction,
+    i_f,
     i_g,
     i_b,
 ):
     v = ti.Vector.zero(gs.ti_float, 3)
     geom_type = geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, False)
+        v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_f, i_g, i_b, False)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
+        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_f, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, False)
+        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_f, i_g, i_b, False)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, _ = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
+        v, _ = support_field._func_support_box(geoms_state, geoms_info, direction, i_f, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
-            v, _ = support_field._func_support_prism(collider_state, direction, i_g, i_b)
+            v, _ = support_field._func_support_prism(collider_state, direction, i_f, i_g, i_b)
     else:
         v, _ = support_field._func_support_world(
-            geoms_state, geoms_info, support_field_info, support_field_static_config, direction, i_g, i_b
+            geoms_state, geoms_info, support_field_info, support_field_static_config, direction, i_f, i_g, i_b
         )
     return v
 
@@ -223,6 +224,7 @@ def compute_support(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     direction,
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -236,6 +238,7 @@ def compute_support(
         support_field_info,
         support_field_static_config,
         direction,
+        i_f,
         i_ga,
         i_b,
     )
@@ -248,6 +251,7 @@ def compute_support(
         support_field_info,
         support_field_static_config,
         -direction,
+        i_f,
         i_gb,
         i_b,
     )
@@ -296,6 +300,7 @@ def mpr_refine_portal(
     mpr_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -317,6 +322,7 @@ def mpr_refine_portal(
             support_field_info,
             support_field_static_config,
             direction,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -401,6 +407,7 @@ def mpr_find_penetration(
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -423,6 +430,7 @@ def mpr_find_penetration(
             support_field_info,
             support_field_static_config,
             direction,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -505,6 +513,7 @@ def mpr_discover_portal(
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -530,6 +539,7 @@ def mpr_discover_portal(
         support_field_info,
         support_field_static_config,
         direction,
+        i_f,
         i_ga,
         i_gb,
         i_b,
@@ -563,6 +573,7 @@ def mpr_discover_portal(
                 support_field_info,
                 support_field_static_config,
                 direction,
+                i_f,
                 i_ga,
                 i_gb,
                 i_b,
@@ -600,6 +611,7 @@ def mpr_discover_portal(
                         support_field_info,
                         support_field_static_config,
                         direction,
+                        i_f,
                         i_ga,
                         i_gb,
                         i_b,
@@ -653,6 +665,7 @@ def guess_geoms_center(
     geoms_init_AABB: array_class.GeomsInitAABB,
     static_rigid_sim_config: ti.template(),
     mpr_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -685,10 +698,10 @@ def guess_geoms_center(
     # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
     # signed distance is computed once again until to find a valid point. This procedure should be cheap.
 
-    g_pos_a = geoms_state.pos[i_ga, i_b]
-    g_pos_b = geoms_state.pos[i_gb, i_b]
-    g_quat_a = geoms_state.quat[i_ga, i_b]
-    g_quat_b = geoms_state.quat[i_gb, i_b]
+    g_pos_a = geoms_state.pos[i_f, i_ga, i_b]
+    g_pos_b = geoms_state.pos[i_f, i_gb, i_b]
+    g_quat_a = geoms_state.quat[i_f, i_ga, i_b]
+    g_quat_b = geoms_state.quat[i_f, i_gb, i_b]
     center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], g_pos_a, g_quat_a)
     center_b = gu.ti_transform_by_trans_quat(geoms_info.center[i_gb], g_pos_b, g_quat_b)
 
@@ -742,6 +755,7 @@ def func_mpr_contact_from_centers(
     mpr_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -758,6 +772,7 @@ def func_mpr_contact_from_centers(
         collider_static_config=collider_static_config,
         mpr_state=mpr_state,
         mpr_static_config=mpr_static_config,
+        i_f=i_f,
         i_ga=i_ga,
         i_gb=i_gb,
         i_b=i_b,
@@ -785,6 +800,7 @@ def func_mpr_contact_from_centers(
             mpr_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -801,6 +817,7 @@ def func_mpr_contact_from_centers(
                 collider_static_config,
                 mpr_state,
                 mpr_static_config,
+                i_f,
                 i_ga,
                 i_gb,
                 i_b,
@@ -821,6 +838,7 @@ def func_mpr_contact(
     mpr_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -832,6 +850,7 @@ def func_mpr_contact(
         geoms_init_AABB,
         static_rigid_sim_config,
         mpr_static_config,
+        i_f,
         i_ga,
         i_gb,
         i_b,
@@ -848,6 +867,7 @@ def func_mpr_contact(
         mpr_static_config=mpr_static_config,
         support_field_info=support_field_info,
         support_field_static_config=support_field_static_config,
+        i_f=i_f,
         i_ga=i_ga,
         i_gb=i_gb,
         i_b=i_b,

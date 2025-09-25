@@ -129,6 +129,7 @@ def _func_support_world(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     d,
+    i_f,
     i_g,
     i_b,
 ):
@@ -136,8 +137,8 @@ def _func_support_world(
     support position for a world direction
     """
 
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
     d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
     v, vid = _func_support_mesh(support_field_info, support_field_static_config, d_mesh, i_g)
     v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
@@ -199,11 +200,12 @@ def _func_support_sphere(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
+    i_f,
     i_g,
     i_b,
     shrink,
 ):
-    sphere_center = geoms_state.pos[i_g, i_b]
+    sphere_center = geoms_state.pos[i_f, i_g, i_b]
     sphere_radius = geoms_info.data[i_g][0]
 
     # Shrink the sphere to a point
@@ -218,10 +220,11 @@ def _func_support_ellipsoid(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
+    i_f,
     i_g,
     i_b,
 ):
-    ellipsoid_center = geoms_state.pos[i_g, i_b]
+    ellipsoid_center = geoms_state.pos[i_f, i_g, i_b]
     ellipsoid_scaled_axis = ti.Vector(
         [
             geoms_info.data[i_g][0] ** 2,
@@ -230,7 +233,7 @@ def _func_support_ellipsoid(
         ],
         dt=gs.ti_float,
     )
-    ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, geoms_state.quat[i_g, i_b])
+    ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, geoms_state.quat[i_f, i_g, i_b])
     dist = ellipsoid_scaled_axis / ti.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
     return ellipsoid_center + d * dist
 
@@ -240,13 +243,14 @@ def _func_support_capsule(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
+    i_f,
     i_g,
     i_b,
     shrink,
 ):
     res = gs.ti_vec3(0, 0, 0)
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
     capsule_center = g_pos
     capsule_radius = geoms_info.data[i_g][0]
     capsule_halflength = 0.5 * geoms_info.data[i_g][1]
@@ -267,6 +271,7 @@ def _func_support_capsule(
 def _func_support_prism(
     collider_state: array_class.ColliderState,
     d,
+    i_f,
     i_g,
     i_b,
 ):
@@ -290,11 +295,12 @@ def _func_support_box(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
+    i_f,
     i_g,
     i_b,
 ):
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
     d_box = gu.ti_inv_transform_by_quat(d, g_quat)
 
     v_ = ti.Vector(
@@ -318,13 +324,14 @@ def _func_count_supports_world(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     d,
+    i_f,
     i_g,
     i_b,
 ):
     """
     Count the number of valid support points for the given world direction.
     """
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(geoms_state.quat[i_g, i_b]))
+    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(geoms_state.quat[i_f, i_g, i_b]))
     return _func_count_supports_mesh(
         geoms_state, geoms_info, support_field_info, support_field_static_config, d_mesh, i_g
     )
@@ -386,6 +393,7 @@ def _func_count_supports_box(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
+    i_f,
     i_g,
     i_b,
 ):
@@ -395,7 +403,7 @@ def _func_count_supports_box(
     If the direction has 1 zero component, there are 2 possible support points. If the direction has 2 zero
     components, there are 4 possible support points.
     """
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
     d_box = gu.ti_inv_transform_by_quat(d, g_quat)
 
     return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()

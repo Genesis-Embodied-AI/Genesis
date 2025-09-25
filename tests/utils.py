@@ -286,17 +286,17 @@ def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
         gs_robot.set_dofs_velocity(qvel)
     # TODO: This should be moved in `set_state`, `set_qpos`, `set_dofs_position`, `set_dofs_velocity`
     gs_sim.rigid_solver.dofs_state.qf_constraint.fill(0.0)
-    gs_sim.rigid_solver._func_forward_dynamics()
-    gs_sim.rigid_solver._func_constraint_force()
-    gs_sim.rigid_solver._func_update_acc()
+    gs_sim.rigid_solver._func_forward_dynamics(0)
+    gs_sim.rigid_solver._func_constraint_force(0)
+    gs_sim.rigid_solver._func_update_acc(0)
 
     if gs_sim.scene.visualizer:
         gs_sim.scene.visualizer.update()
 
     if mj_sim is not None:
         mujoco.mj_resetData(mj_sim.model, mj_sim.data)
-        mj_sim.data.qpos[mj_qs_idx] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-        mj_sim.data.qvel[mj_dofs_idx] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        mj_sim.data.qpos[mj_qs_idx] = gs_sim.rigid_solver.qpos.to_numpy()[0, :, 0]
+        mj_sim.data.qvel[mj_dofs_idx] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[0, :, 0]
         mujoco.mj_forward(mj_sim.model, mj_sim.data)
 
 
@@ -771,19 +771,19 @@ def check_mujoco_data_consistency(
     (mj_bodies_idx, _, mj_qs_idx, mj_dofs_idx, _, _) = mj_maps
 
     # crb
-    gs_crb_inertial = gs_sim.rigid_solver.links_state.crb_inertial.to_numpy()[:, 0].reshape([-1, 9])[
+    gs_crb_inertial = gs_sim.rigid_solver.links_state.crb_inertial.to_numpy()[0, :, 0].reshape([-1, 9])[
         :, [0, 4, 8, 1, 2, 5]
     ]
     mj_crb_inertial = mj_sim.data.crb[:, :6]  # upper-triangular part
     assert_allclose(gs_crb_inertial[gs_bodies_idx], mj_crb_inertial[mj_bodies_idx], tol=tol)
-    gs_crb_pos = gs_sim.rigid_solver.links_state.crb_pos.to_numpy()[:, 0]
+    gs_crb_pos = gs_sim.rigid_solver.links_state.crb_pos.to_numpy()[0, :, 0]
     mj_crb_pos = mj_sim.data.crb[:, 6:9]
     assert_allclose(gs_crb_pos[gs_bodies_idx], mj_crb_pos[mj_bodies_idx], tol=tol)
-    gs_crb_mass = gs_sim.rigid_solver.links_state.crb_mass.to_numpy()[:, 0]
+    gs_crb_mass = gs_sim.rigid_solver.links_state.crb_mass.to_numpy()[0, :, 0]
     mj_crb_mass = mj_sim.data.crb[:, 9]
     assert_allclose(gs_crb_mass[gs_bodies_idx], mj_crb_mass[mj_bodies_idx], tol=tol)
 
-    gs_mass_mat = gs_sim.rigid_solver.mass_mat.to_numpy()[:, :, 0]
+    gs_mass_mat = gs_sim.rigid_solver.mass_mat.to_numpy()[0, :, :, 0]
     mj_mass_mat = np.zeros((mj_sim.model.nv, mj_sim.model.nv))
     mujoco.mj_fullM(mj_sim.model, mj_mass_mat, mj_sim.data.qM)
     assert_allclose(gs_mass_mat[gs_dofs_idx][:, gs_dofs_idx], mj_mass_mat[mj_dofs_idx][:, mj_dofs_idx], tol=tol)
@@ -793,13 +793,13 @@ def check_mujoco_data_consistency(
     assert_allclose(gs_meaninertia, mj_meaninertia, tol=tol)
 
     # Pre-constraint so-called bias forces in configuration space
-    gs_qfrc_bias = gs_sim.rigid_solver.dofs_state.qf_bias.to_numpy()[:, 0]
+    gs_qfrc_bias = gs_sim.rigid_solver.dofs_state.qf_bias.to_numpy()[0, :, 0]
     mj_qfrc_bias = mj_sim.data.qfrc_bias
     assert_allclose(gs_qfrc_bias, mj_qfrc_bias[mj_dofs_idx], tol=tol)
-    gs_qfrc_passive = gs_sim.rigid_solver.dofs_state.qf_passive.to_numpy()[:, 0]
+    gs_qfrc_passive = gs_sim.rigid_solver.dofs_state.qf_passive.to_numpy()[0, :, 0]
     mj_qfrc_passive = mj_sim.data.qfrc_passive
     assert_allclose(gs_qfrc_passive, mj_qfrc_passive[mj_dofs_idx], tol=tol)
-    gs_qfrc_actuator = gs_sim.rigid_solver.dofs_state.qf_applied.to_numpy()[:, 0]
+    gs_qfrc_actuator = gs_sim.rigid_solver.dofs_state.qf_applied.to_numpy()[0, :, 0]
     mj_qfrc_actuator = mj_sim.data.qfrc_actuator
     assert_allclose(gs_qfrc_actuator, mj_qfrc_actuator[mj_dofs_idx], tol=tol)
 
@@ -895,19 +895,20 @@ def check_mujoco_data_consistency(
             mj_efc_vel = mj_sim.data.efc_vel
             assert_allclose(gs_efc_vel[gs_sidx], mj_efc_vel[mj_sidx], tol=tol)
 
-    gs_qfrc_constraint = gs_sim.rigid_solver.dofs_state.qf_constraint.to_numpy()[:, 0]
+    gs_qfrc_constraint = gs_sim.rigid_solver.dofs_state.qf_constraint.to_numpy()[0, :, 0]
     mj_qfrc_constraint = mj_sim.data.qfrc_constraint
     assert_allclose(gs_qfrc_constraint[gs_dofs_idx], mj_qfrc_constraint[mj_dofs_idx], tol=tol)
 
-    gs_qfrc_all = gs_sim.rigid_solver.dofs_state.force.to_numpy()[:, 0]
+    gs_qfrc_all = gs_sim.rigid_solver.dofs_state.force.to_numpy()[0, :, 0]
     mj_qfrc_all = mj_sim.data.qfrc_smooth + mj_sim.data.qfrc_constraint
     assert_allclose(gs_qfrc_all[gs_dofs_idx], mj_qfrc_all[mj_dofs_idx], tol=tol)
 
-    gs_qfrc_smooth = gs_sim.rigid_solver.dofs_state.qf_smooth.to_numpy()[:, 0]
+    gs_qfrc_smooth = gs_sim.rigid_solver.dofs_state.qf_smooth.to_numpy()[0, :, 0]
     mj_qfrc_smooth = mj_sim.data.qfrc_smooth
     assert_allclose(gs_qfrc_smooth[gs_dofs_idx], mj_qfrc_smooth[mj_dofs_idx], tol=tol)
 
-    gs_qacc_smooth = gs_sim.rigid_solver.dofs_state.acc_smooth.to_numpy()[:, 0]
+    gs_qacc_smooth = gs_sim.rigid_solver.dofs_state.acc_smooth.to_numpy()[0, :, 0]
+    print(gs_sim.rigid_solver.dofs_state.acc_smooth.to_numpy())
     mj_qacc_smooth = mj_sim.data.qacc_smooth
     assert_allclose(gs_qacc_smooth[gs_dofs_idx], mj_qacc_smooth[mj_dofs_idx], tol=tol)
 
@@ -920,66 +921,66 @@ def check_mujoco_data_consistency(
     mj_qacc_pre = mj_sim.data.qacc
     assert_allclose(gs_qacc_pre[gs_dofs_idx], mj_qacc_pre[mj_dofs_idx], tol=tol)
 
-    gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[0, :, 0]
     mj_qvel = mj_sim.data.qvel
     assert_allclose(gs_qvel[gs_dofs_idx], mj_qvel[mj_dofs_idx], tol=tol)
-    gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    gs_qpos = gs_sim.rigid_solver.qpos.to_numpy()[0, :, 0]
     mj_qpos = mj_sim.data.qpos
     assert_allclose(gs_qpos[gs_q_idx], mj_qpos[mj_qs_idx], tol=tol)
 
     # ------------------------------------------------------------------------
 
-    gs_com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[:, 0]
+    gs_com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[0, :, 0]
     gs_root_idx = np.unique(gs_sim.rigid_solver.links_info.root_idx.to_numpy()[gs_bodies_idx])
     mj_com = mj_sim.data.subtree_com
     mj_root_idx = np.unique(mj_sim.model.body_rootid[mj_bodies_idx])
     assert_allclose(gs_com[gs_root_idx], mj_com[mj_root_idx], tol=tol)
 
-    gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[:, 0]
+    gs_xipos = gs_sim.rigid_solver.links_state.i_pos.to_numpy()[0, :, 0]
     mj_xipos = mj_sim.data.xipos - mj_sim.data.subtree_com[mj_sim.model.body_rootid]
     assert_allclose(gs_xipos[gs_bodies_idx], mj_xipos[mj_bodies_idx], tol=tol)
 
-    gs_xpos = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
+    gs_xpos = gs_sim.rigid_solver.links_state.pos.to_numpy()[0, :, 0]
     mj_xpos = mj_sim.data.xpos
     assert_allclose(gs_xpos[gs_bodies_idx], mj_xpos[mj_bodies_idx], tol=tol)
 
-    gs_xquat = gs_sim.rigid_solver.links_state.quat.to_numpy()[:, 0]
+    gs_xquat = gs_sim.rigid_solver.links_state.quat.to_numpy()[0, :, 0]
     gs_xmat = gu.quat_to_R(gs_xquat).reshape([-1, 9])
     mj_xmat = mj_sim.data.xmat
     assert_allclose(gs_xmat[gs_bodies_idx], mj_xmat[mj_bodies_idx], tol=tol)
 
-    gs_cd_vel = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
+    gs_cd_vel = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[0, :, 0]
     mj_cd_vel = mj_sim.data.cvel[:, 3:]
     assert_allclose(gs_cd_vel[gs_bodies_idx], mj_cd_vel[mj_bodies_idx], tol=tol)
-    gs_cd_ang = gs_sim.rigid_solver.links_state.cd_ang.to_numpy()[:, 0]
+    gs_cd_ang = gs_sim.rigid_solver.links_state.cd_ang.to_numpy()[0, :, 0]
     mj_cd_ang = mj_sim.data.cvel[:, :3]
     assert_allclose(gs_cd_ang[gs_bodies_idx], mj_cd_ang[mj_bodies_idx], tol=tol)
 
-    gs_cdof_vel = gs_sim.rigid_solver.dofs_state.cdof_vel.to_numpy()[:, 0]
+    gs_cdof_vel = gs_sim.rigid_solver.dofs_state.cdof_vel.to_numpy()[0, :, 0]
     mj_cdof_vel = mj_sim.data.cdof[:, 3:]
     assert_allclose(gs_cdof_vel[gs_dofs_idx], mj_cdof_vel[mj_dofs_idx], tol=tol)
-    gs_cdof_ang = gs_sim.rigid_solver.dofs_state.cdof_ang.to_numpy()[:, 0]
+    gs_cdof_ang = gs_sim.rigid_solver.dofs_state.cdof_ang.to_numpy()[0, :, 0]
     mj_cdof_ang = mj_sim.data.cdof[:, :3]
     assert_allclose(gs_cdof_ang[gs_dofs_idx], mj_cdof_ang[mj_dofs_idx], tol=tol)
 
     mj_cdof_dot_ang = mj_sim.data.cdof_dot[:, :3]
-    gs_cdof_dot_ang = gs_sim.rigid_solver.dofs_state.cdofd_ang.to_numpy()[:, 0]
+    gs_cdof_dot_ang = gs_sim.rigid_solver.dofs_state.cdofd_ang.to_numpy()[0, :, 0]
     assert_allclose(gs_cdof_dot_ang[gs_dofs_idx], mj_cdof_dot_ang[mj_dofs_idx], tol=tol)
 
     mj_cdof_dot_vel = mj_sim.data.cdof_dot[:, 3:]
-    gs_cdof_dot_vel = gs_sim.rigid_solver.dofs_state.cdofd_vel.to_numpy()[:, 0]
+    gs_cdof_dot_vel = gs_sim.rigid_solver.dofs_state.cdofd_vel.to_numpy()[0, :, 0]
     assert_allclose(gs_cdof_dot_vel[gs_dofs_idx], mj_cdof_dot_vel[mj_dofs_idx], tol=tol)
 
     # cinr
-    gs_cinr_inertial = gs_sim.rigid_solver.links_state.cinr_inertial.to_numpy()[:, 0].reshape([-1, 9])[
+    gs_cinr_inertial = gs_sim.rigid_solver.links_state.cinr_inertial.to_numpy()[0, :, 0].reshape([-1, 9])[
         :, [0, 4, 8, 1, 2, 5]
     ]
     mj_cinr_inertial = mj_sim.data.cinert[:, :6]  # upper-triangular part
     assert_allclose(gs_cinr_inertial[gs_bodies_idx], mj_cinr_inertial[mj_bodies_idx], tol=tol)
-    gs_cinr_pos = gs_sim.rigid_solver.links_state.cinr_pos.to_numpy()[:, 0]
+    gs_cinr_pos = gs_sim.rigid_solver.links_state.cinr_pos.to_numpy()[0, :, 0]
     mj_cinr_pos = mj_sim.data.cinert[:, 6:9]
     assert_allclose(gs_cinr_pos[gs_bodies_idx], mj_cinr_pos[mj_bodies_idx], tol=tol)
-    gs_cinr_mass = gs_sim.rigid_solver.links_state.cinr_mass.to_numpy()[:, 0]
+    gs_cinr_mass = gs_sim.rigid_solver.links_state.cinr_mass.to_numpy()[0, :, 0]
     mj_cinr_mass = mj_sim.data.cinert[:, 9]
     assert_allclose(gs_cinr_mass[gs_bodies_idx], mj_cinr_mass[mj_bodies_idx], tol=tol)
 
@@ -1002,13 +1003,13 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, tol=tol)
 
         # Keep Mujoco and Genesis simulation in sync to avoid drift over time
-        mj_sim.data.qpos[mj_qs_idx] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-        mj_sim.data.qvel[mj_dofs_idx] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        mj_sim.data.qpos[mj_qs_idx] = gs_sim.rigid_solver.qpos.to_numpy()[0, :, 0]
+        mj_sim.data.qvel[mj_dofs_idx] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[0, :, 0]
         mj_sim.data.qacc_warmstart[mj_dofs_idx] = gs_sim.rigid_solver.constraint_solver.qacc_ws.to_numpy()[:, 0]
-        mj_sim.data.qacc_smooth[mj_dofs_idx] = gs_sim.rigid_solver.dofs_state.acc_smooth.to_numpy()[:, 0]
+        mj_sim.data.qacc_smooth[mj_dofs_idx] = gs_sim.rigid_solver.dofs_state.acc_smooth.to_numpy()[0, :, 0]
 
         # Backup current velocity
-        qvel_prev = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        qvel_prev = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[0, :, 0]
 
         # Do a single simulation step (eventually with substeps for Genesis)
         mujoco.mj_step(mj_sim.model, mj_sim.data)

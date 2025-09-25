@@ -168,6 +168,7 @@ def func_gjk_contact(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -210,6 +211,7 @@ def func_gjk_contact(
                 gjk_static_config,
                 support_field_info,
                 support_field_static_config,
+                i_f,
                 i_ga,
                 i_gb,
                 i_b,
@@ -275,6 +277,7 @@ def func_gjk_contact(
                         gjk_static_config,
                         support_field_info,
                         support_field_static_config,
+                        i_f,
                         i_ga,
                         i_gb,
                         i_b,
@@ -299,6 +302,7 @@ def func_gjk_contact(
                         gjk_static_config,
                         support_field_info,
                         support_field_static_config,
+                        i_f,
                         i_ga,
                         i_gb,
                         i_b,
@@ -306,7 +310,7 @@ def func_gjk_contact(
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
-                    i_f = func_epa(
+                    i_face = func_epa(
                         geoms_state,
                         geoms_info,
                         verts_info,
@@ -317,6 +321,7 @@ def func_gjk_contact(
                         gjk_static_config,
                         support_field_info,
                         support_field_static_config,
+                        i_f,
                         i_ga,
                         i_gb,
                         i_b,
@@ -327,7 +332,7 @@ def func_gjk_contact(
                         # (1) [i_f] should be a valid face index in the polytope (>= 0),
                         # (2) Both of the geometries should be discrete,
                         # (3) [enable_mujoco_multi_contact] should be True. Default to False.
-                        if i_f >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+                        if i_face >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
                             func_multi_contact(
                                 geoms_state,
                                 geoms_info,
@@ -335,6 +340,7 @@ def func_gjk_contact(
                                 faces_info,
                                 gjk_state,
                                 gjk_static_config,
+                                i_f,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -353,6 +359,7 @@ def func_gjk_contact(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -379,6 +386,7 @@ def func_gjk_contact(
                 gjk_static_config,
                 support_field_info,
                 support_field_static_config,
+                i_f,
                 i_ga,
                 i_gb,
                 i_b,
@@ -425,6 +433,7 @@ def func_gjk(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -481,8 +490,8 @@ def func_gjk(
     early_stop = False
 
     # Set initial guess of support vector using the positions, which should be a non-zero vector.
-    approx_witness_point_obj1 = geoms_state.pos[i_ga, i_b]
-    approx_witness_point_obj2 = geoms_state.pos[i_gb, i_b]
+    approx_witness_point_obj1 = geoms_state.pos[i_f, i_ga, i_b]
+    approx_witness_point_obj2 = geoms_state.pos[i_f, i_gb, i_b]
     support_vector = approx_witness_point_obj1 - approx_witness_point_obj2
     if support_vector.dot(support_vector) < gjk_static_config.FLOAT_MIN_SQ:
         support_vector = gs.ti_vec3(1.0, 0.0, 0.0)
@@ -522,6 +531,7 @@ def func_gjk(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -567,6 +577,7 @@ def func_gjk(
                 gjk_static_config=gjk_static_config,
                 support_field_info=support_field_info,
                 support_field_static_config=support_field_static_config,
+                i_f=i_f,
                 i_ga=i_ga,
                 i_gb=i_gb,
                 i_b=i_b,
@@ -661,6 +672,7 @@ def func_gjk_intersect(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -751,6 +763,7 @@ def func_gjk_intersect(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -1086,6 +1099,7 @@ def func_epa(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_frame,
     i_ga,
     i_gb,
     i_b,
@@ -1149,6 +1163,7 @@ def func_epa(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_frame,
             i_ga,
             i_gb,
             i_b,
@@ -1481,6 +1496,7 @@ def func_epa_init_polytope_2d(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -1551,6 +1567,7 @@ def func_epa_init_polytope_2d(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -1624,6 +1641,7 @@ def func_epa_init_polytope_3d(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -1679,6 +1697,7 @@ def func_epa_init_polytope_3d(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -1843,6 +1862,7 @@ def func_epa_support(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -1876,6 +1896,7 @@ def func_epa_support(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -2148,6 +2169,7 @@ def func_multi_contact(
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
+    i_frame,
     i_ga,
     i_gb,
     i_b,
@@ -2213,7 +2235,7 @@ def func_multi_contact(
         nnorms = 0
         if geom_type == gs.GEOM_TYPE.BOX:
             nnorms = func_potential_box_normals(
-                geoms_state, geoms_info, gjk_state, gjk_static_config, i_g, i_b, nface, v1i, v2i, v3i, t_dir
+                geoms_state, geoms_info, gjk_state, gjk_static_config, i_frame, i_g, i_b, nface, v1i, v2i, v3i, t_dir
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
             nnorms = func_potential_mesh_normals(
@@ -2223,6 +2245,7 @@ def func_multi_contact(
                 faces_info,
                 gjk_state,
                 gjk_static_config,
+                i_frame,
                 i_g,
                 i_b,
                 nface,
@@ -2265,7 +2288,7 @@ def func_multi_contact(
             nnorms = 0
             if geom_type == gs.GEOM_TYPE.BOX:
                 nnorms = func_potential_box_edge_normals(
-                    geoms_state, geoms_info, gjk_state, gjk_static_config, i_g, i_b, nface, v1, v2, v1i, v2i
+                    geoms_state, geoms_info, gjk_state, gjk_static_config, i_frame, i_g, i_b, nface, v1, v2, v1i, v2i
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
                 nnorms = func_potential_mesh_edge_normals(
@@ -2275,6 +2298,7 @@ def func_multi_contact(
                     faces_info,
                     gjk_state,
                     gjk_static_config,
+                    i_frame,
                     i_g,
                     i_b,
                     nface,
@@ -2421,6 +2445,7 @@ def func_potential_box_normals(
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
+    i_f,
     i_g,
     i_b,
     dim,
@@ -2439,7 +2464,7 @@ def func_potential_box_normals(
 
     We identify related face normals to the simplex by checking the vertex indices of the simplex.
     """
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
 
     # Change to local vertex indices
     v1 -= geoms_info.vert_start[i_g]
@@ -2528,7 +2553,7 @@ def func_potential_box_normals(
     if is_degenerate_simplex:
         n_normals = (
             1
-            if func_box_normal_from_collision_normal(geoms_state, gjk_state, gjk_static_config, i_g, i_b, dir)
+            if func_box_normal_from_collision_normal(geoms_state, gjk_state, gjk_static_config, i_f, i_g, i_b, dir)
             == RETURN_CODE.SUCCESS
             else 0
         )
@@ -2581,6 +2606,7 @@ def func_box_normal_from_collision_normal(
     geoms_state: array_class.GeomsState,
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
+    i_f,
     i_g,
     i_b,
     dir,
@@ -2595,7 +2621,7 @@ def func_box_normal_from_collision_normal(
     )
 
     # Get local collision normal
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
     local_dir = gu.ti_transform_by_quat(dir, gu.ti_inv_quat(g_quat))
     local_dir = local_dir.normalized()
 
@@ -2620,6 +2646,7 @@ def func_potential_mesh_normals(
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
+    i_f,
     i_g,
     i_b,
     dim,
@@ -2639,7 +2666,7 @@ def func_potential_mesh_normals(
     We identify related face normals to the simplex by checking the vertex indices of the simplex.
     """
     # Get the geometry state and quaternion
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
 
     # Number of potential face normals
     n_normals = 0
@@ -2722,6 +2749,7 @@ def func_potential_box_edge_normals(
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
+    i_f,
     i_g,
     i_b,
     dim,
@@ -2740,8 +2768,8 @@ def func_potential_box_edge_normals(
     We identify related edge normals to the simplex by checking the vertex indices of the simplex.
     """
     # Get the geometry state and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
     g_size_x = geoms_info.data[0] * 0.5
     g_size_y = geoms_info.data[1] * 0.5
     g_size_z = geoms_info.data[2] * 0.5
@@ -2788,6 +2816,7 @@ def func_potential_mesh_edge_normals(
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
+    i_f,
     i_g,
     i_b,
     dim,
@@ -2806,8 +2835,8 @@ def func_potential_mesh_edge_normals(
     We identify related edge normals to the simplex by checking the vertex indices of the simplex.
     """
     # Get the geometry state and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
 
     # Number of potential face normals
     n_normals = 0
@@ -3346,6 +3375,7 @@ def func_support(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -3380,6 +3410,7 @@ def func_support(
             support_field_info,
             support_field_static_config,
             d,
+            i_f,
             i_g,
             i_b,
             i,
@@ -3552,6 +3583,7 @@ def support_mesh(
     gjk_state: array_class.GJKState,
     gjk_static_config: ti.template(),
     direction,
+    i_f,
     i_g,
     i_b,
     i_o,
@@ -3559,8 +3591,8 @@ def support_mesh(
     """
     Find the support point on a mesh in the given direction.
     """
-    g_quat = geoms_state.quat[i_g, i_b]
-    g_pos = geoms_state.pos[i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
     d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_quat))
 
     # Exhaustively search for the vertex with maximum dot product
@@ -3606,6 +3638,7 @@ def support_driver(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     direction,
+    i_f,
     i_g,
     i_b,
     i_o,
@@ -3619,20 +3652,20 @@ def support_driver(
 
     geom_type = geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
+        v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_f, i_g, i_b, shrink_sphere)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
+        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_f, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
+        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_f, i_g, i_b, shrink_sphere)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
+        v, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_f, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
-            v, vid = support_field._func_support_prism(collider_state, direction, i_g, i_b)
+            v, vid = support_field._func_support_prism(collider_state, direction, i_f, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
         v, vid = support_mesh(
-            geoms_state, geoms_info, verts_info, gjk_state, gjk_static_config, direction, i_g, i_b, i_o
+            geoms_state, geoms_info, verts_info, gjk_state, gjk_static_config, direction, i_f, i_g, i_b, i_o
         )
     else:
         v, vid = support_field._func_support_world(
@@ -3641,6 +3674,7 @@ def support_driver(
             support_field_info,
             support_field_static_config,
             direction,
+            i_f,
             i_g,
             i_b,
         )
@@ -3659,6 +3693,7 @@ def func_safe_gjk(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -3707,6 +3742,7 @@ def func_safe_gjk(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -3729,6 +3765,7 @@ def func_safe_gjk(
                 gjk_static_config,
                 support_field_info,
                 support_field_static_config,
+                i_f,
                 i_ga,
                 i_gb,
                 i_b,
@@ -3804,6 +3841,7 @@ def func_safe_gjk(
                 gjk_static_config,
                 support_field_info,
                 support_field_static_config,
+                i_f,
                 i_ga,
                 i_gb,
                 i_b,
@@ -3979,6 +4017,7 @@ def func_search_valid_simplex_vertex(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -4009,7 +4048,7 @@ def func_search_valid_simplex_vertex(
             id2 = geoms_info.vert_start[i_gb] + j
             for p in range(2):
                 obj = func_get_discrete_geom_vertex(
-                    geoms_state, geoms_info, verts_info, i_ga if p == 0 else i_gb, i_b, i if p == 0 else j
+                    geoms_state, geoms_info, verts_info, i_f, i_ga if p == 0 else i_gb, i_b, i if p == 0 else j
                 )
                 if p == 0:
                     obj1 = obj
@@ -4046,6 +4085,7 @@ def func_search_valid_simplex_vertex(
                     gjk_static_config,
                     support_field_info,
                     support_field_static_config,
+                    i_f,
                     i_ga,
                     i_gb,
                     i_b,
@@ -4080,6 +4120,7 @@ def func_get_discrete_geom_vertex(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    i_f,
     i_g,
     i_b,
     i_v,
@@ -4088,8 +4129,8 @@ def func_get_discrete_geom_vertex(
     Get the discrete vertex of the geometry for the given index [i_v].
     """
     geom_type = geoms_info.type[i_g]
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
+    g_pos = geoms_state.pos[i_f, i_g, i_b]
+    g_quat = geoms_state.quat[i_f, i_g, i_b]
 
     # Get the vertex position in the local frame of the geometry.
     v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
@@ -4160,6 +4201,7 @@ def func_safe_gjk_support(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -4199,6 +4241,7 @@ def func_safe_gjk_support(
             geoms_info,
             support_field_info,
             support_field_static_config,
+            i_f,
             i_ga,
             i_gb,
             i_b,
@@ -4226,6 +4269,7 @@ def func_safe_gjk_support(
                 support_field_info,
                 support_field_static_config,
                 d,
+                i_f,
                 i_g,
                 i_b,
                 j,
@@ -4267,6 +4311,7 @@ def count_support_driver(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     d,
+    i_f,
     i_g,
     i_b,
 ):
@@ -4276,7 +4321,7 @@ def count_support_driver(
     geom_type = geoms_info.type[i_g]
     count = 1
     if geom_type == gs.GEOM_TYPE.BOX:
-        count = support_field._func_count_supports_box(geoms_state, geoms_info, d, i_g, i_b)
+        count = support_field._func_count_supports_box(geoms_state, geoms_info, d, i_f, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.MESH:
         count = support_field._func_count_supports_world(
             geoms_state,
@@ -4284,6 +4329,7 @@ def count_support_driver(
             support_field_info,
             support_field_static_config,
             d,
+            i_f,
             i_g,
             i_b,
         )
@@ -4296,6 +4342,7 @@ def func_count_support(
     geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_f,
     i_ga,
     i_gb,
     i_b,
@@ -4312,6 +4359,7 @@ def func_count_support(
             support_field_info,
             support_field_static_config,
             dir if i == 0 else -dir,
+            i_f,
             i_ga if i == 0 else i_gb,
             i_b,
         )
@@ -4331,6 +4379,7 @@ def func_safe_epa(
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
+    i_frame,
     i_ga,
     i_gb,
     i_b,
@@ -4393,6 +4442,7 @@ def func_safe_epa(
             gjk_static_config,
             support_field_info,
             support_field_static_config,
+            i_frame,
             i_ga,
             i_gb,
             i_b,

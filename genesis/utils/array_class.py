@@ -44,6 +44,7 @@ class StructRigidGlobalInfo:
 
 def get_rigid_global_info(solver):
     f_batch = solver._batch_shape
+    n_frame = solver._sim.substeps_local + 1
 
     # Basic fields
     kwargs = {
@@ -54,14 +55,22 @@ def get_rigid_global_info(solver):
         "n_awake_links": V(dtype=gs.ti_int, shape=f_batch()),
         "awake_links": V(dtype=gs.ti_int, shape=f_batch(solver.n_links)),
         "qpos0": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
-        "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_qs_)),
+        "qpos": V(dtype=gs.ti_float, shape=solver._batch_shape((n_frame, solver.n_qs_))),
         "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
         "envs_offset": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
         "geoms_init_AABB": V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
-        "mass_mat": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
-        "mass_mat_L": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_, solver.n_dofs_))),
-        "mass_mat_D_inv": V(dtype=gs.ti_float, shape=solver._batch_shape((solver.n_dofs_,))),
-        "_mass_mat_mask": V(dtype=gs.ti_int, shape=solver._batch_shape(solver.n_entities_)),
+        "mass_mat": V(dtype=gs.ti_float, shape=solver._batch_shape((n_frame, solver.n_dofs_, solver.n_dofs_))),
+        "mass_mat_L": V(dtype=gs.ti_float, shape=solver._batch_shape((n_frame, solver.n_dofs_, solver.n_dofs_))),
+        "mass_mat_D_inv": V(
+            dtype=gs.ti_float,
+            shape=solver._batch_shape(
+                (
+                    n_frame,
+                    solver.n_dofs_,
+                )
+            ),
+        ),
+        "_mass_mat_mask": V(dtype=gs.ti_int, shape=solver._batch_shape((n_frame, solver.n_entities_))),
         "meaninertia": V(dtype=gs.ti_float, shape=solver._batch_shape()),
         "mass_parent_mask": V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         "gravity": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
@@ -136,6 +145,7 @@ class StructConstraintState:
     qfrc_constraint: V_ANNOTATION
     qacc: V_ANNOTATION
     qacc_ws: V_ANNOTATION
+    qacc_smooth: V_ANNOTATION
     qacc_prev: V_ANNOTATION
     cost_ws: V_ANNOTATION
     gauss: V_ANNOTATION
@@ -210,6 +220,7 @@ def get_constraint_state(constraint_solver, solver):
         "qfrc_constraint": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "qacc": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "qacc_ws": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
+        "qacc_smooth": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "qacc_prev": V(dtype=gs.ti_float, shape=solver._batch_shape(solver.n_dofs_)),
         "cost_ws": V(gs.ti_float, shape=solver._batch_shape()),
         "gauss": V(gs.ti_float, shape=solver._batch_shape()),
@@ -1252,7 +1263,7 @@ class StructDofsState:
 
 
 def get_dofs_state(solver):
-    shape = solver._batch_shape(solver.n_dofs_)
+    shape = solver._batch_shape((solver._sim.substeps_local + 1, solver.n_dofs_))
     kwargs = {
         "force": V(dtype=gs.ti_float, shape=shape),
         "qf_bias": V(dtype=gs.ti_float, shape=shape),
@@ -1335,7 +1346,8 @@ class StructLinksState:
 
 
 def get_links_state(solver):
-    shape = solver._batch_shape(solver.n_links_)
+    shape = solver._batch_shape((solver._sim.substeps_local + 1, solver.n_links_))
+    shape_ = solver._batch_shape((solver.n_links_,))
     kwargs = {
         "cinr_inertial": V(dtype=gs.ti_mat3, shape=shape),
         "cinr_pos": V(dtype=gs.ti_vec3, shape=shape),
@@ -1359,8 +1371,6 @@ def get_links_state(solver):
         "cd_vel": V(dtype=gs.ti_vec3, shape=shape),
         "mass_sum": V(dtype=gs.ti_float, shape=shape),
         "root_COM": V(dtype=gs.ti_vec3, shape=shape),
-        "mass_shift": V(dtype=gs.ti_float, shape=shape),
-        "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape),
         "cacc_ang": V(dtype=gs.ti_vec3, shape=shape),
         "cacc_lin": V(dtype=gs.ti_vec3, shape=shape),
         "cfrc_ang": V(dtype=gs.ti_vec3, shape=shape),
@@ -1369,6 +1379,9 @@ def get_links_state(solver):
         "cfrc_applied_vel": V(dtype=gs.ti_vec3, shape=shape),
         "contact_force": V(dtype=gs.ti_vec3, shape=shape),
         "hibernated": V(dtype=gs.ti_int, shape=shape),
+        # These are only updated by user input
+        "mass_shift": V(dtype=gs.ti_float, shape=shape_),
+        "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape_),
     }
 
     if use_ndarray:
@@ -1490,7 +1503,7 @@ class StructJointsState:
 
 
 def get_joints_state(solver):
-    shape = solver._batch_shape(solver.n_joints_)
+    shape = solver._batch_shape((solver._sim.substeps_local + 1, solver.n_joints_))
     kwargs = {
         "xanchor": V(dtype=gs.ti_vec3, shape=shape),
         "xaxis": V(dtype=gs.ti_vec3, shape=shape),
@@ -1600,11 +1613,13 @@ class StructGeomsState:
     min_buffer_idx: V_ANNOTATION
     max_buffer_idx: V_ANNOTATION
     hibernated: V_ANNOTATION
+    # These are only updated by user input
     friction_ratio: V_ANNOTATION
 
 
 def get_geoms_state(solver):
-    shape = solver._batch_shape(solver.n_geoms_)
+    shape = solver._batch_shape((solver._sim.substeps_local + 1, solver.n_geoms_))
+    shape_ = solver._batch_shape((solver.n_geoms_,))
     kwargs = {
         "pos": V(dtype=gs.ti_vec3, shape=shape),
         "quat": V(dtype=gs.ti_vec4, shape=shape),
@@ -1614,7 +1629,7 @@ def get_geoms_state(solver):
         "min_buffer_idx": V(dtype=gs.ti_int, shape=shape),
         "max_buffer_idx": V(dtype=gs.ti_int, shape=shape),
         "hibernated": V(dtype=gs.ti_int, shape=shape),
-        "friction_ratio": V(dtype=gs.ti_float, shape=shape),
+        "friction_ratio": V(dtype=gs.ti_float, shape=shape_),
     }
 
     if use_ndarray:
@@ -2065,6 +2080,52 @@ def get_static_rigid_sim_cache_key(solver):
     return StaticRigidSimCacheKey(**kwargs)
 
 
+# =========================================== RigidAdjointCache ===========================================
+
+
+@dataclasses.dataclass
+class StructRigidAdjointCache:
+    forward_kinematics_joint_pos: V_ANNOTATION
+    forward_kinematics_joint_quat: V_ANNOTATION
+    i_pos: V_ANNOTATION
+    j_pos: V_ANNOTATION
+    j_quat: V_ANNOTATION
+    root_COM: V_ANNOTATION
+    mass_mat_L0: V_ANNOTATION
+    mass_mat_L1: V_ANNOTATION
+
+
+def get_rigid_adjoint_cache(solver):
+    n_frame = solver._sim.substeps_local + 1
+
+    kwargs = {
+        "forward_kinematics_joint_pos_in": V(dtype=gs.ti_vec3, shape=solver._batch_shape((n_frame, solver.n_joints_))),
+        "forward_kinematics_joint_pos_out": V(dtype=gs.ti_vec3, shape=solver._batch_shape((n_frame, solver.n_joints_))),
+        "forward_kinematics_joint_quat_in": V(dtype=gs.ti_vec4, shape=solver._batch_shape((n_frame, solver.n_joints_))),
+        "forward_kinematics_joint_quat_out": V(
+            dtype=gs.ti_vec4, shape=solver._batch_shape((n_frame, solver.n_joints_))
+        ),
+        "i_pos": V(dtype=gs.ti_vec3, shape=solver._batch_shape((n_frame, solver.n_links_))),
+        "j_pos": V(dtype=gs.ti_vec3, shape=solver._batch_shape((n_frame, solver.n_links_))),
+        "j_quat": V(dtype=gs.ti_vec4, shape=solver._batch_shape((n_frame, solver.n_links_))),
+        "root_COM": V(dtype=gs.ti_vec3, shape=solver._batch_shape((n_frame, solver.n_links_))),
+        "mass_mat_L0": V(dtype=gs.ti_float, shape=solver._batch_shape((n_frame, solver.n_dofs_, solver.n_dofs_))),
+        "mass_mat_L1": V(dtype=gs.ti_float, shape=solver._batch_shape((n_frame, solver.n_dofs_, solver.n_dofs_))),
+    }
+
+    if use_ndarray:
+        return StructRigidAdjointCache(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassRigidAdjointCache:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassRigidAdjointCache()
+
+
 # =========================================== DataManager ===========================================
 
 
@@ -2100,6 +2161,8 @@ class DataManager:
         self.entities_info = get_entities_info(solver)
         self.entities_state = get_entities_state(solver)
 
+        self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
+
 
 # we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to gstaichi
 DofsState = ti.template() if not use_ndarray else StructDofsState
@@ -2132,3 +2195,4 @@ ConstraintState = ti.template() if not use_ndarray else StructConstraintState
 GJKState = ti.template() if not use_ndarray else StructGJKState
 SDFInfo = ti.template() if not use_ndarray else StructSDFInfo
 ContactIslandState = ti.template() if not use_ndarray else StructContactIslandState
+RigidAdjointCache = ti.template() if not use_ndarray else StructRigidAdjointCache

@@ -188,8 +188,9 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
-    def add_equality_constraints(self):
+    def add_equality_constraints(self, f):
         add_equality_constraints(
+            i_f=f,
             links_info=self._solver.links_info,
             links_state=self._solver.links_state,
             dofs_state=self._solver.dofs_state,
@@ -203,8 +204,9 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
-    def add_frictionloss_constraints(self):
+    def add_frictionloss_constraints(self, f):
         add_frictionloss_constraints(
+            i_f=f,
             links_info=self._solver.links_info,
             joints_info=self._solver.joints_info,
             dofs_info=self._solver.dofs_info,
@@ -215,8 +217,9 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
-    def add_collision_constraints(self):
+    def add_collision_constraints(self, f):
         add_collision_constraints(
+            i_f=f,
             links_info=self._solver.links_info,
             links_state=self._solver.links_state,
             dofs_state=self._solver.dofs_state,
@@ -226,8 +229,9 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
-    def add_joint_limit_constraints(self):
+    def add_joint_limit_constraints(self, f):
         add_joint_limit_constraints(
+            i_f=f,
             links_info=self._solver.links_info,
             joints_info=self._solver.joints_info,
             dofs_info=self._solver.dofs_info,
@@ -238,7 +242,7 @@ class ConstraintSolver:
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
-    def resolve(self):
+    def resolve(self, f):
         # Early return if there is nothing to solve
         if not self._solver._enable_collision and not self._solver._enable_joint_limit:
             has_equality_constraints = np.any(self.constraint_state.ti_n_equalities.to_numpy())
@@ -249,6 +253,7 @@ class ConstraintSolver:
 
         # timer = create_timer(name="resolve", level=3, ti_sync=True, skip_first_call=True)
         func_init_solver(
+            i_f=f,
             dofs_state=self._solver.dofs_state,
             entities_info=self._solver.entities_info,
             constraint_state=self.constraint_state,
@@ -256,8 +261,10 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
+        print("before solve qacc[2, 0]:", self.constraint_state.qacc.to_numpy()[2, 0])
         # timer.stamp("_func_init_solver")
         func_solve(
+            i_f=f,
             entities_info=self._solver.entities_info,
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
@@ -265,20 +272,24 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
+        print("after solve qacc[2, 0]:", self.constraint_state.qacc.to_numpy()[2, 0])
 
         # timer.stamp("_func_solve")
         func_update_qacc(
+            i_f=f,
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
             static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("_func_update_qacc")
+        print("after update dofs acc[2, 0]:", self._solver.dofs_state.acc.to_numpy()[f, 2, 0])
 
         if self._solver._static_rigid_sim_config.noslip_iterations > 0:
             self.noslip()
 
         func_update_contact_force(
+            i_f=f,
             links_state=self._solver.links_state,
             collider_state=self._collider._collider_state,
             constraint_state=self.constraint_state,
@@ -490,6 +501,7 @@ def constraint_solver_kernel_reset(
 @gs.maybe_pure
 @ti.kernel
 def add_collision_constraints(
+    i_f: ti.i32,
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
@@ -498,8 +510,8 @@ def add_collision_constraints(
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    _B = dofs_state.ctrl_mode.shape[1]
-    n_dofs = dofs_state.ctrl_mode.shape[0]
+    _B = dofs_state.ctrl_mode.shape[2]
+    n_dofs = dofs_state.ctrl_mode.shape[1]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -553,16 +565,16 @@ def add_collision_constraints(
                         for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                             i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
-                            cdof_ang = dofs_state.cdof_ang[i_d, i_b]
-                            cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+                            cdof_ang = dofs_state.cdof_ang[i_f, i_d, i_b]
+                            cdot_vel = dofs_state.cdof_vel[i_f, i_d, i_b]
 
                             t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data_pos - links_state.root_COM[link, i_b]
+                            t_pos = contact_data_pos - links_state.root_COM[i_f, link, i_b]
                             _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                             diff = sign * vel
                             jac = diff @ n
-                            jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
+                            jac_qvel = jac_qvel + jac * dofs_state.vel[i_f, i_d, i_b]
                             constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                             if ti.static(static_rigid_sim_config.sparse_solve):
@@ -588,6 +600,7 @@ def add_collision_constraints(
 
 @ti.func
 def func_equality_connect(
+    i_f,
     i_b,
     i_e,
     links_info: array_class.LinksInfo,
@@ -598,7 +611,7 @@ def func_equality_connect(
     collider_state: array_class.ColliderState,
     static_rigid_sim_config: ti.template(),
 ):
-    n_dofs = dofs_state.ctrl_mode.shape[0]
+    n_dofs = dofs_state.ctrl_mode.shape[1]
 
     link1_idx = equalities_info.eq_obj1id[i_e, i_b]
     link2_idx = equalities_info.eq_obj2id[i_e, i_b]
@@ -623,13 +636,13 @@ def func_equality_connect(
     # Transform anchor positions to global coordinates
     global_anchor1 = gu.ti_transform_by_trans_quat(
         pos=anchor1_pos,
-        trans=links_state.pos[link1_idx, i_b],
-        quat=links_state.quat[link1_idx, i_b],
+        trans=links_state.pos[i_f, link1_idx, i_b],
+        quat=links_state.quat[i_f, link1_idx, i_b],
     )
     global_anchor2 = gu.ti_transform_by_trans_quat(
         pos=anchor2_pos,
-        trans=links_state.pos[link2_idx, i_b],
-        quat=links_state.quat[link2_idx, i_b],
+        trans=links_state.pos[i_f, link2_idx, i_b],
+        quat=links_state.quat[i_f, link2_idx, i_b],
     )
 
     invweight = links_info.invweight[link_a_maybe_batch][0] + links_info.invweight[link_b_maybe_batch][0]
@@ -639,7 +652,7 @@ def func_equality_connect(
         ti.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
 
         if ti.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(collider_state.jac_n_relevant_dofs[n_con, i_b]):
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
         else:
@@ -662,16 +675,16 @@ def func_equality_connect(
                 for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                     i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
-                    cdof_ang = dofs_state.cdof_ang[i_d, i_b]
-                    cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+                    cdof_ang = dofs_state.cdof_ang[i_f, i_d, i_b]
+                    cdot_vel = dofs_state.cdof_vel[i_f, i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = pos - links_state.root_COM[link, i_b]
+                    t_pos = pos - links_state.root_COM[i_f, link, i_b]
                     ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
                     diff = sign * vel
                     jac = diff[i_3]
-                    jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
+                    jac_qvel = jac_qvel + jac * dofs_state.vel[i_f, i_d, i_b]
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                     if ti.static(static_rigid_sim_config.sparse_solve):
@@ -697,6 +710,7 @@ def func_equality_connect(
 
 @ti.func
 def func_equality_joint(
+    i_f,
     i_b,
     i_e,
     joints_info: array_class.JointsInfo,
@@ -739,8 +753,8 @@ def func_equality_joint(
         for i_d in range(n_dofs):
             constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
-    pos1 = rigid_global_info.qpos[i_qpos1, i_b]
-    pos2 = rigid_global_info.qpos[i_qpos2, i_b]
+    pos1 = rigid_global_info.qpos[i_f, i_qpos1, i_b]
+    pos2 = rigid_global_info.qpos[i_f, i_qpos2, i_b]
     ref1 = rigid_global_info.qpos0[i_qpos1, i_b]
     ref2 = rigid_global_info.qpos0[i_qpos2, i_b]
 
@@ -759,8 +773,8 @@ def func_equality_joint(
     constraint_state.jac[n_con, i_dof1, i_b] = gs.ti_float(1.0)
     constraint_state.jac[n_con, i_dof2, i_b] = -deriv
     jac_qvel = (
-        constraint_state.jac[n_con, i_dof1, i_b] * dofs_state.vel[i_dof1, i_b]
-        + constraint_state.jac[n_con, i_dof2, i_b] * dofs_state.vel[i_dof2, i_b]
+        constraint_state.jac[n_con, i_dof1, i_b] * dofs_state.vel[i_f, i_dof1, i_b]
+        + constraint_state.jac[n_con, i_dof2, i_b] * dofs_state.vel[i_f, i_dof2, i_b]
     )
     invweight = dofs_info.invweight[I_dof1] + dofs_info.invweight[I_dof2]
 
@@ -776,6 +790,7 @@ def func_equality_joint(
 @gs.maybe_pure
 @ti.kernel
 def add_equality_constraints(
+    i_f: ti.i32,
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
@@ -788,12 +803,13 @@ def add_equality_constraints(
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    _B = dofs_state.ctrl_mode.shape[1]
+    _B = dofs_state.ctrl_mode.shape[2]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_b in range(_B):
         for i_e in range(constraint_state.ti_n_equalities[i_b]):
             if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
                 func_equality_connect(
+                    i_f,
                     i_b,
                     i_e,
                     links_info=links_info,
@@ -807,6 +823,7 @@ def add_equality_constraints(
 
             elif equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD:
                 func_equality_weld(
+                    i_f,
                     i_b,
                     i_e,
                     links_info=links_info,
@@ -818,6 +835,7 @@ def add_equality_constraints(
                 )
             elif equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
                 func_equality_joint(
+                    i_f,
                     i_b,
                     i_e,
                     joints_info=joints_info,
@@ -832,6 +850,7 @@ def add_equality_constraints(
 
 @ti.func
 def func_equality_weld(
+    i_f,
     i_b,
     i_e,
     links_info: array_class.LinksInfo,
@@ -841,7 +860,7 @@ def func_equality_weld(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    n_dofs = dofs_state.ctrl_mode.shape[0]
+    n_dofs = dofs_state.ctrl_mode.shape[1]
 
     # TODO: sparse mode
     # Get equality info for this constraint
@@ -883,21 +902,21 @@ def func_equality_weld(
     # Transform anchor positions to global coordinates
     global_anchor1 = gu.ti_transform_by_trans_quat(
         pos=anchor1_pos,
-        trans=links_state.pos[link1_idx, i_b],
-        quat=links_state.quat[link1_idx, i_b],
+        trans=links_state.pos[i_f, link1_idx, i_b],
+        quat=links_state.quat[i_f, link1_idx, i_b],
     )
     global_anchor2 = gu.ti_transform_by_trans_quat(
         pos=anchor2_pos,
-        trans=links_state.pos[link2_idx, i_b],
-        quat=links_state.quat[link2_idx, i_b],
+        trans=links_state.pos[i_f, link2_idx, i_b],
+        quat=links_state.quat[i_f, link2_idx, i_b],
     )
 
     pos_error = global_anchor1 - global_anchor2
 
     # Compute orientation error.
     # For weld: compute q = body1_quat * relpose, then error = (inv(body2_quat) * q)
-    quat_body1 = links_state.quat[link1_idx, i_b]
-    quat_body2 = links_state.quat[link2_idx, i_b]
+    quat_body1 = links_state.quat[i_f, link1_idx, i_b]
+    quat_body2 = links_state.quat[i_f, link2_idx, i_b]
     q = gu.ti_quat_mul(quat_body1, relpose)
     inv_quat_body2 = gu.ti_inv_quat(quat_body2)
     error_quat = gu.ti_quat_mul(inv_quat_body2, q)
@@ -937,15 +956,15 @@ def func_equality_weld(
 
                 for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                     i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
-                    cdof_ang = dofs_state.cdof_ang[i_d, i_b]
-                    cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+                    cdof_ang = dofs_state.cdof_ang[i_f, i_d, i_b]
+                    cdot_vel = dofs_state.cdof_vel[i_f, i_d, i_b]
 
                     t_quat = gu.ti_identity_quat()
-                    t_pos = pos_anchor - links_state.root_COM[link, i_b]
+                    t_pos = pos_anchor - links_state.root_COM[i_f, link, i_b]
                     ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                     diff = sign * vel
                     jac = diff[i]
-                    jac_qvel += jac * dofs_state.vel[i_d, i_b]
+                    jac_qvel += jac * dofs_state.vel[i_f, i_d, i_b]
                     constraint_state.jac[n_con, i_d, i_b] += jac
 
                     if ti.static(static_rigid_sim_config.sparse_solve):
@@ -981,7 +1000,7 @@ def func_equality_weld(
 
             for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                 i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
-                jac = sign * dofs_state.cdof_ang[i_d, i_b]
+                jac = sign * dofs_state.cdof_ang[i_f, i_d, i_b]
 
                 for i_con in range(n_con, n_con + 3):
                     constraint_state.jac[i_con, i_d, i_b] = constraint_state.jac[i_con, i_d, i_b] + jac[i_con - n_con]
@@ -1004,7 +1023,7 @@ def func_equality_weld(
         for i_con in range(n_con, n_con + 3):
             constraint_state.jac[i_con, i_d, i_b] = 0.5 * quat3[i_con - n_con + 1] * torquescale
             jac_qvel[i_con - n_con] = (
-                jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state.vel[i_d, i_b]
+                jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state.vel[i_f, i_d, i_b]
             )
 
     for i_con in range(n_con, n_con + 3):
@@ -1022,6 +1041,7 @@ def func_equality_weld(
 @gs.maybe_pure
 @ti.kernel
 def add_joint_limit_constraints(
+    i_f: ti.i32,
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
     dofs_info: array_class.DofsInfo,
@@ -1033,7 +1053,7 @@ def add_joint_limit_constraints(
 ):
     _B = constraint_state.jac.shape[2]
     n_links = links_info.root_idx.shape[0]
-    n_dofs = dofs_state.ctrl_mode.shape[0]
+    n_dofs = dofs_state.ctrl_mode.shape[1]
 
     # TODO: sparse mode
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -1048,13 +1068,13 @@ def add_joint_limit_constraints(
                     i_q = joints_info.q_start[I_j]
                     i_d = joints_info.dof_start[I_j]
                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                    pos_delta_min = rigid_global_info.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
-                    pos_delta_max = dofs_info.limit[I_d][1] - rigid_global_info.qpos[i_q, i_b]
+                    pos_delta_min = rigid_global_info.qpos[i_f, i_q, i_b] - dofs_info.limit[I_d][0]
+                    pos_delta_max = dofs_info.limit[I_d][1] - rigid_global_info.qpos[i_f, i_q, i_b]
                     pos_delta = min(pos_delta_min, pos_delta_max)
 
                     if pos_delta < 0:
                         jac = (pos_delta_min < pos_delta_max) * 2 - 1
-                        jac_qvel = jac * dofs_state.vel[i_d, i_b]
+                        jac_qvel = jac * dofs_state.vel[i_f, i_d, i_b]
                         imp, aref = gu.imp_aref(joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta)
                         diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
 
@@ -1081,6 +1101,7 @@ def add_joint_limit_constraints(
 @gs.maybe_pure
 @ti.kernel
 def add_frictionloss_constraints(
+    i_f: ti.i32,
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
     dofs_info: array_class.DofsInfo,
@@ -1092,7 +1113,7 @@ def add_frictionloss_constraints(
 ):
     _B = constraint_state.jac.shape[2]
     n_links = links_info.root_idx.shape[0]
-    n_dofs = dofs_state.ctrl_mode.shape[0]
+    n_dofs = dofs_state.ctrl_mode.shape[1]
 
     # TODO: sparse mode
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -1108,7 +1129,7 @@ def add_frictionloss_constraints(
 
                     if dofs_info.frictionloss[I_d] > gs.EPS:
                         jac = 1.0
-                        jac_qvel = jac * dofs_state.vel[i_d, i_b]
+                        jac_qvel = jac * dofs_state.vel[i_f, i_d, i_b]
                         imp, aref = gu.imp_aref(joints_info.sol_params[I_j], 0.0, jac_qvel, 0.0)
                         diag = ti.max(dofs_info.invweight[I_d] * (1.0 - imp) / imp, gs.EPS)
 
@@ -1126,6 +1147,7 @@ def add_frictionloss_constraints(
 
 @ti.func
 def func_nt_hessian_incremental(
+    i_f,
     i_b,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
@@ -1184,6 +1206,7 @@ def func_nt_hessian_incremental(
 
                     if rank < n_dofs:
                         func_nt_hessian_direct(
+                            i_f,
                             i_b,
                             entities_info=entities_info,
                             constraint_state=constraint_state,
@@ -1226,6 +1249,7 @@ def func_nt_hessian_incremental(
 
                     if rank < n_dofs:
                         func_nt_hessian_direct(
+                            i_f,
                             i_b,
                             entities_info=entities_info,
                             constraint_state=constraint_state,
@@ -1237,6 +1261,7 @@ def func_nt_hessian_incremental(
 
 @ti.func
 def func_nt_hessian_direct(
+    i_f,
     i_b,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
@@ -1286,7 +1311,7 @@ def func_nt_hessian_direct(
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                 constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                    constraint_state.nt_H[i_d1, i_d2, i_b] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                    constraint_state.nt_H[i_d1, i_d2, i_b] + rigid_global_info.mass_mat[i_f, i_d1, i_d2, i_b]
                 )
             # self.nt_ori_H[i_d1, i_d2, i_b] = self.nt_H[i_d1, i_d2, i_b]
 
@@ -1351,18 +1376,19 @@ def func_nt_chol_solve(
 @gs.maybe_pure
 @ti.kernel
 def func_update_contact_force(
+    i_f: ti.i32,
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    n_links = links_state.contact_force.shape[0]
-    _B = links_state.contact_force.shape[1]
+    n_links = links_state.contact_force.shape[1]
+    _B = links_state.contact_force.shape[2]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b in ti.ndrange(n_links, _B):
-        links_state.contact_force[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+        links_state.contact_force[i_f, i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -1384,35 +1410,39 @@ def func_update_contact_force(
 
             collider_state.contact_data.force[i_c, i_b] = force
 
-            links_state.contact_force[contact_data_link_a, i_b] = (
-                links_state.contact_force[contact_data_link_a, i_b] - force
+            links_state.contact_force[i_f, contact_data_link_a, i_b] = (
+                links_state.contact_force[i_f, contact_data_link_a, i_b] - force
             )
-            links_state.contact_force[contact_data_link_b, i_b] = (
-                links_state.contact_force[contact_data_link_b, i_b] + force
+            links_state.contact_force[i_f, contact_data_link_b, i_b] = (
+                links_state.contact_force[i_f, contact_data_link_b, i_b] + force
             )
 
 
 @gs.maybe_pure
 @ti.kernel
 def func_update_qacc(
+    i_f: ti.i32,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    n_dofs = dofs_state.acc.shape[0]
-    _B = dofs_state.acc.shape[1]
+    n_dofs = dofs_state.acc.shape[1]
+    _B = dofs_state.acc.shape[2]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
-        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        dofs_state.acc[i_f, i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dofs_state.qf_constraint[i_f, i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dofs_state.force[i_f, i_d, i_b] = (
+            dofs_state.qf_smooth[i_f, i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        )
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
 @gs.maybe_pure
 @ti.kernel
 def func_solve(
+    i_f: ti.i32,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -1430,6 +1460,7 @@ def func_solve(
             tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * static_rigid_sim_config.tolerance
             for it in range(static_rigid_sim_config.iterations):
                 func_solve_body(
+                    i_f,
                     i_b,
                     entities_info=entities_info,
                     dofs_state=dofs_state,
@@ -1443,6 +1474,7 @@ def func_solve(
 
 @ti.func
 def func_ls_init(
+    i_f,
     i_b,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -1458,7 +1490,7 @@ def func_ls_init(
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             mv = gs.ti_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                mv += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                mv += rigid_global_info.mass_mat[i_f, i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
 
     for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1478,7 +1510,7 @@ def func_ls_init(
     for i_d in range(n_dofs):
         quad_gauss_1 += (
             constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
-            - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
+            - constraint_state.search[i_d, i_b] * dofs_state.force[i_f, i_d, i_b]
         )
         quad_gauss_2 += 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
     for _i0 in range(1):
@@ -1553,8 +1585,8 @@ def func_ls_point_fn(
 
 
 @ti.func
-def func_no_linesearch(i_b, constraint_state: array_class.ConstraintState):
-    func_ls_init(i_b)
+def func_no_linesearch(i_f, i_b, constraint_state: array_class.ConstraintState):
+    func_ls_init(i_f, i_b)
     n_dofs = constraint_state.search.shape[0]
 
     constraint_state.improved[i_b] = 1
@@ -1567,6 +1599,7 @@ def func_no_linesearch(i_b, constraint_state: array_class.ConstraintState):
 
 @ti.func
 def func_linesearch(
+    i_f,
     i_b,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -1597,6 +1630,7 @@ def func_linesearch(
         res_alpha = 0.0
     else:
         func_ls_init(
+            i_f,
             i_b,
             entities_info=entities_info,
             dofs_state=dofs_state,
@@ -1802,6 +1836,7 @@ def update_bracket(
 
 @ti.func
 def func_solve_body(
+    i_f,
     i_b,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -1811,6 +1846,7 @@ def func_solve_body(
 ):
     n_dofs = constraint_state.qacc.shape[0]
     alpha = func_linesearch(
+        i_f,
         i_b,
         entities_info=entities_info,
         dofs_state=dofs_state,
@@ -1837,6 +1873,7 @@ def func_solve_body(
                 constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
 
         func_update_constraint(
+            i_f,
             i_b,
             qacc=constraint_state.qacc,
             Ma=constraint_state.Ma,
@@ -1848,6 +1885,7 @@ def func_solve_body(
 
         if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             func_nt_hessian_incremental(
+                i_f,
                 i_b,
                 entities_info=entities_info,
                 constraint_state=constraint_state,
@@ -1856,6 +1894,7 @@ def func_solve_body(
             )
 
         func_update_gradient(
+            i_f,
             i_b,
             dofs_state=dofs_state,
             entities_info=entities_info,
@@ -1902,6 +1941,7 @@ def func_solve_body(
 
 @ti.func
 def func_update_constraint(
+    i_f,
     i_b,
     qacc: array_class.V_ANNOTATION,
     Ma: array_class.V_ANNOTATION,
@@ -1960,11 +2000,15 @@ def func_update_constraint(
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
     # (Mx - Mx') * (x - x')
     for i_d in range(n_dofs):
-        v = 0.5 * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b]) * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+        v = (
+            0.5
+            * (Ma[i_d, i_b] - dofs_state.force[i_f, i_d, i_b])
+            * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_f, i_d, i_b])
+        )
         constraint_state.gauss[i_b] = constraint_state.gauss[i_b] + v
         cost[i_b] = cost[i_b] + v
 
-    # D * (Jx - aref) ** 2
+    # # D * (Jx - aref) ** 2
     for i_c in range(constraint_state.n_constraints[i_b]):
         cost[i_b] = cost[i_b] + 0.5 * (
             constraint_state.efc_D[i_c, i_b]
@@ -1976,6 +2020,7 @@ def func_update_constraint(
 
 @ti.func
 def func_update_gradient(
+    i_f,
     i_b,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -1987,13 +2032,14 @@ def func_update_gradient(
 
     for i_d in range(n_dofs):
         constraint_state.grad[i_d, i_b] = (
-            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_f, i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
         )
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         rigid_solver.func_solve_mass_batched(
             constraint_state.grad,
             constraint_state.Mgrad,
+            i_f,
             i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
@@ -2002,6 +2048,20 @@ def func_update_gradient(
 
     elif ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_nt_chol_solve(i_b, constraint_state=constraint_state)
+
+
+@ti.func
+def copy_acc_smooth(
+    i_f: ti.i32,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    n_dofs = constraint_state.qacc_smooth.shape[0]
+    _B = constraint_state.qacc_smooth.shape[1]
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in ti.ndrange(n_dofs, _B):
+        constraint_state.qacc_smooth[i_d, i_b] = dofs_state.acc_smooth[i_f, i_d, i_b]
 
 
 @ti.func
@@ -2028,6 +2088,7 @@ def initialize_Jaref(
 
 @ti.func
 def initialize_Ma(
+    i_f: ti.i32,
     Ma: array_class.V_ANNOTATION,
     qacc: array_class.V_ANNOTATION,
     entities_info: array_class.EntitiesInfo,
@@ -2035,7 +2096,7 @@ def initialize_Ma(
     static_rigid_sim_config: ti.template(),
 ):
 
-    _B = rigid_global_info.mass_mat.shape[2]
+    _B = rigid_global_info.mass_mat.shape[3]
     n_entities = entities_info.n_links.shape[0]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_e, i_b in ti.ndrange(n_entities, _B):
@@ -2043,13 +2104,14 @@ def initialize_Ma(
             i_d1 = entities_info.dof_start[i_e] + i_d1_
             Ma_ = gs.ti_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                Ma_ += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+                Ma_ += rigid_global_info.mass_mat[i_f, i_d1, i_d2, i_b] * qacc[i_d2, i_b]
             Ma[i_d1, i_b] = Ma_
 
 
 @gs.maybe_pure
 @ti.kernel
 def func_init_solver(
+    i_f: ti.i32,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
@@ -2057,8 +2119,17 @@ def func_init_solver(
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    _B = dofs_state.acc_smooth.shape[1]
-    n_dofs = dofs_state.acc_smooth.shape[0]
+    _B = dofs_state.acc_smooth.shape[2]
+    n_dofs = dofs_state.acc_smooth.shape[1]
+
+    # copy dofs_state.acc_smooth to constraint_state.qacc_smooth
+    copy_acc_smooth(
+        i_f=i_f,
+        dofs_state=dofs_state,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
     # check if warm start
     initialize_Jaref(
         qacc=constraint_state.qacc_ws,
@@ -2067,6 +2138,7 @@ def func_init_solver(
     )
 
     initialize_Ma(
+        i_f=i_f,
         Ma=constraint_state.Ma_ws,
         qacc=constraint_state.qacc_ws,
         entities_info=entities_info,
@@ -2077,6 +2149,7 @@ def func_init_solver(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         func_update_constraint(
+            i_f,
             i_b,
             qacc=constraint_state.qacc_ws,
             Ma=constraint_state.Ma_ws,
@@ -2086,14 +2159,15 @@ def func_init_solver(
             static_rigid_sim_config=static_rigid_sim_config,
         )
     initialize_Jaref(
-        qacc=dofs_state.acc_smooth,
+        qacc=constraint_state.qacc_smooth,
         constraint_state=constraint_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
     initialize_Ma(
+        i_f=i_f,
         Ma=constraint_state.Ma,
-        qacc=dofs_state.acc_smooth,
+        qacc=constraint_state.qacc_smooth,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
@@ -2101,8 +2175,9 @@ def func_init_solver(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         func_update_constraint(
+            i_f,
             i_b,
-            qacc=dofs_state.acc_smooth,
+            qacc=constraint_state.qacc_smooth,
             Ma=constraint_state.Ma,
             cost=constraint_state.cost,
             dofs_state=dofs_state,
@@ -2115,7 +2190,7 @@ def func_init_solver(
             constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
             constraint_state.Ma[i_d, i_b] = constraint_state.Ma_ws[i_d, i_b]
         else:
-            constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+            constraint_state.qacc[i_d, i_b] = constraint_state.qacc_smooth[i_d, i_b]
     initialize_Jaref(
         qacc=constraint_state.qacc,
         constraint_state=constraint_state,
@@ -2126,6 +2201,7 @@ def func_init_solver(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         func_update_constraint(
+            i_f,
             i_b,
             qacc=constraint_state.qacc,
             Ma=constraint_state.Ma,
@@ -2136,6 +2212,7 @@ def func_init_solver(
         )
         if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             func_nt_hessian_direct(
+                i_f,
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
@@ -2144,6 +2221,7 @@ def func_init_solver(
             )
 
         func_update_gradient(
+            i_f,
             i_b,
             dofs_state=dofs_state,
             entities_info=entities_info,

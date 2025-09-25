@@ -73,6 +73,7 @@ def sdf_func_world(
     geoms_info: array_class.GeomsInfo,
     sdf_info: array_class.SDFInfo,
     pos_world,
+    frame_idx,
     geom_idx,
     batch_idx,
 ):
@@ -80,8 +81,8 @@ def sdf_func_world(
     sdf value from world coordinate
     """
 
-    g_pos = geoms_state.pos[geom_idx, batch_idx]
-    g_quat = geoms_state.quat[geom_idx, batch_idx]
+    g_pos = geoms_state.pos[frame_idx, geom_idx, batch_idx]
+    g_quat = geoms_state.quat[frame_idx, geom_idx, batch_idx]
 
     sd = gs.ti_float(0.0)
     if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
@@ -168,11 +169,12 @@ def sdf_func_grad_world(
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     pos_world,
+    frame_idx,
     geom_idx,
     batch_idx,
 ):
-    g_pos = geoms_state.pos[geom_idx, batch_idx]
-    g_quat = geoms_state.quat[geom_idx, batch_idx]
+    g_pos = geoms_state.pos[frame_idx, geom_idx, batch_idx]
+    g_quat = geoms_state.quat[frame_idx, geom_idx, batch_idx]
 
     grad_world = ti.Vector.zero(gs.ti_float, 3)
     if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
@@ -272,11 +274,14 @@ def sdf_func_normal_world(
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     pos_world,
+    frame_idx,
     geom_idx,
     batch_idx,
 ):
     return gu.ti_normalize(
-        sdf_func_grad_world(geoms_state, geoms_info, collider_static_config, sdf_info, pos_world, geom_idx, batch_idx)
+        sdf_func_grad_world(
+            geoms_state, geoms_info, collider_static_config, sdf_info, pos_world, frame_idx, geom_idx, batch_idx
+        )
     )
 
 

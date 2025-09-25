@@ -267,18 +267,13 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward=False):
-        if self._rigid_only:  # "Only Advance!" --Thomas Wade :P
-            for _ in range(self._substeps):
-                self.rigid_solver.substep()
-                self._cur_substep_global += 1
-        else:
-            self.process_input(in_backward=in_backward)
-            for _ in range(self._substeps):
-                self.substep(self.cur_substep_local)
+        self.process_input(in_backward=in_backward)
+        for _ in range(self._substeps):
+            self.substep(self.cur_substep_local)
 
-                self._cur_substep_global += 1
-                if self.cur_substep_local == 0 and not in_backward:
-                    self.save_ckpt()
+            self._cur_substep_global += 1
+            if self.cur_substep_local == 0 and not in_backward:
+                self.save_ckpt()
 
         if self.rigid_solver.is_active():
             self.rigid_solver.clear_external_force()
