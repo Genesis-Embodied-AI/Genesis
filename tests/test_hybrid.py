@@ -136,4 +136,8 @@ def test_fluid_emitter(material_type, show_viewer):
         ),
     )
     scene.build(n_envs=2)
+    emitter.emit(
+        droplet_shape="circle",
+        droplet_size=0.22,
+    )
     scene.step()
