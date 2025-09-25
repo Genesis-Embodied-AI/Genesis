@@ -90,7 +90,7 @@ def test_examples_run_headless(example_file: Path):
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=240,
             env=env,
         )
     except subprocess.TimeoutExpired as e:

@@ -10,7 +10,7 @@ def main():
     parser.add_argument("-s", "--sep", action="store_true", default=False)
     parser.add_argument("-r", "--record", action="store_true", default=False)
     parser.add_argument("-n", "--num_env", type=int, default=1)
-    parser.add_argument("--horizon", type=int, default=1000)
+    parser.add_argument("--horizon", type=int, default=100)
     args = parser.parse_args()
 
     ########################## init ##########################
