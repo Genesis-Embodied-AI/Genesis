@@ -10,7 +10,7 @@ SCENE_POS = (0.5, 0.5, 1.0)
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--solver", choices=["explicit", "implicit"], default="explicit", help="FEM solver type (default: explicit)"
+        "--solver", choices=["explicit", "implicit"], default="implicit", help="FEM solver type (default: explicit)"
     )
     parser.add_argument("--dt", type=float)
     parser.add_argument("--substeps", type=int)
