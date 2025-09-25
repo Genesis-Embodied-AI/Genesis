@@ -174,7 +174,7 @@ class RigidEntity(Entity):
                     vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface),
                 )
             )
-        if morph.collision:
+        if (morph.contype or morph.conaffinity) and morph.collision:
             g_infos.append(
                 dict(
                     contype=morph.contype,
