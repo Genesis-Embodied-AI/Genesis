@@ -527,3 +527,28 @@ class FEMSurfaceTetLBVH(LBVH):
             if i_av[i] == i_qv[j]:
                 result = True
         return result
+
+
+@ti.data_oriented
+class RigidTetLBVH(LBVH):
+    """
+    RigidTetLBVH is a specialized Linear BVH for rigid tetrahedrals.
+    It extends the LBVH class to support filtering based on rigid tetrahedral elements.
+    """
+
+    def __init__(self, coupler, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
+        super().__init__(aabb, max_n_query_result_per_aabb, n_radix_sort_groups)
+        self.coupler = coupler
+        self.rigid_solver = coupler.rigid_solver
+
+    @ti.func
+    def filter(self, i_a, i_q):
+        """
+        Filter function for Rigid tets. Filter out tet that belong to the same link
+
+        i_a: index of the found AABB
+        i_q: index of the query AABB
+        """
+        i_ag = self.coupler.rigid_volume_elems_geom_idx[i_a]
+        i_qg = self.coupler.rigid_volume_elems_geom_idx[i_q]
+        return not self.rigid_solver.collider._collider_info.collision_pair_validity[i_ag, i_qg]

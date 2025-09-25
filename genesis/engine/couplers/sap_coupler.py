@@ -1,14 +1,15 @@
 from typing import TYPE_CHECKING
 import math
 
+import igl
 import numpy as np
 import gstaichi as ti
 
 import genesis as gs
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
-from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH
-from genesis.utils.element import mesh_to_elements, split_all_surface_tets
+from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
+import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum, EQUALITY_TYPE
@@ -69,6 +70,16 @@ class RigidFloorContactType(IntEnum):
 
     NONE = 0  # No contact
     VERT = 1  # Vertex contact
+    TET = 2  # Tetrahedral contact
+
+
+class RigidRigidContactType(IntEnum):
+    """
+    Enum for rigid-rigid contact types.
+    """
+
+    NONE = 0  # No contact
+    TET = 1  # Tetrahedral contact
 
 
 @ti.func
@@ -185,6 +196,8 @@ class SAPCoupler(RBC):
         self._enable_fem_self_tet_contact = options.enable_fem_self_tet_contact
         if options.rigid_floor_contact_type == "vert":
             self._rigid_floor_contact_type = RigidFloorContactType.VERT
+        elif options.rigid_floor_contact_type == "tet":
+            self._rigid_floor_contact_type = RigidFloorContactType.TET
         elif options.rigid_floor_contact_type == "none":
             self._rigid_floor_contact_type = RigidFloorContactType.NONE
         else:
@@ -193,6 +206,18 @@ class SAPCoupler(RBC):
                 "Must be one of 'vert' or 'none'."
             )
         self._enable_rigid_fem_contact = options.enable_rigid_fem_contact
+
+        if options.rigid_rigid_contact_type == "tet":
+            self._rigid_rigid_contact_type = RigidRigidContactType.TET
+        elif options.rigid_rigid_contact_type == "none":
+            self._rigid_rigid_contact_type = RigidRigidContactType.NONE
+        else:
+            gs.raise_exception(
+                f"Invalid rigid-rigid contact type: {options.rigid_rigid_contact_type}. "
+                "Must be one of 'tet' or 'none'."
+            )
+
+        self._rigid_compliant = False
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Initialization -----------------------------------
@@ -204,7 +229,7 @@ class SAPCoupler(RBC):
         self._enable_rigid_fem_contact &= self.rigid_solver.is_active() and self.fem_solver.is_active()
         self._enable_fem_self_tet_contact &= self.fem_solver.is_active()
 
-        self._init_bvh()
+        init_tet_tables = False
 
         if self.fem_solver.is_active():
             if self.fem_solver._use_implicit_solver is False:
@@ -213,7 +238,7 @@ class SAPCoupler(RBC):
                     "Please set `use_implicit_solver=True` in FEM options."
                 )
             if self._fem_floor_contact_type == FEMFloorContactType.TET or self._enable_fem_self_tet_contact:
-                # Hydroelastic
+                init_tet_tables = True
                 self._init_hydroelastic_fem_fields_and_info()
 
             if self._fem_floor_contact_type == FEMFloorContactType.TET:
@@ -231,19 +256,36 @@ class SAPCoupler(RBC):
             self._init_fem_fields()
 
         if self.rigid_solver.is_active():
+            if (
+                self._rigid_floor_contact_type == RigidFloorContactType.TET
+                or self._rigid_rigid_contact_type == RigidRigidContactType.TET
+            ):
+                init_tet_tables = True
+                self._init_hydroelastic_rigid_fields_and_info()
+
             self._init_rigid_fields()
             if self._rigid_floor_contact_type == RigidFloorContactType.VERT:
                 self.rigid_floor_vert_contact = RigidFloorVertContactHandler(self.sim)
                 self.contact_handlers.append(self.rigid_floor_vert_contact)
+            elif self._rigid_floor_contact_type == RigidFloorContactType.TET:
+                self.rigid_floor_tet_contact = RigidFloorTetContactHandler(self.sim)
+                self.contact_handlers.append(self.rigid_floor_tet_contact)
+
+            if self._rigid_rigid_contact_type == RigidRigidContactType.TET:
+                self.rigid_rigid_tet_contact = RigidRigidTetContactHandler(self.sim)
+                self.contact_handlers.append(self.rigid_rigid_tet_contact)
 
             # TODO: Dynamically added constraints are not supported for now
             if self.rigid_solver.n_equalities > 0:
                 self._init_equality_constraint()
 
         if self._enable_rigid_fem_contact:
-            self.rigid_fem_contact = RigidFemTetContactHandler(self.sim)
+            self.rigid_fem_contact = RigidFemTriTetContactHandler(self.sim)
             self.contact_handlers.append(self.rigid_fem_contact)
 
+        self._init_bvh()
+        if init_tet_tables:
+            self._init_tet_tables()
         self._init_sap_fields()
         self._init_pcg_fields()
         self._init_linesearch_fields()
@@ -251,18 +293,117 @@ class SAPCoupler(RBC):
     def reset(self, envs_idx=None):
         pass
 
-    def _init_hydroelastic_fem_fields_and_info(self):
-        self.fem_pressure = ti.field(gs.ti_float, shape=(self.fem_solver.n_vertices))
-        fem_pressure_np = np.concatenate([fem_entity.pressure_field_np for fem_entity in self.fem_solver.entities])
-        self.fem_pressure.from_numpy(fem_pressure_np)
-        self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_elements))
-
+    def _init_tet_tables(self):
         # Lookup table for marching tetrahedra edges
         self.MarchingTetsEdgeTable = ti.field(gs.ti_ivec4, shape=len(MARCHING_TETS_EDGE_TABLE))
         self.MarchingTetsEdgeTable.from_numpy(np.array(MARCHING_TETS_EDGE_TABLE, dtype=np.int32))
 
         self.TetEdges = ti.field(gs.ti_ivec2, shape=len(TET_EDGES))
         self.TetEdges.from_numpy(np.array(TET_EDGES, dtype=np.int32))
+
+    def _init_hydroelastic_fem_fields_and_info(self):
+        self.fem_pressure = ti.field(gs.ti_float, shape=(self.fem_solver.n_vertices))
+        fem_pressure_np = np.concatenate([fem_entity.pressure_field_np for fem_entity in self.fem_solver.entities])
+        self.fem_pressure.from_numpy(fem_pressure_np)
+        self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_elements))
+
+    def _init_hydroelastic_rigid_fields_and_info(self):
+        rigid_volume_verts = []
+        rigid_volume_elems = []
+        rigid_volume_verts_geom_idx = []
+        rigid_volume_elems_geom_idx = []
+        rigid_pressure_field = []
+        offset = 0
+        for geom in self.rigid_solver.geoms:
+            if geom.contype or geom.conaffinity:
+                if geom.type == gs.GEOM_TYPE.PLANE:
+                    raise gs.GenesisException("Primitive plane not supported as user-specified collision geometries.")
+                volume = geom.get_trimesh().volume
+                tet_cfg = {"nobisect": False, "maxvolume": volume / 100}
+                verts, elems = eu.split_all_surface_tets(*eu.mesh_to_elements(file=geom.get_trimesh(), tet_cfg=tet_cfg))
+                rigid_volume_verts.append(verts)
+                rigid_volume_elems.append(elems + offset)
+                rigid_volume_verts_geom_idx.append(np.full(len(verts), geom.idx, dtype=np.int32))
+                rigid_volume_elems_geom_idx.append(np.full(len(elems), geom.idx, dtype=np.int32))
+                signed_distance, *_ = igl.signed_distance(verts, geom.init_verts, geom.init_faces)
+                signed_distance = signed_distance.astype(gs.np_float, copy=False)
+
+                distance_unsigned = np.abs(signed_distance)
+                distance_max = np.max(distance_unsigned)
+                if distance_max < gs.EPS:
+                    gs.raise_exception(
+                        f"Pressure field max distance is too small: {distance_max}. "
+                        "This might be due to a mesh having no internal vertices."
+                    )
+                pressure_field_np = distance_unsigned / distance_max * self._hydroelastic_stiffness
+                rigid_pressure_field.append(pressure_field_np)
+                offset += len(verts)
+        if not rigid_volume_verts:
+            gs.raise_exception("No rigid collision geometries found.")
+        rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=np.float32)
+        rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0, dtype=np.float32)
+        rigid_volume_verts_geom_idx_np = np.concatenate(rigid_volume_verts_geom_idx, axis=0, dtype=np.float32)
+        rigid_volume_elems_geom_idx_np = np.concatenate(rigid_volume_elems_geom_idx, axis=0, dtype=np.float32)
+        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
+
+        self.n_rigid_volume_verts = len(rigid_volume_verts_np)
+        self.n_rigid_volume_elems = len(rigid_volume_elems_np)
+        self.rigid_volume_verts_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_verts,))
+        self.rigid_volume_verts_rest.from_numpy(rigid_volume_verts_np)
+        self.rigid_volume_verts = ti.field(gs.ti_vec3, shape=(self._B, self.n_rigid_volume_verts))
+        self.rigid_volume_elems = ti.field(gs.ti_ivec4, shape=(self.n_rigid_volume_elems,))
+        self.rigid_volume_elems.from_numpy(rigid_volume_elems_np)
+        self.rigid_volume_verts_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_verts,))
+        self.rigid_volume_verts_geom_idx.from_numpy(rigid_volume_verts_geom_idx_np)
+        self.rigid_volume_elems_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_elems,))
+        self.rigid_volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
+        self.rigid_pressure_field = ti.field(gs.ti_float, shape=(self.n_rigid_volume_verts,))
+        self.rigid_pressure_field.from_numpy(rigid_pressure_field_np)
+        self.rigid_pressure_gradient_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_elems,))
+        self.rigid_pressure_gradient = ti.field(gs.ti_vec3, shape=(self._B, self.n_rigid_volume_elems))
+        self.rigid_compute_pressure_gradient_rest()
+        self._rigid_compliant = True
+
+    @ti.func
+    def rigid_update_volume_verts_pressure_gradient(self):
+        for i_b, i_v in ti.ndrange(self._B, self.n_rigid_volume_verts):
+            i_g = self.rigid_volume_verts_geom_idx[i_v]
+            pos = self.rigid_solver.geoms_state.pos[i_g, i_b]
+            quat = self.rigid_solver.geoms_state.quat[i_g, i_b]
+            R = gu.ti_quat_to_R(quat)
+            self.rigid_volume_verts[i_b, i_v] = R @ self.rigid_volume_verts_rest[i_v] + pos
+
+        for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
+            i_g = self.rigid_volume_elems_geom_idx[i_e]
+            pos = self.rigid_solver.geoms_state.pos[i_g, i_b]
+            quat = self.rigid_solver.geoms_state.quat[i_g, i_b]
+            R = gu.ti_quat_to_R(quat)
+            self.rigid_pressure_gradient[i_b, i_e] = R @ self.rigid_pressure_gradient_rest[i_e]
+
+    @ti.kernel
+    def rigid_compute_pressure_gradient_rest(self):
+        grad = ti.static(self.rigid_pressure_gradient_rest)
+        for i_e in range(self.n_rigid_volume_elems):
+            grad[i_e].fill(0.0)
+            for i in ti.static(range(4)):
+                i_v0 = self.rigid_volume_elems[i_e][i]
+                i_v1 = self.rigid_volume_elems[i_e][(i + 1) % 4]
+                i_v2 = self.rigid_volume_elems[i_e][(i + 2) % 4]
+                i_v3 = self.rigid_volume_elems[i_e][(i + 3) % 4]
+                pos_v0 = self.rigid_volume_verts_rest[i_v0]
+                pos_v1 = self.rigid_volume_verts_rest[i_v1]
+                pos_v2 = self.rigid_volume_verts_rest[i_v2]
+                pos_v3 = self.rigid_volume_verts_rest[i_v3]
+
+                e10 = pos_v0 - pos_v1
+                e12 = pos_v2 - pos_v1
+                e13 = pos_v3 - pos_v1
+
+                area_vector = e12.cross(e13)
+                signed_volume = area_vector.dot(e10)
+                if ti.abs(signed_volume) > gs.EPS:
+                    grad_i = area_vector / signed_volume
+                    grad[i_e] += grad_i * self.rigid_pressure_field[i_v0]
 
     def _init_bvh(self):
         if self._enable_fem_self_tet_contact:
@@ -280,11 +421,17 @@ class SAPCoupler(RBC):
             )
             self.rigid_tri_bvh = LBVH(self.rigid_tri_aabb, max_n_query_result_per_aabb)
 
+        if self.rigid_solver.is_active() and self._rigid_rigid_contact_type == RigidRigidContactType.TET:
+            self.rigid_tet_aabb = AABB(self.sim._B, self.n_rigid_volume_elems)
+            self.rigid_tet_bvh = RigidTetLBVH(
+                self, self.rigid_tet_aabb, max_n_query_result_per_aabb=MAX_N_QUERY_RESULT_PER_AABB
+            )
+
     def _init_equality_constraint(self):
         # TODO: Handling dynamically registered weld constraints would requiere passing 'constraint_state' as input.
         # This is not a big deal for now since only joint equality constraints are support by this coupler.
-        self.equality_constraint = RigidConstraintHandler(self.sim)
-        self.equality_constraint.build_constraints(
+        self.equality_constraint_handler = RigidConstraintHandler(self.sim)
+        self.equality_constraint_handler.build_constraints(
             self.rigid_solver.equalities_info,
             self.rigid_solver.joints_info,
             self.rigid_solver._static_rigid_sim_config,
@@ -436,6 +583,9 @@ class SAPCoupler(RBC):
         if ti.static(self.rigid_solver.is_active()):
             func_update_all_verts(self.rigid_solver)
 
+        if ti.static(self._rigid_compliant):
+            self.rigid_update_volume_verts_pressure_gradient()
+
     @ti.kernel
     def update_contact(self, i_step: ti.i32) -> tuple[bool, bool]:
         has_contact = False
@@ -507,6 +657,9 @@ class SAPCoupler(RBC):
         if self._enable_rigid_fem_contact:
             self.update_rigid_tri_bvh()
 
+        if self.rigid_solver.is_active() and self._rigid_rigid_contact_type == RigidRigidContactType.TET:
+            self.update_rigid_tet_bvh()
+
     def update_fem_surface_tet_bvh(self, i_step: ti.i32):
         self.compute_fem_surface_tet_aabb(i_step)
         self.fem_surface_tet_bvh.build()
@@ -514,6 +667,10 @@ class SAPCoupler(RBC):
     def update_rigid_tri_bvh(self):
         self.compute_rigid_tri_aabb()
         self.rigid_tri_bvh.build()
+
+    def update_rigid_tet_bvh(self):
+        self.compute_rigid_tet_aabb()
+        self.rigid_tet_bvh.build()
 
     @ti.kernel
     def compute_fem_surface_tet_aabb(self, i_step: ti.i32):
@@ -543,15 +700,23 @@ class SAPCoupler(RBC):
             pos_v0 = self.rigid_solver.free_verts_state.pos[i_fv0, i_b]
             pos_v1 = self.rigid_solver.free_verts_state.pos[i_fv1, i_b]
             pos_v2 = self.rigid_solver.free_verts_state.pos[i_fv2, i_b]
+            aabbs[i_b, i_f].min = ti.min(pos_v0, pos_v1, pos_v2)
+            aabbs[i_b, i_f].max = ti.max(pos_v0, pos_v1, pos_v2)
 
-            aabbs[i_b, i_f].min.fill(np.inf)
-            aabbs[i_b, i_f].max.fill(-np.inf)
-            aabbs[i_b, i_f].min = ti.min(aabbs[i_b, i_f].min, pos_v0)
-            aabbs[i_b, i_f].min = ti.min(aabbs[i_b, i_f].min, pos_v1)
-            aabbs[i_b, i_f].min = ti.min(aabbs[i_b, i_f].min, pos_v2)
-            aabbs[i_b, i_f].max = ti.max(aabbs[i_b, i_f].max, pos_v0)
-            aabbs[i_b, i_f].max = ti.max(aabbs[i_b, i_f].max, pos_v1)
-            aabbs[i_b, i_f].max = ti.max(aabbs[i_b, i_f].max, pos_v2)
+    @ti.kernel
+    def compute_rigid_tet_aabb(self):
+        aabbs = ti.static(self.rigid_tet_aabb.aabbs)
+        for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
+            i_v0 = self.rigid_volume_elems[i_e][0]
+            i_v1 = self.rigid_volume_elems[i_e][1]
+            i_v2 = self.rigid_volume_elems[i_e][2]
+            i_v3 = self.rigid_volume_elems[i_e][3]
+            pos_v0 = self.rigid_volume_verts[i_b, i_v0]
+            pos_v1 = self.rigid_volume_verts[i_b, i_v1]
+            pos_v2 = self.rigid_volume_verts[i_b, i_v2]
+            pos_v3 = self.rigid_volume_verts[i_b, i_v3]
+            aabbs[i_b, i_e].min = ti.min(pos_v0, pos_v1, pos_v2, pos_v3)
+            aabbs[i_b, i_e].max = ti.max(pos_v0, pos_v1, pos_v2, pos_v3)
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------- Solve ----------------------------------------
@@ -634,15 +799,12 @@ class SAPCoupler(RBC):
         for contact in ti.static(self.contact_handlers):
             contact.compute_regularization()
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_regularization()
+            self.equality_constraint_handler.compute_regularization()
 
     @ti.kernel
     def _init_sap_solve(self, i_step: ti.i32):
         self._init_v(i_step)
         self.batch_active.fill(True)
-        self.compute_regularization()
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_regularization()
 
     @ti.func
     def _init_v(self, i_step: ti.i32):
@@ -716,7 +878,7 @@ class SAPCoupler(RBC):
     def compute_constraint_contact_gradient_hessian_diag_prec(self):
         self.clear_impulses()
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_gradient_hessian_diag()
+            self.equality_constraint_handler.compute_gradient_hessian_diag()
         for contact in ti.static(self.contact_handlers):
             contact.compute_gradient_hessian_diag()
         self.compute_preconditioner()
@@ -969,7 +1131,7 @@ class SAPCoupler(RBC):
             self.compute_rigid_pcg_matrix_vector_product()
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_Ap()
+            self.equality_constraint_handler.compute_Ap()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_pcg_matrix_vector_product()
@@ -1114,7 +1276,7 @@ class SAPCoupler(RBC):
             self.compute_rigid_energy(energy)
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_energy(energy)
+            self.equality_constraint_handler.compute_energy(energy)
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_energy(energy)
@@ -1226,8 +1388,8 @@ class SAPCoupler(RBC):
             self.compute_rigid_gradient_alpha()
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.compute_energy_gamma_G()
-            self.equality_constraint.update_gradient_hessian_alpha()
+            self.equality_constraint_handler.compute_energy_gamma_G()
+            self.equality_constraint_handler.update_gradient_hessian_alpha()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.compute_energy_gamma_G()
@@ -1303,7 +1465,7 @@ class SAPCoupler(RBC):
             self.prepare_rigid_search_direction_data()
         # Constraint
         if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
-            self.equality_constraint.prepare_search_direction_data()
+            self.equality_constraint_handler.prepare_search_direction_data()
         # Contact
         for contact in ti.static(self.contact_handlers):
             contact.prepare_search_direction_data()
@@ -2027,6 +2189,108 @@ class RigidContactHandler(BaseContactHandler):
             if self.coupler.batch_linesearch_active[i_b]:
                 sap_info[i_p].dvc = self.compute_Jx(i_p, self.coupler.pcg_rigid_state_dof.x)
 
+    @ti.func
+    def compute_delassus_world_frame(self):
+        self.coupler.rigid_solve_jacobian(
+            self.Jt, self.M_inv_Jt, self.n_contact_pairs[None], self.contact_pairs.batch_idx, 3
+        )
+        self.W.fill(0.0)
+        for i_p, i_d, i, j in ti.ndrange(self.n_contact_pairs[None], self.rigid_solver.n_dofs, 3, 3):
+            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j]
+
+    @ti.func
+    def compute_delassus(self, i_p):
+        return self.W[i_p]
+
+    @ti.func
+    def compute_Jx(self, i_p, x):
+        pairs = ti.static(self.contact_pairs)
+        i_b = pairs[i_p].batch_idx
+        Jx = ti.Vector.zero(gs.ti_float, 3)
+        for i in range(self.rigid_solver.n_dofs):
+            Jx = Jx + self.Jt[i_p, i] * x[i_b, i]
+        return Jx
+
+    @ti.func
+    def add_Jt_x(self, y, i_p, x):
+        pairs = ti.static(self.contact_pairs)
+        i_b = pairs[i_p].batch_idx
+        for i in range(self.rigid_solver.n_dofs):
+            y[i_b, i] += self.Jt[i_p, i].dot(x)
+
+
+@ti.data_oriented
+class RigidRigidContactHandler(RigidContactHandler):
+    def __init__(
+        self,
+        simulator: "Simulator",
+    ) -> None:
+        super().__init__(simulator)
+
+    @ti.func
+    def compute_jacobian(self):
+        self.Jt.fill(0.0)
+        pairs = ti.static(self.contact_pairs)
+        for i_p in range(self.n_contact_pairs[None]):
+            i_b = pairs[i_p].batch_idx
+            link = pairs[i_p].link_idx0
+            while link > -1:
+                link_maybe_batch = [link, i_b] if ti.static(self.rigid_solver._options.batch_links_info) else link
+                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                for i_d_ in range(self.rigid_solver.links_info.n_dofs[link_maybe_batch]):
+                    i_d = self.rigid_solver.links_info.dof_end[link_maybe_batch] - 1 - i_d_
+
+                    cdof_ang = self.rigid_solver.dofs_state.cdof_ang[i_d, i_b]
+                    cdof_vel = self.rigid_solver.dofs_state.cdof_vel[i_d, i_b]
+
+                    t_quat = gu.ti_identity_quat()
+                    t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
+                    _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
+
+                    self.Jt[i_p, i_d] = self.Jt[i_p, i_d] + vel
+                link = self.rigid_solver.links_info.parent_idx[link_maybe_batch]
+            link = pairs[i_p].link_idx1
+            while link > -1:
+                link_maybe_batch = [link, i_b] if ti.static(self.rigid_solver._options.batch_links_info) else link
+                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                for i_d_ in range(self.rigid_solver.links_info.n_dofs[link_maybe_batch]):
+                    i_d = self.rigid_solver.links_info.dof_end[link_maybe_batch] - 1 - i_d_
+
+                    cdof_ang = self.rigid_solver.dofs_state.cdof_ang[i_d, i_b]
+                    cdof_vel = self.rigid_solver.dofs_state.cdof_vel[i_d, i_b]
+
+                    t_quat = gu.ti_identity_quat()
+                    t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
+                    _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
+
+                    self.Jt[i_p, i_d] = self.Jt[i_p, i_d] - vel
+                link = self.rigid_solver.links_info.parent_idx[link_maybe_batch]
+
+    @ti.func
+    def compute_delassus(self, i_p):
+        pairs = ti.static(self.contact_pairs)
+        world = ti.Matrix.cols([pairs[i_p].tangent0, pairs[i_p].tangent1, pairs[i_p].normal])
+        return world.transpose() @ self.W[i_p] @ world
+
+    @ti.func
+    def compute_Jx(self, i_p, x):
+        pairs = ti.static(self.contact_pairs)
+        i_b = pairs[i_p].batch_idx
+        Jx = ti.Vector.zero(gs.ti_float, 3)
+        for i in range(self.rigid_solver.n_dofs):
+            Jx = Jx + self.Jt[i_p, i] * x[i_b, i]
+        Jx = ti.Vector([Jx.dot(pairs[i_p].tangent0), Jx.dot(pairs[i_p].tangent1), Jx.dot(pairs[i_p].normal)])
+        return Jx
+
+    @ti.func
+    def add_Jt_x(self, y, i_p, x):
+        pairs = ti.static(self.contact_pairs)
+        i_b = pairs[i_p].batch_idx
+        world = ti.Matrix.cols([pairs[i_p].tangent0, pairs[i_p].tangent1, pairs[i_p].normal])
+        x_ = world @ x
+        for i in range(self.rigid_solver.n_dofs):
+            y[i_b, i] += self.Jt[i_p, i].dot(x_)
+
 
 @ti.data_oriented
 class FEMContactHandler(BaseContactHandler):
@@ -2148,11 +2412,12 @@ class FEMFloorTetContactHandler(FEMContactHandler):
     def __init__(
         self,
         simulator: "Simulator",
-        eps: float = 1e-6,
+        eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
-        self.name = "FEMFloorTetContact"
+        self.name = "FEMFloorTetContactHandler"
         self.fem_solver = self.sim.fem_solver
+        self.eps = eps
         self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
@@ -2250,6 +2515,8 @@ class FEMFloorTetContactHandler(FEMContactHandler):
             g = 1.0 / (1.0 / deformable_g + 1.0 / rigid_g)  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
+            if rigid_k < self.eps or rigid_phi0 > self.eps:
+                continue
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
                 self.contact_pairs[i_p].batch_idx = i_b
@@ -2329,7 +2596,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
         eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
-        self.name = "FEMSelfTetContact"
+        self.name = "FEMSelfTetContactHandler"
         self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
@@ -2437,6 +2704,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     def compute_pairs(self, i_step: ti.i32):
         """
         Computes the FEM self contact pairs and their properties.
+
         Intersection code reference:
         https://github.com/RobotLocomotion/drake/blob/8c3a249184ed09f0faab3c678536d66d732809ce/geometry/proximity/field_intersection.cc#L87
         """
@@ -2683,7 +2951,7 @@ class FEMFloorVertContactHandler(FEMContactHandler):
         simulator: "Simulator",
     ) -> None:
         super().__init__(simulator)
-        self.name = "FEMFloorVertContact"
+        self.name = "FEMFloorVertContactHandler"
         self.fem_solver = self.sim.fem_solver
 
         self.contact_pair_type = ti.types.struct(
@@ -2766,12 +3034,11 @@ class RigidFloorVertContactHandler(RigidContactHandler):
         simulator: "Simulator",
     ) -> None:
         super().__init__(simulator)
-        self.name = "RigidFloorVertContact"
+        self.name = "RigidFloorVertContactHandler"
         self.rigid_solver = self.sim.rigid_solver
         self.floor_height = self.sim.fem_solver.floor_height
         self.contact_pair_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
-            geom_idx=gs.ti_int,  # index of the vertex
             link_idx=gs.ti_int,  # index of the link
             contact_pos=gs.ti_vec3,  # contact position
             sap_info=self.sap_contact_info_type,  # contact info
@@ -2802,7 +3069,6 @@ class RigidFloorVertContactHandler(RigidContactHandler):
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
                 self.contact_pairs[i_p].batch_idx = i_b
-                self.contact_pairs[i_p].geom_idx = i_fv
                 self.contact_pairs[i_p].link_idx = i_l
                 self.contact_pairs[i_p].contact_pos = pos_v
                 sap_info[i_p].k = C
@@ -2812,39 +3078,151 @@ class RigidFloorVertContactHandler(RigidContactHandler):
                 overflow = True
         return overflow
 
-    @ti.func
-    def compute_delassus_world_frame(self):
-        self.coupler.rigid_solve_jacobian(
-            self.Jt, self.M_inv_Jt, self.n_contact_pairs[None], self.contact_pairs.batch_idx, 3
+
+@ti.data_oriented
+class RigidFloorTetContactHandler(RigidContactHandler):
+    def __init__(
+        self,
+        simulator: "Simulator",
+        eps: float = 1e-10,
+    ) -> None:
+        super().__init__(simulator)
+        self.name = "RigidFloorTetContactHandler"
+        self.rigid_solver = self.sim.rigid_solver
+        self.floor_height = self.sim.fem_solver.floor_height
+        self.eps = eps
+        self.contact_candidate_type = ti.types.struct(
+            batch_idx=gs.ti_int,  # batch index
+            geom_idx=gs.ti_int,  # index of the element
+            intersection_code=gs.ti_int,  # intersection code for the element
+            distance=gs.ti_vec4,  # distance vector for the element
         )
-        self.W.fill(0.0)
-        for i_p, i_d, i, j in ti.ndrange(self.n_contact_pairs[None], self.rigid_solver.n_dofs, 3, 3):
-            self.W[i_p][i, j] += self.M_inv_Jt[i_p, i_d][i] * self.Jt[i_p, i_d][j]
+        self.n_contact_candidates = ti.field(gs.ti_int, shape=())
+        self.max_contact_candidates = self.coupler.rigid_volume_elems.shape[0] * self.sim._B * 8
+        self.contact_candidates = self.contact_candidate_type.field(shape=(self.max_contact_candidates,))
+
+        self.contact_pair_type = ti.types.struct(
+            batch_idx=gs.ti_int,  # batch index
+            link_idx=gs.ti_int,  # index of the link
+            contact_pos=gs.ti_vec3,  # contact position
+            sap_info=self.sap_contact_info_type,  # contact info
+        )
+        self.max_contact_pairs = self.coupler.rigid_volume_elems.shape[0] * self.sim._B
+        self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
+        self.Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
+        self.M_inv_Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
+        self.W = ti.field(gs.ti_mat3, shape=(self.max_contact_pairs,))
 
     @ti.func
-    def compute_delassus(self, i_p):
-        return self.W[i_p]
+    def detection(self, f: ti.i32):
+        overflow = False
+        candidates = ti.static(self.contact_candidates)
+        # Compute contact pairs
+        self.n_contact_candidates[None] = 0
+        # TODO Check surface element only instead of all elements
+        for i_b, i_e in ti.ndrange(self.sim._B, self.coupler.n_rigid_volume_elems):
+            i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
+            i_l = self.rigid_solver.geoms_info.link_idx[i_g]
+            if self.rigid_solver.links_info.is_fixed[i_l]:
+                continue
+            intersection_code = ti.int32(0)
+            distance = ti.Vector.zero(gs.ti_float, 4)
+            for i in ti.static(range(4)):
+                i_v = self.coupler.rigid_volume_elems[i_e][i]
+                pos_v = self.coupler.rigid_volume_verts[i_b, i_v]
+                distance[i] = pos_v.z - self.floor_height
+                if distance[i] > 0.0:
+                    intersection_code |= 1 << i
 
-    @ti.func
-    def compute_Jx(self, i_p, x):
-        """
-        Compute the contact Jacobian J times a vector x.
-        """
-        i_b = self.contact_pairs[i_p].batch_idx
-        Jx = ti.Vector.zero(gs.ti_float, 3)
-        for i in range(self.rigid_solver.n_dofs):
-            Jx = Jx + self.Jt[i_p, i] * x[i_b, i]
-        return Jx
+            # check if the element intersect with the floor
+            if intersection_code != 0 and intersection_code != 15:
+                i_c = ti.atomic_add(self.n_contact_candidates[None], 1)
+                if i_c < self.max_contact_candidates:
+                    candidates[i_c].batch_idx = i_b
+                    candidates[i_c].geom_idx = i_e
+                    candidates[i_c].intersection_code = intersection_code
+                    candidates[i_c].distance = distance
+                else:
+                    overflow = True
 
-    @ti.func
-    def add_Jt_x(self, y, i_p, x):
-        i_b = self.contact_pairs[i_p].batch_idx
-        for i in range(self.rigid_solver.n_dofs):
-            y[i_b, i] += self.Jt[i_p, i].dot(x)
+        pairs = ti.static(self.contact_pairs)
+        sap_info = ti.static(pairs.sap_info)
+        self.n_contact_pairs[None] = 0
+        # Compute pair from candidates
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
+        for i_c in range(result_count):
+            candidate = candidates[i_c]
+            i_b = candidate.batch_idx
+            i_e = candidate.geom_idx
+            intersection_code = candidate.intersection_code
+            distance = candidate.distance
+            intersected_edges = self.coupler.MarchingTetsEdgeTable[intersection_code]
+            tet_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices
+            tet_pressures = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices
+
+            for i in ti.static(range(4)):
+                i_v = self.coupler.rigid_volume_elems[i_e][i]
+                tet_vertices[:, i] = self.coupler.rigid_volume_verts[i_b, i_v]
+                tet_pressures[i] = self.coupler.rigid_pressure_field[i_v]
+
+            polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 3 or 4 vertices
+            total_area = gs.EPS  # avoid division by zero
+            total_area_weighted_centroid = ti.Vector([0.0, 0.0, 0.0])
+            for i in range(4):
+                if intersected_edges[i] >= 0:
+                    edge = self.coupler.TetEdges[intersected_edges[i]]
+                    pos_v0 = tet_vertices[:, edge[0]]
+                    pos_v1 = tet_vertices[:, edge[1]]
+                    d_v0 = distance[edge[0]]
+                    d_v1 = distance[edge[1]]
+                    t = d_v0 / (d_v0 - d_v1)
+                    polygon_vertices[:, i] = pos_v0 + t * (pos_v1 - pos_v0)
+
+                    # Compute tirangle area and centroid
+                    if i >= 2:
+                        e1 = polygon_vertices[:, i - 1] - polygon_vertices[:, 0]
+                        e2 = polygon_vertices[:, i] - polygon_vertices[:, 0]
+                        area = 0.5 * e1.cross(e2).norm()
+                        total_area += area
+                        total_area_weighted_centroid += (
+                            area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
+                        )
+
+            centroid = total_area_weighted_centroid / total_area
+
+            # Compute barycentric coordinates
+            barycentric = tet_barycentric(centroid, tet_vertices)
+            pressure = (
+                barycentric[0] * tet_pressures[0]
+                + barycentric[1] * tet_pressures[1]
+                + barycentric[2] * tet_pressures[2]
+                + barycentric[3] * tet_pressures[3]
+            )
+
+            rigid_g = self.coupler.rigid_pressure_gradient[i_b, i_e].z
+            g = rigid_g  # harmonic average
+            rigid_k = total_area * g
+            rigid_phi0 = -pressure / g
+            if rigid_k < self.eps or rigid_phi0 > self.eps:
+                continue
+            i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
+            i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
+            i_l = self.rigid_solver.geoms_info.link_idx[i_g]
+            if i_p < self.max_contact_pairs:
+                pairs[i_p].batch_idx = i_b
+                pairs[i_p].link_idx = i_l
+                pairs[i_p].contact_pos = centroid
+                sap_info[i_p].k = rigid_k
+                sap_info[i_p].phi0 = rigid_phi0
+                sap_info[i_p].mu = self.rigid_solver.geoms_info.coup_friction[i_g]
+            else:
+                overflow = True
+
+        return overflow
 
 
 @ti.data_oriented
-class RigidFemTetContactHandler(RigidFEMContactHandler):
+class RigidFemTriTetContactHandler(RigidFEMContactHandler):
     """
     Class for handling self-contact between tetrahedral elements in a simulation using hydroelastic model.
 
@@ -2858,7 +3236,7 @@ class RigidFemTetContactHandler(RigidFEMContactHandler):
         eps: float = 1e-10,
     ) -> None:
         super().__init__(simulator)
-        self.name = "RigidFemTetContact"
+        self.name = "RigidFemTriTetContactHandler"
         self.eps = eps
         self.contact_candidate_type = ti.types.struct(
             batch_idx=gs.ti_int,  # batch index
@@ -2879,10 +3257,7 @@ class RigidFemTetContactHandler(RigidFEMContactHandler):
             tangent0=gs.ti_vec3,  # contact plane tangent0
             tangent1=gs.ti_vec3,  # contact plane tangent1
             geom_idx0=gs.ti_int,  # index of the FEM element
-            geom_idx1=gs.ti_int,  # index of the Rigid triangle
-            vert_idx1=gs.ti_ivec3,  # vertex indices of the rigid triangle
             barycentric0=gs.ti_vec4,  # barycentric coordinates of the contact point in tet
-            barycentric1=gs.ti_vec3,  # barycentric coordinates of the contact point in tri
             link_idx=gs.ti_int,  # index of the link
             contact_pos=gs.ti_vec3,  # contact position
             sap_info=self.sap_contact_info_type,  # contact info
@@ -3027,7 +3402,6 @@ class RigidFemTetContactHandler(RigidFEMContactHandler):
 
             centroid = total_area_weighted_centroid / total_area
             barycentric0 = tet_barycentric(centroid, tet_vertices)
-            barycentric1 = tri_barycentric(centroid, tri_vertices, normal=self.contact_candidates[i_c].normal)
             tangent0 = (polygon_vertices[:, 0] - centroid).normalized()
             tangent1 = self.contact_candidates[i_c].normal.cross(tangent0)
             deformable_g = self.coupler._hydroelastic_stiffness
@@ -3038,7 +3412,7 @@ class RigidFemTetContactHandler(RigidFEMContactHandler):
             g = rigid_g * deformable_g / (deformable_g + rigid_g)  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
-            i_g = self.rigid_solver.faces_info.geom_idx[i_f]
+            i_g = self.rigid_solver.verts_info.geom_idx[self.contact_candidates[i_c].vert_idx1[0]]
             i_l = self.rigid_solver.geoms_info.link_idx[i_g]
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
             if i_p < self.max_contact_pairs:
@@ -3047,10 +3421,7 @@ class RigidFemTetContactHandler(RigidFEMContactHandler):
                 self.contact_pairs[i_p].tangent0 = tangent0
                 self.contact_pairs[i_p].tangent1 = tangent1
                 self.contact_pairs[i_p].geom_idx0 = i_e
-                self.contact_pairs[i_p].geom_idx1 = i_f
-                self.contact_pairs[i_p].vert_idx1 = self.contact_candidates[i_c].vert_idx1
                 self.contact_pairs[i_p].barycentric0 = barycentric0
-                self.contact_pairs[i_p].barycentric1 = barycentric1
                 self.contact_pairs[i_p].link_idx = i_l
                 self.contact_pairs[i_p].contact_pos = centroid
                 sap_info[i_p].k = rigid_k
@@ -3153,3 +3524,277 @@ class RigidFemTetContactHandler(RigidFEMContactHandler):
             i_v = self.fem_solver.elements_i[i_g0].el2v[i]
             if i_v < self.fem_solver.n_vertices:
                 y[i_b, i_v] += self.contact_pairs[i_p].barycentric0[i] ** 2 * B_
+
+
+@ti.data_oriented
+class RigidRigidTetContactHandler(RigidRigidContactHandler):
+    """
+    Class for handling contact between Rigid bodies using hydroelastic model.
+
+    This class extends the RigidContact class and provides methods for detecting contact
+    between tetrahedral elements, computing contact pairs, and managing contact-related computations.
+    """
+
+    def __init__(
+        self,
+        simulator: "Simulator",
+        eps: float = 1e-10,
+    ) -> None:
+        super().__init__(simulator)
+        self.coupler = simulator.coupler
+        self.name = "RigidRigidTetContactHandler"
+        self.eps = eps
+        self.contact_candidate_type = ti.types.struct(
+            batch_idx=gs.ti_int,  # batch index
+            geom_idx0=gs.ti_int,  # index of the element
+            geom_idx1=gs.ti_int,  # index of the other element
+            intersection_code0=gs.ti_int,  # intersection code for element0
+            normal=gs.ti_vec3,  # contact plane normal
+            x=gs.ti_vec3,  # a point on the contact plane
+            distance0=gs.ti_vec4,  # distance vector for element0
+        )
+        self.n_contact_candidates = ti.field(gs.ti_int, shape=())
+        self.max_contact_candidates = self.coupler.rigid_volume_elems.shape[0] * self.sim._B * 8
+        self.contact_candidates = self.contact_candidate_type.field(shape=(self.max_contact_candidates,))
+
+        self.contact_pair_type = ti.types.struct(
+            batch_idx=gs.ti_int,  # batch index
+            normal=gs.ti_vec3,  # contact plane normal
+            tangent0=gs.ti_vec3,  # contact plane tangent0
+            tangent1=gs.ti_vec3,  # contact plane tangent1
+            link_idx0=gs.ti_int,  # index of the link
+            link_idx1=gs.ti_int,  # index of the other link
+            contact_pos=gs.ti_vec3,  # contact position
+            sap_info=self.sap_contact_info_type,  # contact info
+        )
+        self.max_contact_pairs = self.coupler.rigid_volume_elems.shape[0] * self.sim._B
+        self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
+        self.Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
+        self.M_inv_Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
+        self.W = ti.field(gs.ti_mat3, shape=(self.max_contact_pairs,))
+
+    @ti.func
+    def compute_candidates(self, f: ti.i32):
+        overflow = False
+        candidates = ti.static(self.contact_candidates)
+        self.n_contact_candidates[None] = 0
+        result_count = ti.min(
+            self.coupler.rigid_tet_bvh.query_result_count[None],
+            self.coupler.rigid_tet_bvh.max_query_results,
+        )
+        for i_r in range(result_count):
+            i_b, i_a, i_q = self.coupler.rigid_tet_bvh.query_result[i_r]
+            i_v0 = self.coupler.rigid_volume_elems[i_a][0]
+            i_v1 = self.coupler.rigid_volume_elems[i_q][1]
+            x0 = self.coupler.rigid_volume_verts[i_b, i_v0]
+            x1 = self.coupler.rigid_volume_verts[i_b, i_v1]
+            p0 = self.coupler.rigid_pressure_field[i_v0]
+            p1 = self.coupler.rigid_pressure_field[i_v1]
+            g0 = self.coupler.rigid_pressure_gradient[i_b, i_a]
+            g1 = self.coupler.rigid_pressure_gradient[i_b, i_q]
+            g0_norm = g0.norm()
+            g1_norm = g1.norm()
+            if g0_norm < gs.EPS or g1_norm < gs.EPS:
+                continue
+            # Calculate the isosurface, i.e. equal pressure plane defined by x and normal
+            # Solve for p0 + g0.dot(x - x0) = p1 + g1.dot(x - x1)
+            normal = g0 - g1
+            magnitude = normal.norm()
+            if magnitude < gs.EPS:
+                continue
+            normal /= magnitude
+            b = p1 - p0 - g1.dot(x1) + g0.dot(x0)
+            x = b / magnitude * normal
+            # Check that the normal is pointing along g0 and against g1, some allowance as used in Drake
+            if normal.dot(g0) < self.eps or normal.dot(g1) > -self.eps:
+                continue
+
+            intersection_code0 = ti.int32(0)
+            distance0 = ti.Vector([0.0, 0.0, 0.0, 0.0])
+            intersection_code1 = ti.int32(0)
+            distance1 = ti.Vector([0.0, 0.0, 0.0, 0.0])
+            for i in ti.static(range(4)):
+                i_v = self.coupler.rigid_volume_elems[i_a][i]
+                pos_v = self.coupler.rigid_volume_verts[i_b, i_v]
+                distance0[i] = (pos_v - x).dot(normal)  # signed distance
+                if distance0[i] > 0:
+                    intersection_code0 |= 1 << i
+            for i in ti.static(range(4)):
+                i_v = self.coupler.rigid_volume_elems[i_q][i]
+                pos_v = self.coupler.rigid_volume_verts[i_b, i_v]
+                distance1[i] = (pos_v - x).dot(normal)
+                if distance1[i] > 0:
+                    intersection_code1 |= 1 << i
+            # Fast check for whether both tets intersect with the plane
+            if (
+                intersection_code0 == 0
+                or intersection_code1 == 0
+                or intersection_code0 == 15
+                or intersection_code1 == 15
+            ):
+                continue
+            i_c = ti.atomic_add(self.n_contact_candidates[None], 1)
+            if i_c < self.max_contact_candidates:
+                candidates[i_c].batch_idx = i_b
+                candidates[i_c].normal = normal
+                candidates[i_c].x = x
+                candidates[i_c].geom_idx0 = i_a
+                candidates[i_c].intersection_code0 = intersection_code0
+                candidates[i_c].distance0 = distance0
+                candidates[i_c].geom_idx1 = i_q
+            else:
+                overflow = True
+        return overflow
+
+    @ti.func
+    def compute_pairs(self, i_step: ti.i32):
+        """
+        Computes the FEM self contact pairs and their properties.
+        Intersection code reference:
+        https://github.com/RobotLocomotion/drake/blob/8c3a249184ed09f0faab3c678536d66d732809ce/geometry/proximity/field_intersection.cc#L87
+        """
+        overflow = False
+        candidates = ti.static(self.contact_candidates)
+        pairs = ti.static(self.contact_pairs)
+        sap_info = ti.static(pairs.sap_info)
+        normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0])  # make normal point outward
+        self.n_contact_pairs[None] = 0
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
+        for i_c in range(result_count):
+            i_b = candidates[i_c].batch_idx
+            i_e0 = candidates[i_c].geom_idx0
+            i_e1 = candidates[i_c].geom_idx1
+            intersection_code0 = candidates[i_c].intersection_code0
+            distance0 = candidates[i_c].distance0
+            intersected_edges0 = self.coupler.MarchingTetsEdgeTable[intersection_code0]
+            tet_vertices0 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 0
+            tet_pressures0 = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices of tet 0
+            tet_vertices1 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 1
+
+            for i in ti.static(range(4)):
+                i_v = self.coupler.rigid_volume_elems[i_e0][i]
+                tet_vertices0[:, i] = self.coupler.rigid_volume_verts[i_b, i_v]
+                tet_pressures0[i] = self.coupler.rigid_pressure_field[i_v]
+
+            for i in ti.static(range(4)):
+                i_v = self.coupler.rigid_volume_elems[i_e1][i]
+                tet_vertices1[:, i] = self.coupler.rigid_volume_verts[i_b, i_v]
+
+            polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 8)  # maximum 8 vertices
+            polygon_n_vertices = gs.ti_int(0)
+            clipped_vertices = ti.Matrix.zero(gs.ti_float, 3, 8)  # maximum 8 vertices
+            clipped_n_vertices = gs.ti_int(0)
+            for i in range(4):
+                if intersected_edges0[i] >= 0:
+                    edge = self.coupler.TetEdges[intersected_edges0[i]]
+                    pos_v0 = tet_vertices0[:, edge[0]]
+                    pos_v1 = tet_vertices0[:, edge[1]]
+                    d_v0 = distance0[edge[0]]
+                    d_v1 = distance0[edge[1]]
+                    t = d_v0 / (d_v0 - d_v1)
+                    polygon_vertices[:, polygon_n_vertices] = pos_v0 + t * (pos_v1 - pos_v0)
+                    polygon_n_vertices += 1
+            # Intersects the polygon with the four halfspaces of the four triangles
+            # of the tetrahedral element1.
+            for face in range(4):
+                clipped_n_vertices = 0
+                x = tet_vertices1[:, (face + 1) % 4]
+                normal = (tet_vertices1[:, (face + 2) % 4] - x).cross(
+                    tet_vertices1[:, (face + 3) % 4] - x
+                ) * normal_signs[face]
+                normal /= normal.norm()
+
+                distances = ti.Vector.zero(gs.ti_float, 8)
+                for i in range(polygon_n_vertices):
+                    distances[i] = (polygon_vertices[:, i] - x).dot(normal)
+
+                for i in range(polygon_n_vertices):
+                    j = (i + 1) % polygon_n_vertices
+                    if distances[i] <= 0.0:
+                        clipped_vertices[:, clipped_n_vertices] = polygon_vertices[:, i]
+                        clipped_n_vertices += 1
+                        if distances[j] > 0.0:
+                            wa = distances[j] / (distances[j] - distances[i])
+                            wb = 1.0 - wa
+                            clipped_vertices[:, clipped_n_vertices] = (
+                                wa * polygon_vertices[:, i] + wb * polygon_vertices[:, j]
+                            )
+                            clipped_n_vertices += 1
+                    elif distances[j] <= 0.0:
+                        wa = distances[j] / (distances[j] - distances[i])
+                        wb = 1.0 - wa
+                        clipped_vertices[:, clipped_n_vertices] = (
+                            wa * polygon_vertices[:, i] + wb * polygon_vertices[:, j]
+                        )
+                        clipped_n_vertices += 1
+                polygon_n_vertices = clipped_n_vertices
+                polygon_vertices = clipped_vertices
+
+                if polygon_n_vertices < 3:
+                    # If the polygon has less than 3 vertices, it is not a valid contact
+                    break
+
+            if polygon_n_vertices < 3:
+                continue
+
+            # compute centroid and area of the polygon
+            total_area = 0.0  # avoid division by zero
+            total_area_weighted_centroid = ti.Vector.zero(gs.ti_float, 3)
+            for i in range(2, polygon_n_vertices):
+                e1 = polygon_vertices[:, i - 1] - polygon_vertices[:, 0]
+                e2 = polygon_vertices[:, i] - polygon_vertices[:, 0]
+                area = 0.5 * e1.cross(e2).norm()
+                total_area += area
+                total_area_weighted_centroid += (
+                    area * (polygon_vertices[:, 0] + polygon_vertices[:, i - 1] + polygon_vertices[:, i]) / 3.0
+                )
+
+            if total_area < self.eps:
+                continue
+            centroid = total_area_weighted_centroid / total_area
+            tangent0 = polygon_vertices[:, 0] - centroid
+            tangent0 /= tangent0.norm()
+            tangent1 = candidates[i_c].normal.cross(tangent0)
+            g0 = self.coupler.rigid_pressure_gradient[i_b, i_e0].dot(candidates[i_c].normal)
+            g1 = -self.coupler.rigid_pressure_gradient[i_b, i_e1].dot(candidates[i_c].normal)
+            g = 1.0 / (1.0 / g0 + 1.0 / g1)  # harmonic average, can handle infinity
+            rigid_k = total_area * g
+            barycentric0 = tet_barycentric(centroid, tet_vertices0)
+            pressure = (
+                barycentric0[0] * tet_pressures0[0]
+                + barycentric0[1] * tet_pressures0[1]
+                + barycentric0[2] * tet_pressures0[2]
+                + barycentric0[3] * tet_pressures0[3]
+            )
+            rigid_phi0 = -pressure / g
+            if rigid_phi0 > self.eps:
+                continue
+            i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
+            if i_p < self.max_contact_pairs:
+                pairs[i_p].batch_idx = i_b
+                pairs[i_p].normal = candidates[i_c].normal
+                pairs[i_p].tangent0 = tangent0
+                pairs[i_p].tangent1 = tangent1
+                pairs[i_p].contact_pos = centroid
+                i_g0 = self.coupler.rigid_volume_elems_geom_idx[i_e0]
+                i_g1 = self.coupler.rigid_volume_elems_geom_idx[i_e1]
+                i_l0 = self.rigid_solver.geoms_info.link_idx[i_g0]
+                i_l1 = self.rigid_solver.geoms_info.link_idx[i_g1]
+                pairs[i_p].link_idx0 = i_l0
+                pairs[i_p].link_idx1 = i_l1
+                sap_info[i_p].k = rigid_k
+                sap_info[i_p].phi0 = rigid_phi0
+                sap_info[i_p].mu = ti.sqrt(
+                    self.rigid_solver.geoms_info.friction[i_g0] * self.rigid_solver.geoms_info.friction[i_g1]
+                )
+            else:
+                overflow = True
+        return overflow
+
+    @ti.func
+    def detection(self, f: ti.i32):
+        overflow = False
+        overflow |= self.coupler.rigid_tet_bvh.query(self.coupler.rigid_tet_aabb.aabbs)
+        overflow |= self.compute_candidates(f)
+        overflow |= self.compute_pairs(f)
+        return overflow
