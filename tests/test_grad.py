@@ -13,7 +13,6 @@ pytestmark = [
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(precision, show_viewer):
-    pytest.skip(reason="skip this example until a gstaichi bug is fixed")
     # FIXME: Wait for fix to be merged in GsTaichi: https://github.com/Genesis-Embodied-AI/gstaichi/pull/225
     if sys.platform == "darwin" and gs.backend != gs.cpu:
         pytest.skip(reason="GsTaichi does not support AutoDiff on non-CPU backend on Mac OS for now.")
