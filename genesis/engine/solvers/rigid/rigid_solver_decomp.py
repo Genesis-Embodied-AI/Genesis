@@ -2287,6 +2287,11 @@ class RigidSolver(Solver):
         return ti_to_torch(self.geoms_info.friction, geoms_idx, None, unsafe=unsafe)
 
     def get_aabb(self, entities_idx=None, envs_idx=None, *, unsafe=False):
+        from genesis.engine.couplers import LegacyCoupler
+
+        if not isinstance(self.sim.coupler, LegacyCoupler):
+            raise gs.GenesisException("Method only supported when using 'LegacyCoupler' coupler type.")
+
         aabb_min = ti_to_torch(
             self.geoms_state.aabb_min, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
         )

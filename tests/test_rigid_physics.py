@@ -1085,6 +1085,36 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
 
 
 @pytest.mark.required
+def test_robot_scaling_primitive_collision(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    asset_path = get_hf_dataset(pattern="cross.xml")
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=f"{asset_path}/cross.xml",
+            scale=0.5,
+        ),
+        vis_mode="collision",
+    )
+    scene.build()
+
+    robot.set_qpos([0.0, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0, 1.0, -1.0, -1.0, 1.0])
+    for _ in range(50):
+        scene.step()
+
+    # Robot not moving anymore
+    assert_allclose(robot.get_links_vel(), 0.0, atol=5e-3)
+
+    # Robot in contact with the ground
+    assert_allclose(robot.get_verts().min(dim=0).values[2], 0.0, tol=1e-3)
+
+
+@pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -1705,7 +1735,7 @@ def test_frictionloss_advanced(show_viewer, tol):
         scene.step()
 
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
-    # assert_allclose(torch.stack([geom.get_AABB() for geom in robot.geoms])[:, :, 2].min(), 0.0, tol=1e-3)
+    # assert_allclose(torch.stack([geom.get_aabb() for geom in robot.geoms])[:, :, 2].min(), 0.0, tol=1e-3)
     assert_allclose(box.get_dofs_velocity(), 0.0, tol=tol)
 
 
@@ -2179,7 +2209,7 @@ def test_urdf_parsing(show_viewer, tol):
                 ]
             )
             for geom in entities[key].geoms:
-                AABB_i = geom.get_AABB()
+                AABB_i = geom.get_aabb()
                 AABB[0] = np.minimum(AABB[0], AABB_i[0])
                 AABB[1] = np.maximum(AABB[1], AABB_i[1])
             AABB_all.append(AABB)
@@ -2661,9 +2691,10 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
         (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
-        (-1, -1, gs_robot.get_AABB, None, None),
+        (-1, -1, gs_robot.get_aabb, None, None),
         # LINK
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
+        (-1, -1, gs_link.get_aabb, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
 
@@ -2902,11 +2933,12 @@ def test_geom_pos_quat(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
 def test_contype_conaffinity(show_viewer, tol):
+    GRAVITY = (0.0, 0.0, -10.0)
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, -10.0),
+            gravity=GRAVITY,
         ),
         show_viewer=show_viewer,
     )
@@ -2917,46 +2949,72 @@ def test_contype_conaffinity(show_viewer, tol):
         )
     )
     box1 = scene.add_entity(
-        gs.morphs.Box(
+        morph=gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0.0, 0.0, 0.5),
             contype=3,
             conaffinity=3,
-        )
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
     )
     box2 = scene.add_entity(
-        gs.morphs.Box(
+        morph=gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0.0, 0.0, 1.0),
             contype=2,
             conaffinity=2,
-        )
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 1.0, 0.0, 1.0),
+        ),
     )
     box3 = scene.add_entity(
-        gs.morphs.Box(
+        morph=gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0.0, 0.0, 1.5),
             contype=1,
             conaffinity=1,
-        )
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 0.0, 1.0, 1.0),
+        ),
+    )
+    box4 = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 2.0),
+            contype=0,
+            conaffinity=0,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.8, 0.8, 0.8, 1.0),
+        ),
     )
     scene.build()
 
-    for _ in range(100):
+    for _ in range(80):
         scene.step()
 
-    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-3)
-    assert_allclose(box1.get_pos(), np.array([0.0, 0.0, 0.25]), atol=1e-3)
-    assert_allclose(box2.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
-    assert_allclose(box3.get_pos(), np.array([0.0, 0.0, 0.75]), atol=1e-3)
+    assert_allclose(box1.get_pos(), (0.0, 0.0, 0.25), atol=5e-4)
+    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=1e-3)
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-4)
+    assert_allclose(scene.rigid_solver.get_links_acc(slice(box4.link_start, box4.link_end)), GRAVITY, atol=tol)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_mesh_primitive_COM(show_viewer, tol):
+    GRAVITY = (0.0, 0.0, -10.0)
+
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, -10.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=GRAVITY,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -3063,46 +3121,51 @@ def test_noslip_iterations(scale, show_viewer, tol):
 
 
 @pytest.mark.required
-def test_batched_aabb(tol):
+@pytest.mark.parametrize("n_envs", [0, 1])
+def test_axis_aligned_bounding_boxes(n_envs):
     scene = gs.Scene()
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(
             normal=(0, 0, 1),
             pos=(0, 0, 0),
         ),
     )
-    box = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
             pos=(0.5, 0, 0.05),
         ),
     )
-    sphere = scene.add_entity(
+    scene.add_entity(
+        gs.morphs.Cylinder(
+            height=0.8,
+            radius=0.06,
+            pos=(1.0, 0, 0.5),
+        ),
+    )
+    scene.add_entity(
         gs.morphs.Sphere(
             radius=0.05,
             pos=(-0.5, 0, 0.05),
         ),
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     all_aabbs = scene.sim.rigid_solver.get_aabb()
-    plane_aabb = plane.get_aabb()
-    box_aabb = box.get_aabb()
-    sphere_aabb = sphere.get_aabb()
+    aabbs = [entity.get_aabb() for entity in scene.entities]
+    if n_envs > 0:
+        assert all_aabbs.ndim == 4 and len(all_aabbs) == n_envs
+    else:
+        assert all_aabbs.ndim == 3
+    assert all_aabbs.shape[-3:] == (4, 2, 3)
+    assert_allclose(aabbs[0], all_aabbs.split(1, dim=-3)[0], atol=gs.EPS)
 
-    assert_allclose(all_aabbs.shape, (3, 2, 3), atol=0)
-    assert_allclose(plane_aabb.shape[-1], 3, atol=0)
-    assert_allclose(box_aabb.shape[-1], 3, atol=0)
-    assert_allclose(sphere_aabb.shape[-1], 3, atol=0)
-    assert_allclose((plane_aabb, box_aabb, sphere_aabb), all_aabbs, atol=tol)
-
-    box_aabb_min, box_aabb_max = box_aabb
-    assert_allclose(box_aabb_min, (0.45, -0.05, 0.0), atol=tol)
-    assert_allclose(box_aabb_max, (0.55, 0.05, 0.1), atol=tol)
-
-    sphere_aabb_min, sphere_aabb_max = sphere_aabb
-    assert_allclose(sphere_aabb_min, (-0.55, -0.05, 0.0), atol=tol)
-    assert_allclose(sphere_aabb_max, (-0.45, 0.05, 0.1), atol=tol)
+    box_aabb_min, box_aabb_max = aabbs[1].split(1, dim=-2)
+    assert_allclose(box_aabb_min, (0.45, -0.05, 0.0), atol=gs.EPS)
+    assert_allclose(box_aabb_max, (0.55, 0.05, 0.1), atol=gs.EPS)
+    sphere_aabb_min, sphere_aabb_max = aabbs[3].split(1, dim=-2)
+    assert_allclose(sphere_aabb_min, (-0.55, -0.05, 0.0), atol=gs.EPS)
+    assert_allclose(sphere_aabb_max, (-0.45, 0.05, 0.1), atol=gs.EPS)
 
 
 @pytest.mark.required

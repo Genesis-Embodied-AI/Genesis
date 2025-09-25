@@ -423,7 +423,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             tmesh = trimesh.creation.icosphere(radius=radius)
         gs_type = gs.GEOM_TYPE.SPHERE
-        geom_data = np.array([radius])
+        geom_data = np.array([radius * scale])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
         if is_col:
@@ -432,7 +432,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             tmesh = trimesh.creation.icosphere(radius=1.0)
         tmesh.apply_transform(np.diag([*geom_size, 1]))
         gs_type = gs.GEOM_TYPE.ELLIPSOID
-        geom_data = geom_size
+        geom_data = geom_size * scale
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CAPSULE:
         radius = geom_size[0]
@@ -442,14 +442,14 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             tmesh = trimesh.creation.capsule(radius=radius, height=height)
         gs_type = gs.GEOM_TYPE.CAPSULE
-        geom_data = np.array([radius, height])
+        geom_data = np.array([radius * scale, height * scale])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CYLINDER:
         radius = geom_size[0]
         height = geom_size[1] * 2
         tmesh = trimesh.creation.cylinder(radius=radius, height=height)
         gs_type = gs.GEOM_TYPE.CYLINDER
-        geom_data = np.array([radius, height])
+        geom_data = np.array([radius * scale, height * scale])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_BOX:
         tmesh = trimesh.creation.box(extents=geom_size * 2)
@@ -470,7 +470,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
                 uv_coordinates = uv_coordinates * mj_mat.texrepeat
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
-        geom_data = 2 * geom_size
+        geom_data = 2 * geom_size * scale
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
         mj_mesh = mj.mesh(mj_geom.dataid[0])

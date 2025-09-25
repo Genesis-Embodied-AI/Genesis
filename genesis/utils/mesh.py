@@ -981,7 +981,7 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+    # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
     import pyvista as pv
     import tetgen
 

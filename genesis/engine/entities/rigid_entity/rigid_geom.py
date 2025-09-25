@@ -396,16 +396,12 @@ class RigidGeom(RBC):
         return tensor
 
     @gs.assert_built
-    def get_AABB(self):
+    def get_aabb(self):
         """
         Get the axis-aligned bounding box (AABB) of the geom in world frame.
         """
         verts = self.get_verts()
-        AABB = torch.concatenate(
-            [verts.min(axis=-2, keepdim=True)[0], verts.max(axis=-2, keepdim=True)[0]],
-            axis=-2,
-        )
-        return AABB
+        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
 
     def set_sol_params(self, sol_params):
         """

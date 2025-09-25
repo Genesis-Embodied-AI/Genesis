@@ -3,7 +3,7 @@ import pytest
 
 import genesis as gs
 
-from .utils import assert_allclose
+from .utils import assert_allclose, get_hf_dataset
 
 
 pytestmark = [
@@ -141,3 +141,68 @@ def test_fluid_emitter(material_type, show_viewer):
         droplet_size=0.22,
     )
     scene.step()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
+def test_sap_fem_vs_robot(show_viewer):
+    SPHERE_RADIUS = 0.2
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 1.5, 1.2),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            collision=False,
+        ),
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            radius=SPHERE_RADIUS,
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=1e5,
+            nu=0.4,
+            model="linear_corotated",
+        ),
+    )
+    asset_path = get_hf_dataset(pattern="cross.xml")
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=f"{asset_path}/cross.xml",
+            pos=(0.0, 0.0, 2 * SPHERE_RADIUS + 0.04),
+            scale=0.5,
+        ),
+    )
+    scene.build()
+
+    # Run the simulation
+    for _ in range(50):
+        scene.step()
+
+    # Check that the sphere did not move, and the slightly squished
+    state = sphere.get_state()
+    center = state.pos.mean(axis=(0, 1))
+    assert_allclose(center[:2], 0.0, tol=1e-2)
+    assert center[2] < SPHERE_RADIUS - 0.02
+
+    # Check that the ant is laying on top of the sphere
+    robot_pos = robot.get_pos()
+    assert_allclose(robot_pos[:2], 0.0, tol=2e-2)
+    assert robot_pos[2] > (2 * SPHERE_RADIUS + 0.04) - 0.05
+
+    # Check that the legs of the ants are resting on the sphere
+    assert_allclose(robot.get_qpos()[-4:].abs(), 1.0, tol=0.1)
