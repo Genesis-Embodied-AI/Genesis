@@ -4,9 +4,6 @@ import argparse
 
 
 def main():
-    pile_type = "static"
-    num_cubes = 5
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--pile_type", type=str, default=pile_type, choices=["static", "falling"])
     parser.add_argument("--num_cubes", type=int, default=num_cubes, choices=range(5, 11))
