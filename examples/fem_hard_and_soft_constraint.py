@@ -1,8 +1,11 @@
-import genesis as gs
+import os
+import argparse
+
 import numpy as np
 import torch
-import argparse
 from tqdm import tqdm
+
+import genesis as gs
 
 SCENE_POS = (0.5, 0.5, 1.0)
 
@@ -14,10 +17,11 @@ def main():
     )
     parser.add_argument("--dt", type=float)
     parser.add_argument("--substeps", type=int)
-    parser.add_argument("--seconds", type=float, default=0.01)
+    parser.add_argument("--seconds", type=float, default=5)
     parser.add_argument("--vis", "-v", action="store_true", default=False)
 
     args = parser.parse_args()
+    args.seconds = 0.01 if "PYTEST_VERSION" in os.environ else args.seconds
 
     if args.solver == "explicit":
         dt = args.dt if args.dt is not None else 1e-4

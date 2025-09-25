@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -74,8 +75,9 @@ class Jet(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--num_steps", type=int, default=20)
+    parser.add_argument("-n", "--num_steps", type=int, default=200)
     args = parser.parse_args()
+    args.num_steps = 20 if "PYTEST_VERSION" in os.environ else args.num_steps
 
     ########################## init ##########################
     gs.init(seed=0, precision="32", logging_level="debug")
