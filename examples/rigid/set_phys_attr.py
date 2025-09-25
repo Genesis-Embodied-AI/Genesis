@@ -140,7 +140,12 @@ def main():
         ),
         motors_dof_idx,
     )
-    print("=== damping ===\n", franka.get_dofs_damping())
+    print("=== set mass ===\n", franka.get_dofs_damping())
+    original_mass = franka.get_mass()
+    new_mass = original_mass * 2
+    franka.set_mass(new_mass)
+
+    print("=== invweight ===\n", franka.get_dofs_invweight())
     links_inertial_mass = np.array(
         [
             [0.6298, 4.9707, 0.6469, 3.2286, 3.5879, 1.2259, 1.6666, 0.7355, 0.7300, 0.0150, 0.0150],
