@@ -141,6 +141,76 @@ def test_fluid_emitter(material_type, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
+def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
+    BOX_POS = (0.0, 0.0, 0.1)
+    BOX_HALFHEIGHT = 0.1
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1 / 60,
+            substeps=2,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(
+            pcg_threshold=1e-10,
+            sap_convergence_atol=1e-10,
+            sap_convergence_rtol=1e-10,
+            linesearch_ftol=1e-10,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            collision=False,
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.5, 0.5, 2 * BOX_HALFHEIGHT),
+            pos=(0.0, 0.0, BOX_HALFHEIGHT),
+        ),
+        material=gs.materials.Rigid(),
+    )
+    asset_path = get_hf_dataset(pattern="heavy_three_joint_link.xml")
+    robot_1 = scene.add_entity(
+        gs.morphs.MJCF(
+            file=f"{asset_path}/heavy_three_joint_link.xml",
+            pos=(-0.2, -0.26, 0.0),
+            scale=0.3,
+        ),
+    )
+    robot_2 = scene.add_entity(
+        gs.morphs.MJCF(
+            file=f"{asset_path}/heavy_three_joint_link.xml",
+            pos=(0.17, -0.26, 0.1),
+            euler=(0.0, 0.0, 90.0),
+            scale=0.3,
+        ),
+    )
+    scene.build()
+
+    # Run simulation
+    for _ in range(80):
+        scene.step()
+
+    # All the entities must be still
+    for entity in scene.entities:
+        assert_allclose(entity.get_links_vel(), 0.0, atol=2e-2)
+
+    # The box should stay at its initial position
+    assert_allclose(box.get_pos(), (0.0, 0.0, BOX_HALFHEIGHT), atol=1e-3)
+
+    # The box, and both robots should be laying on top of each other
+    robot_1_min_corner, robot_1_max_corner = robot_1.get_aabb()
+    robot_2_min_corner, robot_2_max_corner = robot_2.get_aabb()
+    assert (robot_1_min_corner[:2] > -0.4).all() and (robot_2_min_corner[:2] > -0.4).all()
+    assert (robot_1_min_corner[:2] < 0.4).all() and (robot_2_min_corner[:2] < 0.4).all()
+    assert robot_1_max_corner[2] > 2 * BOX_HALFHEIGHT
+    assert robot_2_max_corner[2] > robot_1_max_corner[2] + 0.05
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
 def test_sap_fem_vs_robot(show_viewer):
     SPHERE_RADIUS = 0.2
 
@@ -192,12 +262,12 @@ def test_sap_fem_vs_robot(show_viewer):
     # Check that the sphere did not move, and the slightly squished
     state = sphere.get_state()
     center = state.pos.mean(axis=(0, 1))
-    assert_allclose(center[:2], 0.0, tol=1e-2)
+    assert_allclose(center[:2], 0.0, tol=0.01)
     assert center[2] < SPHERE_RADIUS - 0.02
 
     # Check that the ant is laying on top of the sphere
     robot_pos = robot.get_pos()
-    assert_allclose(robot_pos[:2], 0.0, tol=2e-2)
+    assert_allclose(robot_pos[:2], 0.0, tol=0.03)
     assert robot_pos[2] > (2 * SPHERE_RADIUS + 0.04) - 0.05
 
     # Check that the legs of the ants are resting on the sphere

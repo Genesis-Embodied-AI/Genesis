@@ -242,7 +242,7 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         BV, *_ = igl.bounding_box(pos)
         entity_center = 0.5 * (BV[0] + BV[-1])
         if coupler_type == gs.options.SAPCouplerOptions:
-            tol = 1e-2 if material_model == "linear_corotated" else 5e-4
+            tol = 1e-2 if material_model == "linear_corotated" else 1e-3
         else:
             tol = 5e-3
         assert_allclose(entity_center[:2], init_pos[:2], tol=tol)

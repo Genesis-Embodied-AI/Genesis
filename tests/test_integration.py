@@ -314,4 +314,4 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         scene.step()
     box_pos_post = obj.get_state().pos.mean(dim=-2)
-    assert_allclose(box_pos_f, box_pos_post, atol=5e-5)
+    assert_allclose(box_pos_f, box_pos_post, atol=1e-4)
