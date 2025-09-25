@@ -549,6 +549,6 @@ class RigidTetLBVH(LBVH):
         i_a: index of the found AABB
         i_q: index of the query AABB
         """
-        i_ag = self.coupler.rigid_volume_elem_geom_idxs[i_a]
-        i_qg = self.coupler.rigid_volume_elem_geom_idxs[i_q]
+        i_ag = self.coupler.rigid_volume_elems_geom_idx[i_a]
+        i_qg = self.coupler.rigid_volume_elems_geom_idx[i_q]
         return not self.rigid_solver.collider._collider_info.collision_pair_validity[i_ag, i_qg]

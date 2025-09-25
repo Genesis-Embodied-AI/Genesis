@@ -310,8 +310,8 @@ class SAPCoupler(RBC):
     def _init_hydroelastic_rigid_fields_and_info(self):
         rigid_volume_verts = []
         rigid_volume_elems = []
-        rigid_volume_vert_geom_idxs = []
-        rigid_volume_elem_geom_idxs = []
+        rigid_volume_verts_geom_idx = []
+        rigid_volume_elems_geom_idx = []
         rigid_pressure_field = []
         offset = 0
         for geom in self.rigid_solver.geoms:
@@ -320,47 +320,43 @@ class SAPCoupler(RBC):
                     raise gs.GenesisException("Primitive plane not supported as user-specified collision geometries.")
                 volume = geom.get_trimesh().volume
                 tet_cfg = {"nobisect": False, "maxvolume": volume / 100}
-                verts, elems = eu.split_all_surface_tets(
-                    *eu.mesh_to_elements(
-                        file=geom.get_trimesh(),
-                        tet_cfg=tet_cfg,
-                    )
-                )
+                verts, elems = eu.split_all_surface_tets(*eu.mesh_to_elements(file=geom.get_trimesh(), tet_cfg=tet_cfg))
                 rigid_volume_verts.append(verts)
                 rigid_volume_elems.append(elems + offset)
-                offset += len(verts)
-                rigid_volume_vert_geom_idxs.append(np.full(len(verts), geom.idx, dtype=np.int32))
-                rigid_volume_elem_geom_idxs.append(np.full(len(elems), geom.idx, dtype=np.int32))
+                rigid_volume_verts_geom_idx.append(np.full(len(verts), geom.idx, dtype=np.int32))
+                rigid_volume_elems_geom_idx.append(np.full(len(elems), geom.idx, dtype=np.int32))
                 signed_distance, *_ = igl.signed_distance(verts, geom.init_verts, geom.init_faces)
                 signed_distance = signed_distance.astype(gs.np_float, copy=False)
 
-                unsigned_distance = np.abs(signed_distance)
-                max_distance = np.max(unsigned_distance)
-                if max_distance < gs.EPS:
+                distance_unsigned = np.abs(signed_distance)
+                distance_max = np.max(distance_unsigned)
+                if distance_max < gs.EPS:
                     gs.raise_exception(
-                        f"Pressure field max distance is too small: {max_distance}. "
+                        f"Pressure field max distance is too small: {distance_max}. "
                         "This might be due to a mesh having no internal vertices."
                     )
-                pressure_field_np = unsigned_distance / max_distance * self._hydroelastic_stiffness
+                pressure_field_np = distance_unsigned / distance_max * self._hydroelastic_stiffness
                 rigid_pressure_field.append(pressure_field_np)
-        if len(rigid_volume_verts) == 0:
-            gs.raise_exception("No rigid collision found.")
+                offset += len(verts)
+        if not rigid_volume_verts:
+            gs.raise_exception("No rigid collision geometries found.")
         rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=np.float32)
         rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0, dtype=np.float32)
+        rigid_volume_verts_geom_idx_np = np.concatenate(rigid_volume_verts_geom_idx, axis=0, dtype=np.float32)
+        rigid_volume_elems_geom_idx_np = np.concatenate(rigid_volume_elems_geom_idx, axis=0, dtype=np.float32)
+        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
+
         self.n_rigid_volume_verts = len(rigid_volume_verts_np)
         self.n_rigid_volume_elems = len(rigid_volume_elems_np)
-        rigid_volume_vert_geom_idxs_np = np.concatenate(rigid_volume_vert_geom_idxs, axis=0, dtype=np.float32)
-        rigid_volume_elem_geom_idxs_np = np.concatenate(rigid_volume_elem_geom_idxs, axis=0, dtype=np.float32)
-        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
         self.rigid_volume_verts_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_verts,))
         self.rigid_volume_verts_rest.from_numpy(rigid_volume_verts_np)
         self.rigid_volume_verts = ti.field(gs.ti_vec3, shape=(self._B, self.n_rigid_volume_verts))
         self.rigid_volume_elems = ti.field(gs.ti_ivec4, shape=(self.n_rigid_volume_elems,))
         self.rigid_volume_elems.from_numpy(rigid_volume_elems_np)
-        self.rigid_volume_vert_geom_idxs = ti.field(gs.ti_int, shape=(self.n_rigid_volume_verts,))
-        self.rigid_volume_vert_geom_idxs.from_numpy(rigid_volume_vert_geom_idxs_np)
-        self.rigid_volume_elem_geom_idxs = ti.field(gs.ti_int, shape=(self.n_rigid_volume_elems,))
-        self.rigid_volume_elem_geom_idxs.from_numpy(rigid_volume_elem_geom_idxs_np)
+        self.rigid_volume_verts_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_verts,))
+        self.rigid_volume_verts_geom_idx.from_numpy(rigid_volume_verts_geom_idx_np)
+        self.rigid_volume_elems_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_elems,))
+        self.rigid_volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
         self.rigid_pressure_field = ti.field(gs.ti_float, shape=(self.n_rigid_volume_verts,))
         self.rigid_pressure_field.from_numpy(rigid_pressure_field_np)
         self.rigid_pressure_gradient_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_elems,))
@@ -371,14 +367,14 @@ class SAPCoupler(RBC):
     @ti.func
     def rigid_update_volume_verts_pressure_gradient(self):
         for i_b, i_v in ti.ndrange(self._B, self.n_rigid_volume_verts):
-            i_g = self.rigid_volume_vert_geom_idxs[i_v]
+            i_g = self.rigid_volume_verts_geom_idx[i_v]
             pos = self.rigid_solver.geoms_state.pos[i_g, i_b]
             quat = self.rigid_solver.geoms_state.quat[i_g, i_b]
             R = gu.ti_quat_to_R(quat)
             self.rigid_volume_verts[i_b, i_v] = R @ self.rigid_volume_verts_rest[i_v] + pos
 
         for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
-            i_g = self.rigid_volume_elem_geom_idxs[i_e]
+            i_g = self.rigid_volume_elems_geom_idx[i_e]
             pos = self.rigid_solver.geoms_state.pos[i_g, i_b]
             quat = self.rigid_solver.geoms_state.quat[i_g, i_b]
             R = gu.ti_quat_to_R(quat)
@@ -2251,9 +2247,7 @@ class RigidRigidContactHandler(RigidContactHandler):
                     t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
                     _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
 
-                    diff = vel
-                    jac = diff
-                    self.Jt[i_p, i_d] = self.Jt[i_p, i_d] + jac
+                    self.Jt[i_p, i_d] = self.Jt[i_p, i_d] + vel
                 link = self.rigid_solver.links_info.parent_idx[link_maybe_batch]
             link = pairs[i_p].link_idx1
             while link > -1:
@@ -2269,9 +2263,7 @@ class RigidRigidContactHandler(RigidContactHandler):
                     t_pos = pairs[i_p].contact_pos - self.rigid_solver.links_state.root_COM[link, i_b]
                     _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdof_vel, t_pos, t_quat)
 
-                    diff = vel
-                    jac = diff
-                    self.Jt[i_p, i_d] = self.Jt[i_p, i_d] - jac
+                    self.Jt[i_p, i_d] = self.Jt[i_p, i_d] - vel
                 link = self.rigid_solver.links_info.parent_idx[link_maybe_batch]
 
     @ti.func
@@ -2712,6 +2704,7 @@ class FEMSelfTetContactHandler(FEMContactHandler):
     def compute_pairs(self, i_step: ti.i32):
         """
         Computes the FEM self contact pairs and their properties.
+
         Intersection code reference:
         https://github.com/RobotLocomotion/drake/blob/8c3a249184ed09f0faab3c678536d66d732809ce/geometry/proximity/field_intersection.cc#L87
         """
@@ -3128,7 +3121,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
         self.n_contact_candidates[None] = 0
         # TODO Check surface element only instead of all elements
         for i_b, i_e in ti.ndrange(self.sim._B, self.coupler.n_rigid_volume_elems):
-            i_g = self.coupler.rigid_volume_elem_geom_idxs[i_e]
+            i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
             i_l = self.rigid_solver.geoms_info.link_idx[i_g]
             if self.rigid_solver.links_info.is_fixed[i_l]:
                 continue
@@ -3213,7 +3206,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
             if rigid_k < self.eps or rigid_phi0 > self.eps:
                 continue
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
-            i_g = self.coupler.rigid_volume_elem_geom_idxs[i_e]
+            i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
             i_l = self.rigid_solver.geoms_info.link_idx[i_g]
             if i_p < self.max_contact_pairs:
                 pairs[i_p].batch_idx = i_b
@@ -3666,10 +3659,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
         sap_info = ti.static(pairs.sap_info)
         normal_signs = ti.Vector([1.0, -1.0, 1.0, -1.0])  # make normal point outward
         self.n_contact_pairs[None] = 0
-        result_count = ti.min(
-            self.n_contact_candidates[None],
-            self.max_contact_candidates,
-        )
+        result_count = ti.min(self.n_contact_candidates[None], self.max_contact_candidates)
         for i_c in range(result_count):
             i_b = candidates[i_c].batch_idx
             i_e0 = candidates[i_c].geom_idx0
@@ -3786,8 +3776,8 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
                 pairs[i_p].tangent0 = tangent0
                 pairs[i_p].tangent1 = tangent1
                 pairs[i_p].contact_pos = centroid
-                i_g0 = self.coupler.rigid_volume_elem_geom_idxs[i_e0]
-                i_g1 = self.coupler.rigid_volume_elem_geom_idxs[i_e1]
+                i_g0 = self.coupler.rigid_volume_elems_geom_idx[i_e0]
+                i_g1 = self.coupler.rigid_volume_elems_geom_idx[i_e1]
                 i_l0 = self.rigid_solver.geoms_info.link_idx[i_g0]
                 i_l1 = self.rigid_solver.geoms_info.link_idx[i_g1]
                 pairs[i_p].link_idx0 = i_l0
