@@ -160,7 +160,7 @@ class FEMEntity(Entity):
             If the tensor shape is not supported.
         """
         self._assert_active()
-        gs.logger.warning("Manally setting element velocities. This is not recommended and could break gradient flow.")
+        gs.logger.warning("Manually setting element velocities. This is not recommended and could break gradient flow.")
 
         vel = to_gs_tensor(vel)
 
