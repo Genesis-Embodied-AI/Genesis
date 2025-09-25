@@ -6,6 +6,8 @@ import genesis as gs
 
 
 def main():
+    gs.logger.warning("skip this example until a gstaichi bug is fixed")
+    return
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()

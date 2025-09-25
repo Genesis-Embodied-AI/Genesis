@@ -23,7 +23,6 @@ from ....utils.sdf_decomp import SDF
 from ..base_solver import Solver
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
 from .collider_decomp import Collider
 from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 

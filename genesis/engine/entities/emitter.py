@@ -169,23 +169,29 @@ class Emitter(RBC):
                     f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum number of particles ({self._entity.n_particles})."
                 )
 
+            start_idx = self._entity.particle_start + self._next_particle
+            end_idx = start_idx + n_particles
+            particles_idx = np.tile(np.arange(start_idx, end_idx), (self._sim._B, 1))
+            envs_idx = np.arange(self._sim._B)
+
             self._solver._kernel_set_particles_pos(
                 self._sim.cur_substep_local,
-                self._entity.particle_start + self._next_particle,
-                n_particles,
+                particles_idx,
+                envs_idx,
                 positions,
             )
             self._solver._kernel_set_particles_vel(
                 self._sim.cur_substep_local,
-                self._entity.particle_start + self._next_particle,
-                n_particles,
+                particles_idx,
+                envs_idx,
                 vels,
             )
+            actives = np.ones((self._sim._B, n_particles), dtype=gs.np_bool) * gs.ACTIVE
             self._solver._kernel_set_particles_active(
                 self._sim.cur_substep_local,
-                self._entity.particle_start + self._next_particle,
-                n_particles,
-                gs.ACTIVE,
+                particles_idx,
+                envs_idx,
+                actives,
             )
 
             self._next_particle += n_particles

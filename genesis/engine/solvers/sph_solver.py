@@ -802,6 +802,7 @@ class SPHSolver(Solver):
     @ti.kernel
     def _kernel_set_particles_pos(
         self,
+        f_unused: ti.i32,  # will be called by emitter
         particles_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         poss: ti.types.ndarray(),
@@ -831,6 +832,7 @@ class SPHSolver(Solver):
     @ti.kernel
     def _kernel_set_particles_vel(
         self,
+        f_unused: ti.i32,  # will be called by emitter
         particles_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         vels: ti.types.ndarray(),
@@ -859,6 +861,7 @@ class SPHSolver(Solver):
     @ti.kernel
     def _kernel_set_particles_active(
         self,
+        f_unused: ti.i32,  # will be called by emitter
         particles_idx: ti.types.ndarray(),
         envs_idx: ti.types.ndarray(),
         actives: ti.types.ndarray(),  # shape [B, n_particles]

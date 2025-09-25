@@ -12,11 +12,10 @@ def main():
     parser.add_argument(
         "--solver", choices=["explicit", "implicit"], default="explicit", help="FEM solver type (default: explicit)"
     )
-    parser.add_argument("--dt", type=float, help="Time step (auto-selected based on solver if not specified)")
-    parser.add_argument(
-        "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
-    )
-    parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
+    parser.add_argument("--dt", type=float)
+    parser.add_argument("--substeps", type=int)
+    parser.add_argument("--seconds", type=float, default=0.01)
+    parser.add_argument("--vis", "-v", action="store_true", default=False)
 
     args = parser.parse_args()
 
@@ -97,7 +96,7 @@ def main():
         return circle_center + offset
 
     debug_circle = None
-    total_steps = int(5 / dt)  # 5 seconds
+    total_steps = int(args.seconds / dt)
 
     try:
         target_positions = blob.init_positions[pinned_idx]

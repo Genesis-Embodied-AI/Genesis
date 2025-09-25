@@ -44,7 +44,6 @@ def main_equality_weld(args):
     rigid.qpos.from_numpy(qpos[:, None])
 
     for i in range(1000):
-        time.sleep(1)
         scene.step()
 
 

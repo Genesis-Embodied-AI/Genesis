@@ -102,8 +102,8 @@ class SFSolver(Solver):
 
     @ti.kernel
     def advect_and_impulse(self, f: ti.i32, t: ti.f32):
-        for I in ti.grouped(ti.ndrange(*self.res)):
-            p = ti.Vector(I, dt=gs.ti_float) + 0.5
+        for i, j, k in ti.ndrange(*self.res):
+            p = ti.Vector([i, j, k], dt=gs.ti_float) + 0.5
             p = self.backtrace(self.grid.v, p, self.dt)
             v_tmp = self.trilerp(self.grid.v, p)
 
@@ -111,17 +111,17 @@ class SFSolver(Solver):
                 q_f = self.trilerp_scalar(self.grid.q, p, q)
 
                 imp_dir = self.jets[q].get_tan_dir(t)
-                factor = self.jets[q].get_factor(*I, self.dx, t)
+                factor = self.jets[q].get_factor(i, j, k, self.dx, t)
                 momentum = (imp_dir * self.inlet_s * factor) * self.dt
 
                 v_tmp += momentum
 
-                self.grid.q[I][q] = (1.0 - factor) * q_f + factor
-                # self.grid.q[I][q] *= self.decay
-                self.grid.q[I][q] -= self.decay * self.dt
-                self.grid.q[I][q] = max(0.0, self.grid.q[I][q])
+                self.grid.q[i, j, k][q] = (1 - factor) * q_f + factor
+                # self.grid.q[i, j, k][q] *= self.decay
+                self.grid.q[i, j, k][q] -= self.decay * self.dt
+                self.grid.q[i, j, k][q] = max(0.0, self.grid.q[i, j, k][q])
 
-            self.grid.v_tmp[I] = v_tmp
+            self.grid.v_tmp[i, j, k] = v_tmp
 
     @ti.kernel
     def divergence(self):
@@ -169,16 +169,16 @@ class SFSolver(Solver):
             pp = self.grid.p[self.compute_location(*I, 0, 0, -1)]
             pq = self.grid.p[self.compute_location(*I, 0, 0, 1)]
 
-            self.grid.v[I] = self.grid.v_tmp[I] - 0.5 * ti.Vector([pr - pl, pt - pb, pq - pp], dtype=gs.ti_float)
+            self.grid.v[I] = self.grid.v_tmp[I] - 0.5 * ti.Vector([pr - pl, pt - pb, pq - pp], dt=gs.ti_float)
 
     @ti.func
     def compute_location(self, u, v, w, du, dv, dw):
-        I = ti.Vector([u + du, v + dv, w + dw], dtype=gs.ti_int)
+        I = ti.Vector([u + du, v + dv, w + dw], dt=gs.ti_int)
         return ti.math.clamp(I, 0, self.n_grid - 1)
 
     @ti.func
     def is_free(self, u, v, w, du, dv, dw):
-        I = ti.Vector([u + du, v + dv, w + dw], dtype=gs.ti_int)
+        I = ti.Vector([u + du, v + dv, w + dw], dt=gs.ti_int)
         return gs.ti_bool((0 <= I).all() and (I < self.n_grid).all())
 
     @ti.func
