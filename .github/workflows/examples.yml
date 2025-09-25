@@ -72,7 +72,7 @@ jobs:
 
       - name: Run examples suite
         run: |
-          pytest -v -m required -k "examples_ci" --logical --forked
+          CI_EXAMPLES=1 pytest -v tests/test_examples_ci.py
 
       - name: Save cache
         if: always()
