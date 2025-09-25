@@ -112,13 +112,10 @@ class LBVH(RBC):
         https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf
     """
 
-    def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int | None = None):
+    def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
         if aabb.n_aabbs < 2:
             raise gs.GenesisException("The number of AABBs must be larger than 2.")
-        if n_radix_sort_groups is None:
-            n_radix_sort_groups = min(aabb.n_aabbs, 256)
-        if n_radix_sort_groups > aabb.n_aabbs:
-            raise gs.GenesisException("The number of radix sort groups must be slower than the number of AABBs.")
+        n_radix_sort_groups = min(aabb.n_aabbs, n_radix_sort_groups)
 
         self.aabbs = aabb.aabbs
         self.n_aabbs = aabb.n_aabbs
