@@ -1111,7 +1111,8 @@ def test_robot_scaling_primitive_collision(show_viewer):
     assert_allclose(robot.get_links_vel(), 0.0, atol=5e-3)
 
     # Robot in contact with the ground
-    assert_allclose(robot.get_verts().min(dim=0).values[2], 0.0, tol=1e-3)
+    robot_min_corner, _ = robot.get_AABB()
+    assert_allclose(robot_min_corner[2], 0.0, tol=1e-3)
 
 
 @pytest.mark.required
@@ -1727,7 +1728,7 @@ def test_frictionloss_advanced(show_viewer, tol):
             size=(0.025, 0.025, 0.025),
         ),
     )
-    scene.build(n_envs=0)
+    scene.build()
 
     scene.reset()
     box.set_pos(torch.tensor((0.1, 0.0, 1.0), dtype=gs.tc_float, device=gs.device))
@@ -1735,7 +1736,7 @@ def test_frictionloss_advanced(show_viewer, tol):
         scene.step()
 
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
-    # assert_allclose(torch.stack([geom.get_aabb() for geom in robot.geoms])[:, :, 2].min(), 0.0, tol=1e-3)
+    # assert_allclose(robot.get_AABB()[2], 0.0, tol=1e-3)
     assert_allclose(box.get_dofs_velocity(), 0.0, tol=tol)
 
 
@@ -2209,7 +2210,7 @@ def test_urdf_parsing(show_viewer, tol):
                 ]
             )
             for geom in entities[key].geoms:
-                AABB_i = geom.get_aabb()
+                AABB_i = geom.get_AABB()
                 AABB[0] = np.minimum(AABB[0], AABB_i[0])
                 AABB[1] = np.maximum(AABB[1], AABB_i[1])
             AABB_all.append(AABB)
@@ -2691,10 +2692,10 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
         (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
-        (-1, -1, gs_robot.get_aabb, None, None),
+        (-1, -1, gs_robot.get_AABB, None, None),
         # LINK
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
-        (-1, -1, gs_link.get_aabb, None, None),
+        (-1, -1, gs_link.get_AABB, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
 
@@ -3151,8 +3152,8 @@ def test_axis_aligned_bounding_boxes(n_envs):
     )
     scene.build(n_envs=n_envs)
 
-    all_aabbs = scene.sim.rigid_solver.get_aabb()
-    aabbs = [entity.get_aabb() for entity in scene.entities]
+    all_aabbs = scene.sim.rigid_solver.get_AABB()
+    aabbs = [entity.get_AABB() for entity in scene.entities]
     if n_envs > 0:
         assert all_aabbs.ndim == 4 and len(all_aabbs) == n_envs
     else:

@@ -205,8 +205,8 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
     assert_allclose(box.get_pos(), (0.0, 0.0, BOX_HALFHEIGHT), atol=1e-3)
 
     # The box, and both robots should be laying on top of each other
-    robot_1_min_corner, robot_1_max_corner = robot_1.get_aabb()
-    robot_2_min_corner, robot_2_max_corner = robot_2.get_aabb()
+    robot_1_min_corner, robot_1_max_corner = robot_1.get_AABB()
+    robot_2_min_corner, robot_2_max_corner = robot_2.get_AABB()
     assert (robot_1_min_corner[:2] > -0.4).all() and (robot_2_min_corner[:2] > -0.4).all()
     assert (robot_1_min_corner[:2] < 0.4).all() and (robot_2_min_corner[:2] < 0.4).all()
     assert robot_1_max_corner[2] > 2 * BOX_HALFHEIGHT

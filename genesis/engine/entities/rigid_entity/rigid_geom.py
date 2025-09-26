@@ -396,7 +396,7 @@ class RigidGeom(RBC):
         return tensor
 
     @gs.assert_built
-    def get_aabb(self):
+    def get_AABB(self):
         """
         Get the axis-aligned bounding box (AABB) of the geom in world frame.
         """

@@ -343,7 +343,7 @@ class RigidLink(RBC):
                     tensor[i_b, i_v - self._vvert_start, j] = vvert_pos[j]
 
     @gs.assert_built
-    def get_aabb(self):
+    def get_AABB(self):
         """
         Get the axis-aligned bounding box (AABB) of the link's collision body in the world frame by aggregating all
         the collision geometries associated with this link (`link.geoms`).
