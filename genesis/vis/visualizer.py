@@ -65,15 +65,16 @@ class Visualizer(RBC):
                     viewer_options.run_in_thread = True
                 elif gs.platform == "macOS":
                     viewer_options.run_in_thread = False
-                    gs.logger.warning(
-                        "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
-                    )
                 elif gs.platform == "Windows":
                     viewer_options.run_in_thread = True
             if gs.platform == "macOS" and viewer_options.run_in_thread:
                 gs.raise_exception("Running viewer in background thread is not supported on MacOS.")
 
             self._viewer = Viewer(viewer_options, self._context)
+            if not viewer_options.run_in_thread:
+                gs.logger.warning(
+                    "Interactive viewer running in main thread. It will only be responsive if a simulation is running."
+                )
 
         # Rasterizer is always needed for depth and segmentation mask rendering.
         self._rasterizer = Rasterizer(self._viewer, self._context)

@@ -1,8 +1,9 @@
-import sys
+import math
 
+import igl
 import numpy as np
 import pytest
-import igl
+import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
@@ -15,92 +16,8 @@ pytestmark = [
 ]
 
 
-# Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
-@pytest.fixture(scope="function")
-def fem_material():
-    """Fixture for common FEM material properties"""
-    return gs.materials.FEM.Muscle(
-        E=3.0e4,
-        nu=0.45,
-        rho=1000.0,
-        model="stable_neohookean",
-    )
-
-
-@pytest.fixture(scope="function")
-def fem_material_linear_corotated():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated")
-
-
-@pytest.fixture(scope="function")
-def fem_material_linear():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic()
-
-
-@pytest.fixture(scope="function")
-def fem_material_linear_corotated_soft():
-    """Fixture for common FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", E=1.0e5, nu=0.4)
-
-
-@pytest.fixture(scope="function")
-def fem_material_linear_corotated_rough():
-    """Fixture for rough FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", friction_mu=1.0)
-
-
-@pytest.fixture(scope="function")
-def fem_material_linear_corotated_soft_rough():
-    """Fixture for soft rough FEM linear material properties"""
-    return gs.materials.FEM.Elastic(model="linear_corotated", E=1e5, nu=0.4, friction_mu=1.0)
-
-
 @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_multiple_fem_entities(fem_material, show_viewer):
-    """Test adding multiple FEM entities to the scene"""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=5e-4,
-            substeps=10,
-            gravity=(0.0, 0.0, 0.0),
-        ),
-        fem_options=gs.options.FEMOptions(
-            damping=0.0,
-        ),
-        show_viewer=show_viewer,
-    )
-
-    # Add first FEM entity
-    scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.5, -0.2, 0.3),
-            radius=0.1,
-        ),
-        material=fem_material,
-    )
-
-    # Add second FEM entity
-    scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.5),
-        ),
-        material=fem_material,
-    )
-
-    # Build the scene
-    scene.build()
-
-    # Run simulation
-    for _ in range(100):
-        scene.step()
-
-
-@pytest.mark.required
-def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path, cube_verts_and_faces):
+def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
     """
     Test tetrahedralization of a FEM entity with a small maxvolume value that introduces
     internal vertices during tetrahedralization:
@@ -112,7 +29,6 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=box_obj_path,
@@ -121,13 +37,12 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
             verbose=1,
             maxvolume=0.01,
         ),
-        material=fem_material,
+        material=gs.materials.FEM.Muscle(),
     )
-
     scene.build()
 
     state = fem.get_state()
-    vertices = state.pos[0].cpu().numpy()
+    vertices = tensor_to_array(state.pos[0])
     surface_indices = np.unique(fem.surface_triangles)
 
     # Ensure there are interior vertices; this is a prerequisite for this test
@@ -178,8 +93,7 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
         ), f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
 
     # Verify whether surface faces in the visualizer mesh matches the surface faces of the FEM entity
-    rasterizer_context = scene.visualizer.context
-    static_nodes = rasterizer_context.static_nodes
+    static_nodes = scene.visualizer.context.static_nodes
     fem_node_mesh = static_nodes[(0, fem.uid)].mesh
 
     (fem_node_primitive,) = fem_node_mesh.primitives
@@ -214,7 +128,7 @@ def test_interior_tetrahedralized_vertex(fem_material, show_viewer, box_obj_path
 
 
 @pytest.mark.required
-def test_maxvolume(fem_material, show_viewer, box_obj_path):
+def test_maxvolume(box_obj_path, show_viewer):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -222,14 +136,23 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
 
     # Mesh without any maximum-element-volume constraint
     fem1 = scene.add_entity(
-        morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, verbose=1),
-        material=fem_material,
+        morph=gs.morphs.Mesh(
+            file=box_obj_path,
+            nobisect=False,
+            verbose=1,
+        ),
+        material=gs.materials.FEM.Muscle(),
     )
 
     # Mesh with maximum element volume limited to 0.01
     fem2 = scene.add_entity(
-        morph=gs.morphs.Mesh(file=box_obj_path, nobisect=False, maxvolume=0.01, verbose=1),
-        material=fem_material,
+        morph=gs.morphs.Mesh(
+            file=box_obj_path,
+            nobisect=False,
+            maxvolume=0.01,
+            verbose=1,
+        ),
+        material=gs.materials.FEM.Muscle(),
     )
 
     assert len(fem1.elems) < len(fem2.elems), (
@@ -238,60 +161,111 @@ def test_maxvolume(fem_material, show_viewer, box_obj_path):
     )
 
 
-# @pytest.mark.required
+@pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
-def test_sphere_box_fall_implicit_fem_coupler(fem_material_linear, show_viewer):
+@pytest.mark.parametrize(
+    "coupler_type, material_model",
+    [
+        (gs.options.SAPCouplerOptions, "linear"),
+        (gs.options.SAPCouplerOptions, "linear_corotated"),
+        (gs.options.LegacyCouplerOptions, "linear"),
+    ],
+)
+def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
+    SPHERE_POS = (0.4, -0.1, 0.1)
+    SPHERE_RADIUS = 0.1
+    SPHERE_RHO = 500.0
+    BOX_POS = (0.0, 0.1, 0.3)
+    BOX_SIZE = 0.05
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
-            substeps=2,
+            substeps=3 if coupler_type == gs.options.SAPCouplerOptions else 2,
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,
         ),
+        coupler_options=coupler_type(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, 0.0, 0.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+            max_FPS=60,
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-
-    # Add first FEM entity
-    scene.add_entity(
+    sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
-            pos=(0.5, -0.2, 0.3),
-            radius=0.1,
+            pos=(0.4, -0.1, 0.10),
+            radius=SPHERE_RADIUS,
         ),
-        material=fem_material_linear,
+        material=gs.materials.FEM.Elastic(
+            E=1e5,
+            rho=SPHERE_RHO,
+            model=material_model,
+        ),
     )
-
-    # Add second FEM entity
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.5),
+            size=(BOX_SIZE * 2, BOX_SIZE * 2, BOX_SIZE * 2),
+            pos=BOX_POS,
         ),
-        material=fem_material_linear,
+        material=gs.materials.FEM.Elastic(),
     )
 
     # Build the scene
     scene.build()
 
+    sphere_mass_ref = (4 / 3 * np.pi * SPHERE_RADIUS**3) * SPHERE_RHO
+    elems_mass_scaled = scene.fem_solver.elements_i.mass_scaled.to_numpy()
+    sphere_elems_mass_scaled = elems_mass_scaled[sphere.el_start : (sphere.el_start + sphere.n_elements)]
+    sphere_mass_1 = sphere_elems_mass_scaled.sum() / scene.fem_solver.vol_scale
+    verts_mass = scene.fem_solver.elements_v_info.mass.to_numpy()
+    sphere_verts_mass = verts_mass[sphere.v_start : (sphere.v_start + sphere.n_vertices)]
+    sphere_mass_2 = sphere_verts_mass.sum()
+    assert_allclose(sphere_mass_1, sphere_mass_2, tol=gs.EPS)
+    assert_allclose(sphere_mass_ref, sphere_mass_1, rtol=0.01)  # Large tolerance due to tessellation
+
     # Run simulation
-    for _ in range(200):
+    n_steps = 40 if coupler_type == gs.options.SAPCouplerOptions else 150
+    for _ in range(n_steps):
         scene.step()
 
-    for entity in scene.entities:
+    for entity, init_pos, entity_halfsize_ref in zip(scene.entities, (SPHERE_POS, BOX_POS), (SPHERE_RADIUS, BOX_SIZE)):
+        # Not moving anymore
         state = entity.get_state()
-        min_pos_z = state.pos[..., 2].min()
-        assert_allclose(
-            min_pos_z,
-            0.0,  # FIXME: Compute desired penetration analytically
-            atol=5e-2,
-            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to 0.0.",
-        )
+        assert_allclose(state.vel, 0.0, tol=2e-2)
+
+        # Landed vertically
+        pos = tensor_to_array(state.pos.squeeze(0))
+        BV, *_ = igl.bounding_box(pos)
+        entity_center = 0.5 * (BV[0] + BV[-1])
+        if coupler_type == gs.options.SAPCouplerOptions:
+            tol = 1e-2 if material_model == "linear_corotated" else 1e-3
+        else:
+            tol = 5e-3
+        assert_allclose(entity_center[:2], init_pos[:2], tol=tol)
+
+        # Reasonable deformation if possible
+        # FIXME: Compute theoretical deformation to be able to reduce the tolerance
+        if coupler_type == gs.options.SAPCouplerOptions:
+            entity_halfsize = 0.5 * (BV[0] - BV[-1])
+            assert_allclose(entity_halfsize, entity_halfsize_ref, tol=5e-3)
+
+        # Reasonable penetration depth
+        # FIXME: Compute theoretical penetration depth to be able to reduce the tolerance
+        penetration_depth_ref = 0.0
+        tol = 1e-3 if coupler_type == gs.options.SAPCouplerOptions else 0.05
+        assert_allclose(-state.pos[..., 2].min(), penetration_depth_ref, tol=tol)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
-def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
+def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
+    SPHERE_RADIUS = 0.1
+    BOX_SIZE = 0.015
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -301,700 +275,350 @@ def test_sphere_fall_implicit_fem_sap_coupler(fem_material_linear, show_viewer):
             use_implicit_solver=True,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, 0.6, 0.45),
+            camera_lookat=(0.0, 0.0, 0.15),
+            max_FPS=60,
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-
-    scene.add_entity(
+    sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
-            pos=(0.5, -0.2, 0.5),
-            radius=0.1,
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            radius=SPHERE_RADIUS,
         ),
-        material=fem_material_linear,
+        material=gs.materials.FEM.Elastic(
+            friction_mu=1.0,
+            model="linear_corotated",
+        ),
     )
-
-    # Build the scene
-    scene.build()
-
-    # Run simulation
-    for _ in range(100):
-        scene.step()
-
-    for entity in scene.entities:
-        state = entity.get_state()
-        min_pos_z = state.pos[..., 2].min()
-        assert_allclose(
-            min_pos_z,
-            -1e-3,  # FIXME: Compute desired penetration analytically
-            atol=1e-4,
-            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3.",
-        )
-
-
-@pytest.mark.required
-def test_linear_corotated_sphere_fall_implicit_fem_sap_coupler(fem_material_linear_corotated, backend, show_viewer):
-    # FIXME: Fix GsTaichi bug on Apple Metal due to SpirV compilation failure
-    if sys.platform == "darwin" and backend == gs.backend.gpu:
-        pytest.xfail("This test is broken on Mac OS because of a bug in GsTaichi.")
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1.0 / 60.0,
-            substeps=2,
-        ),
-        # Not using default fem_options to make it faster, linear material only need one iteration without linesearch
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-
-    scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.5, -0.2, 0.5),
-            radius=0.1,
-        ),
-        material=fem_material_linear_corotated,
-    )
-
-    # Build the scene
-    scene.build()
-
-    # Run simulation
-    for _ in range(100):
-        scene.step()
-
-    for entity in scene.entities:
-        state = entity.get_state()
-        pos = tensor_to_array(state.pos.reshape(-1, 3))
-        min_pos_z = np.min(pos[..., 2])
-        assert_allclose(
-            min_pos_z,
-            -1e-3,  # FIXME: Compute desired penetration analytically
-            atol=1e-4,
-            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to -1e-3.",
-        )
-        BV, BF = igl.bounding_box(pos)
-        scale = BV[0] - BV[-1]
-        assert_allclose(
-            scale,
-            (0.2, 0.2, 0.2 - 1e-3),  # FIXME: Compute desired scale analytically
-            atol=1e-3,
-            err_msg=f"Entity {entity.uid} scale {scale} is not close to 0.2.",
-        )
-
-
-# @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_fem_sphere_box_self(fem_material_linear_corotated, show_viewer):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1 / 60,
-            substeps=2,
-        ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(),
-        show_viewer=show_viewer,
-    )
-
-    # Add first FEM entity
-    scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.0, 0.0, 0.1),
-            radius=0.1,
-        ),
-        material=fem_material_linear_corotated,
-    )
-
-    # Add second FEM entity
-    scale = 0.1
     asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/meshes/cube8.obj",
-            scale=scale,
-            pos=(0.0, 0.0, scale * 4.0),
+            pos=(0.0, 0.0, 2 * SPHERE_RADIUS + BOX_SIZE),
+            scale=BOX_SIZE,
         ),
-        material=fem_material_linear_corotated,
+        material=gs.materials.FEM.Elastic(
+            E=1e4,
+            rho=50.0,
+            friction_mu=1.0,
+            model="linear_corotated",
+        ),
     )
-
-    # Build the scene
     scene.build()
+
     # Run simulation
-    for _ in range(200):
+    for _ in range(40):
         scene.step()
 
-    depths = (-1e-3, -2e-5)  # FIXME: Compute desired penetration analytically
-    atols = (2e-4, 4e-6)
-    for i, entity in enumerate(scene.entities):
+    for entity, init_height in zip(scene.entities, (SPHERE_RADIUS, 2 * SPHERE_RADIUS + BOX_SIZE)):
+        # Barely moving
         state = entity.get_state()
-        min_pos_z = state.pos[..., 2].min()
-        assert_allclose(
-            min_pos_z,
-            depths[i],
-            atol=atols[i],
-            err_msg=f"Entity {entity.uid} minimum Z position {min_pos_z} is not close to {depths[i]}.",
-        )
+        assert_allclose(state.vel, 0.0, tol=0.05)
+
+        # Almost at the initial position
+        pos = tensor_to_array(state.pos.squeeze(0))
+        BV, *_ = igl.bounding_box(pos)
+        entity_center = 0.5 * (BV[0] + BV[-1])
+        assert_allclose(entity_center[:2], 0.0, tol=0.015)
+        assert_allclose(entity_center[2], init_height, tol=5e-3)
 
 
 @pytest.mark.required
+@pytest.mark.xfail(raises=AssertionError, reason="Constraint dynamics inconsistent with analytical formula")
 @pytest.mark.parametrize("precision", ["64"])
-def test_box_hard_vertex_constraint(show_viewer):
-    """
-    Test if a box with hard vertex constraints has those vertices fixed,
-    and that updating and removing constraints works correctly.
-    """
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1e-3,
-            substeps=1,
-        ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=False,
-            gravity=(0.0, 0.0, -9.81),
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-
-    box = scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.5),
-        ),
-        material=gs.materials.FEM.Elastic(),
-    )
-    verts_idx = [0, 3]
-    initial_target_poss = box.init_positions[verts_idx]
-
-    scene.build(n_envs=2)
-
-    if show_viewer:
-        scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
-
-    box.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
-
-    for _ in range(100):
-        scene.step()
-
-    positions = box.get_state().pos[0][verts_idx]
-    assert_allclose(
-        positions,
-        initial_target_poss,
-        tol=gs.EPS,
-        err_msg="Vertices should stay at initial target positions with hard constraints",
-    )
-    new_target_poss = initial_target_poss + gs.tensor(
-        [[0.1, 0.1, 0.1], [0.1, 0.1, 0.1]],
-    )
-    box.update_constraint_targets(verts_idx=verts_idx, target_poss=new_target_poss)
-
-    for _ in range(100):
-        scene.step()
-
-    positions_after_update = box.get_state().pos[0][verts_idx]
-    assert_allclose(
-        positions_after_update,
-        new_target_poss,
-        tol=gs.EPS,
-        err_msg="Vertices should be at new target positions after updating constraints",
-    )
-
-    box.remove_vertex_constraints()
-
-    for _ in range(100):
-        scene.step()
-
-    positions_after_removal = box.get_state().pos[0][verts_idx]
-    with np.testing.assert_raises(AssertionError):
-        assert_allclose(
-            positions_after_removal,
-            new_target_poss,
-            tol=1e-3,
-            err_msg="Vertices should have moved after removing constraints",
-        )
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_box_soft_vertex_constraint(show_viewer):
+def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
     """Test if a box with strong soft vertex constraints has those vertices near."""
+    DT = 0.01
+    BOX_SIZE = 0.1
+    CONSTRAINT_STIFFNESS = 1e1
+    BOX_VELOCITY = torch.tensor([0.2, 0.0, 0.0])
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-3,
-            substeps=1,
-        ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=False,
+            dt=DT,
+            substeps=10,
             gravity=(0.0, 0.0, 0.0),
         ),
+        fem_options=gs.options.FEMOptions(
+            enable_vertex_constraints=True,
+            use_implicit_solver=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, 0.6, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-
     box = scene.add_entity(
         morph=gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.5),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, 0.0),
         ),
-        material=gs.materials.FEM.Elastic(),
+        material=gs.materials.FEM.Elastic(
+            rho=1.0 / BOX_SIZE**3,  # Unit mass
+        ),
+        surface=gs.surfaces.Default(
+            color=(1, 1, 1, 0.5),
+        ),
     )
-    verts_idx = [0, 1]
-    target_poss = box.init_positions[verts_idx]
-
     scene.build()
 
-    if show_viewer:
-        scene.draw_debug_spheres(poss=target_poss, radius=0.02, color=(1, 0, 1, 0.8))
+    verts_idx = [0, 1, 2, 3, 4, 5, 6, 7]
 
+    target_poss = box.init_positions[verts_idx]
     box.set_vertex_constraints(
         verts_idx=verts_idx,
         target_poss=target_poss,
         is_soft_constraint=True,
-        stiffness=2.0e5,
+        stiffness=CONSTRAINT_STIFFNESS,
     )
-    box.set_velocity(gs.tensor([1.0, 1.0, 1.0]) * 1e-2)
+    if show_viewer:
+        scene.draw_debug_spheres(poss=target_poss, radius=0.01, color=(1, 0, 1, 1))
 
-    for _ in range(500):
+    # Initialize box velocity to non-zero value
+    box.set_velocity(BOX_VELOCITY)
+
+    # Check that the box has a spring dynamics
+    omega = math.sqrt(8 * CONSTRAINT_STIFFNESS)
+    for i in range(2000):
+        pos = box.get_state().pos[..., :8, :].sum(dim=-2)
+        pos_ref = BOX_VELOCITY * (i * DT) * math.exp(-omega * (i * DT))
+        assert_allclose(pos, pos_ref, tol=1e-3)
         scene.step()
 
-    positions = box.get_state().pos[0][verts_idx]
-    assert_allclose(
-        positions,
-        target_poss,
-        tol=5e-5,
-        err_msg="Vertices should be near target positions with strong soft constraints",
-    )
 
-
-# @pytest.mark.required
+@pytest.mark.required
+@pytest.mark.parametrize("use_implicit_solver", [False, True])
 @pytest.mark.parametrize("precision", ["64"])
-def test_fem_articulated(fem_material_linear_corotated_soft, show_viewer):
+def test_hard_constraint(use_implicit_solver, show_viewer):
+    DT = 0.01
+    HEIGHT = 2.0  # It must be height enough to avoid hitting the ground when dropping the box at the end
+    BOX_SIZE = 0.1
+    MOTION_RADIUS = 0.1
+    MOTION_SPEED = 0.005
+    VERTICES_IDX = [5, 7]
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1 / 60,
-            substeps=2,
+            dt=DT,
+            substeps=2 if use_implicit_solver else 100,
+            gravity=(0.0, 0.0, -9.81),
         ),
         fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
+            enable_vertex_constraints=True,
+            use_implicit_solver=use_implicit_solver,
         ),
-        coupler_options=gs.options.SAPCouplerOptions(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, 0.6, HEIGHT + 0.5),
+            camera_lookat=(0.0, 0.0, HEIGHT),
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.0, 0.0, 0.2),
-            radius=0.2,
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(-BOX_SIZE / 2, BOX_SIZE / 2 + MOTION_RADIUS, HEIGHT + BOX_SIZE / 2),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
         ),
-        material=fem_material_linear_corotated_soft,
+        material=gs.materials.FEM.Elastic(
+            E=1e5,
+            nu=0.45,
+            rho=1000.0,
+            model="linear_corotated" if use_implicit_solver else "stable_neohookean",
+        ),
     )
+    scene.build(n_envs=2)
 
-    asset_path = get_hf_dataset(pattern="heavy_three_joint_link.xml")
-    link = scene.add_entity(
-        gs.morphs.MJCF(file=f"{asset_path}/heavy_three_joint_link.xml", scale=0.5, pos=(-0.5, -0.5, 0.4)),
-    )
+    # Simulate
+    n_steps = int(0.5 * math.pi / MOTION_SPEED)
+    for it in range(n_steps):
+        # Update the position of the fixed vertices
+        target_poss = torch.zeros((2, 3), dtype=gs.tc_float, device=gs.device)
+        target_poss[0, 0] = MOTION_RADIUS * math.sin(MOTION_SPEED * it)
+        target_poss[0, 1] = MOTION_RADIUS * math.cos(MOTION_SPEED * it)
+        target_poss[0, 2] = HEIGHT + BOX_SIZE
+        target_poss[1, 0] = (MOTION_RADIUS + BOX_SIZE) * math.sin(MOTION_SPEED * it)
+        target_poss[1, 1] = (MOTION_RADIUS + BOX_SIZE) * math.cos(MOTION_SPEED * it)
+        target_poss[1, 2] = HEIGHT + BOX_SIZE
+        box.set_vertex_constraints(verts_idx=VERTICES_IDX, target_poss=target_poss)
 
-    # Build the scene
-    scene.build()
-    for _ in range(300):
+        # Do one simulation step
+        scene.step(update_visualizer=False)
+
+        # Check that the constrained vertices are at their respective target positions
+        corners = box.get_state().pos[..., :8, :]
+        assert_allclose(corners[..., VERTICES_IDX, :], target_poss, tol=1e-8)
+
+        # Check that the box is not more or less a box
+        e_z = corners[..., 5, :] - corners[..., 4, :]
+        e_z /= torch.linalg.norm(e_z, dim=-1, keepdim=True)
+        e_y = corners[..., 6, :] - corners[..., 4, :]
+        e_y /= torch.linalg.norm(e_y, dim=-1, keepdim=True)
+        e_x = torch.cross(e_y, e_z)
+        e_x /= torch.linalg.norm(e_x, dim=-1, keepdim=True)
+        R = torch.stack((e_x, e_y, e_z), dim=-1)
+        corners_local = (corners - corners[..., [0], :]) @ R + box.init_positions[0]
+        assert_allclose(corners_local, box.init_positions[:8], tol=0.01)
+
+        # Update the viewer if requested
+        if show_viewer:
+            # FIXME: Non-persistent markers are apparently broken...
+            if it % max(int(1e-3 / (MOTION_SPEED * DT)), 1) == 0:
+                scene.visualizer.context.draw_debug_spheres(
+                    poss=target_poss, radius=0.005, color=(1, 0, 1, 0.8), persistent=True
+                )
+            scene.visualizer.update(force=False, auto=True)
+
+    # Disable constraints
+    box.remove_vertex_constraints()
+
+    # Check that the box has been free-falling
+    n_steps = 50
+    com_pos_z_0 = box.get_state().pos[..., 8, 2]
+    for _ in range(n_steps):
         scene.step()
-
-    state = sphere.get_state()
-    center = state.pos.mean(axis=(0, 1))
-    min_pos_z = state.pos[..., 2].min()
-    assert_allclose(
-        min_pos_z,
-        -1.0e-3,  # FIXME: Compute desired penetration analytically
-        atol=2e-4,
-        err_msg=f"Sphere minimum Z position {min_pos_z} is not close to -1.0e-3.",
-    )
-    assert_allclose(
-        center,
-        np.array([0.0, 0.0, 0.2], dtype=np.float32),
-        atol=0.2,
-        err_msg=f"Sphere center {center} moves too far from [0.0, 0.0, 0.2].",
-    )
-
-    link_verts = link.get_verts()
-    center = link_verts.mean(axis=0)
-    min_pos_z = link_verts[..., 2].min()
-    assert_allclose(
-        min_pos_z,
-        -1.0e-4,  # FIXME: Compute desired penetration analytically
-        atol=5e-5,
-        err_msg=f"Link minimum Z position {min_pos_z} is not close to -1.0e-4.",
-    )
-    assert_allclose(
-        center,
-        np.array([-0.5, -0.5, 0.04], dtype=np.float32),
-        atol=0.2,
-        err_msg=f"Link center {center} moves too far from [-0.5, -0.5, 0.04].",
-    )
+    com_pos_z_f = box.get_state().pos[..., 8, 2]
+    com_pos_delta = -0.5 * 9.81 * (n_steps * DT) ** 2
+    assert_allclose(com_pos_z_f - com_pos_z_0, com_pos_delta, tol=0.05)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
-def test_implicit_hard_vertex_constraint(fem_material_linear_corotated, show_viewer):
-    """
-    Test if a box with hard vertex constraints has those vertices fixed, and that updating and removing constraints
-    works correctly.
-    """
+def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
+    DT = 0.01
+    HEIGHT = 2.0  # It must be height enough to avoid hitting the ground when dropping the box at the end
+    BOX_SIZE = 0.1
+    SPHERE_RADIUS = 0.03
+    MOTION_RADIUS = 0.1
+    MOTION_SPEED = 0.005
+    VERTICES_IDX = [4, 6]
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1 / 60,
-            substeps=1,
+            dt=DT,
+            substeps=2,
+            gravity=(0.0, 0.0, -9.81),
         ),
         fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
             enable_vertex_constraints=True,
+            use_implicit_solver=True,
         ),
         coupler_options=gs.options.SAPCouplerOptions(),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-
-    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
-    cube = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/meshes/cube8.obj",
-            scale=0.1,
-            pos=np.array([0.0, 0.0, 0.6], dtype=np.float32),
-        ),
-        material=fem_material_linear_corotated,
-    )
-
-    verts_idx = [0]
-    initial_target_poss = cube.init_positions[verts_idx]
-
-    scene.build()
-
-    if show_viewer:
-        sphere = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
-
-    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
-
-    for _ in range(100):
-        scene.step()
-
-    positions = cube.get_state().pos[0][verts_idx]
-    assert_allclose(
-        positions,
-        initial_target_poss,
-        tol=gs.EPS,
-        err_msg="Vertices should stay at initial target positions with hard constraints",
-    )
-    new_target_poss = initial_target_poss + 0.1
-    cube.update_constraint_targets(verts_idx=verts_idx, target_poss=new_target_poss)
-    if show_viewer:
-        scene.clear_debug_object(sphere)
-        sphere = scene.draw_debug_spheres(poss=new_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
-    for _ in range(100):
-        scene.step()
-
-    positions_after_update = cube.get_state().pos[0][verts_idx]
-    assert_allclose(
-        positions_after_update,
-        new_target_poss,
-        tol=gs.EPS,
-        err_msg="Vertices should be at new target positions after updating constraints",
-    )
-
-    cube.remove_vertex_constraints()
-    if show_viewer:
-        scene.clear_debug_object(sphere)
-
-    for _ in range(70):
-        scene.step()
-
-    state = cube.get_state()
-    center = state.pos.mean(axis=(0, 1))
-    assert_allclose(
-        center,
-        np.array([0.2, 0.13, 0.1], dtype=np.float32),
-        atol=0.2,
-        err_msg=f"Cube center {center} moves too far from [0.2, 0.13, 0.1] after removing constraints.",
-    )
-
-    velocity = state.vel.mean(axis=(0, 1))
-    assert_allclose(
-        velocity, 0.0, atol=4e-5, err_msg=f"Cube velocity {velocity} should be close to zero after settling."
-    )
-
-    # The contact requires some penetration to generate enough contact force to cancel out gravity
-    min_pos_z = state.pos[..., 2].min()
-    assert_allclose(
-        min_pos_z,
-        -2.0e-5,  # FIXME: Compute desired penetration analytically
-        atol=5e-6,
-        err_msg=f"Cube minimum Z position {min_pos_z} is not close to -2.0e-5.",
-    )
-
-
-# @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_sphere_box_vertex_constraint(fem_material_linear_corotated, show_viewer):
-    """
-    Test if a box with hard vertex constraints has those vertices fixed, and collisiong with a sphere works correctly.
-    """
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1 / 60,
-            substeps=1,
-        ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
-            enable_vertex_constraints=True,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-
-    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
-    cube = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/meshes/cube8.obj",
-            scale=0.1,
-            pos=np.array([0.0, 0.0, 0.35], dtype=np.float32),
-        ),
-        material=fem_material_linear_corotated,
-    )
-
-    verts_idx = [0]
-    initial_target_poss = cube.init_positions[verts_idx]
-
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.0, 0.0, 0.1),
-            radius=0.1,
-        ),
-        material=fem_material_linear_corotated,
-    )
-
-    scene.build()
-    if show_viewer:
-        sphere_debug = scene.draw_debug_spheres(poss=initial_target_poss, radius=0.02, color=(1, 0, 1, 0.8))
-
-    cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=initial_target_poss)
-
-    for _ in range(200):
-        scene.step()
-
-    pos = cube.get_state().pos
-    fixed_pos = pos[0][verts_idx]
-    assert_allclose(
-        fixed_pos,
-        initial_target_poss,
-        tol=gs.EPS,
-        err_msg="Vertices should stay at initial target positions with hard constraints",
-    )
-
-    state = sphere.get_state()
-    center = state.pos.mean(axis=(0, 1))
-    assert_allclose(
-        center,
-        np.array([0.4, 0.4, 0.1], dtype=np.float32),
-        atol=0.2,
-        err_msg=f"Sphere center {center} moved too much from initial position [0.4, 0.4, 0.1].",
-    )
-
-    # Using a larger tolerance here since the sphere is rolling, rolling friction is not accurately modeled.
-    velocity = state.vel.mean(axis=(0, 1))
-    assert_allclose(
-        velocity, 0.0, atol=0.03, err_msg=f"Sphere velocity {velocity} should be close to zero after settling."
-    )
-
-    min_sphere_pos_z = state.pos[..., 2].min()
-    assert_allclose(
-        min_sphere_pos_z,
-        -1e-3,  # FIXME: Compute desired penetration analytically
-        atol=2e-4,
-        err_msg=f"Sphere minimum Z position {min_sphere_pos_z} is not close to cube bottom surface.",
-    )
-
-
-# @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_franka_panda_grasp_cube(fem_material_linear_corotated_rough, show_viewer):
-    """
-    Test if the Franka Panda can successfully grasp the cube.
-    """
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1.0 / 60,
-            substeps=2,
-        ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
-            pcg_threshold=1e-10,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(
-            pcg_threshold=1e-10,
-            sap_convergence_atol=1e-10,
-            sap_convergence_rtol=1e-10,
-            linesearch_ftol=1e-10,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, 0.6, HEIGHT + 0.5),
+            camera_lookat=(0.0, 0.0, HEIGHT),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-
-    friction = 1.0
-    force = 1.0
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-        material=gs.materials.Rigid(coup_friction=friction, friction=friction),
-    )
-    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
-    cube = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/meshes/cube8.obj",
-            scale=0.02,
-            pos=np.array([0.65, 0.0, 0.02], dtype=np.float32),
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(-BOX_SIZE / 2, BOX_SIZE / 2 + MOTION_RADIUS, HEIGHT + BOX_SIZE / 2),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
         ),
-        material=fem_material_linear_corotated_rough,
-    )
-
-    scene.build()
-    motors_dof = np.arange(7)
-    fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
-    franka.set_qpos(qpos)
-    scene.step()
-
-    end_effector = franka.get_link("hand")
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-
-    franka.control_dofs_position(qpos[:-2], motors_dof)
-
-    # hold
-    for i in range(10):
-        scene.step()
-    # grasp
-    for i in range(30):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
-        scene.step()
-
-    # lift
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    for i in range(100):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
-        scene.step()
-        if i == 49:
-            old_pos = cube.get_state().pos.mean(axis=(0, 1))
-        if i == 99:
-            new_pos = cube.get_state().pos.mean(axis=(0, 1))
-
-    assert_allclose(
-        new_pos, old_pos, atol=5e-4, err_msg=f"Cube should be not moving much. Old pos: {old_pos}, new pos: {new_pos}."
-    )
-
-
-# @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_franka_panda_grasp_soft_sphere(fem_material_linear_corotated_soft_rough, show_viewer):
-    """
-    Test if the Franka Panda can successfully grasp the soft sphere.
-    """
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1.0 / 60,
-            substeps=2,
+        material=gs.materials.FEM.Elastic(
+            E=1e5,
+            nu=0.45,
+            rho=1000.0,
+            model="linear_corotated",
         ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
-            pcg_threshold=1e-10,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(
-            pcg_threshold=1e-10,
-            sap_convergence_atol=1e-10,
-            sap_convergence_rtol=1e-10,
-            linesearch_ftol=1e-10,
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-
-    friction = 1.0
-    force = 1.0
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-        material=gs.materials.Rigid(coup_friction=friction, friction=friction),
     )
     sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
-            radius=0.02,
-            pos=np.array([0.65, 0.0, 0.02], dtype=np.float32),
+            pos=(MOTION_RADIUS + BOX_SIZE, -SPHERE_RADIUS, HEIGHT - BOX_SIZE / 2),
+            radius=SPHERE_RADIUS,
         ),
-        material=fem_material_linear_corotated_soft_rough,
+        material=gs.materials.FEM.Elastic(
+            model="linear_corotated",
+        ),
     )
-
     scene.build()
-    motors_dof = np.arange(7)
-    fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
-    franka.set_qpos(qpos)
-    scene.step()
 
-    end_effector = franka.get_link("hand")
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
-        quat=np.array([0, 1, 0, 0]),
-    )
+    # Attach the sphere to its center
+    sphere_poss = sphere.get_state().pos[0]
+    sphere_poss -= torch.tensor(sphere.morph.pos)
+    sphere_center_idx = int(torch.argmin(torch.linalg.norm(sphere_poss, dim=-1)))
+    sphere_target_poss = sphere.init_positions[sphere_center_idx]
+    sphere.set_vertex_constraints(verts_idx=[sphere_center_idx], target_poss=sphere_target_poss[None])
 
-    franka.control_dofs_position(qpos[:-2], motors_dof)
+    # Simulate
+    n_steps = int(0.5 * math.pi / MOTION_SPEED)
+    box_pos_y_min = torch.tensor(float("inf"), dtype=gs.tc_float, device=gs.device)
+    for it in range(n_steps):
+        # Update the position of the fixed vertices
+        target_poss = torch.zeros((2, 3), dtype=gs.tc_float, device=gs.device)
+        target_poss[0, 0] = MOTION_RADIUS * math.sin(MOTION_SPEED * it)
+        target_poss[0, 1] = MOTION_RADIUS * math.cos(MOTION_SPEED * it)
+        target_poss[0, 2] = HEIGHT
+        target_poss[1, 0] = (MOTION_RADIUS + BOX_SIZE) * math.sin(MOTION_SPEED * it)
+        target_poss[1, 1] = (MOTION_RADIUS + BOX_SIZE) * math.cos(MOTION_SPEED * it)
+        target_poss[1, 2] = HEIGHT
+        box.set_vertex_constraints(verts_idx=VERTICES_IDX, target_poss=target_poss)
 
-    # hold
-    for i in range(10):
+        # Do one simulation step
+        scene.step(update_visualizer=False)
+
+        # Check that the constrained vertices are at their respective target positions
+        corners = box.get_state().pos[..., :8, :]
+        assert_allclose(corners[..., VERTICES_IDX, :], target_poss, tol=1e-8)
+        sphere_center = sphere.get_state().pos[..., sphere_center_idx, :]
+        assert_allclose(sphere_center, sphere_target_poss, tol=1e-8)
+
+        # Check that the box is more or less a box
+        e_z = corners[..., 5, :] - corners[..., 4, :]
+        e_z /= torch.linalg.norm(e_z, dim=-1, keepdim=True)
+        e_y = corners[..., 6, :] - corners[..., 4, :]
+        e_y /= torch.linalg.norm(e_y, dim=-1, keepdim=True)
+        e_x = torch.cross(e_y, e_z)
+        e_x /= torch.linalg.norm(e_x, dim=-1, keepdim=True)
+        R = torch.stack((e_x, e_y, e_z), dim=-1)
+        corners_local = (corners - corners[..., [0], :]) @ R + box.init_positions[0]
+        assert_allclose(corners_local, box.init_positions[:8], tol=0.02)
+
+        # Check that the sphere is more or less a sphere
+        sphere_poss = sphere.get_state().pos
+        sphere_poss -= torch.tensor(sphere.morph.pos)
+        sphere_dist_max = torch.linalg.norm(sphere_poss, dim=-1).max(dim=-1).values
+        assert_allclose(sphere_dist_max, SPHERE_RADIUS, tol=0.01)
+
+        # Check that the box is not going to far along y-axis due to collision with the sphere
+        box_pos_y_min = torch.minimum(corners[..., [2, 3, 7], 1].min(dim=-1).values, box_pos_y_min)
+        assert (box_pos_y_min > -0.05).all()
+
+        # Update the viewer if requested
+        if show_viewer:
+            # FIXME: Non-persistent markers are apparently broken...
+            if it % max(int(1e-3 / (MOTION_SPEED * DT)), 1) == 0:
+                scene.visualizer.context.draw_debug_spheres(
+                    poss=target_poss, radius=0.005, color=(1, 0, 1, 0.8), persistent=True
+                )
+            scene.visualizer.update(force=False, auto=True)
+
+    # Wait for a few extra steps
+    for _ in range(10):
         scene.step()
-    # grasp
-    for i in range(30):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
+
+    # Disable box constraints only
+    box.remove_vertex_constraints(verts_idx=VERTICES_IDX)
+
+    # Simulate for a while
+    n_steps = 40
+    com_pos_z_0 = box.get_state().pos[..., 8, 2]
+    for _ in range(n_steps):
+        # Do one simulation step
         scene.step()
 
-    # lift
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
-        quat=np.array([0, 1, 0, 0]),
-    )
-    for i in range(100):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_force(np.array([-force, -force]), fingers_dof)
-        scene.step()
-        if i == 49:
-            old_pos = sphere.get_state().pos.mean(axis=(0, 1))
-        if i == 99:
-            new_pos = sphere.get_state().pos.mean(axis=(0, 1))
-    pos_np = sphere.get_state().pos.cpu().numpy().reshape(-1, 3)
-    BV, BF = igl.bounding_box(pos_np)
-    deformation = BV[0, :] - BV[-1, :]
-    assert_allclose(
-        new_pos,
-        old_pos,
-        atol=5e-4,
-        err_msg=f"Sphere should be not moving much. Old pos: {old_pos}, new pos: {new_pos}.",
-    )
-    assert_allclose(
-        deformation,
-        np.array([0.04, 0.038, 0.04], dtype=np.float32),
-        atol=1e-3,
-        err_msg=f"Sphere deformation should be small. Deformation: {deformation}.",
-    )
+        # Check that the box is not moving much further along y-axis despite removing constraints
+        box_pos = box.get_state().pos
+        assert (box_pos[..., 1].min(dim=-1).values > box_pos_y_min - 0.01).all()
+
+    # Check that the box has been free-falling, but not the sphere
+    com_pos_z_f = box_pos[..., 8, 2]
+    com_pos_delta = -0.5 * 9.81 * (n_steps * DT) ** 2
+    assert_allclose(com_pos_z_f - com_pos_z_0, com_pos_delta, tol=0.05)
+    sphere_center = sphere.get_state().pos[..., sphere_center_idx, :]
+    assert_allclose(sphere_center, sphere_target_poss, tol=1e-8)

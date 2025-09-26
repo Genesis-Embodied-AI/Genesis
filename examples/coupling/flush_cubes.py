@@ -89,25 +89,24 @@ def main():
             color=(0.0, 0.4, 0.9, 1.0),
         ),
     )
-    scene.build(n_envs=5)
+    scene.build(n_envs=2)
 
-    horizon = 1000
+    horizon = 100
     for i in range(horizon):
-        if i < 500:
-            emitter1.emit(
-                pos=np.array([0.16, -0.4, 0.5]),
-                direction=np.array([0.0, 0.0, -1.0]),
-                speed=1.5,
-                droplet_shape="circle",
-                droplet_size=0.16,
-            )
-            emitter2.emit(
-                pos=np.array([-0.16, -0.4, 0.5]),
-                direction=np.array([0.0, 0.0, -1.0]),
-                speed=1.5,
-                droplet_shape="circle",
-                droplet_size=0.16,
-            )
+        emitter1.emit(
+            pos=np.array([0.16, -0.4, 0.5]),
+            direction=np.array([0.0, 0.0, -1.0]),
+            speed=1.5,
+            droplet_shape="circle",
+            droplet_size=0.16,
+        )
+        emitter2.emit(
+            pos=np.array([-0.16, -0.4, 0.5]),
+            direction=np.array([0.0, 0.0, -1.0]),
+            speed=1.5,
+            droplet_shape="circle",
+            droplet_size=0.16,
+        )
         scene.step()
 
 

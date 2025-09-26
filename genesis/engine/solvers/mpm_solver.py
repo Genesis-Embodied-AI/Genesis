@@ -11,6 +11,7 @@ from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
+from genesis.utils.misc import DeprecationError
 
 from .base_solver import Solver
 

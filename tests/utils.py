@@ -31,7 +31,7 @@ from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "f9d031501cba5e279f1fc77d4f3b9ccd9156ccf7"
+HUGGINGFACE_ASSETS_REVISION = "4d96c3512df4421d4dd3d626055d0d1ebdfdd7cc"
 HUGGINGFACE_SNAPSHOT_REVISION = "74f5b178fb96dfa17a05d98585af8e212db9b4e6"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
@@ -260,11 +260,9 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     # Convert input arguments as numpy arrays
     args = [actual, desired]
     for i, arg in enumerate(args):
-        if isinstance(arg, torch.Tensor):
-            arg = tensor_to_array(arg)
-        elif isinstance(arg, (tuple, list)):
-            arg = [tensor_to_array(val) for val in arg]
-        args[i] = np.asanyarray(arg)
+        if isinstance(arg, (tuple, list)):
+            arg = np.stack([tensor_to_array(val) for val in arg], axis=0)
+        args[i] = tensor_to_array(arg)
 
     # Early return without checking anything is both arrays are empty (0D arrays have size 1).
     if all(e.size == 0 for e in args):

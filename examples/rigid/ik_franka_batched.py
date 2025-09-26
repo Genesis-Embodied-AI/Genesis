@@ -48,7 +48,7 @@ def main():
     )
 
     ########################## build ##########################
-    n_envs = 100
+    n_envs = 64
     scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
 
     target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
@@ -58,7 +58,7 @@ def main():
 
     ee_link = robot.get_link("hand")
 
-    for i in range(0, 2000):
+    for i in range(720):
         target_pos = np.zeros([n_envs, 3])
         target_pos[:, 0] = center[:, 0] + np.cos(i / 360 * np.pi * angular_speed) * r
         target_pos[:, 1] = center[:, 1] + np.sin(i / 360 * np.pi * angular_speed) * r

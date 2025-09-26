@@ -18,7 +18,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, tensor_to_array, ti_to_torch
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -174,7 +174,7 @@ class RigidEntity(Entity):
                     vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface),
                 )
             )
-        if morph.collision:
+        if (morph.contype or morph.conaffinity) and morph.collision:
             g_infos.append(
                 dict(
                     contype=morph.contype,
@@ -1759,24 +1759,44 @@ class RigidEntity(Entity):
         return self._solver.get_links_quat(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_aabb(self, envs_idx=None, *, unsafe=False):
+    def get_AABB(self, envs_idx=None, *, allow_fast_approx: bool = False, unsafe=False):
         """
-        Get the axis-aligned bounding box (AABB) of the entity in world frame.
+        Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the collision
+        geometries associated with this entity.
 
         Parameters
         ----------
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        allow_fast_approx : bool
+            Whether to allow fast approximation for efficiency if supported, i.e. 'LegacyCoupler' is enabled. In this
+            case, each collision geometry is approximated by their pre-computed AABB in geometry-local frame, which is
+            more efficiency but inaccurate.
         unsafe : bool, optional
             Whether to skip input validation. Defaults to False.
 
         Returns
         -------
         aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
-            The AABB of the entity, where [0, :] = min_corner (x_min, y_min, z_min)
-            and [1, :] = max_corner (x_max, y_max, z_max).
+            The AABB of the entity, where `[:, 0] = min_corner (x_min, y_min, z_min)` and
+            `[:, 1] = max_corner (x_max, y_max, z_max)`.
         """
-        return self._solver.get_aabb(entities_idx=[self._idx_in_solver], envs_idx=envs_idx, unsafe=unsafe)
+        from genesis.engine.couplers import LegacyCoupler
+
+        if self.n_geoms == 0:
+            gs.raise_exception("Entity has no geoms.")
+
+        # Already computed internally by the solver. Let's access it directly for efficiency.
+        if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
+            aabbs = self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx, unsafe=unsafe)
+            return aabbs[..., 0, :]
+
+        # Compute the AABB on-the-fly based on the positions of all the vertices
+        verts = self.get_verts()
+        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+
+    def get_aabb(self):
+        raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
 
     @gs.assert_built
     def get_links_vel(
@@ -1957,7 +1977,6 @@ class RigidEntity(Entity):
         verts : torch.Tensor, shape (n_verts, 3) or (n_envs, n_verts, 3)
             The vertices of the entity (using collision geoms).
         """
-
         self._update_verts_for_geom()
         if self.is_free:
             tensor = torch.empty(
@@ -1976,26 +1995,6 @@ class RigidEntity(Entity):
         for i_g_ in range(self.n_geoms):
             i_g = i_g_ + self._geom_start
             self._solver.update_verts_for_geom(i_g)
-
-    @gs.assert_built
-    def get_AABB(self):
-        """
-        Get the axis-aligned bounding box (AABB) of the entity (using collision geoms).
-
-        Returns
-        -------
-        AABB : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
-            The axis-aligned bounding box (AABB) of the entity (using collision geoms).
-        """
-        if self.n_geoms == 0:
-            gs.raise_exception("Entity has no geoms.")
-
-        verts = self.get_verts()
-        AABB = torch.concatenate(
-            [verts.min(axis=-2, keepdim=True)[0], verts.max(axis=-2, keepdim=True)[0]],
-            axis=-2,
-        )
-        return AABB
 
     def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         # Handling default argument and special cases

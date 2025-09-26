@@ -345,26 +345,11 @@ class RigidLink(RBC):
     @gs.assert_built
     def get_AABB(self):
         """
-        Get the axis-aligned bounding box (AABB) of the link's collision body (concatenation of all `link.geoms`) in the world frame.
+        Get the axis-aligned bounding box (AABB) of the link's collision body in the world frame by aggregating all
+        the collision geometries associated with this link (`link.geoms`).
         """
         verts = self.get_verts()
-        AABB = torch.concatenate(
-            [verts.min(axis=-2, keepdim=True)[0], verts.max(axis=-2, keepdim=True)[0]],
-            axis=-2,
-        )
-        return AABB
-
-    @gs.assert_built
-    def get_vAABB(self):
-        """
-        Get the axis-aligned bounding box (AABB) of the link's visual body (concatenation of all `link.vgeoms`) in the world frame.
-        """
-        vverts = self.get_vverts()
-        AABB = torch.concatenate(
-            [vverts.min(axis=-2, keepdim=True)[0], vverts.max(axis=-2, keepdim=True)[0]],
-            axis=-2,
-        )
-        return AABB
+        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
 
     @gs.assert_built
     def set_mass(self, mass):
@@ -372,7 +357,7 @@ class RigidLink(RBC):
         Set the mass of the link.
         """
         if self.is_fixed:
-            gs.warning(f"Updating the mass of a link that is fixed wrt world has no effect, skipping.")
+            gs.logger.warning(f"Updating the mass of a link that is fixed wrt world has no effect, skipping.")
             return
 
         if mass < gs.EPS:
