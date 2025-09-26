@@ -852,7 +852,7 @@ class MPMSolver(Solver):
         for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
-            self.particles_ng[f, i_p, i_b].active = actives[i_b_, i_p_]
+            self.particles_ng[f, i_p, i_b].active = ti.cast(actives[i_b_, i_p_], gs.ti_bool)
 
     @ti.kernel
     def _kernel_get_particles_active(

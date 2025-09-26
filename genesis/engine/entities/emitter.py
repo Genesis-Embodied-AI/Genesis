@@ -107,7 +107,7 @@ class Emitter(RBC):
         else:
             direction = gu.normalize(direction)
 
-        p_size = self._solver.particle_size if p_size is None else p_size
+        p_size = self._entity.particle_size if p_size is None else p_size
 
         if droplet_length is None:
             # Use the speed to determine the length of the droplet in the emitting direction
@@ -166,33 +166,17 @@ class Emitter(RBC):
 
             if n_particles > self._entity.n_particles:
                 gs.logger.warning(
-                    f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum number of particles ({self._entity.n_particles})."
+                    f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum "
+                    f"number of particles ({self._entity.n_particles})."
                 )
 
             start_idx = self._entity.particle_start + self._next_particle
             end_idx = start_idx + n_particles
-            particles_idx = np.tile(np.arange(start_idx, end_idx), (self._sim._B, 1))
-            envs_idx = np.arange(self._sim._B)
+            particles_idx = range(start_idx, end_idx)
 
-            self._solver._kernel_set_particles_pos(
-                self._sim.cur_substep_local,
-                particles_idx,
-                envs_idx,
-                positions,
-            )
-            self._solver._kernel_set_particles_vel(
-                self._sim.cur_substep_local,
-                particles_idx,
-                envs_idx,
-                vels,
-            )
-            actives = np.ones((self._sim._B, n_particles), dtype=gs.np_bool) * gs.ACTIVE
-            self._solver._kernel_set_particles_active(
-                self._sim.cur_substep_local,
-                particles_idx,
-                envs_idx,
-                actives,
-            )
+            self._entity.set_particles_pos(positions, particles_idx)
+            self._entity.set_particles_vel(vels, particles_idx)
+            self._entity.set_particles_active(gs.ACTIVE, particles_idx)
 
             self._next_particle += n_particles
 
@@ -229,7 +213,7 @@ class Emitter(RBC):
         pos = np.asarray(pos, dtype=gs.np_float)
 
         if particle_size is None:
-            particle_size = self._solver.particle_size
+            particle_size = self._entity.particle_size
 
         positions_ = pu.shell_to_particles(
             p_size=particle_size,
@@ -244,7 +228,7 @@ class Emitter(RBC):
 
         dists = np.linalg.norm(positions_, axis=1)
         positions[dists < gs.EPS] = gs.EPS
-        vels = (speed / (dists + gs.EPS)) * positions_
+        vels = (speed / (dists[:, None] + gs.EPS)) * positions_
 
         n_particles = len(positions)
         if n_particles > self._entity.n_particles:
@@ -253,24 +237,13 @@ class Emitter(RBC):
                 f"of particles ({self._entity.n_particles})."
             )
 
-        self._solver._kernel_set_particles_pos(
-            self._sim.cur_substep_local,
-            self._entity.particle_start + self._next_particle,
-            n_particles,
-            positions,
-        )
-        self._solver._kernel_set_particles_vel(
-            self._sim.cur_substep_local,
-            self._entity.particle_start + self._next_particle,
-            n_particles,
-            vels,
-        )
-        self._solver._kernel_set_particles_active(
-            self._sim.cur_substep_local,
-            self._entity.particle_start + self._next_particle,
-            n_particles,
-            gs.ACTIVE,
-        )
+        start_idx = self._entity.particle_start + self._next_particle
+        end_idx = start_idx + n_particles
+        particles_idx = range(start_idx, end_idx)
+
+        self._entity.set_particles_pos(positions, particles_idx)
+        self._entity.set_particles_vel(vels, particles_idx)
+        self._entity.set_particles_active(gs.ACTIVE, particles_idx)
 
         self._next_particle += n_particles
 
