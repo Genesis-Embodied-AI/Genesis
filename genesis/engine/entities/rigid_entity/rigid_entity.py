@@ -1759,7 +1759,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_quat(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def get_aabb(self, envs_idx=None, *, unsafe=False):
+    def get_AABB(self, envs_idx=None, *, allow_fast_approx: bool = False, unsafe=False):
         """
         Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the collision
         geometries associated with this entity.
@@ -1768,6 +1768,10 @@ class RigidEntity(Entity):
         ----------
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        allow_fast_approx : bool
+            Whether to allow fast approximation for efficiency if supported, i.e. 'LegacyCoupler' is enabled. In this
+            case, each collision geometry is approximated by their pre-computed AABB in geometry-local frame, which is
+            more efficiency but inaccurate.
         unsafe : bool, optional
             Whether to skip input validation. Defaults to False.
 
@@ -1783,13 +1787,16 @@ class RigidEntity(Entity):
             gs.raise_exception("Entity has no geoms.")
 
         # Already computed internally by the solver. Let's access it directly for efficiency.
-        if isinstance(self.sim.coupler, LegacyCoupler):
-            aabbs = self._solver.get_aabb(entities_idx=[self._idx_in_solver], envs_idx=envs_idx, unsafe=unsafe)
+        if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
+            aabbs = self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx, unsafe=unsafe)
             return aabbs[..., 0, :]
 
         # Compute the AABB on-the-fly based on the positions of all the vertices
         verts = self.get_verts()
         return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+
+    def get_aabb(self):
+        raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
 
     @gs.assert_built
     def get_links_vel(
