@@ -6,6 +6,7 @@ from typing import cast
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import igl
 import mujoco
 import numpy as np
 import pytest
@@ -922,7 +923,6 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(10, 10, 10),
             camera_lookat=(0.0, 0.0, 0.0),
-            camera_fov=40,
         ),
         show_viewer=show_viewer,
     )
@@ -1352,7 +1352,6 @@ def test_multilink_inverse_kinematics(show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=40,
         ),
         vis_options=gs.options.VisOptions(
             rendered_envs_idx=(1,),
@@ -1426,8 +1425,6 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, 1, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -1529,8 +1526,6 @@ def test_all_fixed(show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, 1, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -1562,9 +1557,6 @@ def test_contact_forces(show_viewer, tol):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            res=(960, 640),
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -1633,7 +1625,6 @@ def test_apply_external_forces(xml_path, show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3.5, 2.5),
             camera_lookat=(0.0, 0.0, 1.0),
-            camera_fov=40,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -1978,8 +1969,6 @@ def test_collision_plane_convex(show_viewer, tol):
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(1.0, -0.5, 0.5),
                 camera_lookat=(0.5, 0.0, 0.0),
-                camera_fov=30,
-                max_FPS=60,
             ),
             show_viewer=show_viewer,
             show_FPS=False,
@@ -2032,17 +2021,29 @@ def test_nan_reset(gs_sim, mode):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("offset", [(0.0, 0.0, 0.0), (10.0, -10.0, 0.5)])
+@pytest.mark.parametrize("offset", [(0.0, 0.0, 0.0), (10.0, -10.0, -1.0)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_terrain_generation(offset, show_viewer):
+    TERRAIN_PATTERN = [
+        ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
+        ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
+        ["flat_terrain", "pyramid_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain", "flat_terrain"],
+        ["flat_terrain", "stairs_terrain", "pyramid_stairs_terrain", "stepping_stones_terrain", "flat_terrain"],
+        ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
+    ]
+    TERRAIN_SIZE = 10.0
+    SUBTERRAIN_GRID_SIZE = 15
+    OBJ_SIZE = 0.1
+    OBJ_HEIGHT_INIT = 0.3
+    NUM_OBJ_SQRT = 15
+
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            dt=0.01,
+            dt=0.006,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-5.0, -5.0, 10.0),
-            camera_lookat=(5.0, 5.0, 0.0),
-            camera_fov=40,
+            camera_pos=(-5.0 + offset[0], -5.0 + offset[1], 10.0 + offset[2]),
+            camera_lookat=(5.0 + offset[0], 5.0 + offset[1], 0.0 + offset[2]),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -2050,41 +2051,42 @@ def test_terrain_generation(offset, show_viewer):
     terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
             pos=offset,
-            n_subterrains=(2, 2),
-            subterrain_size=(6.0, 6.0),
-            horizontal_scale=0.25,
-            vertical_scale=0.005,
-            subterrain_types=[
-                ["stairs_terrain", "stairs_terrain"],
-                ["flat_terrain", "flat_terrain"],
-            ],
+            n_subterrains=(len(TERRAIN_PATTERN),) * 2,
+            subterrain_size=(TERRAIN_SIZE / len(TERRAIN_PATTERN),) * 2,
+            horizontal_scale=TERRAIN_SIZE / len(TERRAIN_PATTERN) / SUBTERRAIN_GRID_SIZE,
+            vertical_scale=0.05,
+            subterrain_types=TERRAIN_PATTERN,
         ),
     )
-    ball = scene.add_entity(
-        morph=gs.morphs.Sphere(
+    obj = scene.add_entity(
+        morph=gs.morphs.Box(
             pos=(1.0, 1.0, 1.0),
-            radius=0.1,
+            size=(0.1, 0.1, 0.1),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
         ),
     )
-    scene.build(n_envs=225)
+    scene.build(n_envs=NUM_OBJ_SQRT**2)
 
-    ball.set_pos(
-        torch.tensor(offset).unsqueeze(0)
-        + torch.cartesian_prod(*(torch.linspace(3.0, 8.0, 15),) * 2, torch.tensor((0.6,)))
-    )
-    for _ in range(400):
+    # Spread objects across the entire field
+    obj_pos_1d = torch.linspace(OBJ_SIZE / 2, TERRAIN_SIZE - OBJ_SIZE / 2, NUM_OBJ_SQRT)
+    obj_pos_init_rel = torch.cartesian_prod(*(obj_pos_1d,) * 2, torch.tensor((OBJ_HEIGHT_INIT,)))
+    obj.set_pos(obj_pos_init_rel + torch.tensor(offset))
+
+    # Drop the objects and simulate for a while
+    for _ in range(500):
         scene.step()
 
-    # ball should not fall out of the terrain
-    height_field = terrain.geoms[0].metadata["height_field"]
-    height_field_min = terrain.terrain_scale[1] * height_field.min()
+    # Check that objects are not moving anymore
+    assert_allclose(obj.get_vel(), 0.0, tol=0.05)
 
-    balls_pos = ball.get_pos()
-    height_balls = balls_pos[:, 2]
-    height_balls_min = height_balls.min() - 0.1
-
-    safe_margin = 0.01
-    assert height_balls_min > height_field_min - safe_margin
+    # Check that all objects are in contact with the terrain
+    obj_pos = tensor_to_array(obj.get_pos()) - offset
+    terrain_mesh = terrain.geoms[0].mesh
+    signed_distance, *_ = igl.signed_distance(obj_pos, terrain_mesh.verts, terrain_mesh.faces)
+    assert (signed_distance > 0.0).all()
+    assert (signed_distance < 2 * OBJ_SIZE).all()
 
 
 @pytest.mark.required
@@ -2433,8 +2435,6 @@ def test_drone_advanced(show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
