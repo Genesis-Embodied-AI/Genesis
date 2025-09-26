@@ -176,7 +176,7 @@ class SPHEntity(ParticleEntity):
     def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
+        actives = self._sanitize_particles_tensor((), gs.tc_bool, actives, particles_idx_local, envs_idx)
         self.solver._kernel_set_particles_active(particles_idx_local + self._particle_start, envs_idx, actives)
 
     def get_particles_active(self, envs_idx=None, *, unsafe=False):
