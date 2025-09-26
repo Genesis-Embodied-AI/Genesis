@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 import gstaichi as ti
 
 import genesis as gs
@@ -13,6 +14,7 @@ from genesis.engine.entities import (
     PBDParticleEntity,
 )
 from genesis.engine.states.solvers import PBDSolverState
+from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
 
 from .base_solver import Solver
@@ -148,26 +150,19 @@ class PBDSolver(Solver):
             active=gs.ti_bool,
         )
 
-        self.particles_info = struct_particle_info.field(shape=self._n_particles, layout=ti.Layout.SOA)
-        self.particles_info_reordered = struct_particle_info.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        shared_shape = self._n_particles
+        batched_shape = self._batch_shape(shared_shape)
 
-        self.particles = struct_particle_state.field(shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA)
-        self.particles_reordered = struct_particle_state.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        self.particles_info = struct_particle_info.field(shape=shared_shape, layout=ti.Layout.SOA)
+        self.particles_info_reordered = struct_particle_info.field(shape=batched_shape, layout=ti.Layout.SOA)
 
-        self.particles_ng = struct_particle_state_ng.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
-        self.particles_ng_reordered = struct_particle_state_ng.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        self.particles = struct_particle_state.field(shape=batched_shape, layout=ti.Layout.SOA)
+        self.particles_reordered = struct_particle_state.field(shape=batched_shape, layout=ti.Layout.SOA)
 
-        self.particles_render = struct_particle_state_render.field(
-            shape=self._batch_shape(self._n_particles), layout=ti.Layout.SOA
-        )
+        self.particles_ng = struct_particle_state_ng.field(shape=batched_shape, layout=ti.Layout.SOA)
+        self.particles_ng_reordered = struct_particle_state_ng.field(shape=batched_shape, layout=ti.Layout.SOA)
+
+        self.particles_render = struct_particle_state_render.field(shape=batched_shape, layout=ti.Layout.SOA)
 
     def init_edge_fields(self):
         # edges information for stretch. edge: (v1, v2)
@@ -393,9 +388,11 @@ class PBDSolver(Solver):
                         self.particles[i_p, i_b].vel
                         - f_air_resistance / self.particles_info[i_p].mass * self._substep_dt
                     )
-                self.particles[i_p, i_b].pos = (
-                    self.particles[i_p, i_b].pos + self.particles[i_p, i_b].vel * self._substep_dt
-                )
+
+            # attached particles are not free but still need to update position to follow the link
+            self.particles[i_p, i_b].pos = (
+                self.particles[i_p, i_b].pos + self.particles[i_p, i_b].vel * self._substep_dt
+            )
 
     @ti.kernel
     def _kernel_solve_stretch(self, f: ti.i32):
@@ -557,9 +554,13 @@ class PBDSolver(Solver):
                         self.sh.slot_start[slot_idx, i_b],
                         self.sh.slot_size[slot_idx, i_b] + self.sh.slot_start[slot_idx, i_b],
                     ):
-                        if i_p != j and not (
-                            self.particles_info_reordered[i_p, i_b].material_type == self.MATERIAL.LIQUID
-                            and self.particles_info_reordered[j, i_b].material_type == self.MATERIAL.LIQUID
+                        if (
+                            i_p != j
+                            and (self.particles_reordered[i_p, i_b].free or self.particles_reordered[j, i_b].free)
+                            and not (
+                                self.particles_info_reordered[i_p, i_b].material_type == self.MATERIAL.LIQUID
+                                and self.particles_info_reordered[j, i_b].material_type == self.MATERIAL.LIQUID
+                            )
                         ):
                             self._func_solve_collision(i_p, j, i_b)
 
@@ -911,7 +912,17 @@ class PBDSolver(Solver):
             for i in ti.static(range(3)):
                 self.particles[i_p, i_b].vel[i] = vels[i_b_, i_p_, i]
 
-    @ti.kernel
+    @gs.assert_built
+    def set_animate_particles_by_link(
+        self,
+        particles_idx: NDArray[np.int32],
+        link_idx: int,
+        links_state: LinksState,
+        envs_idx: NDArray[np.int32] | None = None,
+    ) -> None:
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        self._sim._coupler.kernel_attach_pbd_to_rigid_link(particles_idx, envs_idx, link_idx, links_state)
+
     def _kernel_get_particles_vel(
         self,
         particle_start: ti.i32,

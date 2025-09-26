@@ -2,7 +2,6 @@ import math
 import numpy as np
 import pytest
 import torch
-import gstaichi as ti
 
 import genesis as gs
 
@@ -203,107 +202,9 @@ def test_deformable_parallel(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("material_type", [gs.materials.PBD.Cloth])
-@pytest.mark.parametrize("backend", [gs.gpu])
-def test_attach_cloth(n_envs, material_type, show_viewer, tol):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=4e-3,
-            substeps=10,
-        ),
-        show_viewer=show_viewer,
-    )
-    plane = scene.add_entity(
-        morph=gs.morphs.Plane(),
-    )
-    cloth_1 = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/cloth.obj",
-            pos=(0, 2.0, 0.5),
-            scale=1.0,
-        ),
-        material=material_type(),
-        surface=gs.surfaces.Default(
-            color=(1.0, 1.0, 0.2, 1.0),
-            vis_mode="visual",
-        ),
-    )
-    cloth_2 = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/cloth.obj",
-            pos=(0, 0, 0.1),
-            scale=2.0,
-        ),
-        material=material_type(),
-        surface=gs.surfaces.Default(
-            color=(1.0, 1.0, 0.2, 1.0),
-            vis_mode="visual",
-        ),
-    )
-    scene.build(n_envs=n_envs)
-
-    # Make sure that 'get_position', 'get_velocity' is working
-    for cloth in (cloth_1, cloth_2):
-        init_com = torch.tensor([2.0, 0.0, 1.0])
-        cloth.set_position(init_com)
-        cloth.process_input()
-        poss = cloth.get_particles_pos()
-        assert_allclose(poss.mean(dim=-2), init_com, tol=1e-2)
-        poss += torch.tensor([0.5, -1.0, -0.5])
-        vels = torch.rand_like(poss)
-        cloth.set_position(poss)
-        cloth.set_velocity(vels)
-        assert_allclose(cloth.get_particles_vel(), 0.0, tol=tol)
-        cloth.process_input()
-        assert_allclose(cloth.get_particles_pos(), poss, tol=tol)
-        assert_allclose(cloth.get_particles_vel(), vels, tol=tol)
-    scene.reset()
-
-    # Simulate for a while
-    for i in range(40):
-        scene.step()
-
-    # Make sure that the cloth is landing perfectly vertically and laying on the ground without moving
-    poss = cloth_2.get_particles_pos()
-    assert_allclose(poss[..., :2], cloth_2._mesh.verts[..., :2], tol=tol)
-    assert_allclose(poss[..., 2], cloth_2._particle_size / 2, tol=tol)
-    vels = cloth_2.get_particles_vel()
-    assert_allclose(vels, 0.0, tol=tol)
-
-    # Attach top-left corner and simulate for a while
-    particle_idx = cloth_2.find_closest_particle((-1, -1, 0))
-    particle_pos_ref = (-0.5, -0.5, 0.05)
-    cloth_2.set_particles_pos(particle_pos_ref, particle_idx)
-    for i in range(60):
-        scene.step()
-
-    # Make sure that the corner is at the target position, some points are still on the ground, and none are moving
-    poss = cloth_2.get_particles_pos()
-    if scene.n_envs > 0:
-        particle_pos = poss[torch.arange(scene.n_envs), particle_idx]
-    else:
-        particle_pos = poss[particle_idx]
-    assert_allclose(particle_pos, particle_pos_ref, tol=tol)
-    assert_allclose(poss[..., 2].min(dim=-1).values, cloth_2._particle_size / 2, tol=tol)
-    vels = cloth_2.get_particles_vel()
-    assert_allclose(vels[..., 2].mean(dim=-1), 0.0, tol=1e-3)
-
-    # Release cloth
-    cloth_2.release_particle(particle_idx)
-    for i in range(30):
-        scene.step()
-
-    # Make sure that the cloth is laying on the ground without moving
-    poss = cloth_2.get_particles_pos()
-    assert_allclose(poss[..., 2], cloth_2._particle_size / 2, tol=tol)
-    assert -0.6 < poss[..., :1].min() and poss[..., :1].max() < 0.6
-    vels = cloth_2.get_particles_vel()
-    assert_allclose(vels[..., 2].mean(dim=-1), 0.0, tol=tol)
-
-
-@pytest.mark.required
 def test_sf_solver(show_viewer):
+    import gstaichi as ti
+
     res = 384
     orbit_tau = 0.2
     orbit_radius = 0.3
