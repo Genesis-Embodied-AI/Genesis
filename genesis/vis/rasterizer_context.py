@@ -413,8 +413,7 @@ class RasterizerContext:
                     geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     node = self.rigid_nodes[geom.uid]
                     node.mesh._bounds = None
-                    for primitive in node.mesh.primitives:
-                        primitive.poses = geom_T
+                    node.mesh.primitives[0].poses = geom_T
                     buffer_updates[self._scene.get_buffer_id(node, "model")] = geom_T.transpose((0, 2, 1))
                     if isinstance(rigid_entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
@@ -507,8 +506,7 @@ class RasterizerContext:
                     geom_T = geoms_T[geom.idx]
                     node = self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")
                     node.mesh._bounds = None
-                    for primitive in node.mesh.primitives:
-                        primitive.poses = geom_T
+                    node.mesh.primitives[0].poses = geom_T
                     buffer_updates[node] = geom_T.transpose((0, 2, 1))
 
     def on_mpm(self):
@@ -912,8 +910,18 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def clear_debug_object(self, object):
-        self.clear_external_node(object)
+    def update_debug_objects(self, objs, poses):
+        poses = tensor_to_array(poses)
+        buffer_updates = {}
+        for obj, pose in zip(objs, poses):
+            obj._bounds = None
+            obj.primitives[0].poses = pose
+            node = self.external_nodes[obj.name]
+            buffer_updates[self._scene.get_buffer_id(node, "model")] = poses.swapaxes(-2, -1)
+        self.jit.update_buffer(buffer_updates)
+
+    def clear_debug_object(self, obj):
+        self.clear_external_node(obj)
 
     def clear_debug_objects(self):
         self.clear_external_nodes()
