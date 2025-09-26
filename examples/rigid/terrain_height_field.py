@@ -10,7 +10,7 @@ import genesis as gs
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=True)
+    parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -62,7 +62,6 @@ def main():
     poss = torch.cat([rows, cols, heights], dim=-1).reshape(-1, 3)
     scene.draw_debug_spheres(poss=poss, radius=0.05, color=(0, 0, 1, 0.7))
     for _ in range(1000):
-        time.sleep(0.5)
         scene.step()
 
 

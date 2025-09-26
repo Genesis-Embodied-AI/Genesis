@@ -1,4 +1,6 @@
+import argparse
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -72,6 +74,10 @@ class Jet(object):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--num_steps", type=int, default=200)
+    args = parser.parse_args()
+    args.num_steps = 20 if "PYTEST_VERSION" in os.environ else args.num_steps
 
     ########################## init ##########################
     gs.init(seed=0, precision="32", logging_level="debug")
@@ -120,10 +126,8 @@ def main():
 
     scene.build()
 
-    num_steps = 200
     substeps = 10
-
-    for i in range(num_steps):
+    for i in range(args.num_steps):
 
         scalars = scene.sim.solvers[-1].grid.q.to_numpy().astype(np.float32)  # (res, res, res, 3)
         scalars[scalars < 1e-4] = 0
