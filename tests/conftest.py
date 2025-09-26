@@ -392,7 +392,7 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
         if os.environ.get("GS_USE_NDARRAY") == "1":
             for mark in request.node.iter_markers("field_only"):
                 if not mark.args or mark.args[0]:
-                    pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
+                    pytest.skip("This test does not support GsTaichi ndarray mode. Skipping...")
             if sys.platform == "darwin" and backend != gs.cpu:
                 pytest.skip(
                     "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only "
