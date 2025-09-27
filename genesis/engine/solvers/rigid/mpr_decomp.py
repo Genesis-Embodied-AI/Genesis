@@ -196,18 +196,18 @@ def support_driver(
     v = ti.Vector.zero(gs.ti_float, 3)
     geom_type = geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, False)
+        v, v_, vid = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, False)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
         v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
         v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, False)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, _ = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
+        v, v_, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
             v, _ = support_field._func_support_prism(collider_state, direction, i_g, i_b)
     else:
-        v, _ = support_field._func_support_world(
+        v, v_, vid = support_field._func_support_world(
             geoms_state, geoms_info, support_field_info, support_field_static_config, direction, i_g, i_b
         )
     return v

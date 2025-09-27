@@ -315,7 +315,7 @@ class RigidOptions(Options):
     contact_resolve_time: Optional[float] = None
     constraint_timeconst: float = 0.01
     use_contact_island: bool = False
-    box_box_detection: bool = True
+    box_box_detection: Optional[bool] = None
 
     # hibernation threshold
     use_hibernation: bool = False
