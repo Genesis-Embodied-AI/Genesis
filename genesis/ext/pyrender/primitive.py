@@ -4,6 +4,7 @@ https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#reference-pri
 Author: Matthew Matl
 """
 
+import numba as nb
 import numpy as np
 from OpenGL.GL import *
 
@@ -11,6 +12,15 @@ from .constants import FLOAT_SZ, GLTF, UINT_SZ, BufFlags
 from .material import Material, MetallicRoughnessMaterial
 from .utils import format_color_array
 
+
+@nb.jit(nopython=True, cache=True)
+def _compute_bounds(positions):
+    bounds = np.zeros((2, 3))
+    if len(positions) > 0:
+        for i in range(3):
+            bounds[0, i] = np.min(positions[:, i])
+            bounds[1, i] = np.max(positions[:, i])
+    return bounds
 
 class Primitive(object):
     """A primitive object which can be rendered.
@@ -76,7 +86,6 @@ class Primitive(object):
         is_floor=False,
         env_shared=True,
     ):
-
         if mode is None:
             mode = GLTF.TRIANGLES
 
@@ -99,6 +108,7 @@ class Primitive(object):
         self.env_shared = env_shared
 
         self._bounds = None
+        self._bounds_0 = None
         self._vaid = None
         self._buffers = {}
         self._is_transparent = None
@@ -116,6 +126,7 @@ class Primitive(object):
     def positions(self, value):
         value = np.asanyarray(value, order="C", dtype=np.float32)
         self._positions = value
+        self._bounds_0 = None
         self._bounds = None
 
     @property
@@ -269,17 +280,17 @@ class Primitive(object):
     def bounds(self):
         """Compute the bounds of this object."""
         if self._bounds is None:
-            # Compute bounds of this object
-            if len(self.positions) > 0:
-                self._bounds = np.stack((np.min(self.positions, axis=0), np.max(self.positions, axis=0)), axis=0)
-            else:
-                self._bounds = np.zeros((2, 3))
-
-            # If instanced, compute translations for approximate bounds
+            if self._bounds_0 is None:
+                self._bounds_0 = _compute_bounds(self.positions)
             if self.poses is not None:
-                self._bounds += np.stack(
-                    (np.min(self.poses[:, :3, 3], axis=0), np.max(self.poses[:, :3, 3], axis=0)), axis=0
-                )
+                if len(self.poses) == 1:
+                    self._bounds = self._bounds_0 + self.poses[:, :3, 3]
+                else:
+                    self._bounds = self._bounds_0 + np.stack(
+                        (np.min(self.poses[:, :3, 3], axis=0), np.max(self.poses[:, :3, 3], axis=0)), axis=0
+                    )
+            else:
+                self._bounds = self._bounds_0
         return self._bounds
 
     @property
@@ -326,18 +337,18 @@ class Primitive(object):
             p = self.positions.reshape((-1, 3, 3))
             face_normal = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
             face_normal /= np.maximum(1e-10, np.linalg.norm(face_normal, axis=1, keepdims=True))
-            return np.repeat(face_normal, 3, axis=0)
+            vertex_normal = np.repeat(face_normal, 3, axis=0)
         else:
             p = self.positions.reshape((-1, 3))
             idx = self.indices.reshape((-1, 3))
-            face_normal = np.cross(p[idx[:, 1]] - p[idx[:, 0]], p[idx[:, 2]] - p[idx[:, 0]])
+            face_points = p[idx]
+            face_normal = np.cross(face_points[:, 1] - face_points[:, 0], face_points[:, 2] - face_points[:, 0])
+            # Must use `np.add.at` which is unbuffered unlike `+=`, otherwise accumulation will
+            # not work properly as there are repeated indices.
             vertex_normal = np.zeros_like(p)
-            for f in range(face_normal.shape[0]):
-                vertex_normal[idx[f, 0]] += face_normal[f]
-                vertex_normal[idx[f, 1]] += face_normal[f]
-                vertex_normal[idx[f, 2]] += face_normal[f]
+            np.add.at(vertex_normal, idx.reshape((-1,)), np.repeat(face_normal, 3, axis=0))
             vertex_normal /= np.maximum(1e-10, np.linalg.norm(vertex_normal, axis=1, keepdims=True))
-            return vertex_normal
+        return vertex_normal
 
     def _add_to_context(self):
         if self._vaid is not None:
@@ -358,8 +369,7 @@ class Primitive(object):
             self._buffers["pos"] = posbuffer
             glBindBuffer(GL_ARRAY_BUFFER, posbuffer)
 
-            vertex_data = self.positions
-            vertex_data = vertex_data.astype(np.float32, order="C", copy=False).reshape((-1,))
+            vertex_data = self.positions.astype(np.float32, order="C", copy=False).reshape((-1,))
             glBufferData(GL_ARRAY_BUFFER, FLOAT_SZ * len(vertex_data), vertex_data, GL_STREAM_DRAW)
 
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, FLOAT_SZ * 3, ctypes.c_void_p(0))
