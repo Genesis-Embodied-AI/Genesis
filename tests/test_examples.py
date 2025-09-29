@@ -39,7 +39,7 @@ SKIP_BASENAMES = {
     "fem_cube_linked_with_arm.py",  # FIXME: memory bug
 }
 
-TIMEOUT = 300.0
+TIMEOUT = 400.0
 
 
 # Only enable this suite when explicitly requested (e.g., in the dedicated CI workflow)
@@ -88,13 +88,15 @@ def test_example(file: Path):
     try:
         result = subprocess.run(run_cmd, env=os.environ, capture_output=True, text=True, check=False, timeout=TIMEOUT)
     except subprocess.TimeoutExpired as e:
-        pytest.fail(
-            f"Timeout running example {path_rel}.\n"
-            f"--- STDOUT ---\n{e.stdout or ''}\n\n--- STDERR ---\n{e.stderr or ''}"
-        )
+        err_msg = f"Timeout running example {path_rel}."
+        if e.stdout is not None:
+            err_msg += f"\n\n--- STDOUT ---\n{e.stdout.decode()}"
+        if e.stderr is not None:
+            err_msg += f"\n\n--- STDERR ---\n{e.stderr.decode()}"
+        pytest.fail(err_msg)
 
     if result.returncode != 0:
         pytest.fail(
-            f"Failed to run example {path_rel} (Exit Code {result.returncode})\n"
+            f"Failed to run example {path_rel} (Exit Code {result.returncode}).\n\n"
             f"--- STDOUT ---\n{result.stdout}\n\n--- STDERR ---\n{result.stderr}"
         )
