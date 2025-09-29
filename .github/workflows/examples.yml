@@ -13,10 +13,13 @@ concurrency:
 
 jobs:
   run-examples:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    name: ubuntu-24.04-3.12-examples
+
     env:
-      CI_EXAMPLES: "1"
       HF_HUB_DOWNLOAD_TIMEOUT: 60
+      FORCE_COLOR: 1
+      PY_COLORS: 1
       GS_CACHE_FILE_PATH: ".cache/genesis"
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
@@ -37,32 +40,22 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: examples-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          key: ubuntu-24.04-3.12-examples
           restore-keys: |
-            examples-${{ runner.os }}-
+            ubuntu-24.04-3.12-examples-
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install system deps (headless OpenGL)
+      - name: Install Mesa OpenGL driver for headless rendering
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libgl1 \
-            libegl1 \
-            libglvnd-dev \
-            libglew-dev \
-            libegl-dev \
-            libx11-6 \
-            libxrender1 \
-            libglib2.0-0 \
-            libosmesa6-dev \
-            libglx-mesa0 \
-            libglu1-mesa \
-            libegl1-mesa-dev \
-            libgles2-mesa-dev
+          sudo apt install -y \
+              libglu1-mesa \
+              libegl-mesa0 \
+              libgl1-mesa-dev
 
       - name: Install Python deps
         run: |
@@ -72,13 +65,11 @@ jobs:
 
       - name: Run examples suite
         run: |
-          CI_EXAMPLES=1 pytest -v tests/test_examples_ci.py
+          pytest -v -m examples tests/test_examples.py
 
       - name: Save cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: .cache
-          key: examples-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-
+          key: ubuntu-24.04-3.12-examples-${{ github.run_id }}-${{ github.run_attempt }}
