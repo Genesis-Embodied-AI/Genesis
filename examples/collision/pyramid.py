@@ -5,8 +5,8 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pile_type", type=str, default=pile_type, choices=["static", "falling"])
-    parser.add_argument("--num_cubes", type=int, default=num_cubes, choices=range(5, 11))
+    parser.add_argument("--pile_type", type=str, default="falling", choices=["static", "falling"])
+    parser.add_argument("--num_cubes", type=int, default=5, choices=range(5, 11))
     parser.add_argument("--cpu", action="store_true", help="Use CPU backend instead of GPU")
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("-v", "--vis", action="store_true", default=False)

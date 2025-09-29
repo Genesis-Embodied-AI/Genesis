@@ -40,6 +40,7 @@ def main():
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=args.solver == "implicit",
+            enable_vertex_constraints=True,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

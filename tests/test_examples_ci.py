@@ -59,7 +59,6 @@ def _discover_examples():
         elif p.parent == EXAMPLES_DIR and p.name in {
             "smoke.py",
             "elastic_dragon.py",
-            "differentiable_push.py",
             "fem_hard_and_soft_constraint.py",
         }:
             kept.append(p)
