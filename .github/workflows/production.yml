@@ -1,0 +1,113 @@
+name: Production
+
+on:
+  # Trigger the workflow on push on the master branch, or for any pull request
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  # Cancel all workflows that are stil running if any when updating branches associated with PRs,
+  # BUT don't do anything for workflows that are not triggered by PRs.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  linux-gpu:
+    runs-on: [self-hosted, coreweave]
+
+    env:
+      # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_HUB_DOWNLOAD_TIMEOUT: 60
+      GENESIS_IMAGE_VER: "1_1"
+      TIMEOUT_MINUTES: 180
+      FORCE_COLOR: 1
+      PY_COLORS: 1
+      MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
+      OMNI_KIT_ACCEPT_EULA: "yes"
+      OMNI_KIT_ALLOW_ROOT: "1"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
+          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
+          fetch-depth: 0
+
+      - name: Run unit tests
+        if: github.event_name == 'pull_request'
+        run: |
+          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+
+          mkdir -p "${HOME}/.cache"
+
+          # TODO: USD baking does not currently support Python 3.11 since
+          # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
+          # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
+          srun \
+            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+            --container-mounts=\
+          "${{ github.workspace }}":/root/workspace,\
+          "${HOME}/.cache":/root/.cache \
+            --no-container-mount-home --container-workdir=/root/workspace \
+            --export=NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN \
+            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --job-name=${SLURM_JOB_NAME} \
+            bash -c "
+              pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
+              pip install -e '.[dev,render,usd]' && \
+              pytest -v --backend gpu --dev --forked ./tests
+            "
+
+      - name: Run benchmarks
+        run: |
+          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN"
+          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
+            SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
+          fi
+
+          # Remove `: #` prefixes to enable tmate interactive debugging session
+          srun \
+            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+            --container-mounts=\
+          /mnt/data/artifacts:/mnt/data/artifacts,\
+          "${{ github.workspace }}":/root/workspace \
+            --no-container-mount-home --container-workdir=/root/workspace \
+            --export=${SLURM_ENV_VARS} \
+            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --job-name=${SLURM_JOB_NAME} \
+            bash -c "
+              : # sudo apt install -y tmate && \
+              tmate -S /tmp/tmate.sock new-session -d && \
+              tmate -S /tmp/tmate.sock wait tmate-ready && \
+              tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+              pip install -e '.[dev,render]' && \
+              pytest --print -x -m 'benchmarks' ./tests && \
+              cat speed_test*.txt > '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
+              : # tmate -S /tmp/tmate.sock wait tmate-exit
+            "
+
+      - name: Kill srun job systematically
+        if: always()
+        run: |
+          if [ -n "${SLURM_JOB_NAME}" ] ; then
+            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+          fi
+
+      - name: Display benchmark stats
+        run: |
+          cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+
+      - name: Upload benchmark stats as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-test-results
+          path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"

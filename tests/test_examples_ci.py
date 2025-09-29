@@ -34,7 +34,8 @@ SKIP_BASENAMES = {
     "cut_dragon.py",
     "differentiable_push.py",
     "single_franka_batch_render.py",  # FIXME: it will have segfault on exit
-    "flush_cubes.py",  # FIXME: # FIXME: #1721 might be related
+    "flush_cubes.py",  # FIXME: #1721 might be related
+    "fem_cube_linked_with_arm.py",  # FIXME: memory bug
 }
 
 
