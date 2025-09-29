@@ -811,7 +811,7 @@ class MPMSolver(Solver):
             i_p = particles_idx[i_b_, i_p_]
             i_b = envs_idx[i_b_]
             for i in ti.static(range(3)):
-                self.particles[f, i_p, i_b].vel[i] = vels[i_b, i_p, i]
+                self.particles[f, i_p, i_b].vel[i] = vels[i_b_, i_p_, i]
 
     @ti.kernel
     def _kernel_set_particles_vel_grad(

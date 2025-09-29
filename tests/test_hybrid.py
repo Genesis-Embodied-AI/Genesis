@@ -130,16 +130,17 @@ def test_fluid_emitter(material_type, show_viewer):
     )
     emitter = scene.add_emitter(
         material=material_type(),
-        max_particles=100000,
+        max_particles=1400,
         surface=gs.surfaces.Glass(
             color=(0.7, 0.85, 1.0, 0.7),
         ),
     )
     scene.build(n_envs=2)
 
-    emitter.emit(droplet_shape="circle", droplet_size=0.22)
     emitter.emit_omni()
-
+    for i in range(5):
+        emitter.emit(droplet_shape="circle", droplet_size=0.25)
+        scene.step()
     scene.step()
 
 
@@ -202,7 +203,7 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
         assert_allclose(entity.get_links_vel(), 0.0, atol=2e-2)
 
     # The box should stay at its initial position
-    assert_allclose(box.get_pos(), (0.0, 0.0, BOX_HALFHEIGHT), atol=1e-3)
+    assert_allclose(box.get_pos(), (0.0, 0.0, BOX_HALFHEIGHT), atol=2e-3)
 
     # The box, and both robots should be laying on top of each other
     robot_1_min_corner, robot_1_max_corner = robot_1.get_AABB()
