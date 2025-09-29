@@ -51,12 +51,12 @@ def main():
 
     blob = scene.add_entity(
         morph=gs.morphs.Sphere(pos=tuple(map(sum, zip(SCENE_POS, (-0.3, -0.3, 0)))), radius=0.1),
-        material=gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean"),
+        material=gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="linear_corotated"),
     )
 
     cube = scene.add_entity(
         morph=gs.morphs.Box(pos=tuple(map(sum, zip(SCENE_POS, (0.3, 0.3, 0)))), size=(0.2, 0.2, 0.2)),
-        material=gs.materials.FEM.Elastic(E=1.0e6, nu=0.45, rho=1000.0, model="stable_neohookean"),
+        material=gs.materials.FEM.Elastic(E=1.0e6, nu=0.45, rho=1000.0, model="linear_corotated"),
     )
 
     video_fps = 1 / dt

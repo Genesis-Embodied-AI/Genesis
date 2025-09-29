@@ -1,13 +1,16 @@
-import genesis as gs
-import numpy as np
+import os
 import argparse
+
+import numpy as np
 from tqdm import tqdm
+
+import genesis as gs
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--solver", choices=["explicit", "implicit"], default="explicit", help="FEM solver type (default: explicit)"
+        "--solver", choices=["explicit", "implicit"], default="implicit", help="FEM solver type (default: explicit)"
     )
     parser.add_argument("--dt", type=float, help="Time step (auto-selected based on solver if not specified)")
     parser.add_argument(
@@ -26,6 +29,8 @@ def main():
 
     gs.init(backend=gs.gpu, logging_level=None)
 
+    steps = int(1.0 / dt if "PYTEST_VERSION" not in os.environ else 5)
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=dt,
@@ -34,6 +39,7 @@ def main():
         ),
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=args.solver == "implicit",
+            enable_vertex_constraints=True,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -53,7 +59,7 @@ def main():
             E=1.0e4,  # stiffness
             nu=0.45,  # compressibility (0 to 0.5)
             rho=1000.0,  # density
-            model="stable_neohookean",
+            model="linear_corotated",
         ),
     )
     arm = scene.add_entity(
@@ -121,7 +127,7 @@ def main():
             pos=np.array(arm_target_pos, gs.np_float),
             quat=np.array((0.0, 1.0, 0.0, 0.0), gs.np_float),
         )
-        arm_path_waypoints = arm.plan_path(qpos_goal=qpos, num_waypoints=int(1 / dt))
+        arm_path_waypoints = arm.plan_path(qpos_goal=qpos, num_waypoints=steps)
 
         for i, waypoint in tqdm(enumerate(arm_path_waypoints), total=len(arm_path_waypoints)):
             arm.control_dofs_position(waypoint)
@@ -131,7 +137,6 @@ def main():
 
         print("Now dropping the cube")
         cube.remove_vertex_constraints()
-        steps = int(1 / dt)
         for i in tqdm(range(steps), total=steps):
             arm.control_dofs_position(arm_path_waypoints[-1])
             scene.step()

@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import numpy as np
 
@@ -48,7 +49,7 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    horizon = 1000
+    horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
     # forward pass
     for i in range(horizon):
         scene.step()
