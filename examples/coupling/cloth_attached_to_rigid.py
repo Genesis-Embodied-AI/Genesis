@@ -1,5 +1,6 @@
 import argparse
 import math
+import os
 
 import numpy as np
 
@@ -11,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument("--horizon", type=int, default=50)
+    parser.add_argument("--horizon", type=int, default=100 if "PYTEST_VERSION" not in os.environ else 25)
     parser.add_argument("--num_teleports", type=int, default=5)
     args = parser.parse_args()
 

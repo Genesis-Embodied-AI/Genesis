@@ -90,7 +90,7 @@ def test_example(file: Path):
     except subprocess.TimeoutExpired as e:
         pytest.fail(
             f"Timeout running example {path_rel}.\n"
-            f"--- STDOUT ---\n{result.stdout or ''}\n\n--- STDERR ---\n{result.stderr or ''}"
+            f"--- STDOUT ---\n{e.stdout or ''}\n\n--- STDERR ---\n{e.stderr or ''}"
         )
 
     if result.returncode != 0:
