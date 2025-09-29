@@ -155,7 +155,7 @@ addopts = [
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=40.0",
-    "-m not benchmarks",
+    "-m not (benchmarks or examples)",
 ]
 filterwarnings = [
     "ignore::_pytest.warning_types.PytestUnknownMarkWarning",
