@@ -244,8 +244,7 @@ class ViewerInteraction(ViewerInteractionBase):
     def _draw_arrow(
         self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
     ) -> None:
-        self.scene.draw_debug_arrow(pos.v, dir.v, color=color)  # Only draws arrowhead -- bug?
-        self.scene.draw_debug_line(pos.v, pos.v + dir.v, color=color)
+        self.scene.draw_debug_arrow(pos.v, dir.v, color=color)
 
     def _draw_entity_unrotated_obb(self, geom: 'RigidGeom') -> None:
         obb: OBB | None = None
