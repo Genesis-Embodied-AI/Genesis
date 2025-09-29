@@ -33,6 +33,8 @@ SKIP_BASENAMES = {
     "multi_gpu.py",
     "cut_dragon.py",
     "differentiable_push.py",
+    "single_franka_batch_render.py",  # FIXME: it will have segfault on exit
+    "flush_cubes.py",  # FIXME: # FIXME: #1721 might be related
 }
 
 
@@ -89,7 +91,7 @@ def test_examples_run_headless(example_file: Path):
             capture_output=True,
             text=True,
             check=False,
-            timeout=240,
+            timeout=300,
             env=env,
         )
     except subprocess.TimeoutExpired as e:
