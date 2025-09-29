@@ -108,7 +108,7 @@ class Elastic(Base):
 
     @ti.func
     def update_stress_linear_corotated(self, mu, lam, J, F, actu, m_dir):
-        raise NotImplementedError("Linear corotated stress update is not implemented yet.")
+        gs.raise_exception("Linear corotated stress update is not implemented yet.")
 
     @ti.func
     def compute_energy_gradient_hessian_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
@@ -336,7 +336,7 @@ class Elastic(Base):
         This implementation is adapted from the HOBAKv1 stable Neo-Hookean model:
         https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/SNH.cpp
         """
-        raise NotImplementedError("Gradient computation is not implemented for stable_neohookean model.")
+        gs.raise_exception("Gradient computation is not implemented for stable_neohookean model.")
 
     @ti.func
     def compute_energy_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b):

@@ -162,6 +162,7 @@ filterwarnings = [
     "ignore::DeprecationWarning",
 ]
 markers = [
+    "examples: example scripts.",
     "benchmarks: benchmarks for profiling and monitoring.",
     "required: minimal test set that must pass systematically on any environment before merging.",
     "field_only: tests that are not compatible with gstaichi ndarrays."

@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import numpy as np
 
@@ -105,7 +106,7 @@ def main():
     )
     scene.build(n_envs=5)
 
-    horizon = 1000
+    horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
     for i in range(horizon):
         print(i)
         emitter.emit(

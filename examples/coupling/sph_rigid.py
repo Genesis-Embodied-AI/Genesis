@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import genesis as gs
 
@@ -64,7 +65,8 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    for i in range(500):
+    horizon = 500 if "PYTEST_VERSION" not in os.environ else 5
+    for i in range(horizon):
         scene.step()
 
 

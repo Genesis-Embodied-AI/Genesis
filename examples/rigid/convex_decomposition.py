@@ -1,4 +1,5 @@
 import argparse
+import os
 
 from huggingface_hub import snapshot_download
 
@@ -53,7 +54,8 @@ def main():
 
     ########################## build ##########################
     scene.build()
-    for i in range(2000):
+    horizon = 2000 if "PYTEST_VERSION" not in os.environ else 5
+    for i in range(horizon):
         scene.step()
 
 

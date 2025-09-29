@@ -1734,7 +1734,7 @@ class RigidSolver(Solver):
         kernel_set_links_COM_shift(com, links_idx, envs_idx, self.links_state, self._static_rigid_sim_config)
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
-        _, links_idx, envs_idx = self._sanitize_1D_io_variables(
+        mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
             mass,
             links_idx,
             self.n_links,
