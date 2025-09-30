@@ -18,6 +18,7 @@ import random
 import threading
 
 import numpy as np
+from examples.util.keyboard import KeyboardDevice
 from pynput import keyboard
 from scipy.spatial.transform import Rotation as R
 
