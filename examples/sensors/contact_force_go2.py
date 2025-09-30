@@ -46,38 +46,35 @@ def main():
 
     for link_name in foot_link_names:
         if args.force:
-            force_sensor = scene.add_sensor(
-                gs.sensors.ContactForce(
-                    entity_idx=go2.idx,
-                    link_idx_local=go2.get_link(link_name).idx_local,
-                    draw_debug=True,
-                )
+            sensor_options = gs.sensors.ContactForce(
+                entity_idx=go2.idx,
+                link_idx_local=go2.get_link(link_name).idx_local,
+                draw_debug=True,
             )
-            if IS_PYQTGRAPH_AVAILABLE:
-                force_sensor.start_recording(
-                    gs.recorders.PyQtLinePlot(
-                        title="Force Sensor Data",
-                        labels=["force_x", "force_y", "force_z"],
-                    )
-                )
-            elif IS_MATPLOTLIB_AVAILABLE:
-                print("pyqtgraph not found, falling back to matplotlib.")
-                force_sensor.start_recording(
-                    gs.recorders.MPLLinePlot(
-                        title="Force Sensor Data",
-                        labels=["force_x", "force_y", "force_z"],
-                    )
-                )
-            else:
-                print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
+            plot_kwargs = dict(
+                title=f"{link_name} Force Sensor Data",
+                labels=["force_x", "force_y", "force_z"],
+            )
         else:
-            contact_sensor = scene.add_sensor(
-                gs.sensors.Contact(
-                    entity_idx=go2.idx,
-                    link_idx_local=go2.get_link(link_name).idx_local,
-                    draw_debug=True,
-                )
+            sensor_options = gs.sensors.Contact(
+                entity_idx=go2.idx,
+                link_idx_local=go2.get_link(link_name).idx_local,
+                draw_debug=True,
             )
+            plot_kwargs = dict(
+                title=f"{link_name} Contact Sensor Data",
+                labels=["in_contact"],
+            )
+
+        sensor = scene.add_sensor(sensor_options)
+
+        if IS_PYQTGRAPH_AVAILABLE:
+            sensor.start_recording(gs.recorders.PyQtLinePlot(**plot_kwargs))
+        elif IS_MATPLOTLIB_AVAILABLE:
+            print("pyqtgraph not found, falling back to matplotlib.")
+            sensor.start_recording(gs.recorders.MPLLinePlot(**plot_kwargs))
+        else:
+            print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
 
     scene.build()
 
@@ -85,7 +82,6 @@ def main():
         steps = int(args.seconds / args.timestep)
         for _ in tqdm(range(steps)):
             scene.step()
-
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:

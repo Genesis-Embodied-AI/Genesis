@@ -84,14 +84,14 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
     if plotter.run_in_thread:
         plotter.sync()
 
-    assert call_count == STEPS // 2
-    assert len(plotter.x_data) == HISTORY_LENGTH
-    assert np.isclose(plotter.x_data[-1], STEPS * DT, atol=gs.EPS)
+    assert call_count == STEPS // 2 + 1  # one additional call during plot setup
+    assert len(plotter.line_plot.x_data) == HISTORY_LENGTH
+    assert np.isclose(plotter.line_plot.x_data[-1], STEPS * DT, atol=gs.EPS)
     assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
 
     assert len(buffers) == 5
-    assert_allclose([cur_time for data, cur_time in buffers], np.arange(STEPS + 1)[::2][1:] * DT, tol=gs.EPS)
-    for rgb_diff in np.diff([data for data, cur_time in buffers], axis=0):
+    assert_allclose([cur_time for _, cur_time in buffers], np.arange(STEPS + 1)[::2][1:] * DT, tol=gs.EPS)
+    for rgb_diff in np.diff([data for data, _ in buffers], axis=0):
         assert rgb_diff.max() > 10.0
 
     # Intentionally do not stop the recording to test the destructor

@@ -15,6 +15,7 @@ from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -389,6 +390,10 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
     Base sensor class for sensors that are attached to a RigidEntity.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._link: "RigidLink" | None = None
+
     def build(self):
         super().build()
 
@@ -398,9 +403,10 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
         batch_size = self._manager._sim._B
 
         entity = self._shared_metadata.solver.entities[self._options.entity_idx]
-        self.link_idx = self._options.link_idx_local + entity.link_start
-        self.link = entity.links[self._options.link_idx_local]
-        self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, self.link_idx)
+        self._link = entity.links[self._options.link_idx_local]
+        self._shared_metadata.links_idx = concat_with_tensor(
+            self._shared_metadata.links_idx, self._options.link_idx_local + entity.link_start
+        )
         self._shared_metadata.offsets_pos = concat_with_tensor(
             self._shared_metadata.offsets_pos,
             self._options.pos_offset,

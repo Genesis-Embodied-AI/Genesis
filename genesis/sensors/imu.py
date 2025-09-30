@@ -126,7 +126,7 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth data, and not the measured data.
     draw_debug : bool, optional
-        If True and the rasterizer visualization is active, an arrow for linear acceleration will be drawn.
+        If True and the interactive viewer is active, an arrow for linear acceleration will be drawn.
     debug_acc_color : float, optional
         The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
     debug_acc_scale: float, optional
@@ -332,16 +332,16 @@ class IMUSensor(
         """
         Draw debug arrow for the IMU acceleration.
 
-        Only draws for first environment.
+        Only draws for first rendered environment.
         """
-        envs_idx = 0 if self._manager._sim.n_envs > 0 else None
+        env_idx = context.rendered_envs_idx[0]
 
-        quat = self.link.get_quat(envs_idx=envs_idx).squeeze(0)
-        pos = self.link.get_pos(envs_idx=envs_idx).squeeze(0) + transform_by_quat(self.pos_offset, quat)
+        quat = self._link.get_quat(envs_idx=env_idx)
+        pos = self._link.get_pos(envs_idx=env_idx) + transform_by_quat(self.pos_offset, quat)
 
-        data = self.read(envs_idx=envs_idx)
-        acc_vec = data["lin_acc"].squeeze(0) * self._options.debug_acc_scale
-        gyro_vec = data["ang_vel"].squeeze(0) * self._options.debug_gyro_scale
+        data = self.read(envs_idx=env_idx)
+        acc_vec = data["lin_acc"] * self._options.debug_acc_scale
+        gyro_vec = data["ang_vel"] * self._options.debug_gyro_scale
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
         acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
@@ -350,5 +350,5 @@ class IMUSensor(
         for debug_object in self.debug_objects:
             if debug_object is not None:
                 context.clear_debug_object(debug_object)
-        self.debug_objects[0] = context.draw_debug_arrow(pos=pos, vec=acc_vec, color=self._options.debug_acc_color)
-        self.debug_objects[1] = context.draw_debug_arrow(pos=pos, vec=gyro_vec, color=self._options.debug_gyro_color)
+        self.debug_objects[0] = context.draw_debug_arrow(pos=pos[0], vec=acc_vec, color=self._options.debug_acc_color)
+        self.debug_objects[1] = context.draw_debug_arrow(pos=pos[0], vec=gyro_vec, color=self._options.debug_gyro_color)
