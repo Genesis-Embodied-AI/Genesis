@@ -35,7 +35,7 @@ class LidarOptions(RaycasterOptions):
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth cache, and not the measured cache.
     draw_debug : bool, optional
-        If True and the rasterizer visualization is active, spheres will be drawn at every hit point.
+        If True and the interactive viewer is active, spheres will be drawn at every hit point.
     debug_sphere_radius: float, optional
         The radius of each debug hit point sphere drawn in the scene. Defaults to 0.02.
     """
