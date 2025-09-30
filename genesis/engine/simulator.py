@@ -210,8 +210,6 @@ class Simulator(RBC):
         if self.n_envs > 0 and self.sf_solver.is_active():
             gs.raise_exception("Batching is not supported for SF solver as of now.")
 
-        self._sensor_manager.build()
-
         # hybrid
         for entity in self._entities:
             if isinstance(entity, HybridEntity):
