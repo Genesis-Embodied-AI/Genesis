@@ -28,7 +28,8 @@ class Snow(ElastoPlastic):
     mu: float, optional
         The second Lame's parameter. Default is None, computed by E and nu.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Default is 'random'.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
+        'random'.
     yield_lower: float, optional
         Lower bound of yield condition. Default is 2.5e-2.
     yield_higher: float, optional

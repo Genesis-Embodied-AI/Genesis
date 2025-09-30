@@ -275,15 +275,12 @@ class ParticleEntity(Entity):
 
                 sampler = self.sampler
                 if "pbs" in sampler:
-                    try:
-                        particles_i = pu.trimesh_to_particles_pbs(
-                            mesh=mesh_i,
-                            p_size=self._particle_size,
-                            sampler=sampler,
-                        )
-                    except gs.GenesisException:
-                        sampler = "random"
-                if "pbs" not in sampler:
+                    particles_i = pu.trimesh_to_particles_pbs(
+                        mesh=mesh_i,
+                        p_size=self._particle_size,
+                        sampler=sampler,
+                    )
+                else:
                     particles_i = pu.trimesh_to_particles_simple(
                         mesh=mesh_i,
                         p_size=self._particle_size,

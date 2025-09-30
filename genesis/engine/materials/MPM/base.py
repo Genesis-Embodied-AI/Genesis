@@ -27,7 +27,8 @@ class Base(Material):
     mu: float, optional
         The second Lame's parameter. Default is None, computed by E and nu.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
+        'pbs' on supported platforms, 'random' otherwise.
     """
 
     def __init__(
@@ -37,12 +38,19 @@ class Base(Material):
         rho=1000.0,  # density (kg/m^3)
         lam=None,  # Lame's first parameter
         mu=None,  # Lame's second parameter
-        sampler="pbs",  # particle sampler
+        sampler=None,  # particle sampler
     ):
         """
         lam and mu will be computed based on E and nu if not provided.
         """
         super().__init__()
+
+        if sampler is None:
+            sampler = "pbs" if gs.platform == "Linux" else "random"
+        if not (sampler in ("pbs", "random", "regular") or sampler.startswith("pdb-")):
+            raise gs.GenesisException(
+                f"Particle sampler must be either 'pbs(-[0-9]*)', 'random' or 'regular. Got '{sampler}'."
+            )
 
         self._E = E
         self._nu = nu
