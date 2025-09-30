@@ -7,8 +7,8 @@ import torch
 
 import genesis as gs
 from genesis.engine.solvers import RigidSolver
-from genesis.utils.geom import ti_inv_transform_by_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.utils.geom import ti_inv_transform_by_quat, trans_to_T, transform_by_quat
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
     MaybeTuple3FType,
@@ -26,7 +26,12 @@ from .base_sensor import (
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.rasterizer_context import RasterizerContext
+
+    from .sensor_manager import SensorManager
 
 
 @ti.kernel
@@ -79,7 +84,16 @@ class ContactSensorOptions(RigidSensorOptionsMixin, SensorOptions):
         The delay in seconds before the sensor data is read.
     update_ground_truth_only : bool
         If True, the sensor will only update the ground truth data, and not the measured data.
+    draw_debug : bool, optional
+        If True and the interactive viewer is active, a sphere will be drawn at the sensor's position.
+    debug_sphere_radius : float, optional
+        The radius of the debug sphere. Defaults to 0.05.
+    debug_color : float, optional
+        The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
+
+    debug_sphere_radius: float = 0.05
+    debug_color: tuple[float, float, float, float] = (1.0, 0.0, 1.0, 0.5)
 
 
 @dataclass
@@ -99,17 +113,22 @@ class ContactSensor(Sensor):
     Sensor that returns bool based on whether associated RigidLink is in contact.
     """
 
+    def __init__(self, sensor_options: ContactSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
+        self._link: "RigidLink" | None = None
+        self.debug_object: "Mesh" | None = None
+
     def build(self):
         super().build()
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
-        link_start = self._shared_metadata.solver.entities[self._options.entity_idx].link_start
+        entity = self._shared_metadata.solver.entities[self._options.entity_idx]
+        link_idx = self._options.link_idx_local + entity.link_start
+        self._link = entity.links[self._options.link_idx_local]
+
         self._shared_metadata.expanded_links_idx = concat_with_tensor(
-            self._shared_metadata.expanded_links_idx,
-            link_start + self._options.link_idx_local,
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
 
     def _get_return_format(self) -> tuple[int, ...]:
@@ -143,6 +162,28 @@ class ContactSensor(Sensor):
         buffered_data.append(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
+    def _draw_debug(self, context: "RasterizerContext"):
+        """
+        Draw debug sphere when the sensor detects contact.
+
+        Only draws for first rendered environment.
+        """
+        env_idx = context.rendered_envs_idx[0]
+
+        pos = self._link.get_pos(envs_idx=env_idx)[0]
+        is_contact = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None).item()
+
+        if is_contact:
+            if self.debug_object is None:
+                self.debug_object = context.draw_debug_sphere(
+                    pos=pos, radius=self._options.debug_sphere_radius, color=self._options.debug_color
+                )
+            else:
+                context.update_debug_objects([self.debug_object], trans_to_T(pos).unsqueeze(0))
+        elif self.debug_object is not None:
+            context.clear_debug_object(self.debug_object)
+            self.debug_object = None
+
 
 # ==========================================================================================================
 
@@ -158,9 +199,9 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
     link_idx_local : int, optional
         The local index of the RigidLink of the RigidEntity to which this sensor is attached.
     min_force : float | tuple[float, float, float], optional
-        The minimum detectable force per each axis. Values below this will be treated as 0. Default is 0.
+        The minimum detectable absolute force per each axis. Values below this will be treated as 0. Default is 0.
     max_force : float | tuple[float, float, float], optional
-        The maximum output force per each axis. Values above this will be clipped. Default is infinity.
+        The maximum output absolute force per each axis. Values above this will be clipped. Default is infinity.
     resolution : float | tuple[float, float, float], optional
         The measurement resolution of each axis of force (smallest increment of change in the sensor reading).
         Default is 0.0, which means no quantization is applied.
@@ -180,10 +221,19 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
         Otherwise, the sensor data at the closest time step will be used. Default is False.
     update_ground_truth_only : bool, optional
         If True, the sensor will only update the ground truth data, and not the measured data.
+    draw_debug : bool, optional
+        If True and the interactive viewer is active, an arrow for the contact force will be drawn.
+    debug_color : float, optional
+        The rgba color of the debug arrow. Defaults to (1.0, 0.0, 1.0, 0.5).
+    debug_scale : float, optional
+        The scale factor for the debug force arrow. Defaults to 0.01.
     """
 
     min_force: MaybeTuple3FType = 0.0
     max_force: MaybeTuple3FType = np.inf
+
+    debug_color: tuple[float, float, float, float] = (1.0, 0.0, 1.0, 0.5)
+    debug_scale: float = 0.01
 
     def validate(self, scene):
         super().validate(scene)
@@ -225,6 +275,10 @@ class ContactForceSensor(
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
+
+    def __init__(self, sensor_options: ContactForceSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
+        self.debug_object: "Mesh" | None = None
 
     def build(self):
         if not (isinstance(self._options.resolution, tuple) and len(self._options.resolution) == 3):
@@ -299,7 +353,25 @@ class ContactForceSensor(
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         shared_cache_per_sensor = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
         # clip for max force
-        shared_cache_per_sensor.clamp_(max=shared_metadata.max_force)
+        shared_cache_per_sensor.clamp_(min=-shared_metadata.max_force, max=shared_metadata.max_force)
         # set to 0 for undetectable force
         shared_cache_per_sensor[torch.abs(shared_cache_per_sensor) < shared_metadata.min_force] = 0.0
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        """
+        Draw debug arrow representing the contact force.
+
+        Only draws for first rendered environment.
+        """
+        env_idx = context.rendered_envs_idx[0]
+
+        pos = self._link.get_pos(envs_idx=env_idx)
+        quat = self._link.get_quat(envs_idx=env_idx)
+
+        force = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
+        vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))
+
+        if self.debug_object is not None:
+            context.clear_debug_object(self.debug_object)
+        self.debug_object = context.draw_debug_arrow(pos=pos[0], vec=vec[0], color=self._options.debug_color)
