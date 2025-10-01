@@ -25,6 +25,7 @@ from .base_sensor import (
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
+    from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
 
@@ -81,14 +82,6 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
 
     Parameters
     ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this IMU sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this IMU sensor is attached.
-    pos_offset : tuple[float, float, float], optional
-        The positional offset of the IMU sensor from the RigidLink.
-    euler_offset : tuple[float, float, float], optional
-        The rotational offset of the IMU sensor from the RigidLink in degrees.
     acc_resolution : float, optional
         The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
         Default is 0.0, which means no quantization is applied.
@@ -115,18 +108,6 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         The standard deviation of the white noise for each axis of the gyroscope.
     gyro_random_walk : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the gyroscope.
-    delay : float, optional
-        The delay in seconds, affecting how outdated the sensor data is when it is read.
-    jitter : float, optional
-        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
-        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
-    interpolate : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
-    update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth data, and not the measured data.
-    draw_debug : bool, optional
-        If True and the interactive viewer is active, an arrow for linear acceleration will be drawn.
     debug_acc_color : float, optional
         The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
     debug_acc_scale: float, optional
@@ -184,6 +165,12 @@ class IMUSensor(
     NoisySensorMixin[IMUSharedMetadata],
     Sensor[IMUSharedMetadata],
 ):
+    def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "gs.SensorManager"):
+        super().__init__(options, shared_metadata, manager)
+        self.debug_objects: list["Mesh | None"] = [None, None]
+        self.quat_offset: torch.Tensor
+        self.pos_offset: torch.Tensor
+
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -256,9 +243,7 @@ class IMUSensor(
             expand=(self._manager._sim._B, 2, 3, 3),
             dim=1,
         )
-
         if self._options.draw_debug:
-            self.debug_objects = [None, None]
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 

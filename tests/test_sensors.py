@@ -299,7 +299,7 @@ def test_lidar_grid_pattern_ground_distance(show_viewer, tol, n_envs, is_fixed):
     distances = sensor_data["hit_ranges"]
 
     expected_shape = (NUM_RAYS_XY, NUM_RAYS_XY) if n_envs == 0 else (n_envs, NUM_RAYS_XY, NUM_RAYS_XY)
-    assert distances.shape == expected_shape, f"Expected distances shape {expected_shape}, got {distances.shape}"
+    assert distances.shape == expected_shape
 
     assert_allclose(hit_points[..., 2], 0.0, tol=tol, err_msg="LiDAR hit point should be at ground level (z≈0)")
     assert_allclose(

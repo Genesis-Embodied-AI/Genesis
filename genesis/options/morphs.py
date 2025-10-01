@@ -11,12 +11,10 @@ from typing import Any, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.misc as mu
 
 from .misc import CoacdOptions
 from .options import Options
-
 
 URDF_FORMAT = ".urdf"
 MJCF_FORMAT = ".xml"
