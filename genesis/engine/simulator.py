@@ -215,6 +215,8 @@ class Simulator(RBC):
             if isinstance(entity, HybridEntity):
                 entity.build()
 
+        self._sensor_manager.build()
+
     def reset(self, state: SimState, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):
             if solver.n_entities > 0:

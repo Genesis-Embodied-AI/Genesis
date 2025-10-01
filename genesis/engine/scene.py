@@ -810,14 +810,9 @@ class Scene(RBC):
 
             self._is_built = True
 
-        # This check should be removed when deprecating `compile_kernels`.
-        if compile_kernels or len(self._sim._sensor_manager._sensors) > 0:
-            with gs.logger.timer("Compiling simulation kernels..."):
-                self._sim.step()
-                self._reset()
-
-            # sensors
-            self._sim._sensor_manager.build()
+        with gs.logger.timer("Compiling simulation kernels..."):
+            self._sim.step()
+            self._reset()
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):

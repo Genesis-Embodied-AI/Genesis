@@ -15,8 +15,10 @@ def _generate_uniform_angles(
     fov: float | tuple[float, float] | None = None,
     res: float | None = None,
     angles: Sequence[float] | None = None,
-    use_degrees: bool = True,
 ) -> torch.Tensor:
+    """
+    Helper function to generate uniform angles given various formats (n and fov, res and fov, or angles).
+    """
 
     if angles is None:
         assert fov is not None, "FOV should be provided if angles not given."
@@ -39,17 +41,13 @@ def _generate_uniform_angles(
             f_min = -f_max
             fov_size = fov
 
-        full_rotation = 360.0 if use_degrees else math.pi
-        assert fov_size <= full_rotation + gs.EPS, "FOV should not be larger than a full rotation."
+        assert fov_size <= 360.0 + gs.EPS, "FOV should not be larger than a full rotation."
 
         # avoid duplicate angle at 0/360 degrees
-        if fov_size >= full_rotation - gs.EPS:
+        if fov_size >= 360.0 - gs.EPS:
             f_max -= fov_size / (n - 1) * 0.5
 
         angles = torch.linspace(f_min, f_max, n, dtype=gs.tc_float, device=gs.device)
-
-    if use_degrees:
-        angles = torch.deg2rad(angles)
 
     return angles
 
@@ -57,6 +55,9 @@ def _generate_uniform_angles(
 def _compute_focal_lengths(
     width: int, height: int, fov_horizontal: float | None, fov_vertical: float | None
 ) -> tuple[float, float]:
+    """
+    Helper function to compute focal lengths given image dimensions and FOV.
+    """
     if fov_horizontal is not None and fov_vertical is None:
         fh_rad = math.radians(fov_horizontal)
         fv_rad = 2.0 * math.atan((height / width) * math.tan(fh_rad / 2.0))
@@ -74,6 +75,8 @@ def _compute_focal_lengths(
 
 
 # ============================== Generic Patterns ==============================
+
+
 @dataclass
 class GridPattern(RaycastPattern):
     """
@@ -89,20 +92,15 @@ class GridPattern(RaycastPattern):
         Grid dimensions (length, width) in meters.
     direction : tuple[float, float, float]
         Ray direction vector.
-    ordering : str
-        Point ordering, either "xy" or "yx".
     """
 
     resolution: float = 0.1
     size: tuple[float, float] = (2.0, 2.0)
     direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
-    ordering: str = "xy"
 
-    def validate(self):
-        if self.ordering not in ["xy", "yx"]:
-            raise ValueError(f"Ordering must be 'xy' or 'yx'. Received: '{self.ordering}'.")
-        if self.resolution <= 0:
-            raise ValueError(f"Resolution must be greater than 0. Received: '{self.resolution}'.")
+    def __post_init__(self):
+        if self.resolution < 1e-3:
+            gs.raise_exception(f"Resolution should be at least 1e-3 (1mm). Received: '{self.resolution}'.")
 
     def get_return_shape(self) -> tuple[int, ...]:
         num_x = math.ceil(self.size[0] / self.resolution) + 1
@@ -116,28 +114,20 @@ class GridPatternGenerator(RaycastPatternGenerator):
 
     def __init__(self, options: GridPattern):
         super().__init__(options)
-        self.x_coords = torch.arange(
-            -options.size[0] / 2, options.size[0] / 2 + gs.EPS, options.resolution, dtype=gs.tc_float, device=gs.device
-        )
-        self.y_coords = torch.arange(
-            -options.size[1] / 2, options.size[1] / 2 + gs.EPS, options.resolution, dtype=gs.tc_float, device=gs.device
-        )
+        self.coords = [
+            torch.arange(-size / 2, size / 2 + gs.EPS, options.resolution, dtype=gs.tc_float, device=gs.device)
+            for size in options.size
+        ]
         self.direction = torch.tensor(options.direction, dtype=gs.tc_float, device=gs.device)
 
     def get_ray_directions(self) -> torch.Tensor:
         return self.direction.expand((*self._return_shape, 3))
 
     def get_ray_starts(self) -> torch.Tensor:
-        if self._options.ordering == "xy":
-            grid_x, grid_y = torch.meshgrid(self.x_coords, self.y_coords, indexing="xy")
-        else:
-            grid_x, grid_y = torch.meshgrid(self.x_coords, self.y_coords, indexing="ij")
-
-        starts = torch.empty((*self._return_shape, 3), dtype=gs.tc_float, device=gs.device)
+        grid_x, grid_y = torch.meshgrid(*self.coords, indexing="xy")
+        starts = torch.zeros((*self._return_shape, 3), dtype=gs.tc_float, device=gs.device)
         starts[..., 0] = grid_x
         starts[..., 1] = grid_y
-        starts[..., 2] = 0.0
-
         return starts
 
 
@@ -170,8 +160,6 @@ class SphericalPattern(RaycastPattern):
         Array of elevation angles. Overrides n_vertical/res_vertical/fov_vertical if provided.
     angles_horizontal: Sequence[float], optional
         Array of azimuth angles. Overrides n_horizontal/res_horizontal/fov_horizontal if provided.
-    use_degrees : bool, optional
-        Whether the provided angles are in degrees or radians. Defaults to True.
     """
 
     fov_vertical: float | tuple[float, float] = 30.0
@@ -182,15 +170,13 @@ class SphericalPattern(RaycastPattern):
     res_horizontal: float | None = None
     vertical_angles: Sequence[float] | None = None
     horizontal_angles: Sequence[float] | None = None
-    use_degrees: bool = True
 
     def validate(self):
-        full_rotation = 360.0 if self.use_degrees else math.pi * 2.0
         for fov in (self.fov_vertical, self.fov_horizontal):
-            if (isinstance(fov, float) and (fov < 0 or fov > full_rotation + gs.EPS)) or (
-                isinstance(fov, tuple) and (fov[1] - fov[0] > full_rotation + gs.EPS)
+            if (isinstance(fov, float) and (fov < 0 or fov > 360.0 + gs.EPS)) or (
+                isinstance(fov, tuple) and (fov[1] - fov[0] > 360.0 + gs.EPS)
             ):
-                gs.raise_exception(f"[{type(self).__class__}] FOV should not be <0 or >{full_rotation}. Got: {fov}.")
+                gs.raise_exception(f"[{type(self).__class__}] FOV should be between 0 and 360. Got: {fov}.")
 
     def get_return_shape(self) -> tuple[int, ...]:
         if self.vertical_angles is not None and self.horizontal_angles is not None:
@@ -209,14 +195,12 @@ class SphericalPatternGenerator(RaycastPatternGenerator):
             fov=self._options.fov_vertical,
             res=self._options.res_vertical,
             angles=self._options.vertical_angles,
-            use_degrees=self._options.use_degrees,
         )
         h_angles = _generate_uniform_angles(
             n=self._options.n_horizontal,
             fov=self._options.fov_horizontal,
             res=self._options.res_horizontal,
             angles=self._options.horizontal_angles,
-            use_degrees=self._options.use_degrees,
         )
 
         h_grid, v_grid = torch.meshgrid(h_angles, v_angles, indexing="ij")
@@ -288,7 +272,7 @@ class DepthCameraPatternGenerator(RaycastPatternGenerator):
         # standard camera frame coordinates
         x_c = (uu - cx) / fx
         y_c = (vv - cy) / fy
-        z_c = torch.ones_like(x_c, dtype=gs.tc_float, device=gs.device)
+        z_c = torch.ones_like(x_c)
 
         # transform to robotics camera frame
         dirs = torch.stack([z_c, -x_c, -y_c], dim=-1)

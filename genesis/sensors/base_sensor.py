@@ -75,6 +75,7 @@ class SensorOptions(Options):
             )
 
 
+# Note: dataclass is used as opposed to pydantic.BaseModel since torch.Tensors are not supported by default
 @dataclass
 class SharedSensorMetadata:
     """
@@ -436,16 +437,12 @@ class NoisySensorOptionsMixin:
         The standard deviation of the additive white noise.
     random_walk : float | tuple[float, ...], optional
         The standard deviation of the random walk, which acts as accumulated bias drift.
-    delay : float, optional
-        The delay in seconds, affecting how outdated the sensor data is when it is read.
     jitter : float, optional
         The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
         Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
     interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used. Default is False.
-    update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
     resolution: float | tuple[float, ...] = 0.0

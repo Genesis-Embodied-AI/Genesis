@@ -42,6 +42,7 @@ DEBUG_COLORS = (
     (0.2, 0.6, 1.0, 1.0),
     (1.0, 1.0, 0.2, 1.0),
 )
+STACK_SIZE = ti.static(64)
 
 
 @ti.func
@@ -51,7 +52,7 @@ def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
 
     Returns: vec4(t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
     """
-    result = ti.math.vec4(0.0, 0.0, 0.0, 0.0)
+    result = ti.Vector.zero(gs.ti_float, 4)
 
     edge1 = v1 - v0
     edge2 = v2 - v0
@@ -63,12 +64,12 @@ def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
     # Check all conditions in sequence without early returns
     valid = True
 
-    t = 0.0
-    u = 0.0
-    v = 0.0
-    f = 0.0
-    s = ti.math.vec3(0.0, 0.0, 0.0)
-    q = ti.math.vec3(0.0, 0.0, 0.0)
+    t = gs.ti_float(0.0)
+    u = gs.ti_float(0.0)
+    v = gs.ti_float(0.0)
+    f = gs.ti_float(0.0)
+    s = ti.Vector.zero(gs.ti_float, 3)
+    q = ti.Vector.zero(gs.ti_float, 3)
 
     # If determinant is near zero, ray lies in plane of triangle
     if ti.abs(a) < gs.EPS:
@@ -112,16 +113,9 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
     result = -1.0
 
     # Use the slab method for ray-AABB intersection
+    sign = ti.select(ray_dir >= 0.0, 1.0, -1.0)
+    ray_dir = sign * ti.max(ti.abs(ray_dir), gs.EPS)
     inv_dir = 1.0 / ray_dir
-
-    # Handle potential division by zero with large values
-    large_value = ti.static(1 / gs.EPS)
-    if ti.abs(ray_dir.x) < gs.EPS:
-        inv_dir.x = large_value if ray_dir.x >= 0.0 else -large_value
-    if ti.abs(ray_dir.y) < gs.EPS:
-        inv_dir.y = large_value if ray_dir.y >= 0.0 else -large_value
-    if ti.abs(ray_dir.z) < gs.EPS:
-        inv_dir.z = large_value if ray_dir.z >= 0.0 else -large_value
 
     t1 = (aabb_min - ray_start) * inv_dir
     t2 = (aabb_max - ray_start) * inv_dir
@@ -129,12 +123,12 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
     tmin = ti.min(t1, t2)
     tmax = ti.max(t1, t2)
 
-    t_near = ti.max(ti.max(tmin.x, tmin.y), tmin.z)
-    t_far = ti.min(ti.min(tmax.x, tmax.y), tmax.z)
+    t_near = ti.max(tmin.x, tmin.y, tmin.z, 0.0)
+    t_far = ti.min(tmax.x, tmax.y, tmax.z)
 
     # Check if ray intersects AABB
-    if t_near <= t_far and t_far >= 0.0:
-        result = ti.max(t_near, 0.0)
+    if t_near <= t_far:
+        result = t_near
 
     return result
 
@@ -190,7 +184,6 @@ def kernel_cast_lidar_rays(
     The result `output_hits` will be a 2D array of shape (n_env, n_points * 4) where in the second dimension,
     the first n_points * 3 are hit points and the last n_points is hit ranges.
     """
-    STACK_SIZE = ti.static(64)
 
     n_triangles = map_lidar_faces.shape[0]
     n_points = ray_starts.shape[0]
@@ -215,13 +208,13 @@ def kernel_cast_lidar_rays(
         hit_face = -1
 
         # Stack for non-recursive traversal
-        stack = ti.Vector.zero(ti.i32, STACK_SIZE)
-        stack[0] = 0  # Start traversal at the root node (index 0)
-        stack_ptr = 1
+        node_stack = ti.Vector.zero(ti.i32, STACK_SIZE)
+        node_stack[0] = 0  # Start traversal at the root node (index 0)
+        stack_idx = 1
 
-        while stack_ptr > 0:
-            stack_ptr -= 1
-            node_idx = stack[stack_ptr]
+        while stack_idx > 0:
+            stack_idx -= 1
+            node_idx = node_stack[stack_idx]
 
             node = bvh_nodes[i_b, node_idx]
 
@@ -268,16 +261,12 @@ def kernel_cast_lidar_rays(
                         # hit_u, hit_v could be stored here if needed
 
                 else:  # It's an INTERNAL node
-                    assert node.left >= 0
-                    assert node.right >= 0
-                    assert node.left < bvh_nodes.shape[1]
-                    assert node.right < bvh_nodes.shape[1]
                     # Push children onto the stack for further traversal
                     # Make sure stack doesn't overflow
-                    if stack_ptr < ti.static(STACK_SIZE - 2):
-                        stack[stack_ptr] = node.left
-                        stack[stack_ptr + 1] = node.right
-                        stack_ptr += 2
+                    if stack_idx < ti.static(STACK_SIZE - 2):
+                        node_stack[stack_idx] = node.left
+                        node_stack[stack_idx + 1] = node.right
+                        stack_idx += 2
 
         # --- 3. Process Hit Result ---
         if hit_face >= 0:
@@ -292,11 +281,7 @@ def kernel_cast_lidar_rays(
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * ti_normalize(
-                    ti.math.vec3(
-                        ray_directions[i_p, 0],
-                        ray_directions[i_p, 1],
-                        ray_directions[i_p, 2],
-                    )
+                    ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
                 )
                 output_hits[i_b, i_p * 3 + 0] = hit_point.x
                 output_hits[i_b, i_p * 3 + 1] = hit_point.y
@@ -415,14 +400,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
                 n_batches=self._shared_metadata.solver.free_verts_state.pos.shape[1], n_aabbs=n_lidar_faces
             )
 
-            print("RaycasterSensor::build preupdate -----")
-            print("aabb n_batches")
-            print(self._shared_metadata.aabb.n_batches)
-            print("aabb n_aabbs")
-            print(self._shared_metadata.aabb.n_aabbs)
-            print("aabbs")
-            print(self._shared_metadata.aabb.aabbs)
-
             rigid_solver_decomp.kernel_update_all_verts(
                 geoms_state=self._shared_metadata.solver.geoms_state,
                 verts_info=self._shared_metadata.solver.verts_info,
@@ -440,19 +417,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             )
             self._shared_metadata.bvh = LBVH(self._shared_metadata.aabb)
             self._shared_metadata.bvh.build()
-
-            print("RaycasterSensor::build -----")
-            print("aabb n_batches")
-            print(self._shared_metadata.aabb.n_batches)
-            print("aabb n_aabbs")
-            print(self._shared_metadata.aabb.n_aabbs)
-            print("aabbs")
-            print(self._shared_metadata.aabb.aabbs)
-            print()
-            print("bvh nodes")
-            print(self._shared_metadata.bvh.nodes)
-            print("bvh morton codes")
-            print(self._shared_metadata.bvh.morton_codes)
 
         self.pattern_generator = create_pattern_generator(self._options.pattern)
         self._shared_metadata.pattern_generators.append(self.pattern_generator)
@@ -526,19 +490,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         if shared_metadata.solver.n_envs == 0:
             links_pos = links_pos.unsqueeze(0)
             links_quat = links_quat.unsqueeze(0)
-
-        print("RaycasterSensor::update -----")
-        print("aabb n_batches")
-        print(shared_metadata.aabb.n_batches)
-        print("aabb n_aabbs")
-        print(shared_metadata.aabb.n_aabbs)
-        print("aabbs")
-        print(shared_metadata.aabb.aabbs)
-        print()
-        print("bvh nodes")
-        print(shared_metadata.bvh.nodes)
-        print("bvh morton codes")
-        print(shared_metadata.bvh.morton_codes)
 
         kernel_cast_lidar_rays(
             map_lidar_faces=shared_metadata.map_lidar_faces,

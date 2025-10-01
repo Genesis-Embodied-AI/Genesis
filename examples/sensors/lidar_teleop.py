@@ -2,15 +2,26 @@ import argparse
 import threading
 
 import numpy as np
-from pynput import keyboard
 
 import genesis as gs
 from genesis.sensors.raycaster.patterns import DepthCameraPattern, GridPattern, SphericalPattern
 from genesis.utils.geom import euler_to_quat
 
+IS_PYNPUT_AVAILABLE = False
+try:
+    from pynput import keyboard
+
+    IS_PYNPUT_AVAILABLE = True
+except ImportError:
+    pass
+
 # Position and angle increments for keyboard teleop control
 KEY_DPOS = 0.1
 KEY_DANGLE = 0.1
+
+# Movement when no keyboard control is available
+MOVE_RADIUS = 1.0
+MOVE_RATE = 1.0 / 100.0
 
 # Number of obstacles to create in a ring around the robot
 NUM_CYLINDERS = 8
@@ -32,11 +43,11 @@ class KeyboardDevice:
         self.listener.stop()
         self.listener.join()
 
-    def on_press(self, key: keyboard.Key):
+    def on_press(self, key: "keyboard.Key"):
         with self.lock:
             self.pressed_keys.add(key)
 
-    def on_release(self, key: keyboard.Key):
+    def on_release(self, key: "keyboard.Key"):
         with self.lock:
             self.pressed_keys.discard(key)
 
@@ -53,7 +64,7 @@ def main():
         "-f",
         "--fixed",
         action="store_true",
-        help="Load obstacles as fixed and cast only against fixed objects (is_free=False)",
+        help="Load obstacles as fixed and cast only against fixed objects",
         default=True,
     )
     parser.add_argument(
@@ -61,7 +72,7 @@ def main():
         "--no-fixed",
         action="store_false",
         dest="fixed",
-        help="Load obstacles as dynamic (is_free=True), raycaster will update BVH every step",
+        help="Load obstacles as collidable, raycaster will update BVH every step",
     )
     parser.add_argument(
         "--pattern",
@@ -75,9 +86,6 @@ def main():
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
-    kb = KeyboardDevice()
-    kb.start()
-
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(6.0, 6.0, 4.0),
@@ -85,24 +93,24 @@ def main():
             camera_fov=60,
             max_FPS=60,
         ),
-        show_viewer=args.show_viewer,
-        show_FPS=False,
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=True,
     )
 
-    scene.add_entity(gs.morphs.Plane(is_free=args.is_free))
+    scene.add_entity(gs.morphs.Plane())
 
     # create ring of obstacles to visualize raycaster sensor hits
     for i in range(NUM_CYLINDERS):
         angle = 2 * np.pi * i / NUM_CYLINDERS
         x = CYLINDER_RING_RADIUS * np.cos(angle)
         y = CYLINDER_RING_RADIUS * np.sin(angle)
-        scene.add_entity(gs.morphs.Cylinder(height=1.5, radius=0.3, pos=(x, y, 0.75), is_free=args.is_free))
+        scene.add_entity(gs.morphs.Cylinder(height=1.5, radius=0.3, pos=(x, y, 0.75)))
 
     for i in range(NUM_BOXES):
         angle = 2 * np.pi * i / NUM_BOXES + np.pi / 6
         x = BOX_RING_RADIUS * np.cos(angle)
         y = BOX_RING_RADIUS * np.sin(angle)
-        scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0), is_free=args.is_free))
+        scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0)))
 
     robot_kwargs = dict(
         pos=(0.0, 0.0, 0.35),
@@ -144,15 +152,21 @@ def main():
 
     scene.build(n_envs=args.n_envs)
 
-    print("Keyboard Controls:")
-    # Avoid using same keys as interactive viewer keyboard controls
-    print("[↑/↓/←/→]: Move XY")
-    print("[j/k]: Down/Up")
-    print("[n/m]: Roll CCW/CW")
-    print("[,/.]: Pitch Up/Down")
-    print("[o/p]: Yaw CCW/CW")
-    print("[\\]: Reset")
-    print("[esc]: Quit")
+    if IS_PYNPUT_AVAILABLE:
+        kb = KeyboardDevice()
+        kb.start()
+
+        print("Keyboard Controls:")
+        # Avoid using same keys as interactive viewer keyboard controls
+        print("[↑/↓/←/→]: Move XY")
+        print("[j/k]: Down/Up")
+        print("[n/m]: Roll CCW/CW")
+        print("[,/.]: Pitch Up/Down")
+        print("[o/p]: Yaw CCW/CW")
+        print("[\\]: Reset")
+        print("[esc]: Quit")
+    else:
+        print("Keyboard teleop is disabled since pynput is not installed. To install, run `pip install pynput`.")
 
     init_pos = np.array([0.0, 0.0, 0.35], dtype=np.float32)
     init_euler = np.array([0.0, 0.0, 0.0], dtype=np.float32)
@@ -171,41 +185,45 @@ def main():
 
     try:
         while True:
-            pressed = kb.pressed_keys.copy()
-            if keyboard.Key.esc in pressed:
-                break
-            if keyboard.KeyCode.from_char("\\") in pressed:
-                target_pos[:] = init_pos
-                target_euler[:] = init_euler
+            if IS_PYNPUT_AVAILABLE:
+                pressed = kb.pressed_keys.copy()
+                if keyboard.Key.esc in pressed:
+                    break
+                if keyboard.KeyCode.from_char("\\") in pressed:
+                    target_pos[:] = init_pos
+                    target_euler[:] = init_euler
 
-            if keyboard.Key.up in pressed:
-                target_pos[0] += KEY_DPOS
-            if keyboard.Key.down in pressed:
-                target_pos[0] -= KEY_DPOS
-            if keyboard.Key.right in pressed:
-                target_pos[1] -= KEY_DPOS
-            if keyboard.Key.left in pressed:
-                target_pos[1] += KEY_DPOS
-            if keyboard.KeyCode.from_char("j") in pressed:
-                target_pos[2] -= KEY_DPOS
-            if keyboard.KeyCode.from_char("k") in pressed:
-                target_pos[2] += KEY_DPOS
+                if keyboard.Key.up in pressed:
+                    target_pos[0] += KEY_DPOS
+                if keyboard.Key.down in pressed:
+                    target_pos[0] -= KEY_DPOS
+                if keyboard.Key.right in pressed:
+                    target_pos[1] -= KEY_DPOS
+                if keyboard.Key.left in pressed:
+                    target_pos[1] += KEY_DPOS
+                if keyboard.KeyCode.from_char("j") in pressed:
+                    target_pos[2] -= KEY_DPOS
+                if keyboard.KeyCode.from_char("k") in pressed:
+                    target_pos[2] += KEY_DPOS
 
-            if keyboard.KeyCode.from_char("n") in pressed:
-                target_euler[0] += KEY_DANGLE  # roll CCW around +X
-            if keyboard.KeyCode.from_char("m") in pressed:
-                target_euler[0] -= KEY_DANGLE  # roll CW around +X
-            if keyboard.KeyCode.from_char(",") in pressed:
-                target_euler[1] += KEY_DANGLE  # pitch up around +Y
-            if keyboard.KeyCode.from_char(".") in pressed:
-                target_euler[1] -= KEY_DANGLE  # pitch down around +Y
-            if keyboard.KeyCode.from_char("o") in pressed:
-                target_euler[2] += KEY_DANGLE  # yaw CCW around +Z
-            if keyboard.KeyCode.from_char("p") in pressed:
-                target_euler[2] -= KEY_DANGLE  # yaw CW around +Z
+                if keyboard.KeyCode.from_char("n") in pressed:
+                    target_euler[0] += KEY_DANGLE  # roll CCW around +X
+                if keyboard.KeyCode.from_char("m") in pressed:
+                    target_euler[0] -= KEY_DANGLE  # roll CW around +X
+                if keyboard.KeyCode.from_char(",") in pressed:
+                    target_euler[1] += KEY_DANGLE  # pitch up around +Y
+                if keyboard.KeyCode.from_char(".") in pressed:
+                    target_euler[1] -= KEY_DANGLE  # pitch down around +Y
+                if keyboard.KeyCode.from_char("o") in pressed:
+                    target_euler[2] += KEY_DANGLE  # yaw CCW around +Z
+                if keyboard.KeyCode.from_char("p") in pressed:
+                    target_euler[2] -= KEY_DANGLE  # yaw CW around +Z
+            else:
+                # move in a circle if no keyboard control
+                target_pos[0] = MOVE_RADIUS * np.cos(scene.t * MOVE_RATE)
+                target_pos[1] = MOVE_RADIUS * np.sin(scene.t * MOVE_RATE)
 
             apply_pose_to_all_envs(target_pos, euler_to_quat(target_euler))
-
             scene.step()
 
     except KeyboardInterrupt:

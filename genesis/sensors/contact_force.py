@@ -76,16 +76,6 @@ class ContactSensorOptions(RigidSensorOptionsMixin, SensorOptions):
 
     Parameters
     ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
-    delay : float
-        The delay in seconds before the sensor data is read.
-    update_ground_truth_only : bool
-        If True, the sensor will only update the ground truth data, and not the measured data.
-    draw_debug : bool, optional
-        If True and the interactive viewer is active, a sphere will be drawn at the sensor's position.
     debug_sphere_radius : float, optional
         The radius of the debug sphere. Defaults to 0.05.
     debug_color : float, optional
@@ -130,9 +120,6 @@ class ContactSensor(Sensor):
         self._shared_metadata.expanded_links_idx = concat_with_tensor(
             self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
-
-        if self._options.draw_debug:
-            self.debug_object = None
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
@@ -197,35 +184,10 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
 
     Parameters
     ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
     min_force : float | tuple[float, float, float], optional
         The minimum detectable absolute force per each axis. Values below this will be treated as 0. Default is 0.
     max_force : float | tuple[float, float, float], optional
         The maximum output absolute force per each axis. Values above this will be clipped. Default is infinity.
-    resolution : float | tuple[float, float, float], optional
-        The measurement resolution of each axis of force (smallest increment of change in the sensor reading).
-        Default is 0.0, which means no quantization is applied.
-    bias : float | tuple[float, float, float], optional
-        The constant additive bias of the sensor.
-    noise : float | tuple[float, float, float], optional
-        The standard deviation of the additive white noise.
-    random_walk : float | tuple[float, float, float], optional
-        The standard deviation of the random walk, which acts as accumulated bias drift.
-    delay : float, optional
-        The delay in seconds, affecting how outdated the sensor data is when it is read.
-    jitter : float, optional
-        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
-        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
-    interpolate : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
-    update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth data, and not the measured data.
-    draw_debug : bool, optional
-        If True and the interactive viewer is active, an arrow for the contact force will be drawn.
     debug_color : float, optional
         The rgba color of the debug arrow. Defaults to (1.0, 0.0, 1.0, 0.5).
     debug_scale : float, optional
@@ -300,9 +262,6 @@ class ContactForceSensor(
             self._shared_metadata.max_force,
             _to_tuple(self._options.max_force, length_per_value=3),
         )
-
-        if self._options.draw_debug:
-            self.debug_object = None
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
