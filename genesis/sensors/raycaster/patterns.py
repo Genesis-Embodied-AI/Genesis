@@ -18,6 +18,8 @@ class RaycastPattern:
         self._return_shape: tuple[int, ...] = self._get_return_shape()
         self._ray_dirs: torch.Tensor = torch.empty((*self._return_shape, 3), dtype=gs.tc_float, device=gs.device)
         self._ray_starts: torch.Tensor = torch.empty((*self._return_shape, 3), dtype=gs.tc_float, device=gs.device)
+        self.compute_ray_dirs()
+        self.compute_ray_starts()
 
     def _get_return_shape(self) -> tuple[int, ...]:
         """Get the shape of the ray vectors, e.g. (n_scan_lines, n_points_per_line) or (n_rays,)"""
@@ -97,48 +99,47 @@ class GridPattern(RaycastPattern):
         self._ray_starts[..., 2] = 0.0
 
 
-def _generate_uniform_angles(
-    n: int | None = None,
-    fov: float | tuple[float, float] | None = None,
-    res: float | None = None,
-    angles: Sequence[float] | None = None,
-) -> torch.Tensor:
+def _generate_uniform_angles(n_points, fov, res, angles) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Helper function to generate uniform angles given various formats (n and fov, res and fov, or angles).
     """
+    return_angles = []
 
-    if angles is None:
-        assert fov is not None, "FOV should be provided if angles not given."
+    for n_points_i, fov_i, res_i, angles_i in zip(n_points, fov, res, angles):
+        if angles_i is None:
+            assert fov_i is not None, "FOV should be provided if angles not given."
 
-        if res is not None:
-            if isinstance(fov, tuple):
-                f_min, f_max = fov
+            if res_i is not None:
+                if isinstance(fov_i, tuple):
+                    f_min, f_max = fov_i
+                else:
+                    f_max = fov_i / 2.0
+                    f_min = -f_max
+                n_points_i = math.ceil((f_max - f_min) / res_i) + 1
+
+            assert n_points_i is not None
+
+            if isinstance(fov_i, tuple):
+                f_min, f_max = fov_i
+                fov_size = f_max - f_min
             else:
-                f_max = fov / 2.0
+                f_max = fov_i / 2.0
                 f_min = -f_max
-            n = math.ceil((f_max - f_min) / res) + 1
+                fov_size = fov_i
 
-        assert n is not None
+            assert fov_size <= 360.0 + gs.EPS, "FOV should not be larger than a full rotation."
 
-        if isinstance(fov, tuple):
-            f_min, f_max = fov
-            fov_size = f_max - f_min
+            # Avoid duplicate angle at 0/360 degrees
+            if fov_size >= 360.0 - gs.EPS:
+                f_max -= fov_size / (n_points_i - 1) * 0.5
+
+            angles_i = torch.linspace(f_min, f_max, n_points_i, dtype=gs.tc_float, device=gs.device)
         else:
-            f_max = fov / 2.0
-            f_min = -f_max
-            fov_size = fov
+            angles_i = torch.tensor(angles_i, dtype=gs.tc_float, device=gs.device)
 
-        assert fov_size <= 360.0 + gs.EPS, "FOV should not be larger than a full rotation."
+        return_angles.append(torch.deg2rad(angles_i))
 
-        # avoid duplicate angle at 0/360 degrees
-        if fov_size >= 360.0 - gs.EPS:
-            f_max -= fov_size / (n - 1) * 0.5
-
-        angles = torch.linspace(f_min, f_max, n, dtype=gs.tc_float, device=gs.device)
-    else:
-        angles = torch.tensor(angles, dtype=gs.tc_float, device=gs.device)
-
-    return angles
+    return tuple(return_angles)
 
 
 class SphericalPattern(RaycastPattern):
@@ -154,7 +155,7 @@ class SphericalPattern(RaycastPattern):
     Parameters
     ----------
     fov: tuple[float | tuple[float, float], float | tuple[float, float]]
-        Field of view in degrees for horizontal and vertical directions. Defaults to (30.0, 360.0).
+        Field of view in degrees for horizontal and vertical directions. Defaults to (360.0, 30.0).
         If a single float is provided, the FOV is centered around 0 degrees.
         If a tuple is provided, it specifies the (min, max) angles.
     n_points: tuple[int, int]
@@ -167,68 +168,27 @@ class SphericalPattern(RaycastPattern):
 
     def __init__(
         self,
-        fov: tuple[float | tuple[float, float], float | tuple[float, float]] = (30.0, 360.0),
+        fov: tuple[float | tuple[float, float], float | tuple[float, float]] = (360.0, 30.0),
         n_points: tuple[int, int] = (64, 128),
         angular_resolution: tuple[float | None, float | None] = (None, None),
-        angles: tuple[Sequence[float] | None, Sequence[float] | None] | None = (None, None),
+        angles: tuple[Sequence[float] | None, Sequence[float] | None] = (None, None),
     ):
         for fov_i in fov:
             if (isinstance(fov_i, float) and (fov_i < 0 or fov_i > 360.0 + gs.EPS)) or (
                 isinstance(fov_i, tuple) and (fov_i[1] - fov_i[0] > 360.0 + gs.EPS)
             ):
                 gs.raise_exception(f"[{type(self).__name__}] FOV should be between 0 and 360. Got: {fov}.")
-        self.fov = fov
-        self.n_points = n_points
-        self.angular_resolution = angular_resolution
-        self.angles = angles
+
+        self.angles = _generate_uniform_angles(n_points, fov, angular_resolution, angles)
 
         super().__init__()
 
     def _get_return_shape(self) -> tuple[int, ...]:
-        width_and_height = []
-        for n_points_i, fov_i, res_i, angles_i in zip(
-            self.n_points,
-            self.fov,
-            self.angular_resolution if self.angular_resolution is not None else (None, None),
-            self.angles if self.angles is not None else (None, None),
-        ):
-            if angles_i is not None:
-                n_rays = len(angles_i)
-            elif res_i is not None:
-                # Calculate number of rays from angular resolution
-                if isinstance(fov_i, tuple):
-                    f_min, f_max = fov_i
-                    fov_size = f_max - f_min
-                else:
-                    fov_size = fov_i
-                n_rays = math.ceil(fov_size / res_i) + 1
-            else:
-                # Use n_points directly
-                n_rays = n_points_i
-
-            width_and_height.append(n_rays)
-
-        return tuple(width_and_height)
+        return tuple(len(a) for a in self.angles)
 
     def compute_ray_dirs(self):
-        angles = []
-        for n_points_i, fov_i, res_i, angles_i in zip(
-            self.n_points,
-            self.fov,
-            self.angular_resolution if self.angular_resolution is not None else (None, None),
-            self.angles if self.angles is not None else (None, None),
-        ):
-            angles.append(
-                _generate_uniform_angles(
-                    n=n_points_i,
-                    fov=fov_i,
-                    res=res_i,
-                    angles=angles_i,
-                )
-            )
-
-        h_grid, v_grid = torch.meshgrid(*angles, indexing="ij")
-        self._ray_dirs[:] = spherical_to_cartesian(h_grid, v_grid)
+        meshgrid = torch.meshgrid(*self.angles, indexing="ij")
+        self._ray_dirs[:] = spherical_to_cartesian(*meshgrid)
 
 
 # ============================== Camera Patterns ==============================
