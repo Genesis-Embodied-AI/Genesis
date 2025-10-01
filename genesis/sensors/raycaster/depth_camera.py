@@ -32,4 +32,4 @@ class DepthCameraSensor(RaycasterSensor):
         torch.Tensor
             The depth image with shape (height, width).
         """
-        return self.read()["hit_ranges"].reshape(self._options.pattern.height, self._options.pattern.width)
+        return self.read().hit_ranges.reshape(self._options.pattern.height, self._options.pattern.width)

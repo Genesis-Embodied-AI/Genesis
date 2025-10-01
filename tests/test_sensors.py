@@ -84,12 +84,12 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     # IMU should calculate "classical linear acceleration" using the local frame without accounting for gravity
     # acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
-    assert_allclose(imu_biased.read()["lin_acc"], expand_batch_dim(BIAS, n_envs), tol=tol)
-    assert_allclose(imu_biased.read()["ang_vel"], expand_batch_dim(BIAS, n_envs), tol=tol)
-    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=tol)
-    assert_allclose(imu_delayed.read()["ang_vel"], 0.0, tol=tol)
-    assert_allclose(imu_noisy.read()["lin_acc"], 0.0, tol=1e-1)
-    assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=1e-1)
+    assert_allclose(imu_biased.read().lin_acc, expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu_biased.read().ang_vel, expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=tol)
+    assert_allclose(imu_delayed.read().ang_vel, 0.0, tol=tol)
+    assert_allclose(imu_noisy.read().lin_acc, 0.0, tol=1e-1)
+    assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=1e-1)
 
     # shift COM to induce angular velocity
     com_shift = torch.tensor([[0.1, 0.1, 0.1]])
@@ -109,21 +109,21 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(DELAY_STEPS):
         scene.step()
 
-    assert_array_equal(imu_delayed.read()["lin_acc"], true_imu_delayed_reading["lin_acc"])
-    assert_array_equal(imu_delayed.read()["ang_vel"], true_imu_delayed_reading["ang_vel"])
+    assert_array_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
+    assert_array_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
 
     # let box collide with ground
     for _ in range(20):
         scene.step()
 
-    assert_array_equal(imu_biased.read_ground_truth()["lin_acc"], imu_delayed.read_ground_truth()["lin_acc"])
-    assert_array_equal(imu_biased.read_ground_truth()["ang_vel"], imu_delayed.read_ground_truth()["ang_vel"])
+    assert_array_equal(imu_biased.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
+    assert_array_equal(imu_biased.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
 
     with np.testing.assert_raises(AssertionError, msg="Angular velocity should not be zero due to COM shift"):
-        assert_allclose(imu_biased.read_ground_truth()["ang_vel"], 0.0, tol=tol)
+        assert_allclose(imu_biased.read_ground_truth().ang_vel, 0.0, tol=tol)
 
     with np.testing.assert_raises(AssertionError, msg="Delayed data should not be equal to the ground truth data"):
-        assert_array_equal(imu_delayed.read()["lin_acc"] - imu_delayed.read_ground_truth()["lin_acc"], 0.0)
+        assert_array_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
 
     zero_com_shift = torch.tensor([[0.0, 0.0, 0.0]])
     box.set_COM_shift(zero_com_shift.expand((n_envs, 1, 3)) if n_envs > 0 else zero_com_shift)
@@ -132,22 +132,22 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(80):
         scene.step()
 
-    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=5e-6)
+    assert_allclose(imu_skewed.read().lin_acc, -GRAVITY, tol=5e-6)
     assert_allclose(
-        imu_biased.read()["lin_acc"],
+        imu_biased.read().lin_acc,
         expand_batch_dim((BIAS[0], BIAS[1], BIAS[2] - GRAVITY), n_envs),
         tol=5e-6,
     )
-    assert_allclose(imu_biased.read()["ang_vel"], expand_batch_dim(BIAS, n_envs), tol=1e-5)
+    assert_allclose(imu_biased.read().ang_vel, expand_batch_dim(BIAS, n_envs), tol=1e-5)
 
     scene.reset()
 
-    assert_allclose(imu_biased.read()["lin_acc"], 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
-    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=gs.EPS)
-    assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=gs.EPS)
+    assert_allclose(imu_biased.read().lin_acc, 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
+    assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=gs.EPS)
+    assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
 
     scene.step()
-    assert_allclose(imu_biased.read()["lin_acc"], expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu_biased.read().lin_acc, expand_batch_dim(BIAS, n_envs), tol=tol)
 
 
 @pytest.mark.required
@@ -295,8 +295,8 @@ def test_lidar_grid_pattern_ground_distance(show_viewer, tol, n_envs, is_fixed):
     scene.step()
 
     sensor_data = lidar.read()
-    hit_points = sensor_data["hit_points"]
-    distances = sensor_data["hit_ranges"]
+    hit_points = sensor_data.hit_points
+    distances = sensor_data.hit_ranges
 
     expected_shape = (NUM_RAYS_XY, NUM_RAYS_XY) if n_envs == 0 else (n_envs, NUM_RAYS_XY, NUM_RAYS_XY)
     assert distances.shape == expected_shape
