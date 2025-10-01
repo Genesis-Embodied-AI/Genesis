@@ -96,7 +96,7 @@ class ContactSensorMetadata(SharedSensorMetadata):
     expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
-@register_sensor(ContactSensorOptions, ContactSensorMetadata)
+@register_sensor(ContactSensorOptions, ContactSensorMetadata, tuple)
 @ti.data_oriented
 class ContactSensor(Sensor):
     """
@@ -237,7 +237,7 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
     max_force: torch.Tensor = make_tensor_field((0, 3))
 
 
-@register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata)
+@register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
 @ti.data_oriented
 class ContactForceSensor(
     RigidSensorMixin[ContactForceSensorMetadata],

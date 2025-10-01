@@ -3,7 +3,7 @@ import torch
 from genesis.sensors.sensor_manager import register_sensor
 
 from .patterns import DepthCameraPattern
-from .raycaster import RaycasterOptions, RaycasterSensor, RaycasterSharedMetadata
+from .raycaster import RaycasterData, RaycasterOptions, RaycasterSensor, RaycasterSharedMetadata
 
 
 class DepthCameraOptions(RaycasterOptions):
@@ -16,10 +16,10 @@ class DepthCameraOptions(RaycasterOptions):
         The raycasting pattern configuration for the sensor.
     """
 
-    pattern: DepthCameraPattern = DepthCameraPattern()
+    pattern: DepthCameraPattern
 
 
-@register_sensor(DepthCameraOptions, RaycasterSharedMetadata)
+@register_sensor(DepthCameraOptions, RaycasterSharedMetadata, RaycasterData)
 class DepthCameraSensor(RaycasterSensor):
     def read_image(self) -> torch.Tensor:
         """

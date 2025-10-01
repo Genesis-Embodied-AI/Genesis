@@ -1,7 +1,7 @@
 import csv
 import os
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,7 +12,6 @@ from genesis.utils import tensor_to_array
 
 from .base_recorder import Recorder, RecorderOptions
 from .recorder_manager import register_recording
-
 
 IS_PYAV_AVAILABLE = False
 try:
@@ -107,10 +106,10 @@ class VideoFileWriterOptions(BaseFileWriterOptions):
     bitrate: float = 1.0
     codec_options: dict[str, str] = Field(default_factory=dict)
 
-    def validate(self):
-        super().validate()
+    def model_post_init(self, context):
+        super().model_post_init(context)
 
-        if not self.codec in av.codecs_available:
+        if self.codec not in av.codecs_available:
             gs.raise_exception(f"[{type(self).__name__}] Codec '{self._options.codec}' not supported.")
 
         if not self.filename.endswith(".mp4"):
@@ -240,8 +239,8 @@ class CSVFileWriterOptions(BaseFileWriterOptions):
     header: tuple[str, ...] | None = None
     save_every_write: bool = False
 
-    def validate(self):
-        super().validate()
+    def model_post_init(self, context):
+        super().model_post_init(context)
         if not self.filename.lower().endswith(".csv"):
             gs.raise_exception(f"[{type(self).__name__}] CSV output must be a .csv file")
 
@@ -322,8 +321,8 @@ class NPZFileWriterOptions(BaseFileWriterOptions):
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
-    def validate(self):
-        super().validate()
+    def model_post_init(self, context):
+        super().model_post_init(context)
         if not self.filename.lower().endswith(".npz"):
             gs.raise_exception(f"[{type(self).__name__}] NPZ output must be an .npz file")
 
