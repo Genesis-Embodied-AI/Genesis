@@ -23,7 +23,8 @@ class Muscle(Elastic):
     mu: float, optional
         The second Lame's parameter. Default is None, computed by E and nu.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Default is 'pbs'.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
+        'pbs' on supported platforms, 'random' otherwise.
     model: str, optional
         Stress model ('corotation', 'neohooken'). Default is 'corotation'.
     n_groups: int, optional
@@ -37,10 +38,13 @@ class Muscle(Elastic):
         rho=1000.0,
         lam=None,
         mu=None,
-        sampler="pbs",
+        sampler=None,
         model="neohooken",
         n_groups=1,  # number of muscle group
     ):
+        if sampler is None:
+            sampler = "pbs" if gs.platform == "Linux" else "random"
+
         super().__init__(E, nu, rho, lam, mu, sampler, model)
 
         # inherit from Elastic

@@ -48,24 +48,21 @@ class SPHEntity(ParticleEntity):
         """
         self.sampler = self._material.sampler
 
-        valid = True
-        if self.sampler == "regular":
-            pass
-        elif "pbs" in self.sampler:
-            splits = self.sampler.split("-")
-            if len(splits) == 1:  # using default sdf_res=32
-                self.sampler += "-32"
-            elif len(splits) == 2 and splits[0] == "pbs" and splits[1].isnumeric():
+        match self.sampler.split("-"):
+            case ["regular"]:
                 pass
-            else:
-                valid = False
-        else:
-            valid = False
-
-        if not valid:
-            gs.raise_exception(
-                f"Only one of the following samplers is supported: [`regular`, `pbs`, `pbs-sdf_res`]. Got: {self.sampler}."
-            )
+            case ["random"]:
+                pass
+            case ["pbs"]:
+                # using default sdf_res=32
+                self.sampler += "-32"
+            case ["pbs", num] if num.isnumeric():
+                pass
+            case _:
+                gs.raise_exception(
+                    "Only one of the following samplers is supported: [`regular`, `random`, `pbs`, `pbs-sdf_res`]. "
+                    f"Got: {self.sampler}."
+                )
 
     def _add_particles_to_solver(self):
         self._solver._kernel_add_particles(

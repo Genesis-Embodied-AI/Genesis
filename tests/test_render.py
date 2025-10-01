@@ -974,6 +974,7 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
             nu=0.45,
             rho=10000.0,
             model="neohooken",
+            sampler="random",
             n_groups=4,
         ),
     )
@@ -982,7 +983,9 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
             pos=(0.0, 0.0, 0.65),
             size=(0.4, 0.4, 0.4),
         ),
-        material=gs.materials.SPH.Liquid(),
+        material=gs.materials.SPH.Liquid(
+            sampler="random",
+        ),
         surface=gs.surfaces.Default(
             color=(0.4, 0.8, 1.0),
             vis_mode="particle",

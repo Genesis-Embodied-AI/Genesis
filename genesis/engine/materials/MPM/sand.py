@@ -24,7 +24,8 @@ class Sand(Base):
     mu: float, optional
         The second Lame's parameter. Default is None, computed by E and nu.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Default is 'random'.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
+        'random'.
     friction_angle: float, optional
         Friction angle in degrees, used to compute internal pressure-dependent plasticity. Default is 45.
     """
