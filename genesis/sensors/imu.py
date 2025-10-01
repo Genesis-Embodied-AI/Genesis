@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, Type
 
 import gstaichi as ti
 import numpy as np
@@ -158,15 +158,27 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
     gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
 
-@register_sensor(IMUOptions, IMUSharedMetadata)
+class IMUData(NamedTuple):
+    lin_acc: torch.Tensor
+    ang_vel: torch.Tensor
+
+
+@register_sensor(IMUOptions, IMUSharedMetadata, IMUData)
 @ti.data_oriented
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
     NoisySensorMixin[IMUSharedMetadata],
     Sensor[IMUSharedMetadata],
 ):
-    def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "gs.SensorManager"):
-        super().__init__(options, shared_metadata, manager)
+    def __init__(
+        self,
+        options: IMUOptions,
+        shared_metadata: IMUSharedMetadata,
+        data_cls: Type[IMUData],
+        manager: "gs.SensorManager",
+    ):
+        super().__init__(options, shared_metadata, data_cls, manager)
+
         self.debug_objects: list["Mesh | None"] = [None, None]
         self.quat_offset: torch.Tensor
         self.pos_offset: torch.Tensor
@@ -247,11 +259,8 @@ class IMUSensor(
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
-        return {
-            "lin_acc": (3,),
-            "ang_vel": (3,),
-        }
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+        return (3,), (3,)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
@@ -324,9 +333,11 @@ class IMUSensor(
         quat = self._link.get_quat(envs_idx=env_idx)
         pos = self._link.get_pos(envs_idx=env_idx) + transform_by_quat(self.pos_offset, quat)
 
-        data = self.read(envs_idx=env_idx)
-        acc_vec = data["lin_acc"] * self._options.debug_acc_scale
-        gyro_vec = data["ang_vel"] * self._options.debug_gyro_scale
+        # cannot specify envs_idx for read() when n_envs=0
+        data = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
+        acc_vec = data.lin_acc * self._options.debug_acc_scale
+        gyro_vec = data.ang_vel * self._options.debug_gyro_scale
+
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
         acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))

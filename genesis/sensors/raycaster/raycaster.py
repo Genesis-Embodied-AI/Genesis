@@ -1,10 +1,9 @@
 import itertools
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import gstaichi as ti
-import numpy as np
 import torch
 
 import genesis as gs
@@ -19,7 +18,7 @@ from genesis.utils.geom import (
     transform_by_quat,
     transform_by_trans_quat,
 )
-from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, ti_to_torch
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from ..base_sensor import (
@@ -367,9 +366,56 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
-@register_sensor(RaycasterOptions, RaycasterSharedMetadata)
+class RaycasterData(NamedTuple):
+    hit_points: torch.Tensor
+    hit_ranges: torch.Tensor
+
+
+@register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
 @ti.data_oriented
 class RaycasterSensor(RigidSensorMixin, Sensor):
+
+    @classmethod
+    def _build_bvh(cls, shared_metadata: RaycasterSharedMetadata):
+        n_lidar_faces = shared_metadata.solver.faces_info.geom_idx.shape[0]
+        torch_map_lidar_faces = torch.arange(n_lidar_faces, dtype=torch.int32, device=gs.device)
+        if shared_metadata.only_cast_fixed:
+            # count the number of faces in a fixed geoms
+            geom_is_fixed = torch.logical_not(ti_to_torch(shared_metadata.solver.geoms_info.is_free))
+            faces_geom = ti_to_torch(shared_metadata.solver.faces_info.geom_idx)
+            n_lidar_faces = torch.sum(geom_is_fixed[faces_geom]).item()
+            if n_lidar_faces == 0:
+                gs.raise_exception(
+                    "No fixed geoms found in the scene. To use only_cast_fixed, "
+                    "at least some entities should have is_free=False."
+                )
+            torch_map_lidar_faces = torch.where(geom_is_fixed[faces_geom])[0]
+
+        shared_metadata.map_lidar_faces = ti.field(ti.i32, (n_lidar_faces))
+        shared_metadata.map_lidar_faces.from_torch(torch_map_lidar_faces)
+        shared_metadata.n_lidar_faces = n_lidar_faces
+
+        shared_metadata.aabb = AABB(
+            n_batches=shared_metadata.solver.free_verts_state.pos.shape[1], n_aabbs=n_lidar_faces
+        )
+
+        rigid_solver_decomp.kernel_update_all_verts(
+            geoms_state=shared_metadata.solver.geoms_state,
+            verts_info=shared_metadata.solver.verts_info,
+            free_verts_state=shared_metadata.solver.free_verts_state,
+            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
+        )
+
+        kernel_update_aabbs(
+            map_lidar_faces=shared_metadata.map_lidar_faces,
+            free_verts_state=shared_metadata.solver.free_verts_state,
+            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
+            verts_info=shared_metadata.solver.verts_info,
+            faces_info=shared_metadata.solver.faces_info,
+            aabb_state=shared_metadata.aabb,
+        )
+        shared_metadata.bvh = LBVH(shared_metadata.aabb)
+        shared_metadata.bvh.build()
 
     def build(self):
         super().build()  # set shared metadata from RigidSensorMixin
@@ -377,46 +423,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
             self._shared_metadata.only_cast_fixed = self._options.only_cast_fixed  # set for first only
-
-            n_lidar_faces = self._shared_metadata.solver.faces_info.geom_idx.shape[0]
-            np_map_lidar_faces = np.arange(n_lidar_faces)
-            if self._shared_metadata.only_cast_fixed:
-                # count the number of faces in a fixed geoms
-                geom_is_fixed = np.logical_not(self._shared_metadata.solver.geoms_info.is_free.to_numpy())
-                faces_geom = self._shared_metadata.solver.faces_info.geom_idx.to_numpy()
-                n_lidar_faces = np.sum(geom_is_fixed[faces_geom])
-                if n_lidar_faces == 0:
-                    gs.raise_exception(
-                        "No fixed geoms found in the scene. To use only_cast_fixed, "
-                        "at least some entities should have is_free=False."
-                    )
-                np_map_lidar_faces = np.where(geom_is_fixed[faces_geom])[0]
-
-            self._shared_metadata.map_lidar_faces = ti.field(ti.i32, (n_lidar_faces))
-            self._shared_metadata.map_lidar_faces.from_numpy(np_map_lidar_faces)
-            self._shared_metadata.n_lidar_faces = n_lidar_faces
-
-            self._shared_metadata.aabb = AABB(
-                n_batches=self._shared_metadata.solver.free_verts_state.pos.shape[1], n_aabbs=n_lidar_faces
-            )
-
-            rigid_solver_decomp.kernel_update_all_verts(
-                geoms_state=self._shared_metadata.solver.geoms_state,
-                verts_info=self._shared_metadata.solver.verts_info,
-                free_verts_state=self._shared_metadata.solver.free_verts_state,
-                fixed_verts_state=self._shared_metadata.solver.fixed_verts_state,
-            )
-
-            kernel_update_aabbs(
-                map_lidar_faces=self._shared_metadata.map_lidar_faces,
-                free_verts_state=self._shared_metadata.solver.free_verts_state,
-                fixed_verts_state=self._shared_metadata.solver.fixed_verts_state,
-                verts_info=self._shared_metadata.solver.verts_info,
-                faces_info=self._shared_metadata.solver.faces_info,
-                aabb_state=self._shared_metadata.aabb,
-            )
-            self._shared_metadata.bvh = LBVH(self._shared_metadata.aabb)
-            self._shared_metadata.bvh.build()
+            self._build_bvh(self._shared_metadata)
 
         self.pattern_generator = create_pattern_generator(self._options.pattern)
         self._shared_metadata.pattern_generators.append(self.pattern_generator)
@@ -453,12 +460,14 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         if self._options.draw_debug:
             self.debug_objects = [None] * self._manager._sim._B
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
+    @classmethod
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, envs_idx):
+        super().reset(shared_metadata, envs_idx)
+        cls._build_bvh(shared_metadata)
+
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.get_return_shape()
-        return {
-            "hit_points": (*shape, 3),
-            "hit_ranges": shape,
-        }
+        return (*shape, 3), shape
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:

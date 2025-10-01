@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, Type
 
 import gstaichi as ti
 import numpy as np
@@ -103,8 +103,15 @@ class ContactSensor(Sensor):
     Sensor that returns bool based on whether associated RigidLink is in contact.
     """
 
-    def __init__(self, sensor_options: ContactSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
+    def __init__(
+        self,
+        sensor_options: ContactSensorOptions,
+        sensor_idx: int,
+        data_cls: Type[tuple],
+        sensor_manager: "SensorManager",
+    ):
+        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+
         self._link: "RigidLink" | None = None
         self.debug_object: "Mesh" | None = None
 
@@ -241,8 +248,15 @@ class ContactForceSensor(
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
 
-    def __init__(self, sensor_options: ContactForceSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
+    def __init__(
+        self,
+        sensor_options: ContactForceSensorOptions,
+        sensor_idx: int,
+        data_cls: Type[tuple],
+        sensor_manager: "SensorManager",
+    ):
+        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+
         self.debug_object: "Mesh" | None = None
 
     def build(self):
@@ -334,9 +348,14 @@ class ContactForceSensor(
         pos = self._link.get_pos(envs_idx=env_idx)
         quat = self._link.get_quat(envs_idx=env_idx)
 
-        force = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
-        vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))
+        # TODO: cleanup env handling
+        if self._manager._sim.n_envs > 0:
+            force = self.read(envs_idx=env_idx)
+            vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))[0]
+        else:
+            force = self.read()  # cannot specify envs_idx when n_envs=0
+            vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)
-        self.debug_object = context.draw_debug_arrow(pos=pos[0], vec=vec[0], color=self._options.debug_color)
+        self.debug_object = context.draw_debug_arrow(pos=pos[0], vec=vec, color=self._options.debug_color)
