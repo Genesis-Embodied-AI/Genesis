@@ -65,14 +65,6 @@ def main():
         "--fixed",
         action="store_true",
         help="Load obstacles as fixed and cast only against fixed objects",
-        default=True,
-    )
-    parser.add_argument(
-        "-nf",
-        "--no-fixed",
-        action="store_false",
-        dest="fixed",
-        help="Load obstacles as collidable, raycaster will update BVH every step",
     )
     parser.add_argument(
         "--pattern",
