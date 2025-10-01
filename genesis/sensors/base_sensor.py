@@ -16,6 +16,7 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.scene import Scene
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -63,9 +64,11 @@ class SensorOptions(Options):
     update_ground_truth_only: bool = False
     draw_debug: bool = False
 
-    def validate(self, scene):
+    def validate(self, scene: "Scene"):
         """
         Validate the sensor options values before the sensor is added to the scene.
+
+        Use pydantic's model_post_init() for validation that does not require scene context.
         """
         delay_hz = self.delay / scene._sim.dt
         if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
@@ -352,7 +355,7 @@ class RigidSensorOptionsMixin:
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
-    def validate(self, scene):
+    def validate(self, scene: "Scene"):
         super().validate(scene)
         if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
@@ -444,8 +447,7 @@ class NoisySensorOptionsMixin:
     jitter: float = 0.0
     interpolate: bool = False
 
-    def validate(self, scene):
-        super().validate(scene)
+    def model_post_init(self, _):
         if self.jitter > 0 and not self.interpolate:
             gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
         if self.jitter > self.delay:

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Type
 
 import gstaichi as ti
 import torch
+from pydantic import Field
 
 import genesis as gs
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
@@ -334,11 +335,19 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
     pattern: RaycastPattern
     min_range: float = 0.0
     max_range: float = 20.0
-    no_hit_value: float | None = None
+    no_hit_value: float = Field(default_factory=lambda data: data["max_range"])
     return_world_frame: bool = False
     only_cast_fixed: bool = False
 
     debug_sphere_radius: float = 0.02
+
+    def model_post_init(self, _):
+        if self.min_range < 0.0:
+            gs.raise_exception(f"[{type(self).__name__}] min_range should be non-negative. Got: {self.min_range}.")
+        if self.max_range <= self.min_range:
+            gs.raise_exception(
+                f"[{type(self).__name__}] max_range {self.max_range} should be greater than min_range {self.min_range}."
+            )
 
 
 @dataclass
