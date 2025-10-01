@@ -120,7 +120,7 @@ class SensorManager:
 
 
 def register_sensor(
-    options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"], data_cls: Type[tuple] = tuple
+    options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"], data_cls: Type[tuple]
 ):
     def _impl(sensor_cls: Type["Sensor"]):
         SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls, metadata_cls, data_cls

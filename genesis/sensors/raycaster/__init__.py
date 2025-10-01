@@ -1,4 +1,3 @@
-from .base_pattern import RaycastPattern, RaycastPatternGenerator
 from .depth_camera import DepthCameraOptions
 from .patterns import (
     DepthCameraPattern,

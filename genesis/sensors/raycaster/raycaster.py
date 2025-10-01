@@ -1,7 +1,7 @@
 import itertools
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Type
 
 import gstaichi as ti
 import torch
@@ -29,9 +29,10 @@ from ..base_sensor import (
     SensorOptions,
     SharedSensorMetadata,
 )
-from .base_pattern import RaycastPattern, RaycastPatternGenerator, create_pattern_generator
+from .patterns import RaycastPattern
 
 if TYPE_CHECKING:
+    from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
@@ -307,9 +308,8 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
         The mounting offset position of the sensor in the world frame. Defaults to (0.0, 0.0, 0.0).
     euler_offset : tuple[float, float, float], optional
         The mounting offset quaternion of the sensor in the world frame. Defaults to (0.0, 0.0, 0.0).
-    pattern: RaycastPatternOptions | str
-        The raycasting pattern configuration for the sensor. If a string is provided, a config file with the same name
-        is expected in the `configs` directory.
+    pattern: RaycastPatternOptions
+        The raycasting pattern for the sensor.
     min_range : float, optional
         The minimum sensing range in meters. Defaults to 0.0.
     max_range : float, optional
@@ -331,7 +331,7 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
         The radius of each debug hit point sphere drawn in the scene. Defaults to 0.02.
     """
 
-    pattern: RaycastPattern | str
+    pattern: RaycastPattern
     min_range: float = 0.0
     max_range: float = 20.0
     no_hit_value: float | None = None
@@ -357,7 +357,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     no_hit_values: torch.Tensor = make_tensor_field((0,))
     return_world_frame: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
 
-    pattern_generators: list[RaycastPatternGenerator] = field(default_factory=list)
+    patterns: list[RaycastPattern] = field(default_factory=list)
     ray_dirs: torch.Tensor = make_tensor_field((0, 3))
     ray_starts: torch.Tensor = make_tensor_field((0, 3))
     ray_starts_world: torch.Tensor = make_tensor_field((0, 3))
@@ -374,6 +374,16 @@ class RaycasterData(NamedTuple):
 @register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
 @ti.data_oriented
 class RaycasterSensor(RigidSensorMixin, Sensor):
+
+    def __init__(
+        self,
+        options: RaycasterOptions,
+        shared_metadata: RaycasterSharedMetadata,
+        data_cls: Type[RaycasterData],
+        manager: "gs.SensorManager",
+    ):
+        super().__init__(options, shared_metadata, data_cls, manager)
+        self.debug_objects: list["Mesh | None"] = []
 
     @classmethod
     def _build_bvh(cls, shared_metadata: RaycasterSharedMetadata):
@@ -425,22 +435,22 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             self._shared_metadata.only_cast_fixed = self._options.only_cast_fixed  # set for first only
             self._build_bvh(self._shared_metadata)
 
-        self.pattern_generator = create_pattern_generator(self._options.pattern)
-        self._shared_metadata.pattern_generators.append(self.pattern_generator)
+        pattern = self._options.pattern
+        self._shared_metadata.patterns.append(pattern)
         pos_offset = self._shared_metadata.offsets_pos[-1, :]
         quat_offset = self._shared_metadata.offsets_quat[..., -1, :]
         if self._shared_metadata.solver.n_envs > 0:
             quat_offset = quat_offset[0]  # all envs have same offset on build
 
-        ray_starts = self.pattern_generator.get_ray_starts().reshape(-1, 3)
+        ray_starts = pattern.ray_starts.reshape(-1, 3)
         ray_starts = transform_by_trans_quat(ray_starts, pos_offset, quat_offset)
         self._shared_metadata.ray_starts = torch.cat([self._shared_metadata.ray_starts, ray_starts])
 
-        ray_dirs = self.pattern_generator.get_ray_directions().reshape(-1, 3)
+        ray_dirs = pattern.ray_dirs.reshape(-1, 3)
         ray_dirs = transform_by_quat(ray_dirs, quat_offset)
         self._shared_metadata.ray_dirs = torch.cat([self._shared_metadata.ray_dirs, ray_dirs])
 
-        num_rays = math.prod(self.pattern_generator._return_shape)
+        num_rays = math.prod(pattern.return_shape)
         self._shared_metadata.sensors_ray_start_idx.append(self._shared_metadata.total_n_rays)
         self._shared_metadata.total_n_rays += num_rays
 
@@ -466,7 +476,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         cls._build_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        shape = self._options.pattern.get_return_shape()
+        shape = self._options.pattern.return_shape
         return (*shape, 3), shape
 
     @classmethod
@@ -536,7 +546,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         Spheres will be different colors per environment.
         """
-        data = self.read()["hit_points"].reshape(self._manager._sim._B, -1, 3)
+        data = self.read().hit_points.reshape(self._manager._sim._B, -1, 3)
 
         for env_idx, color in zip(range(data.shape[0]), itertools.cycle(DEBUG_COLORS)):
             points = data[env_idx]
