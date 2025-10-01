@@ -556,8 +556,6 @@ class RigidEntity(Entity):
     def _build(self):
         for link in self._links:
             link._build()
-            if not link.is_fixed:
-                self._is_free = True
 
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
