@@ -43,11 +43,29 @@ jobs:
           ls -la ${{ steps.dl.outputs.download-path }} || true
           (command -v tree >/dev/null && tree -a ${{ steps.dl.outputs.download-path }}) || true
 
-      - name: Check regressions
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_API_URL: ${{ github.api_url }}
+      - name: Resolve PR number
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const wr = context.payload.workflow_run;
+            let pr = (wr.pull_requests && wr.pull_requests[0]) || null;
 
+            if (!pr) {
+              const sha = wr.head_sha;
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: sha,
+              });
+              if (data && data.length) pr = data[0];
+            }
+
+            core.setOutput('pr_number', pr ? String(pr.number) : '');
+
+      - name: Check regressions
+        if: ${{ steps.pr.outputs.pr_number != '' }}
+        env:
           # --- W&B ---
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
           WANDB_ENTITY: genesis-ai-company
@@ -65,7 +83,7 @@ jobs:
           PR_COMMENT_PATH: pr_comment.md
         run: |
           python - <<'PY'
-          import os, sys, json, math, re, requests
+          import os, sys, json, math, re
           import statistics as stats
           import wandb
 
@@ -115,32 +133,10 @@ jobs:
                   out[tid] = {"runtime_fps": rt, "compile_time": ct}
               return out
 
-          # ----- Read event / find PR -----
-          API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
-          ev  = json.load(open(os.environ["GITHUB_EVENT_PATH"], "r", encoding="utf-8"))
+          # ----- read workflow_run id (for tag only; no API calls) -----
+          ev = json.load(open(os.environ["GITHUB_EVENT_PATH"], "r", encoding="utf-8"))
           wr  = ev["workflow_run"]
-          repo= ev["repository"]
-          owner, name = repo["full_name"].split("/", 1)
-          head_sha = wr.get("head_sha")
           wr_id = wr["id"]
-
-          s = requests.Session()
-          s.headers.update({
-              "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-              "Accept": "application/vnd.github+json",
-          })
-
-          prs = wr.get("pull_requests") or []
-          pr = prs[0] if prs else None
-          if not pr:
-              r = s.get(f"{API}/repos/{owner}/{name}/commits/{head_sha}/pulls",
-                        headers={"Accept":"application/vnd.github.groot-preview+json"})
-              if r.ok and r.json(): pr = r.json()[0]
-          if not pr:
-              print("No PR found; skip."); open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"),"w").close(); sys.exit(0)
-
-          pr_num = pr["number"]
-          target_repo_api = pr["base"]["repo"]["url"]
 
           # ----- Load current PR artifacts -----
           artifacts_path = os.path.abspath(os.environ.get("ARTIFACTS_DIR", "./artifacts"))
@@ -187,7 +183,7 @@ jobs:
               if cfg is None: continue
               cfg = json.loads(cfg)
               raw_rev = cfg.get("revision"); raw_bid = cfg.get("benchmark_id")
-              if not raw_rev or not raw_bid: 
+              if not raw_rev or not raw_bid:
                   if selected_revs is not None:
                       no_change_streak += 1
                       if no_change_streak >= NO_CHANGE_PATIENCE: break
@@ -212,8 +208,8 @@ jobs:
                   if len(rev_order) >= MAX_REVISIONS:
                       selected_revs = set(rev_order)
 
-              if wandb_normalize_benchmark_id(bid) not in by_rev[rev]:
-                  # pull first rows with metrics
+              nbid = wandb_normalize_benchmark_id(bid)
+              if nbid not in by_rev[rev]:
                   runtime_fps = None; compile_time = None; cnt = 0
                   for row in run.scan_history(keys=["runtime_fps","compile_time"]):
                       runtime_fps = row.get("runtime_fps")
@@ -221,7 +217,6 @@ jobs:
                       if runtime_fps is not None and compile_time is not None: break
                       cnt += 1
                       if cnt >= 10: break
-                  nbid = wandb_normalize_benchmark_id(bid)
                   by_rev[rev][nbid] = {"runtime_fps": runtime_fps, "compile_time": compile_time}
                   if selected_revs is not None: no_change_streak = 0
               else:
@@ -254,6 +249,7 @@ jobs:
 
           if not runtime_regs and not compile_regs:
             print("No regression vs baselines; skip comment.")
+            open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"),"w").close()
             sys.exit(0)
 
           def trunc(s, n=120): return s if len(s)<=n else s[:n]+"…"
@@ -267,45 +263,34 @@ jobs:
           lines.append("")
 
           if runtime_regs:
-              runtime_regs.sort(key=lambda x: x[3])  # more negative first
-              lines += [
-                  "**Runtime FPS regressions (vs mean of other commits)**",
-                  "| benchmark_id | current | baseline mean | delta % |",
-                  "|---|---:|---:|---:|",
-              ]
+              runtime_regs.sort(key=lambda x: x[3])
+              lines += ["**Runtime FPS regressions (vs mean of other commits)**",
+                        "| benchmark_id | current | baseline mean | delta % |",
+                        "|---|---:|---:|---:|"]
               for bid, cur, base, d in runtime_regs[:20]:
                   lines.append(f"| `{trunc(bid)}` | {cur:,.0f} | {base:,.0f} | {d:.2f}% |")
-              if len(runtime_regs) > 20:
-                  lines.append("_Only first 20 shown._")
+              if len(runtime_regs)>20: lines.append("_Only first 20 shown._")
               lines.append("")
 
           if compile_regs:
-              compile_regs.sort(key=lambda x: -x[3])  # more positive first
-              lines += [
-                  "**Compile-time regressions (vs mean of other commits)**",
-                  "| benchmark_id | current | baseline mean | delta % |",
-                  "|---|---:|---:|---:|",
-              ]
+              compile_regs.sort(key=lambda x: -x[3])
+              lines += ["**Compile-time regressions (vs mean of other commits)**",
+                        "| benchmark_id | current | baseline mean | delta % |",
+                        "|---|---:|---:|---:|"]
               for bid, cur, base, d in compile_regs[:20]:
                   lines.append(f"| `{trunc(bid)}` | {cur:,.0f} | {base:,.0f} | {d:.2f}% |")
-              if len(compile_regs) > 20:
-                  lines.append("_Only first 20 shown._")
+              if len(compile_regs)>20: lines.append("_Only first 20 shown._")
               lines.append("")
 
-          tag = f"bench-guard-run:{wr_id}"
-          lines.append(f"<!-- {tag} -->")
+          lines.append(f"<!-- bench-guard-run:{wr_id} -->")
           body = "\n".join(lines)
 
-          print("********* Body: ")
-          print(body)
-
-          comment_path = os.environ.get("PR_COMMENT_PATH", "pr_comment.md")
-          with open(comment_path, "w", encoding="utf-8") as f:
+          with open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"), "w", encoding="utf-8") as f:
               f.write(body + "\n")
-          print(f"[INFO] wrote {comment_path}")
+          print("[INFO] wrote pr_comment.md")
           PY
 
-          # Pass pr_comment.md to the next step
+          # capture comment into env for next step
           if [ -s "pr_comment.md" ]; then
             {
               echo 'SCRIPT_OUTPUT<<__EOF__'
@@ -317,21 +302,20 @@ jobs:
           fi
 
       - name: Add PR comment
-        if: ${{ env.SCRIPT_OUTPUT != '' }}
+        if: ${{ steps.pr.outputs.pr_number != '' && env.SCRIPT_OUTPUT != '' }}
         uses: actions/github-script@v7
         env:
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
-            const prs = (context.payload.workflow_run.pull_requests || []);
-            if (!prs.length) {
-              core.info('No associated PR; skipping comment.');
+            const prNumber = Number('${{ steps.pr.outputs.pr_number }}');
+            if (!prNumber) {
+              core.info('No PR number; skipping comment.');
               return;
             }
-            const prNumber = prs[0].number;
             await github.rest.issues.createComment({
-              issue_number: prNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
+              issue_number: prNumber,
               body: process.env.COMMENT_BODY
             });
