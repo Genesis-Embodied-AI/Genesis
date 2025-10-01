@@ -207,8 +207,7 @@ class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin
     debug_color: tuple[float, float, float, float] = (1.0, 0.0, 1.0, 0.5)
     debug_scale: float = 0.01
 
-    def validate(self, scene):
-        super().validate(scene)
+    def model_post_init(self, _):
         if not (
             isinstance(self.min_force, float) or (isinstance(self.min_force, Sequence) and len(self.min_force) == 3)
         ):

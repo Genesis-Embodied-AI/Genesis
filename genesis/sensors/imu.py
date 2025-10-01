@@ -134,8 +134,7 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     debug_gyro_color: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.5)
     debug_gyro_scale: float = 0.01
 
-    def validate(self, scene):
-        super().validate(scene)
+    def model_post_init(self, _):
         self._validate_axes_skew(self.acc_axes_skew)
         self._validate_axes_skew(self.gyro_axes_skew)
 
