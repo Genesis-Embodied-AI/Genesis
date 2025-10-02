@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Sequence, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Sequence, TypeVar
 
 import gstaichi as ti
 import numpy as np
@@ -15,8 +15,10 @@ from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.rasterizer_context import RasterizerContext
 
     from .sensor_manager import SensorManager
 
@@ -43,19 +45,23 @@ def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) ->
 class SensorOptions(Options):
     """
     Base class for all sensor options.
+
     Each sensor should have their own options class that inherits from this class.
     The options class should be registered with the SensorManager using the @register_sensor decorator.
 
     Parameters
     ----------
     delay : float
-        The read delay time in seconds. Data read will be outdated by this amount.
+        The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
     update_ground_truth_only : bool
-        If True, the sensor will only update the ground truth data, and not the measured data.
+        If True, the sensor will only update the ground truth data, and not the measured data. Defaults to False.
+    draw_debug : bool
+        If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
     delay: float = 0.0
     update_ground_truth_only: bool = False
+    draw_debug: bool = False
 
     def validate(self, scene):
         """
@@ -202,6 +208,12 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         The dtype of the cache for this sensor.
         """
         raise NotImplementedError(f"{cls.__name__} has not implemented `get_cache_dtype()`.")
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        """
+        Draw debug shapes for the sensor in the scene.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has not implemented `draw_debug()`.")
 
     # =============================== public shared methods ===============================
 
@@ -378,6 +390,10 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
     Base sensor class for sensors that are attached to a RigidEntity.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._link: "RigidLink" | None = None
+
     def build(self):
         super().build()
 
@@ -386,9 +402,10 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
 
         batch_size = self._manager._sim._B
 
-        link_start = self._shared_metadata.solver.entities[self._options.entity_idx].link_start
+        entity = self._shared_metadata.solver.entities[self._options.entity_idx]
+        self._link = entity.links[self._options.link_idx_local]
         self._shared_metadata.links_idx = concat_with_tensor(
-            self._shared_metadata.links_idx, self._options.link_idx_local + link_start
+            self._shared_metadata.links_idx, self._options.link_idx_local + entity.link_start
         )
         self._shared_metadata.offsets_pos = concat_with_tensor(
             self._shared_metadata.offsets_pos,

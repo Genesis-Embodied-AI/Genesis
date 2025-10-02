@@ -10,8 +10,109 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.entities.particle_entity import ParticleEntity
 
 
+class PBDBaseEntity(ParticleEntity):
+    """
+    Base class for PBD entity.
+    """
+
+    @gs.assert_built
+    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
+        particles_idx = particles_idx_local + self._particle_start
+        self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
+
+    def get_particles_pos(self, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        poss = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
+        self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
+        if self._scene.n_envs == 0:
+            poss = poss.squeeze(0)
+        return poss
+
+    @gs.assert_built
+    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
+        particles_idx = particles_idx_local + self._particle_start
+        self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
+
+    def get_particles_vel(self, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        vels = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
+        self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
+        if self._scene.n_envs == 0:
+            vels = vels.squeeze(0)
+        return vels
+
+    @gs.assert_built
+    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        actives = self._sanitize_particles_tensor((), gs.tc_bool, actives, particles_idx_local, envs_idx)
+        self.solver._kernel_set_particles_active(particles_idx_local + self._particle_start, envs_idx, actives)
+
+    def get_particles_active(self, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        actives = torch.empty((len(envs_idx), self.n_particles), dtype=gs.tc_float, device=gs.device)
+        self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)
+        if self._scene.n_envs == 0:
+            actives = actives.squeeze(0)
+        return actives
+
+    @gs.assert_built
+    def fix_particles_to_link(self, link_idx, particles_idx_local=None, envs_idx=None, *, unsafe=False):
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        particles_idx = particles_idx_local + self._particle_start
+        self._sim._coupler.kernel_attach_pbd_to_rigid_link(
+            particles_idx, envs_idx, link_idx, self._scene.rigid_solver.links_state
+        )
+
+    @gs.assert_built
+    def fix_particles(self, particles_idx_local, envs_idx=None, zero_vel=True, *, unsafe=False):
+        """
+        Fix the position of some particles in the simulation.
+
+        Parameters
+        ----------
+        particles_idx_local : int | array_like, shape (N,)
+            Index of the particles relative to this entity.
+        envs_idx : None | int | array_like, shape (M,), optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+        zero_vel : bool, optional
+            Whether to zero the velocity of the particles. Defaults to True.
+        """
+        if zero_vel:
+            self.set_particles_vel(torch.zeros([3]), particles_idx_local, envs_idx, unsafe=unsafe)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        self.solver._kernel_fix_particles(particles_idx_local + self._particle_start, envs_idx)
+
+    @gs.assert_built
+    def release_particle(self, particles_idx_local, envs_idx=None, *, unsafe=False):
+        """
+        Release some of the attached particles, allowing them to move freely again.
+
+        Parameters
+        ----------
+        particles_idx_local : int | array_like, shape (N,)
+            Index of the particles relative to this entity.
+        envs_idx : None | int | array_like, shape (M,), optional
+            The indices of the environments to set. If None, all environments will be set. Defaults to None.
+        """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
+        self.solver._kernel_release_particle(particles_idx_local + self._particle_start, envs_idx)
+        self.solver._sim._coupler.kernel_pbd_rigid_clear_animate_particles_by_link(
+            particles_idx_local + self._particle_start, envs_idx
+        )
+
+
 @ti.data_oriented
-class PBDTetEntity(ParticleEntity):
+class PBDTetEntity(PBDBaseEntity):
     """
     PBD entity represented by tetrahedral elements.
 
@@ -111,8 +212,8 @@ class PBDTetEntity(ParticleEntity):
         """
         Sample and preprocess the mesh for the PBD tetrahedral entity.
 
-        Applies transformation from the morph, stores mesh vertices and faces,
-        and performs remeshing based on the particle size.
+        Applies transformation from the morph, stores mesh vertices and faces, and performs remeshing based on the
+        particle size.
         """
         # We don't use ParticleEntity.sample() because we need to maintain the remeshed self._mesh as well
         pos = np.asarray(self._morph.pos, dtype=gs.np_float)
@@ -129,91 +230,6 @@ class PBDTetEntity(ParticleEntity):
 
     def add_grad_from_state(self, state):
         pass
-
-    # ------------------------------------------------------------------------------------
-    # ---------------------------------- io & control ------------------------------------
-    # ------------------------------------------------------------------------------------
-
-    @gs.assert_built
-    def _set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        poss = self._sanitize_particles_tensor((3,), gs.tc_float, poss, particles_idx_local, envs_idx)
-        particles_idx = particles_idx_local + self._particle_start
-        self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
-        self.solver._kernel_fix_particles(particles_idx, envs_idx)
-
-    def get_particles_pos(self, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        poss = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
-        self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
-        if self._scene.n_envs == 0:
-            poss = poss.squeeze(0)
-        return poss
-
-    @gs.assert_built
-    def _set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        vels = self._sanitize_particles_tensor((3,), gs.tc_float, vels, particles_idx_local, envs_idx)
-        particles_idx = particles_idx_local + self._particle_start
-        self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
-        self.solver._kernel_fix_particles(particles_idx, envs_idx)
-
-    def get_particles_vel(self, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        vels = torch.empty((len(envs_idx), self.n_particles, 3), dtype=gs.tc_float, device=gs.device)
-        self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
-        if self._scene.n_envs == 0:
-            vels = vels.squeeze(0)
-        return vels
-
-    @gs.assert_built
-    def _set_particles_active(self, actives, particles_idx_local=None, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        actives = self._sanitize_particles_tensor((3,), gs.tc_float, actives, particles_idx_local, envs_idx)
-        self.solver._kernel_set_particles_active(particles_idx_local + self._particle_start, envs_idx, actives)
-
-    def get_particles_active(self, envs_idx=None, *, unsafe=False):
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        actives = torch.empty((len(envs_idx), self.n_particles), dtype=gs.tc_float, device=gs.device)
-        self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)
-        if self._scene.n_envs == 0:
-            actives = actives.squeeze(0)
-        return actives
-
-    @gs.assert_built
-    def fix_particles(self, particles_idx_local, envs_idx=None, *, unsafe=False):
-        """
-        Fix the position of some particles in the simulation.
-
-        Parameters
-        ----------
-        particles_idx_local : int | array_like, shape (N,)
-            Index of the particles relative to this entity.
-        envs_idx : None | int | array_like, shape (M,), optional
-            The indices of the environments to set. If None, all environments will be set. Defaults to None.
-        """
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        self.solver._kernel_fix_particles(particles_idx_local + self._particle_start, envs_idx)
-
-    @gs.assert_built
-    def release_particle(self, particles_idx_local, envs_idx=None, *, unsafe=False):
-        """
-        Release some of the fixed particles, allowing them to move freely again.
-
-        Parameters
-        ----------
-        particles_idx_local : int | array_like, shape (N,)
-            Index of the particles relative to this entity.
-        envs_idx : None | int | array_like, shape (M,), optional
-            The indices of the environments to set. If None, all environments will be set. Defaults to None.
-        """
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
-        particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx, unsafe=unsafe)
-        self.solver._kernel_release_particle(particles_idx_local + self._particle_start, envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -309,6 +325,8 @@ class PBD2DEntity(PBDTetEntity):
         self._mass = self._vmesh.area * self.material.rho
 
         self._particles = np.asarray(self._mesh.verts, dtype=gs.np_float)
+        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._morph.pos)
+
         self._edges = np.asarray(self._mesh.get_unique_edges(), dtype=gs.np_int)
 
         self._particle_mass = self._mass / len(self._particles)
@@ -445,6 +463,8 @@ class PBD3DEntity(PBDTetEntity):
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
         particles, elems = self._mesh.tetrahedralize(tet_cfg)
         self._particles = particles.astype(gs.np_float, copy=False)
+        self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._morph.pos)
+
         self._elems = elems.astype(gs.np_int, copy=False)
         self._edges = np.array(
             list(
@@ -504,7 +524,7 @@ class PBD3DEntity(PBDTetEntity):
 
 
 @ti.data_oriented
-class PBDParticleEntity(ParticleEntity):
+class PBDParticleEntity(PBDBaseEntity):
     """
     PBD entity represented solely by particles.
 
@@ -580,7 +600,7 @@ class PBDParticleEntity(ParticleEntity):
 
 
 @ti.data_oriented
-class PBDFreeParticleEntity(ParticleEntity):
+class PBDFreeParticleEntity(PBDBaseEntity):
     """
     PBD-based entity represented by non-physics particles
 

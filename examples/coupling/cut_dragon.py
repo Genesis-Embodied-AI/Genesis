@@ -67,7 +67,7 @@ def main():
             vis_mode="particle",
         ),
     )
-    scene.build(n_envs=5)
+    scene.build(n_envs=2)
 
     horizon = 400
     for i in range(horizon):

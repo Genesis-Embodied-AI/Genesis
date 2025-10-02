@@ -1243,12 +1243,12 @@ class Scene(RBC):
         return rgb_out, depth_out, seg_out, normal_out
 
     @gs.assert_built
-    def clear_debug_object(self, object):
+    def clear_debug_object(self, obj):
         """
         Clears all the debug objects in the scene.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.clear_debug_object(object)
+            self._visualizer.context.clear_debug_object(obj)
 
     @gs.assert_built
     def clear_debug_objects(self):

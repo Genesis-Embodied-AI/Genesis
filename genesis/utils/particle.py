@@ -78,13 +78,13 @@ def trimesh_to_particles_simple(mesh, p_size, sampler):
 def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     """
     Physics-based particle sampler using the method proposed by Kugelstadt et al. [2021].
+
     References: https://splishsplash.readthedocs.io/en/latest/VolumeSampling.html
-    If this sampler fails, it returns `None`.
     """
     assert "pbs" in sampler
 
     if gs.platform != "Linux":
-        gs.raise_exception("This method is only supported on Linux.")
+        gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux.")
 
     # compute file name via hashing for caching
     ptc_file_path = msu.get_ptc_path(mesh.vertices, mesh.faces, p_size, sampler)
@@ -150,7 +150,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
                 reader.Update()
                 positions = vtk_to_numpy(reader.GetOutput().GetPoints().GetData())
             except (OSError, ImportError) as e:
-                gs.raise_exception_from("`pbs` sampler failed.", e)
+                gs.raise_exception_from(f"Physics-based particle sampler '{sampler}' failed.", e)
             finally:
                 os.remove(mesh_path)
                 os.remove(vtk_path)

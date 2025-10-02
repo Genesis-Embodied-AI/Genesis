@@ -712,62 +712,67 @@ def transform_tets_mesh_verts(vertices, positions, zs=None):
 @lru_cache(maxsize=32)
 def _create_unit_sphere_impl(subdivisions):
     mesh = trimesh.creation.icosphere(radius=1.0, subdivisions=subdivisions)
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
-    vertices, faces, face_normals = _create_unit_sphere_impl(subdivisions=subdivisions)
+    vertices, faces, attrs = _create_unit_sphere_impl(subdivisions=subdivisions)
     vertices = vertices * radius
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
     return mesh
 
 
 @lru_cache(maxsize=32)
 def _create_unit_cylinder_impl(sections):
     mesh = trimesh.creation.cylinder(radius=1.0, height=1.0, sections=sections)
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
-    vertices, faces, face_normals = _create_unit_cylinder_impl(sections=sections)
+    vertices, faces, attrs = _create_unit_cylinder_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
     return mesh
 
 
 @lru_cache(maxsize=32)
 def _create_unit_cone_impl(sections):
     mesh = trimesh.creation.cone(radius=1.0, height=1.0, sections=sections)
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_cone(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
-    vertices, faces, face_normals = _create_unit_cone_impl(sections=sections)
+    vertices, faces, attrs = _create_unit_cone_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
-    face_normals = face_normals / (radius, radius, height)
-    face_normals /= np.linalg.norm(face_normals, axis=-1, keepdims=True)
+    for name, normals in attrs.items():
+        normals = normals / (radius, radius, height)
+        normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+        attrs[name] = normals
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
     return mesh
 
 
@@ -815,10 +820,11 @@ def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=1
 @lru_cache(maxsize=1)
 def _create_unit_box_impl():
     mesh = trimesh.creation.box(extents=[1.0, 1.0, 1.0])
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=False, wireframe_radius=0.002):
@@ -849,42 +855,45 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
         box_edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
 
         n_verts = 0
-        vertices, faces, face_normals = [], [], []
+        vertices, faces, attrs = [], [], {}
         for v_start, v_end in box_edges:
             p_start, p_end = box_vertices[v_start], box_vertices[v_end]
             vec = p_end - p_start
             length = np.linalg.norm(vec)
 
-            line_vertices, line_faces, line_face_normals = _create_unit_cylinder_impl(sections=12)
+            line_vertices, line_faces, line_attrs = _create_unit_cylinder_impl(sections=12)
             line_vertices = line_vertices * (wireframe_radius, wireframe_radius, length)
             line_vertices[:, -1] += length / 2.0
             line_vertices = gu.transform_by_trans_R(line_vertices, p_start, gu.z_up_to_R(vec))
 
             vertices.append(line_vertices)
             faces.append(line_faces + n_verts)
-            face_normals.append(line_face_normals)
+            for name, value in line_attrs.items():
+                attrs.setdefault(name, []).append(value)
             n_verts += len(line_vertices)
 
         for vertex in box_vertices:
-            sphere_vertices, sphere_faces, sphere_face_normals = _create_unit_sphere_impl(subdivisions=3)
+            sphere_vertices, sphere_faces, sphere_attrs = _create_unit_sphere_impl(subdivisions=3)
 
             vertices.append(sphere_vertices * wireframe_radius + vertex)
             faces.append(sphere_faces + n_verts)
-            face_normals.append(sphere_face_normals)
+            for name, value in sphere_attrs.items():
+                attrs.setdefault(name, []).append(value)
             n_verts += len(sphere_vertices)
 
         vertices = np.concatenate(vertices)
         faces = np.concatenate(faces)
-        face_normals = np.concatenate(face_normals)
+        for name, values in attrs.items():
+            attrs[name] = np.concatenate(values)
     else:
-        vertices, faces, face_normals = _create_unit_box_impl()
+        vertices, faces, attrs = _create_unit_box_impl()
         vertices = vertices * extents + pos
 
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
 
     return mesh
 
@@ -981,7 +990,7 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+    # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
     import pyvista as pv
     import tetgen
 

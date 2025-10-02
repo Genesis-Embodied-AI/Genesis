@@ -1,0 +1,26 @@
+name: Alarm regression
+
+on:
+  workflow_run:
+    workflows: ["Production"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  comment-if-regressed:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      contains(fromJson('["success","neutral"]'), github.event.workflow_run.conclusion)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
+          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
+          fetch-depth: 0

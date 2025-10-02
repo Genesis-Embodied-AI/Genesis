@@ -110,13 +110,17 @@ class List(list, RBC):
             first_line = styless(repr_str)
             header = self._repr_type()
             line_len = min_len
-
         else:
             common_class_name = self.common_ancestor()._repr_type()
             first_line = styless(repr_str.split("\n")[1])
             header = f"{self._repr_type()} of {common_class_name}"
             header_len = len(first_line)
-            line_len = min(max(min_len, header_len - len(header) - 2), os.get_terminal_size()[0] - len(header) - 2)
+            line_len = max(min_len, header_len - len(header) - 2)
+            try:
+                columns, lines = os.get_terminal_size()
+                line_len = min(line_len, columns - len(header) - 2)
+            except OSError:
+                pass
 
         left_line_len = line_len // 2
         right_line_len = line_len - left_line_len

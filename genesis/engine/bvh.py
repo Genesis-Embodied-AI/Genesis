@@ -113,6 +113,10 @@ class LBVH(RBC):
     """
 
     def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
+        if aabb.n_aabbs < 2:
+            raise gs.GenesisException("The number of AABBs must be larger than 2.")
+        n_radix_sort_groups = min(aabb.n_aabbs, n_radix_sort_groups)
+
         self.aabbs = aabb.aabbs
         self.n_aabbs = aabb.n_aabbs
         self.n_batches = aabb.n_batches
@@ -357,13 +361,14 @@ class LBVH(RBC):
             l_max = ti.u32(2)
             while self.delta(i, i + ti.i32(l_max) * d, i_b) > delta_min:
                 l_max *= 2
-            l = ti.u32(0)
 
+            l = ti.u32(0)
             t = l_max // 2
             while t > 0:
                 if self.delta(i, i + ti.i32(l + t) * d, i_b) > delta_min:
                     l += t
                 t //= 2
+
             j = i + ti.i32(l) * d
             delta_node = self.delta(i, j, i_b)
             s = ti.u32(0)
@@ -522,3 +527,28 @@ class FEMSurfaceTetLBVH(LBVH):
             if i_av[i] == i_qv[j]:
                 result = True
         return result
+
+
+@ti.data_oriented
+class RigidTetLBVH(LBVH):
+    """
+    RigidTetLBVH is a specialized Linear BVH for rigid tetrahedrals.
+    It extends the LBVH class to support filtering based on rigid tetrahedral elements.
+    """
+
+    def __init__(self, coupler, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
+        super().__init__(aabb, max_n_query_result_per_aabb, n_radix_sort_groups)
+        self.coupler = coupler
+        self.rigid_solver = coupler.rigid_solver
+
+    @ti.func
+    def filter(self, i_a, i_q):
+        """
+        Filter function for Rigid tets. Filter out tet that belong to the same link
+
+        i_a: index of the found AABB
+        i_q: index of the query AABB
+        """
+        i_ag = self.coupler.rigid_volume_elems_geom_idx[i_a]
+        i_qg = self.coupler.rigid_volume_elems_geom_idx[i_q]
+        return not self.rigid_solver.collider._collider_info.collision_pair_validity[i_ag, i_qg]

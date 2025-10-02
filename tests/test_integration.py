@@ -3,7 +3,7 @@ import pytest
 
 import genesis as gs
 
-from .utils import assert_allclose
+from .utils import assert_allclose, get_hf_dataset
 
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
@@ -204,3 +204,114 @@ def test_hanging_rigid_cable(show_viewer, tol):
     # FIXME: Why it is not possible to achieve better accuracy?
     assert_allclose(links_pos_0, links_pos_f, tol=1e-3)
     assert_allclose(links_quat_err, 0.0, tol=1e-3)
+
+
+@pytest.mark.parametrize("primitive_type", ["box", "sphere"])
+@pytest.mark.parametrize("precision", ["64"])
+def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
+    GRAPPER_POS_START = (0.65, 0.0, 0.13)
+    GRAPPER_POS_END = (0.65, 0.0, 0.18)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60,
+            substeps=2,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=False,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+            pcg_threshold=1e-10,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(
+            pcg_threshold=1e-10,
+            sap_convergence_atol=1e-10,
+            sap_convergence_rtol=1e-10,
+            linesearch_ftol=1e-10,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.3, 0.0, 0.15),
+            camera_lookat=(0.65, 0.0, 0.15),
+            max_FPS=60,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        material=gs.materials.Rigid(
+            coup_friction=1.0,
+            friction=1.0,
+        ),
+    )
+    # Only allow finger contact to accelerate
+    for geom in franka.geoms:
+        if "finger" not in geom.link.name:
+            geom._contype = 0
+            geom._conaffinity = 0
+    if primitive_type == "sphere":
+        obj = scene.add_entity(
+            morph=gs.morphs.Sphere(
+                pos=(0.65, 0.0, 0.02),
+                radius=0.02,
+            ),
+            material=gs.materials.FEM.Elastic(
+                model="linear_corotated",
+                friction_mu=1.0,
+                E=1e5,
+                nu=0.4,
+            ),
+        )
+    else:  # primitive_type == "box":
+        asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
+        obj = scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file=f"{asset_path}/meshes/cube8.obj",
+                pos=(0.65, 0.0, 0.02),
+                scale=0.02,
+            ),
+            material=gs.materials.FEM.Elastic(
+                model="linear_corotated",
+                friction_mu=1.0,
+            ),
+        )
+    scene.build()
+
+    motors_dof = np.arange(7)
+    fingers_dof = np.arange(7, 9)
+    end_effector = franka.get_link("hand")
+
+    # init
+    franka.set_qpos((-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04))
+    box_pos_0 = obj.get_state().pos.mean(dim=-2)
+
+    # hold
+    qpos = franka.inverse_kinematics(link=end_effector, pos=GRAPPER_POS_START, quat=(0, 1, 0, 0))
+    franka.control_dofs_position(qpos[motors_dof], motors_dof)
+    for i in range(15):
+        scene.step()
+
+    # grasp
+    for i in range(10):
+        franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
+        scene.step()
+
+    # lift and wait for while to give enough time for the robot to stop shaking
+    qpos = franka.inverse_kinematics(link=end_effector, pos=GRAPPER_POS_END, quat=(0, 1, 0, 0))
+    franka.control_dofs_position(qpos[motors_dof], motors_dof)
+    for i in range(60):
+        franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
+        scene.step()
+
+    # Check that the box has moved by the expected delta, without slipping
+    box_pos_f = obj.get_state().pos.mean(dim=-2)
+    assert_allclose(box_pos_f - box_pos_0, np.array(GRAPPER_POS_END) - np.array(GRAPPER_POS_START), tol=5e-3)
+
+    # wait for a while
+    for i in range(25):
+        franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
+        scene.step()
+    box_pos_post = obj.get_state().pos.mean(dim=-2)
+    assert_allclose(box_pos_f, box_pos_post, atol=1e-4)
