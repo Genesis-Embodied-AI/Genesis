@@ -22,7 +22,7 @@ from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
-from .rigid_geom import RigidGeom, _kernel_get_free_verts, _kernel_get_fixed_verts
+from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 
@@ -56,7 +56,8 @@ class RigidEntity(Entity):
         geom_start=0,
         cell_start=0,
         vert_start=0,
-        verts_state_start=0,
+        free_verts_state_start=0,
+        fixed_verts_state_start=0,
         face_start=0,
         edge_start=0,
         vgeom_start=0,
@@ -77,17 +78,19 @@ class RigidEntity(Entity):
         self._vert_start = vert_start
         self._face_start = face_start
         self._edge_start = edge_start
-        self._verts_state_start = verts_state_start
+        self._free_verts_state_start = free_verts_state_start
+        self._fixed_verts_state_start = fixed_verts_state_start
         self._vgeom_start = vgeom_start
         self._vvert_start = vvert_start
         self._vface_start = vface_start
         self._equality_start = equality_start
 
+        self._free_verts_idx_local = torch.tensor([], dtype=gs.tc_int, device=gs.device)
+        self._fixed_verts_idx_local = torch.tensor([], dtype=gs.tc_int, device=gs.device)
+
         self._base_links_idx = torch.tensor([self.base_link_idx], dtype=gs.tc_int, device=gs.device)
 
         self._visualize_contact: bool = visualize_contact
-
-        self._is_free: bool = morph.is_free
 
         self._is_built: bool = False
 
@@ -559,6 +562,20 @@ class RigidEntity(Entity):
         self._n_dofs = self.n_dofs
         self._is_built = True
 
+        verts_start = 0
+        free_verts_idx_local, fixed_verts_idx_local = [], []
+        for link in self.links:
+            verts_idx = torch.arange(verts_start, verts_start + link.n_verts, dtype=gs.tc_int, device=gs.device)
+            if link.is_fixed:
+                fixed_verts_idx_local.append(verts_idx)
+            else:
+                free_verts_idx_local.append(verts_idx)
+            verts_start += link.n_verts
+        if free_verts_idx_local:
+            self._free_verts_idx_local = torch.cat(free_verts_idx_local)
+        if fixed_verts_idx_local:
+            self._fixed_verts_idx_local = torch.cat(fixed_verts_idx_local)
+
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
 
@@ -637,38 +654,19 @@ class RigidEntity(Entity):
         root_idx = l_info.get("root_idx")
         if root_idx is not None and root_idx >= 0:
             root_idx += self._link_start
+        link_idx = self.n_links + self._link_start
+        joint_start = self.n_joints + self._joint_start
+        free_verts_start, fixed_verts_start = self._free_verts_state_start, self._fixed_verts_state_start
+        for link in self.links:
+            if link.is_fixed:
+                fixed_verts_start += link.n_verts
+            else:
+                free_verts_start += link.n_verts
 
-        link = RigidLink(
-            entity=self,
-            name=l_info["name"],
-            idx=self.n_links + self._link_start,
-            joint_start=self.n_joints + self._joint_start,
-            n_joints=len(j_infos),
-            geom_start=self.n_geoms + self._geom_start,
-            cell_start=self.n_cells + self._cell_start,
-            vert_start=self.n_verts + self._vert_start,
-            face_start=self.n_faces + self._face_start,
-            edge_start=self.n_edges + self._edge_start,
-            verts_state_start=self.n_verts + self._verts_state_start,
-            vgeom_start=self.n_vgeoms + self._vgeom_start,
-            vvert_start=self.n_vverts + self._vvert_start,
-            vface_start=self.n_vfaces + self._vface_start,
-            pos=l_info["pos"],
-            quat=l_info["quat"],
-            inertial_pos=l_info.get("inertial_pos"),
-            inertial_quat=l_info.get("inertial_quat"),
-            inertial_i=l_info.get("inertial_i"),
-            inertial_mass=l_info.get("inertial_mass"),
-            parent_idx=parent_idx,
-            root_idx=root_idx,
-            invweight=l_info.get("invweight"),
-            visualize_contact=self.visualize_contact,
-        )
-        self._links.append(link)
-
+        # Add parent joints
         joints = gs.List()
         self._joints.append(joints)
-        for j_info in j_infos:
+        for i_j_, j_info in enumerate(j_infos):
             n_dofs = j_info["n_dofs"]
 
             sol_params = np.array(j_info.get("sol_params", gu.default_solver_params()), copy=True)
@@ -703,8 +701,8 @@ class RigidEntity(Entity):
             joint = RigidJoint(
                 entity=self,
                 name=j_info["name"],
-                idx=self.n_joints + self._joint_start,
-                link_idx=link.idx,
+                idx=joint_start + i_j_,
+                link_idx=link_idx,
                 q_start=self.n_qs + self._q_start,
                 dof_start=self.n_dofs + self._dof_start,
                 n_qs=j_info["n_qs"],
@@ -727,6 +725,36 @@ class RigidEntity(Entity):
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
             )
             joints.append(joint)
+
+        # Add child link
+        link = RigidLink(
+            entity=self,
+            name=l_info["name"],
+            idx=link_idx,
+            joint_start=joint_start,
+            n_joints=len(j_infos),
+            geom_start=self.n_geoms + self._geom_start,
+            cell_start=self.n_cells + self._cell_start,
+            vert_start=self.n_verts + self._vert_start,
+            face_start=self.n_faces + self._face_start,
+            edge_start=self.n_edges + self._edge_start,
+            free_verts_state_start=free_verts_start,
+            fixed_verts_state_start=fixed_verts_start,
+            vgeom_start=self.n_vgeoms + self._vgeom_start,
+            vvert_start=self.n_vverts + self._vvert_start,
+            vface_start=self.n_vfaces + self._vface_start,
+            pos=l_info["pos"],
+            quat=l_info["quat"],
+            inertial_pos=l_info.get("inertial_pos"),
+            inertial_quat=l_info.get("inertial_quat"),
+            inertial_i=l_info.get("inertial_i"),
+            inertial_mass=l_info.get("inertial_mass"),
+            parent_idx=parent_idx,
+            root_idx=root_idx,
+            invweight=l_info.get("invweight"),
+            visualize_contact=self.visualize_contact,
+        )
+        self._links.append(link)
 
         # Separate collision from visual geometry for post-processing
         cg_infos, vg_infos = [], []
@@ -1970,31 +1998,34 @@ class RigidEntity(Entity):
     @gs.assert_built
     def get_verts(self):
         """
-        Get the all vertices of the entity (using collision geoms).
+        Get the all vertices of the entity based on collision geometries.
 
         Returns
         -------
-        verts : torch.Tensor, shape (n_verts, 3) or (n_envs, n_verts, 3)
-            The vertices of the entity (using collision geoms).
+        verts : torch.Tensor, shape (n_envs, n_verts, 3)
+            The vertices of the entity.
         """
-        self._update_verts_for_geom()
-        if self.is_free:
-            tensor = torch.empty(
-                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
-            )
-            _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
-            if self._solver.n_envs == 0:
-                tensor = tensor.squeeze(0)
-        else:
-            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-            _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
-        return tensor
+        self._solver.update_verts_for_geoms(range(self.geom_start, self.geom_end))
 
-    @gs.assert_built
-    def _update_verts_for_geom(self):
-        for i_g_ in range(self.n_geoms):
-            i_g = i_g_ + self._geom_start
-            self._solver.update_verts_for_geom(i_g)
+        tensor = torch.empty(self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device)
+        has_fixed_verts, has_free_vertices = len(self._fixed_verts_idx_local) > 0, len(self._free_verts_idx_local) > 0
+        if has_fixed_verts:
+            _kernel_get_fixed_verts(
+                tensor, self._fixed_verts_idx_local, self._fixed_verts_state_start, self._solver.fixed_verts_state
+            )
+        if has_free_vertices:
+            # FIXME: Get around some bug in gstaichi when using gstaichi with metal backend
+            must_copy = gs.backend == gs.metal and has_fixed_verts
+            tensor_free = torch.zeros_like(tensor) if must_copy else tensor
+            _kernel_get_free_verts(
+                tensor_free, self._free_verts_idx_local, self._free_verts_state_start, self._solver.free_verts_state
+            )
+            if must_copy:
+                tensor += tensor_free
+
+        if self._solver.n_envs == 0:
+            tensor = tensor.squeeze(0)
+        return tensor
 
     def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         # Handling default argument and special cases
@@ -2960,10 +2991,37 @@ class RigidEntity(Entity):
 
     @property
     def is_free(self) -> bool:
-        """Whether the entity is free to move."""
-        return self._is_free
+        raise DeprecationError("This property has been removed.")
 
     @property
     def is_local_collision_mask(self):
         """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
         return self._is_local_collision_mask
+
+
+@ti.kernel
+def _kernel_get_free_verts(
+    tensor: ti.types.ndarray(),
+    free_verts_idx_local: ti.types.ndarray(),
+    verts_state_start: ti.i32,
+    free_verts_state: array_class.FreeVertsState,
+):
+    n_verts = free_verts_idx_local.shape[0]
+    _B = tensor.shape[0]
+    for i_v_, i, i_b in ti.ndrange(n_verts, 3, _B):
+        i_v = i_v_ + verts_state_start
+        tensor[i_b, free_verts_idx_local[i_v_], i] = free_verts_state.pos[i_v, i_b][i]
+
+
+@ti.kernel
+def _kernel_get_fixed_verts(
+    tensor: ti.types.ndarray(),
+    fixed_verts_idx_local: ti.types.ndarray(),
+    verts_state_start: ti.i32,
+    fixed_verts_state: array_class.FixedVertsState,
+):
+    n_verts = fixed_verts_idx_local.shape[0]
+    _B = tensor.shape[0]
+    for i_v_, i, i_b in ti.ndrange(n_verts, 3, _B):
+        i_v = i_v_ + verts_state_start
+        tensor[i_b, fixed_verts_idx_local[i_v_], i] = fixed_verts_state.pos[i_v][i]
