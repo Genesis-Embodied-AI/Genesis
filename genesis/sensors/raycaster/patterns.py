@@ -99,7 +99,12 @@ class GridPattern(RaycastPattern):
         self._ray_starts[..., 2] = 0.0
 
 
-def _generate_uniform_angles(n_points, fov, res, angles) -> tuple[torch.Tensor, torch.Tensor]:
+def _generate_uniform_angles(
+    n_points: tuple[int, int],
+    fov: tuple[float | tuple[float, float] | None, float | tuple[float, float] | None],
+    res: tuple[float | None, float | None],
+    angles: tuple[Sequence[float] | None, Sequence[float] | None],
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Helper function to generate uniform angles given various formats (n and fov, res and fov, or angles).
     """
@@ -110,7 +115,7 @@ def _generate_uniform_angles(n_points, fov, res, angles) -> tuple[torch.Tensor, 
             assert fov_i is not None, "FOV should be provided if angles not given."
 
             if res_i is not None:
-                if isinstance(fov_i, tuple):
+                if isinstance(fov_i, Sequence):
                     f_min, f_max = fov_i
                 else:
                     f_max = fov_i / 2.0
@@ -119,7 +124,7 @@ def _generate_uniform_angles(n_points, fov, res, angles) -> tuple[torch.Tensor, 
 
             assert n_points_i is not None
 
-            if isinstance(fov_i, tuple):
+            if isinstance(fov_i, Sequence):
                 f_min, f_max = fov_i
                 fov_size = f_max - f_min
             else:
