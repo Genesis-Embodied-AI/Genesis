@@ -296,10 +296,10 @@ class SAPCoupler(RBC):
     def _init_tet_tables(self):
         # Lookup table for marching tetrahedra edges
         self.MarchingTetsEdgeTable = ti.field(gs.ti_ivec4, shape=len(MARCHING_TETS_EDGE_TABLE))
-        self.MarchingTetsEdgeTable.from_numpy(np.array(MARCHING_TETS_EDGE_TABLE, dtype=np.int32))
+        self.MarchingTetsEdgeTable.from_numpy(np.array(MARCHING_TETS_EDGE_TABLE, dtype=gs.np_int))
 
         self.TetEdges = ti.field(gs.ti_ivec2, shape=len(TET_EDGES))
-        self.TetEdges.from_numpy(np.array(TET_EDGES, dtype=np.int32))
+        self.TetEdges.from_numpy(np.array(TET_EDGES, dtype=gs.np_int))
 
     def _init_hydroelastic_fem_fields_and_info(self):
         self.fem_pressure = ti.field(gs.ti_float, shape=(self.fem_solver.n_vertices))
@@ -690,16 +690,16 @@ class SAPCoupler(RBC):
     def compute_rigid_tri_aabb(self):
         aabbs = ti.static(self.rigid_tri_aabb.aabbs)
         for i_b, i_f in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_faces):
-            i_v0 = self.rigid_solver.faces_info.verts_idx[i_f][0]
-            i_v1 = self.rigid_solver.faces_info.verts_idx[i_f][1]
-            i_v2 = self.rigid_solver.faces_info.verts_idx[i_f][2]
-            i_fv0 = self.rigid_solver.verts_info.verts_state_idx[i_v0]
-            i_fv1 = self.rigid_solver.verts_info.verts_state_idx[i_v1]
-            i_fv2 = self.rigid_solver.verts_info.verts_state_idx[i_v2]
+            tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
+            for i in ti.static(range(3)):
+                i_v = self.rigid_solver.faces_info.verts_idx[i_f][i]
+                i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
+                if self.rigid_solver.verts_info.is_free[i_v]:
+                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
+                else:
+                    tri_vertices[:, i] = self.rigid_solver.fixed_verts_state.pos[i_fv]
+            pos_v0, pos_v1, pos_v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
-            pos_v0 = self.rigid_solver.free_verts_state.pos[i_fv0, i_b]
-            pos_v1 = self.rigid_solver.free_verts_state.pos[i_fv1, i_b]
-            pos_v2 = self.rigid_solver.free_verts_state.pos[i_fv2, i_b]
             aabbs[i_b, i_f].min = ti.min(pos_v0, pos_v1, pos_v2)
             aabbs[i_b, i_f].max = ti.max(pos_v0, pos_v1, pos_v2)
 
@@ -3278,18 +3278,20 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
         for i_r in range(result_count):
             i_b, i_a, i_sq = self.coupler.rigid_tri_bvh.query_result[i_r]
             i_q = self.fem_solver.surface_elements[i_sq]
-            i_v0 = self.rigid_solver.faces_info.verts_idx[i_a][0]
-            i_v1 = self.rigid_solver.faces_info.verts_idx[i_a][1]
-            i_v2 = self.rigid_solver.faces_info.verts_idx[i_a][2]
-            i_fv0 = self.rigid_solver.verts_info.verts_state_idx[i_v0]
-            i_fv1 = self.rigid_solver.verts_info.verts_state_idx[i_v1]
-            i_fv2 = self.rigid_solver.verts_info.verts_state_idx[i_v2]
 
-            x0 = self.rigid_solver.free_verts_state.pos[i_fv0, i_b]
-            x1 = self.rigid_solver.free_verts_state.pos[i_fv1, i_b]
-            x2 = self.rigid_solver.free_verts_state.pos[i_fv2, i_b]
+            vert_idx1 = ti.Vector.zero(gs.ti_int, 3)
+            tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
+            for i in ti.static(range(3)):
+                i_v = self.rigid_solver.faces_info.verts_idx[i_a][i]
+                i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
+                if self.rigid_solver.verts_info.is_free[i_v]:
+                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
+                else:
+                    tri_vertices[:, i] = self.rigid_solver.fixed_verts_state.pos[i_fv]
+                vert_idx1[i] = i_v
+            pos_v0, pos_v1, pos_v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
-            normal = (x1 - x0).cross(x2 - x0)
+            normal = (pos_v1 - pos_v0).cross(pos_v2 - pos_v0)
             magnitude_sqr = normal.norm_sqr()
             if magnitude_sqr < gs.EPS:
                 continue
@@ -3302,7 +3304,7 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
             for i in ti.static(range(4)):
                 i_v = self.fem_solver.elements_i[i_q].el2v[i]
                 pos_v = self.fem_solver.elements_v[f, i_v, i_b].pos
-                distance = (pos_v - x0).dot(normal)  # signed distance
+                distance = (pos_v - pos_v0).dot(normal)  # signed distance
                 if distance > 0.0:
                     intersection_code |= 1 << i
             if intersection_code == 0 or intersection_code == 15:
@@ -3312,10 +3314,10 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
             if i_c < self.max_contact_candidates:
                 self.contact_candidates[i_c].batch_idx = i_b
                 self.contact_candidates[i_c].normal = normal
-                self.contact_candidates[i_c].x = x0
+                self.contact_candidates[i_c].x = pos_v0
                 self.contact_candidates[i_c].geom_idx0 = i_q
                 self.contact_candidates[i_c].geom_idx1 = i_a
-                self.contact_candidates[i_c].vert_idx1 = gs.ti_ivec3(i_v0, i_v1, i_v2)
+                self.contact_candidates[i_c].vert_idx1 = vert_idx1
             else:
                 overflow = True
         return overflow
@@ -3343,7 +3345,11 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
             tet_pressures = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices of tet 0
             for i in ti.static(range(3)):
                 i_v = self.contact_candidates[i_c].vert_idx1[i]
-                tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_v, i_b]
+                i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
+                if self.rigid_solver.verts_info.is_free[i_v]:
+                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
+                else:
+                    tri_vertices[:, i] = self.rigid_solver.fixed_verts_state.pos[i_fv]
             for i in ti.static(range(4)):
                 i_v = self.fem_solver.elements_i[i_e].el2v[i]
                 tet_vertices[:, i] = self.fem_solver.elements_v[f, i_v, i_b].pos
@@ -3648,11 +3654,6 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
 
     @ti.func
     def compute_pairs(self, i_step: ti.i32):
-        """
-        Computes the FEM self contact pairs and their properties.
-        Intersection code reference:
-        https://github.com/RobotLocomotion/drake/blob/8c3a249184ed09f0faab3c678536d66d732809ce/geometry/proximity/field_intersection.cc#L87
-        """
         overflow = False
         candidates = ti.static(self.contact_candidates)
         pairs = ti.static(self.contact_pairs)

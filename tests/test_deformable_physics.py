@@ -177,7 +177,6 @@ def test_deformable_parallel(show_viewer):
             color=(0.9, 0.8, 0.2, 1.0),
         ),
     )
-
     entity_fem = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.8, 0.8, 0.1),
@@ -192,6 +191,7 @@ def test_deformable_parallel(show_viewer):
     )
     scene.build(n_envs=2)
 
+    scene.get_state()
     for i in range(1500):
         scene.step()
 

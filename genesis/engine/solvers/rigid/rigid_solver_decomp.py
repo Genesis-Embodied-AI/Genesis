@@ -671,16 +671,13 @@ class RigidSolver(Solver):
                 static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
-        self.qpos0 = self._rigid_global_info.qpos0
-        if self.n_qs > 0:
-            init_qpos = self._batch_array(self.init_qpos)
-            self.qpos0.from_numpy(init_qpos)
-
         # Check if the initial configuration is out-of-bounds
         self.qpos = self._rigid_global_info.qpos
+        self.qpos0 = self._rigid_global_info.qpos0
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos)
+            self.qpos0.from_numpy(init_qpos)
             for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
                     is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
@@ -926,7 +923,7 @@ class RigidSolver(Solver):
                 entity_idx = entity_idx[0]
             entity = self._entities[entity_idx]
 
-            scale = entity.terrain_scale
+            scale = np.asarray(entity.terrain_scale, dtype=gs.np_float)
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
             hf = entity.terrain_hf.astype(gs.np_float, copy=False) * scale[1]
             xyz_maxmin = np.array(
@@ -2292,12 +2289,8 @@ class RigidSolver(Solver):
         if not isinstance(self.sim.coupler, LegacyCoupler):
             raise gs.GenesisException("Method only supported when using 'LegacyCoupler' coupler type.")
 
-        aabb_min = ti_to_torch(
-            self.geoms_state.aabb_min, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
-        )
-        aabb_max = ti_to_torch(
-            self.geoms_state.aabb_max, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
-        )
+        aabb_min = ti_to_torch(self.geoms_state.aabb_min, envs_idx, transpose=True, unsafe=unsafe)
+        aabb_max = ti_to_torch(self.geoms_state.aabb_max, envs_idx, transpose=True, unsafe=unsafe)
 
         aabb = torch.stack([aabb_min, aabb_max], dim=-2)
 

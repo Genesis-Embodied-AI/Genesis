@@ -289,14 +289,14 @@ class FEMSolver(Solver):
             shape=(len(surface_vertices_np),),
             needs_grad=False,
         )
-        self.surface_vertices.from_numpy(surface_vertices_np)
+        self.surface_vertices.from_numpy(surface_vertices_np.astype(np.int32, copy=False))
         (surface_elements_np,) = elements_on_surface_np.nonzero()
         self.surface_elements = ti.field(
             dtype=ti.i32,
             shape=(len(surface_elements_np),),
             needs_grad=False,
         )
-        self.surface_elements.from_numpy(surface_elements_np)
+        self.surface_elements.from_numpy(surface_elements_np.astype(np.int32, copy=False))
 
         surface_triangles_np = self.surface.tri2v.to_numpy()
         pos_np = self.elements_v.pos.to_numpy()[0, :, 0, :][surface_vertices_np]

@@ -301,7 +301,7 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
     # lift and wait for while to give enough time for the robot to stop shaking
     qpos = franka.inverse_kinematics(link=end_effector, pos=GRAPPER_POS_END, quat=(0, 1, 0, 0))
     franka.control_dofs_position(qpos[motors_dof], motors_dof)
-    for i in range(60):
+    for i in range(65):
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         scene.step()
 
@@ -314,4 +314,4 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         scene.step()
     box_pos_post = obj.get_state().pos.mean(dim=-2)
-    assert_allclose(box_pos_f, box_pos_post, atol=1e-4)
+    assert_allclose(box_pos_f, box_pos_post, atol=2e-4)

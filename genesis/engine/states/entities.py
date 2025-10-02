@@ -120,8 +120,8 @@ class SPHEntityState(RBC):
             "scene": self._entity.scene,
         }
 
-        self._pos = gs.zeros(base_shape + (3), **args)
-        self._vel = gs.zeros(base_shape + (3), **args)
+        self._pos = gs.zeros(base_shape + (3,), **args)
+        self._vel = gs.zeros(base_shape + (3,), **args)
 
     @property
     def entity(self):

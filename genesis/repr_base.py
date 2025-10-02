@@ -52,7 +52,7 @@ class RBC:
             if isinstance(getattr(self.__class__, attr, None), property):
                 property_attrs.append(attr)
 
-        max_attr_len = max([len(attr) for attr in property_attrs])
+        max_attr_len = max([len(attr) for attr in property_attrs]) if property_attrs else 0
 
         repr_str = ""
         # sort property attrs

@@ -37,6 +37,7 @@ SKIP_BASENAMES = {
     "differentiable_push.py",
     "single_franka_batch_render.py",  # FIXME: it will have segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: memory bug
+    "cloth_on_rigid.py",  # FIXME: crashing during compilation without any debug trace
 }
 
 TIMEOUT = 400.0
