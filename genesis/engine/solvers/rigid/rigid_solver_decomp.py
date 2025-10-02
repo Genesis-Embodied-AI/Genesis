@@ -298,6 +298,7 @@ class RigidSolver(Solver):
             self._init_constraint_solver()
 
             self._init_invweight_and_meaninertia(force_update=False)
+            self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
 
     def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True, unsafe=False):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
@@ -317,21 +318,6 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             qpos = qpos.squeeze(0)
         self.set_qpos(qpos, envs_idx=envs_idx if self.n_envs > 0 else None)
-        kernel_forward_kinematics_links_geoms(
-            envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            geoms_state=self.geoms_state,
-            geoms_info=self.geoms_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
-        )
 
         # Compute mass matrix without any implicit damping terms
         # TODO: This kernel could be optimized to take `envs_idx` as input if performance is critical.
@@ -1100,7 +1086,7 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-    def _func_update_geoms(self, envs_idx):
+    def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
         kernel_update_geoms(
             envs_idx,
             entities_info=self.entities_info,
@@ -1109,6 +1095,8 @@ class RigidSolver(Solver):
             links_state=self.links_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+            force_update_fixed_geoms=force_update_fixed_geoms,
         )
 
     # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
@@ -4077,6 +4065,7 @@ def func_update_cartesian_space(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    force_update_fixed_geoms: ti.template(),
 ):
     func_forward_kinematics(
         i_b,
@@ -4121,6 +4110,7 @@ def func_update_cartesian_space(
         links_state=links_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
+        force_update_fixed_geoms=force_update_fixed_geoms,
     )
 
 
@@ -4158,6 +4148,7 @@ def kernel_step_1(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                force_update_fixed_geoms=False,
             )
 
     func_forward_dynamics(
@@ -4323,6 +4314,7 @@ def kernel_step_2(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                force_update_fixed_geoms=False,
             )
 
 
@@ -4358,6 +4350,7 @@ def kernel_forward_kinematics_links_geoms(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            force_update_fixed_geoms=True,
         )
 
 
@@ -5005,6 +4998,7 @@ def kernel_update_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
+    force_update_fixed_geoms: ti.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -5017,6 +5011,7 @@ def kernel_update_geoms(
             links_state,
             rigid_global_info,
             static_rigid_sim_config,
+            force_update_fixed_geoms,
         )
 
 
@@ -5029,16 +5024,31 @@ def func_update_geoms(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    force_update_fixed_geoms: ti.template(),
 ):
     """
     NOTE: this only update geom pose, not its verts and else.
     """
     n_geoms = geoms_info.pos.shape[0]
     if ti.static(static_rigid_sim_config.use_hibernation):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
             i_e = rigid_global_info.awake_entities[i_e_, i_b]
             for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
+                if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
+                    (
+                        geoms_state.pos[i_g, i_b],
+                        geoms_state.quat[i_g, i_b],
+                    ) = gu.ti_transform_pos_quat_by_trans_quat(
+                        geoms_info.pos[i_g],
+                        geoms_info.quat[i_g],
+                        links_state.pos[geoms_info.link_idx[i_g], i_b],
+                        links_state.quat[geoms_info.link_idx[i_g], i_b],
+                    )
+
+                    geoms_state.verts_updated[i_g, i_b] = False
+    else:
+        for i_g in range(n_geoms):
+            if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
                 (
                     geoms_state.pos[i_g, i_b],
                     geoms_state.quat[i_g, i_b],
@@ -5050,20 +5060,6 @@ def func_update_geoms(
                 )
 
                 geoms_state.verts_updated[i_g, i_b] = False
-    else:
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g in range(n_geoms):
-            (
-                geoms_state.pos[i_g, i_b],
-                geoms_state.quat[i_g, i_b],
-            ) = gu.ti_transform_pos_quat_by_trans_quat(
-                geoms_info.pos[i_g],
-                geoms_info.quat[i_g],
-                links_state.pos[geoms_info.link_idx[i_g], i_b],
-                links_state.quat[geoms_info.link_idx[i_g], i_b],
-            )
-
-            geoms_state.verts_updated[i_g, i_b] = False
 
 
 @ti.kernel(pure=gs.use_pure)
@@ -5114,19 +5110,24 @@ def func_update_verts_for_geom(
 
 
 @ti.func
-def func_update_all_verts(self):
-    ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_v, i_b in ti.ndrange(self.n_verts, self._B):
-        g_pos = self.geoms_state.pos[self.verts_info.geom_idx[i_v], i_b]
-        g_quat = self.geoms_state.quat[self.verts_info.geom_idx[i_v], i_b]
-        verts_state_idx = self.verts_info.verts_state_idx[i_v]
-        if self.verts_info.is_fixed[i_v]:
-            self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                self.verts_info.init_pos[i_v], g_pos, g_quat
+def func_update_all_verts(
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.FreeVertsState,
+    fixed_verts_state: array_class.FixedVertsState,
+):
+    n_verts = verts_info.geom_idx.shape[0]
+    _B = geoms_state.pos.shape[1]
+    for i_v, i_b in ti.ndrange(n_verts, _B):
+        i_g = verts_info.geom_idx[i_v]
+        verts_state_idx = verts_info.verts_state_idx[i_v]
+        if verts_info.is_fixed[i_v]:
+            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
             )
         else:
-            self.free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                self.verts_info.init_pos[i_v], g_pos, g_quat
+            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
             )
 
 

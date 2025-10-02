@@ -581,7 +581,12 @@ class SAPCoupler(RBC):
                 self.fem_compute_pressure_gradient(i_step)
 
         if ti.static(self.rigid_solver.is_active()):
-            func_update_all_verts(self.rigid_solver)
+            func_update_all_verts(
+                self.rigid_solver.geoms_state,
+                self.rigid_solver.verts_info,
+                self.rigid_solver.free_verts_state,
+                self.rigid_solver.fixed_verts_state,
+            )
 
         if ti.static(self._rigid_compliant):
             self.rigid_update_volume_verts_pressure_gradient()

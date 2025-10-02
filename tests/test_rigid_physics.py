@@ -1240,28 +1240,34 @@ def test_set_root_pose(relative, show_viewer, tol):
     )
     scene.build()
 
+    robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
+    cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
+
     for _ in range(2):
         scene.reset()
 
-        for entity, pos_zero, euler_zero in (
-            (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO),
-            (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO),
+        for entity, pos_zero, euler_zero, entity_aabb_init, base_aabb_init in (
+            (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO, robot_aabb_init, robot_base_aabb_init),
+            (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO, cube_aabb_init, cube_base_aabb_init),
         ):
             pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
-
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
             assert_allclose(euler, euler_zero, tol=5e-4)
+            assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init, tol=tol)
+            assert_allclose(entity.get_AABB(), entity_aabb_init, tol=tol)
 
             pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device)
             entity.set_pos(pos_delta, relative=relative)
+            pos_ref = pos_delta + pos_zero if relative else pos_delta
+            assert_allclose(entity.get_pos(), pos_ref, tol=tol)
+            assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init + (pos_ref - pos_zero), tol=tol)
+            assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
+
             quat_delta = torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device)
             quat_delta /= torch.linalg.norm(quat_delta)
             entity.set_quat(quat_delta, relative=relative)
-
-            pos_ref = pos_delta + pos_zero if relative else pos_delta
-            assert_allclose(entity.get_pos(), pos_ref, tol=tol)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
             quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
             if relative:
@@ -3170,7 +3176,9 @@ def test_axis_aligned_bounding_boxes(n_envs):
     else:
         assert all_aabbs.ndim == 3
     assert all_aabbs.shape[-3:] == (len(aabbs), 2, 3)
-    assert_allclose(aabbs[0], all_aabbs.split(1, dim=-3)[0], atol=gs.EPS)
+    assert_allclose(aabbs[:4], all_aabbs.swapaxes(-3, 0)[:4], atol=gs.EPS)
+    with pytest.raises(AssertionError):
+        assert_allclose(aabbs[4:], all_aabbs.swapaxes(-3, 0)[4:], atol=gs.EPS)
 
     box_aabb_min, box_aabb_max = aabbs[1].split(1, dim=-2)
     assert_allclose(box_aabb_min, (0.45, -0.05, 0.0), atol=gs.EPS)
