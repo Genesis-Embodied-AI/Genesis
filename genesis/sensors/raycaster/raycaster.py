@@ -136,15 +136,15 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
 
 @ti.kernel
 def kernel_update_aabbs(
-    map_lidar_faces: ti.template(),
+    map_faces: ti.template(),
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     aabb_state: array_class.AABBState,
 ):
-    for i_b, i_f_ in ti.ndrange(free_verts_state.pos.shape[1], map_lidar_faces.shape[0]):
-        i_f = map_lidar_faces[i_f_]
+    for i_b, i_f_ in ti.ndrange(free_verts_state.pos.shape[1], map_faces.shape[0]):
+        i_f = map_faces[i_f_]
         aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-ti.math.inf)
 
@@ -161,8 +161,8 @@ def kernel_update_aabbs(
 
 
 @ti.kernel
-def kernel_cast_lidar_rays(
-    map_lidar_faces: ti.template(),
+def kernel_cast_rays(
+    map_faces: ti.template(),
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
@@ -177,16 +177,19 @@ def kernel_cast_lidar_rays(
     no_hit_values: ti.types.ndarray(ndim=1),  # [n_sensors]
     points_to_sensor_idx: ti.types.ndarray(ndim=1),  # [n_points]
     is_world_frame: ti.types.ndarray(ndim=1),  # [n_sensors]
-    output_hits: ti.types.ndarray(ndim=2),  # [n_env, n_points_per_sensor * 4 * n_sensors]
+    sensor_cache_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
+    sensor_point_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
+    sensor_point_counts: ti.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
+    output_hits: ti.types.ndarray(ndim=2),  # [n_env, total_cache_size]
 ):
     """
     Taichi kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
 
-    The result `output_hits` will be a 2D array of shape (n_env, n_points * 4) where in the second dimension,
-    the first n_points * 3 are hit points and the last n_points is hit ranges.
+    The result `output_hits` will be a 2D array of shape (n_env, total_cache_size) where in the second dimension,
+    each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
     """
 
-    n_triangles = map_lidar_faces.shape[0]
+    n_triangles = map_faces.shape[0]
     n_points = ray_starts.shape[0]
     # batch, point
     for i_b, i_p in ti.ndrange(output_hits.shape[0], n_points):
@@ -236,7 +239,7 @@ def kernel_cast_lidar_rays(
                     assert original_tri_idx >= 0
                     assert original_tri_idx < n_triangles
 
-                    i_f = map_lidar_faces[original_tri_idx]
+                    i_f = map_faces[original_tri_idx]
                     is_free = verts_info.is_free[faces_info.verts_idx[i_f][0]]
 
                     v0 = ti.Vector.zero(gs.ti_float, 3)
@@ -270,29 +273,37 @@ def kernel_cast_lidar_rays(
                         stack_idx += 2
 
         # --- 3. Process Hit Result ---
+        # The format of output_hits is: [sensor1 points][sensor1 ranges][sensor2 points][sensor2 ranges]...
+        i_p_sensor = i_p - sensor_point_offsets[i_s]
+        i_p_offset = sensor_cache_offsets[i_s]  # cumulative cache offset for this sensor
+        n_points_in_sensor = sensor_point_counts[i_s]  # number of points in this sensor
+
         if hit_face >= 0:
             dist = max_range
-            output_hits[i_b, n_points * 3 + i_p] = dist
+            # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
+            output_hits[i_b, i_p_offset + n_points_in_sensor * 3 + i_p_sensor] = dist
 
             if is_world_frame[i_s]:
                 hit_point = ray_start_world + dist * ray_direction_world
-                output_hits[i_b, i_p * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p * 3 + 2] = hit_point.z
+                # Store points at: cache_offset + point_idx_in_sensor * 3
+                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
+                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
+                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * ti_normalize(
                     ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
                 )
-                output_hits[i_b, i_p * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p * 3 + 2] = hit_point.z
+                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
+                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
+                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
 
         else:
-            output_hits[i_b, i_p * 3 + 0] = 0.0
-            output_hits[i_b, i_p * 3 + 1] = 0.0
-            output_hits[i_b, i_p * 3 + 2] = 0.0
-            output_hits[i_b, n_points * 3 + i_p] = no_hit_values[i_s]
+            # No hit
+            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = 0.0
+            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = 0.0
+            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = 0.0
+            output_hits[i_b, i_p_offset + n_points_in_sensor * 3 + i_p_sensor] = no_hit_values[i_s]
 
 
 class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
@@ -321,7 +332,7 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
         Whether to return points in the world frame. Defaults to False (local frame).
     only_cast_fixed : bool, optional
         Whether to only cast rays on fixed geoms. Defaults to False. This is a shared option, so the value of this
-        option for the **first** lidar sensor will be the behavior for **all** Lidar sensors.
+        option for the **first** Raycaster sensor will be the behavior for **all** Raycaster sensors.
     delay : float, optional
         The delay in seconds before the sensor data is read.
     update_ground_truth_only : bool, optional
@@ -355,8 +366,8 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
     aabb: AABB | None = None
     only_cast_fixed: bool = False
-    map_lidar_faces: Any | None = None
-    n_lidar_faces: int = 0
+    map_faces: Any | None = None
+    n_faces: int = 0
 
     sensors_ray_start_idx: list[int] = field(default_factory=list)
     total_n_rays: int = 0
@@ -373,11 +384,14 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     ray_dirs_world: torch.Tensor = make_tensor_field((0, 3))
 
     points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class RaycasterData(NamedTuple):
-    hit_points: torch.Tensor
-    hit_ranges: torch.Tensor
+    points: torch.Tensor
+    distances: torch.Tensor
 
 
 @register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
@@ -396,27 +410,26 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
     @classmethod
     def _build_bvh(cls, shared_metadata: RaycasterSharedMetadata):
-        n_lidar_faces = shared_metadata.solver.faces_info.geom_idx.shape[0]
-        torch_map_lidar_faces = torch.arange(n_lidar_faces, dtype=torch.int32, device=gs.device)
+        n_faces = shared_metadata.solver.faces_info.geom_idx.shape[0]
+        torch_map_faces = torch.arange(n_faces, dtype=torch.int32, device=gs.device)
         if shared_metadata.only_cast_fixed:
             # count the number of faces in a fixed geoms
             geom_is_fixed = torch.logical_not(ti_to_torch(shared_metadata.solver.geoms_info.is_free))
             faces_geom = ti_to_torch(shared_metadata.solver.faces_info.geom_idx)
-            n_lidar_faces = torch.sum(geom_is_fixed[faces_geom]).item()
-            if n_lidar_faces == 0:
+            n_faces = torch.sum(geom_is_fixed[faces_geom]).item()
+            if n_faces == 0:
                 gs.raise_exception(
                     "No fixed geoms found in the scene. To use only_cast_fixed, "
                     "at least some entities should have is_free=False."
+                    # TODO: update message after PR #1795 is merged
                 )
-            torch_map_lidar_faces = torch.where(geom_is_fixed[faces_geom])[0]
+            torch_map_faces = torch.where(geom_is_fixed[faces_geom])[0]
 
-        shared_metadata.map_lidar_faces = ti.field(ti.i32, (n_lidar_faces))
-        shared_metadata.map_lidar_faces.from_torch(torch_map_lidar_faces)
-        shared_metadata.n_lidar_faces = n_lidar_faces
+        shared_metadata.map_faces = ti.field(ti.i32, (n_faces))
+        shared_metadata.map_faces.from_torch(torch_map_faces)
+        shared_metadata.n_faces = n_faces
 
-        shared_metadata.aabb = AABB(
-            n_batches=shared_metadata.solver.free_verts_state.pos.shape[1], n_aabbs=n_lidar_faces
-        )
+        shared_metadata.aabb = AABB(n_batches=shared_metadata.solver.free_verts_state.pos.shape[1], n_aabbs=n_faces)
 
         rigid_solver_decomp.kernel_update_all_verts(
             geoms_state=shared_metadata.solver.geoms_state,
@@ -426,7 +439,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         )
 
         kernel_update_aabbs(
-            map_lidar_faces=shared_metadata.map_lidar_faces,
+            map_faces=shared_metadata.map_faces,
             free_verts_state=shared_metadata.solver.free_verts_state,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             verts_info=shared_metadata.solver.verts_info,
@@ -446,10 +459,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         pattern = self._options.pattern
         self._shared_metadata.patterns.append(pattern)
-        pos_offset = self._shared_metadata.offsets_pos[-1, :]
-        quat_offset = self._shared_metadata.offsets_quat[..., -1, :]
-        if self._shared_metadata.solver.n_envs > 0:
-            quat_offset = quat_offset[0]  # all envs have same offset on build
+        pos_offset = self._shared_metadata.offsets_pos[0, -1, :]  # all envs have same offset on build
+        quat_offset = self._shared_metadata.offsets_quat[0, -1, :]
 
         ray_starts = pattern.ray_starts.reshape(-1, 3)
         ray_starts = transform_by_trans_quat(ray_starts, pos_offset, quat_offset)
@@ -461,6 +472,18 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         num_rays = math.prod(pattern.return_shape)
         self._shared_metadata.sensors_ray_start_idx.append(self._shared_metadata.total_n_rays)
+
+        # These fields are used to properly index into the big cache tensor in kernel_cast_rays
+        self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
+            self._shared_metadata.sensor_cache_offsets, self._cache_idx
+        )
+        self._shared_metadata.sensor_point_offsets = concat_with_tensor(
+            self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays
+        )
+        self._shared_metadata.sensor_point_counts = concat_with_tensor(
+            self._shared_metadata.sensor_point_counts, num_rays
+        )
+
         self._shared_metadata.total_n_rays += num_rays
 
         self._shared_metadata.points_to_sensor_idx = concat_with_tensor(
@@ -505,7 +528,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             )
 
             kernel_update_aabbs(
-                map_lidar_faces=shared_metadata.map_lidar_faces,
+                map_faces=shared_metadata.map_faces,
                 free_verts_state=shared_metadata.solver.free_verts_state,
                 fixed_verts_state=shared_metadata.solver.fixed_verts_state,
                 verts_info=shared_metadata.solver.verts_info,
@@ -519,8 +542,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             links_pos = links_pos.unsqueeze(0)
             links_quat = links_quat.unsqueeze(0)
 
-        kernel_cast_lidar_rays(
-            map_lidar_faces=shared_metadata.map_lidar_faces,
+        kernel_cast_rays(
+            map_faces=shared_metadata.map_faces,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             free_verts_state=shared_metadata.solver.free_verts_state,
             verts_info=shared_metadata.solver.verts_info,
@@ -535,6 +558,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             no_hit_values=shared_metadata.no_hit_values,
             points_to_sensor_idx=shared_metadata.points_to_sensor_idx,
             is_world_frame=shared_metadata.return_world_frame,
+            sensor_cache_offsets=shared_metadata.sensor_cache_offsets,
+            sensor_point_offsets=shared_metadata.sensor_point_offsets,
+            sensor_point_counts=shared_metadata.sensor_point_counts,
             output_hits=shared_ground_truth_cache,
         )
 
@@ -555,7 +581,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         Spheres will be different colors per environment.
         """
-        data = self.read().hit_points.reshape(self._manager._sim._B, -1, 3)
+        data = self.read().points.reshape(self._manager._sim._B, -1, 3)
 
         for env_idx, color in zip(range(data.shape[0]), itertools.cycle(DEBUG_COLORS)):
             points = data[env_idx]
