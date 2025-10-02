@@ -694,10 +694,10 @@ class SAPCoupler(RBC):
             for i in ti.static(range(3)):
                 i_v = self.rigid_solver.faces_info.verts_idx[i_f][i]
                 i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
-                if self.rigid_solver.verts_info.is_free[i_v]:
-                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
-                else:
+                if self.rigid_solver.verts_info.is_fixed[i_v]:
                     tri_vertices[:, i] = self.rigid_solver.fixed_verts_state.pos[i_fv]
+                else:
+                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
             pos_v0, pos_v1, pos_v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
             aabbs[i_b, i_f].min = ti.min(pos_v0, pos_v1, pos_v2)
@@ -3057,7 +3057,7 @@ class RigidFloorVertContactHandler(RigidContactHandler):
         # Compute contact pairs
         self.n_contact_pairs[None] = 0
         for i_b, i_v in ti.ndrange(self.rigid_solver._B, self.rigid_solver.n_verts):
-            if not self.rigid_solver.verts_info.is_free[i_v]:
+            if self.rigid_solver.verts_info.is_fixed[i_v]:
                 continue
             i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
             pos_v = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
@@ -3284,10 +3284,10 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
             for i in ti.static(range(3)):
                 i_v = self.rigid_solver.faces_info.verts_idx[i_a][i]
                 i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
-                if self.rigid_solver.verts_info.is_free[i_v]:
-                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
-                else:
+                if self.rigid_solver.verts_info.is_fixed[i_v]:
                     tri_vertices[:, i] = self.rigid_solver.fixed_verts_state.pos[i_fv]
+                else:
+                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
                 vert_idx1[i] = i_v
             pos_v0, pos_v1, pos_v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
@@ -3346,10 +3346,10 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
             for i in ti.static(range(3)):
                 i_v = self.contact_candidates[i_c].vert_idx1[i]
                 i_fv = self.rigid_solver.verts_info.verts_state_idx[i_v]
-                if self.rigid_solver.verts_info.is_free[i_v]:
-                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
-                else:
+                if self.rigid_solver.verts_info.is_fixed[i_v]:
                     tri_vertices[:, i] = self.rigid_solver.fixed_verts_state.pos[i_fv]
+                else:
+                    tri_vertices[:, i] = self.rigid_solver.free_verts_state.pos[i_fv, i_b]
             for i in ti.static(range(4)):
                 i_v = self.fem_solver.elements_i[i_e].el2v[i]
                 tet_vertices[:, i] = self.fem_solver.elements_v[f, i_v, i_b].pos

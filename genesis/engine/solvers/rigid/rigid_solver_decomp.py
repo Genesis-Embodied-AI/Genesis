@@ -141,11 +141,6 @@ class RigidSolver(Solver):
         else:
             EntityClass = RigidEntity
 
-        if morph.is_free:
-            verts_state_start = self.n_free_verts
-        else:
-            verts_state_start = self.n_fixed_verts
-
         morph._enable_mujoco_compatibility = self._enable_mujoco_compatibility
 
         entity = EntityClass(
@@ -163,7 +158,8 @@ class RigidSolver(Solver):
             geom_start=self.n_geoms,
             cell_start=self.n_cells,
             vert_start=self.n_verts,
-            verts_state_start=verts_state_start,
+            free_verts_state_start=self.n_free_verts,
+            fixed_verts_state_start=self.n_fixed_verts,
             face_start=self.n_faces,
             edge_start=self.n_edges,
             vgeom_start=self.n_vgeoms,
@@ -716,7 +712,7 @@ class RigidSolver(Solver):
                     [np.arange(geom.verts_state_start, geom.verts_state_start + geom.n_verts) for geom in geoms],
                     dtype=gs.np_int,
                 ),
-                is_free=np.concatenate([np.full(geom.n_verts, geom.is_free) for geom in geoms], dtype=gs.np_int),
+                is_fixed=np.concatenate([np.full(geom.n_verts, geom.is_fixed) for geom in geoms], dtype=gs.np_bool),
                 # taichi variables
                 verts_info=self.verts_info,
                 faces_info=self.faces_info,
@@ -786,15 +782,15 @@ class RigidSolver(Solver):
                 geoms_edge_end=np.array([geom.edge_end for geom in geoms], dtype=gs.np_int),
                 geoms_verts_state_end=np.array([geom.verts_state_end for geom in geoms], dtype=gs.np_int),
                 geoms_data=np.array([geom.data for geom in geoms], dtype=gs.np_float),
-                geoms_is_convex=np.array([geom.is_convex for geom in geoms], dtype=gs.np_int),
+                geoms_is_convex=np.array([geom.is_convex for geom in geoms], dtype=gs.np_bool),
                 geoms_needs_coup=np.array([geom.needs_coup for geom in geoms], dtype=gs.np_int),
                 geoms_contype=np.array([geom.contype for geom in geoms], dtype=np.int32),
                 geoms_conaffinity=np.array([geom.conaffinity for geom in geoms], dtype=np.int32),
                 geoms_coup_softness=np.array([geom.coup_softness for geom in geoms], dtype=gs.np_float),
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
-                geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
-                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_int),
+                geoms_is_fixed=np.array([geom.is_fixed for geom in geoms], dtype=gs.np_bool),
+                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_bool),
                 # taichi variables
                 geoms_info=self.geoms_info,
                 geoms_state=self.geoms_state,
@@ -2451,9 +2447,12 @@ class RigidSolver(Solver):
             self.links_state,
         )
 
-    def update_verts_for_geom(self, i_g):
-        kernel_update_verts_for_geom(
-            i_g,
+    def update_verts_for_geoms(self, geoms_idx):
+        _, geoms_idx, _ = self._sanitize_1D_io_variables(
+            None, geoms_idx, self.n_geoms, None, idx_name="geoms_idx", skip_allocation=True, unsafe=False
+        )
+        kernel_update_verts_for_geoms(
+            geoms_idx,
             self.geoms_state,
             self.geoms_info,
             self.verts_info,
@@ -2529,13 +2528,13 @@ class RigidSolver(Solver):
     def n_free_verts(self):
         if self.is_built:
             return self._n_free_verts
-        return sum(entity.n_verts if entity.is_free else 0 for entity in self._entities)
+        return sum(link.n_verts if not link.is_fixed else 0 for link in self.links)
 
     @property
     def n_fixed_verts(self):
         if self.is_built:
             return self._n_fixed_verts
-        return sum(entity.n_verts if not entity.is_free else 0 for entity in self._entities)
+        return sum(link.n_verts if link.is_fixed else 0 for link in self.links)
 
     @property
     def n_vverts(self):
@@ -2928,7 +2927,7 @@ def kernel_init_vert_fields(
     verts_geom_idx: ti.types.ndarray(),
     init_center_pos: ti.types.ndarray(),
     verts_state_idx: ti.types.ndarray(),
-    is_free: ti.types.ndarray(),
+    is_fixed: ti.types.ndarray(),
     # taichi variables
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
@@ -2948,7 +2947,7 @@ def kernel_init_vert_fields(
 
         verts_info.geom_idx[i_v] = verts_geom_idx[i_v]
         verts_info.verts_state_idx[i_v] = verts_state_idx[i_v]
-        verts_info.is_free[i_v] = is_free[i_v]
+        verts_info.is_fixed[i_v] = is_fixed[i_v]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_f in range(n_faces):
@@ -3020,7 +3019,7 @@ def kernel_init_geom_fields(
     geoms_coup_softness: ti.types.ndarray(),
     geoms_coup_friction: ti.types.ndarray(),
     geoms_coup_restitution: ti.types.ndarray(),
-    geoms_is_free: ti.types.ndarray(),
+    geoms_is_fixed: ti.types.ndarray(),
     geoms_is_decomp: ti.types.ndarray(),
     # taichi variables
     geoms_info: array_class.GeomsInfo,
@@ -3073,7 +3072,7 @@ def kernel_init_geom_fields(
         geoms_info.coup_friction[i_g] = geoms_coup_friction[i_g]
         geoms_info.coup_restitution[i_g] = geoms_coup_restitution[i_g]
 
-        geoms_info.is_free[i_g] = geoms_is_free[i_g]
+        geoms_info.is_fixed[i_g] = geoms_is_fixed[i_g]
         geoms_info.is_decomposed[i_g] = geoms_is_decomp[i_g]
 
         # compute init AABB.
@@ -5050,7 +5049,7 @@ def func_update_geoms(
                     links_state.quat[geoms_info.link_idx[i_g], i_b],
                 )
 
-                geoms_state.verts_updated[i_g, i_b] = 0
+                geoms_state.verts_updated[i_g, i_b] = False
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_g in range(n_geoms):
@@ -5064,20 +5063,22 @@ def func_update_geoms(
                 links_state.quat[geoms_info.link_idx[i_g], i_b],
             )
 
-            geoms_state.verts_updated[i_g, i_b] = 0
+            geoms_state.verts_updated[i_g, i_b] = False
 
 
 @ti.kernel(pure=gs.use_pure)
-def kernel_update_verts_for_geom(
-    i_g: ti.i32,
+def kernel_update_verts_for_geoms(
+    geoms_idx: ti.types.ndarray(),
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     free_verts_state: array_class.FreeVertsState,
     fixed_verts_state: array_class.FixedVertsState,
 ):
+    n_geoms = geoms_idx.shape[0]
     _B = geoms_state.verts_updated.shape[1]
-    for i_b in range(_B):
+    for i_g_, i_b in ti.ndrange(n_geoms, _B):
+        i_g = geoms_idx[i_g_]
         func_update_verts_for_geom(i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state)
 
 
@@ -5092,20 +5093,24 @@ def func_update_verts_for_geom(
     fixed_verts_state: array_class.FixedVertsState,
 ):
     if not geoms_state.verts_updated[i_g, i_b]:
-        if geoms_info.is_free[i_g]:
-            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
-                verts_state_idx = verts_info.verts_state_idx[i_v]
-                free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                    verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
-                )
-            geoms_state.verts_updated[i_g, i_b] = 1
-        elif i_b == 0:
+        if geoms_info.is_fixed[i_g]:
             for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
                 verts_state_idx = verts_info.verts_state_idx[i_v]
                 fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
                 )
-            geoms_state.verts_updated[i_g, 0] = 1
+
+            _B = geoms_state.verts_updated.shape[1]
+            for j_b in range(_B):
+                geoms_state.verts_updated[i_g, j_b] = True
+        else:
+            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+                verts_state_idx = verts_info.verts_state_idx[i_v]
+                free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                    verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
+                )
+
+            geoms_state.verts_updated[i_g, i_b] = True
 
 
 @ti.func
@@ -5115,12 +5120,12 @@ def func_update_all_verts(self):
         g_pos = self.geoms_state.pos[self.verts_info.geom_idx[i_v], i_b]
         g_quat = self.geoms_state.quat[self.verts_info.geom_idx[i_v], i_b]
         verts_state_idx = self.verts_info.verts_state_idx[i_v]
-        if self.verts_info.is_free[i_v]:
-            self.free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+        if self.verts_info.is_fixed[i_v]:
+            self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                 self.verts_info.init_pos[i_v], g_pos, g_quat
             )
-        elif i_b == 0:
-            self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+        else:
+            self.free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
                 self.verts_info.init_pos[i_v], g_pos, g_quat
             )
 

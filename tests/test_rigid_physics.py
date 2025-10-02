@@ -3131,7 +3131,7 @@ def test_axis_aligned_bounding_boxes(n_envs):
             pos=(0, 0, 0),
         ),
     )
-    scene.add_entity(
+    box = scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
             pos=(0.5, 0, 0.05),
@@ -3150,15 +3150,26 @@ def test_axis_aligned_bounding_boxes(n_envs):
             pos=(-0.5, 0, 0.05),
         ),
     )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
     scene.build(n_envs=n_envs)
 
+    aabb_shape = (*((n_envs,) if n_envs > 0 else ()), 2, 3)
+    robot_aabb = robot.get_AABB()
+    robot_geoms_aabb = torch.stack([geom.get_AABB().expand(aabb_shape) for geom in robot.geoms], dim=0)
+    assert_allclose(torch.min(robot_geoms_aabb[..., 0, :], dim=0).values, robot_aabb[..., 0, :], tol=gs.EPS)
+    assert_allclose(torch.max(robot_geoms_aabb[..., 1, :], dim=0).values, robot_aabb[..., 1, :], tol=gs.EPS)
+
     all_aabbs = scene.sim.rigid_solver.get_AABB()
-    aabbs = [entity.get_AABB() for entity in scene.entities]
+    aabbs = [geom.get_AABB().expand(aabb_shape) for entity in scene.entities for geom in entity.geoms]
     if n_envs > 0:
         assert all_aabbs.ndim == 4 and len(all_aabbs) == n_envs
     else:
         assert all_aabbs.ndim == 3
-    assert all_aabbs.shape[-3:] == (4, 2, 3)
+    assert all_aabbs.shape[-3:] == (len(aabbs), 2, 3)
     assert_allclose(aabbs[0], all_aabbs.split(1, dim=-3)[0], atol=gs.EPS)
 
     box_aabb_min, box_aabb_max = aabbs[1].split(1, dim=-2)

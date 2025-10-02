@@ -1195,11 +1195,11 @@ def func_broad_phase(
             for i in range(n_geoms):
                 collider_state.sort_buffer.value[2 * i, i_b] = geoms_state.aabb_min[i, i_b][axis]
                 collider_state.sort_buffer.i_g[2 * i, i_b] = i
-                collider_state.sort_buffer.is_max[2 * i, i_b] = 0
+                collider_state.sort_buffer.is_max[2 * i, i_b] = False
 
                 collider_state.sort_buffer.value[2 * i + 1, i_b] = geoms_state.aabb_max[i, i_b][axis]
                 collider_state.sort_buffer.i_g[2 * i + 1, i_b] = i
-                collider_state.sort_buffer.is_max[2 * i + 1, i_b] = 1
+                collider_state.sort_buffer.is_max[2 * i + 1, i_b] = True
 
                 geoms_state.min_buffer_idx[i, i_b] = 2 * i
                 geoms_state.max_buffer_idx[i, i_b] = 2 * i + 1
