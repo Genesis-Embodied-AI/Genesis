@@ -175,8 +175,8 @@ def kernel_cast_rays(
     ray_directions: ti.types.ndarray(ndim=2),  # [n_points, 3]
     max_ranges: ti.types.ndarray(ndim=1),  # [n_sensors]
     no_hit_values: ti.types.ndarray(ndim=1),  # [n_sensors]
-    points_to_sensor_idx: ti.types.ndarray(ndim=1),  # [n_points]
     is_world_frame: ti.types.ndarray(ndim=1),  # [n_sensors]
+    points_to_sensor_idx: ti.types.ndarray(ndim=1),  # [n_points]
     sensor_cache_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: ti.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
@@ -229,15 +229,7 @@ def kernel_cast_rays(
                 if node.left == -1:  # is leaf node
                     # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
-
-                    assert n_triangles > 0
-                    assert sorted_leaf_idx >= 0
-                    assert sorted_leaf_idx < n_triangles
-
                     original_tri_idx = bvh_morton_codes[0, sorted_leaf_idx][1]
-
-                    assert original_tri_idx >= 0
-                    assert original_tri_idx < n_triangles
 
                     i_f = map_faces[original_tri_idx]
                     is_free = verts_info.is_free[faces_info.verts_idx[i_f][0]]
@@ -312,14 +304,6 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
 
     Parameters
     ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
-    pos_offset : tuple[float, float, float], optional
-        The mounting offset position of the sensor in the world frame. Defaults to (0.0, 0.0, 0.0).
-    euler_offset : tuple[float, float, float], optional
-        The mounting offset quaternion of the sensor in the world frame. Defaults to (0.0, 0.0, 0.0).
     pattern: RaycastPatternOptions
         The raycasting pattern for the sensor.
     min_range : float, optional
@@ -333,12 +317,6 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
     only_cast_fixed : bool, optional
         Whether to only cast rays on fixed geoms. Defaults to False. This is a shared option, so the value of this
         option for the **first** Raycaster sensor will be the behavior for **all** Raycaster sensors.
-    delay : float, optional
-        The delay in seconds before the sensor data is read.
-    update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth cache, and not the measured cache.
-    draw_debug : bool, optional
-        If True and the interactive viewer is active, spheres will be drawn at every hit point.
     debug_sphere_radius: float, optional
         The radius of each debug hit point sphere drawn in the scene. Defaults to 0.02.
     """
@@ -556,8 +534,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             ray_directions=shared_metadata.ray_dirs,
             max_ranges=shared_metadata.max_ranges,
             no_hit_values=shared_metadata.no_hit_values,
-            points_to_sensor_idx=shared_metadata.points_to_sensor_idx,
             is_world_frame=shared_metadata.return_world_frame,
+            points_to_sensor_idx=shared_metadata.points_to_sensor_idx,
             sensor_cache_offsets=shared_metadata.sensor_cache_offsets,
             sensor_point_offsets=shared_metadata.sensor_point_offsets,
             sensor_point_counts=shared_metadata.sensor_point_counts,

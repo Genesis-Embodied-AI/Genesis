@@ -306,6 +306,7 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
             radius=EXPECTED_DISTANCE,
             pos=SPHERE_POS,
             fixed=True,
+            is_free=False,  # TODO: remove after PR #1795 is merged
         ),
     )
     spherical_raycaster = scene.add_sensor(
@@ -331,17 +332,20 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
     assert grid_distances.shape == spherical_distances.shape == expected_shape
 
     grid_distance_min = grid_distances.min()
-    assert grid_distances.min() < EXPECTED_DISTANCE - tol, "Raycaster grid pattern should have hit obstacle"
+    if not only_cast_fixed:
+        assert grid_distances.min() < EXPECTED_DISTANCE - tol, "Raycaster grid pattern should have hit obstacle"
+        ground_hit_mask = grid_distances > grid_distance_min + tol
+        grid_hits = grid_hits[ground_hit_mask]
+        grid_distances = grid_distances[ground_hit_mask]
 
-    ground_hit_mask = grid_distances > grid_distance_min + tol
     assert_allclose(
-        grid_hits[ground_hit_mask][..., 2],
+        grid_hits[..., 2],
         0.0,
         tol=tol,
         err_msg="Raycaster grid pattern should hit ground (z≈0)",
     )
     assert_allclose(
-        grid_distances[ground_hit_mask],
+        grid_distances,
         EXPECTED_DISTANCE,
         tol=tol,
         err_msg=f"Raycaster grid pattern should measure {EXPECTED_DISTANCE}m to ground plane",
@@ -353,7 +357,8 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
         err_msg=f"Raycaster spherical pattern should measure {EXPECTED_DISTANCE}m to the sphere around it",
     )
 
-    for _ in range(5):
-        scene.step()
+    if not only_cast_fixed:
+        for _ in range(5):
+            scene.step()
 
-    assert grid_raycaster.read().distances.min() > grid_distance_min, "Raycaster should hit falling obstacle"
+        assert grid_raycaster.read().distances.min() > grid_distance_min, "Raycaster should hit falling obstacle"
