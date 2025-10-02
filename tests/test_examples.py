@@ -37,7 +37,6 @@ SKIP_BASENAMES = {
     "differentiable_push.py",
     "single_franka_batch_render.py",  # FIXME: it will have segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: memory bug
-    "cloth_on_rigid.py",  # FIXME: crashing during compilation without any debug trace
 }
 
 TIMEOUT = 400.0
@@ -77,17 +76,14 @@ def _discover_examples():
 
 
 @pytest.mark.examples
+@pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("file", _discover_examples(), ids=lambda p: p.relative_to(EXAMPLES_DIR).as_posix())
 def test_example(file: Path):
-    run_cmd = [sys.executable, str(file)]
-
-    # Use a pseudo-TTY on Linux to avoid os.get_terminal_size() OSError in non-TTY envs
-    if sys.platform.startswith("linux") and shutil.which("script") is not None:
-        run_cmd = ["script", "-qec", " ".join(map(shlex.quote, run_cmd)), "/dev/null"]
-
     path_rel = file.relative_to(EXAMPLES_DIR).as_posix()
     try:
-        result = subprocess.run(run_cmd, env=os.environ, capture_output=True, text=True, check=False, timeout=TIMEOUT)
+        result = subprocess.run(
+            [sys.executable, str(file)], capture_output=True, text=True, check=False, timeout=TIMEOUT
+        )
     except subprocess.TimeoutExpired as e:
         err_msg = f"Timeout running example {path_rel}."
         if e.stdout is not None:
