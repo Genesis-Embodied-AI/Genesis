@@ -1,5 +1,6 @@
-import numpy as np
 import gstaichi as ti
+import numpy as np
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -107,7 +108,7 @@ class Emitter(RBC):
         else:
             direction = gu.normalize(direction)
 
-        p_size = self._solver.particle_size if p_size is None else p_size
+        p_size = self._entity.particle_size if p_size is None else p_size
 
         if droplet_length is None:
             # Use the speed to determine the length of the droplet in the emitting direction
@@ -145,7 +146,7 @@ class Emitter(RBC):
                     sampler=self._entity.sampler,
                 )
             else:
-                gs.raise_exception()
+                gs.raise_exception(f"Unsupported droplet shape '{droplet_shape}'")
 
             positions = gu.transform_by_trans_R(
                 positions.astype(gs.np_float, copy=False),
@@ -153,40 +154,27 @@ class Emitter(RBC):
                 gu.z_up_to_R(direction) @ gu.axis_angle_to_R(np.array([0.0, 0.0, 1.0], dtype=gs.np_float), theta),
             )
 
-            positions = np.tile(positions[np.newaxis], (self._sim._B, 1, 1))
-
             if not self._solver.boundary.is_inside(positions):
                 gs.raise_exception("Emitted particles are outside the boundary.")
 
-            n_particles = positions.shape[1]
+            n_particles = len(positions)
 
             # Expand vels with batch dimension
             vels = speed * direction
-            vels = np.tile(vels.reshape((1, 1, -1)), (self._sim._B, n_particles, 1))
 
             if n_particles > self._entity.n_particles:
                 gs.logger.warning(
-                    f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum number of particles ({self._entity.n_particles})."
+                    f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum "
+                    f"number of particles ({self._entity.n_particles})."
                 )
 
-            self._solver._kernel_set_particles_pos(
-                self._sim.cur_substep_local,
-                self._entity.particle_start + self._next_particle,
-                n_particles,
-                positions,
+            particles_idx = torch.arange(
+                self._next_particle, self._next_particle + n_particles, dtype=gs.tc_int, device=gs.device
             )
-            self._solver._kernel_set_particles_vel(
-                self._sim.cur_substep_local,
-                self._entity.particle_start + self._next_particle,
-                n_particles,
-                vels,
-            )
-            self._solver._kernel_set_particles_active(
-                self._sim.cur_substep_local,
-                self._entity.particle_start + self._next_particle,
-                n_particles,
-                gs.ACTIVE,
-            )
+
+            self._entity.set_particles_pos(positions, particles_idx)
+            self._entity.set_particles_vel(vels, particles_idx)
+            self._entity.set_particles_active(gs.ACTIVE, particles_idx)
 
             self._next_particle += n_particles
 
@@ -223,7 +211,7 @@ class Emitter(RBC):
         pos = np.asarray(pos, dtype=gs.np_float)
 
         if particle_size is None:
-            particle_size = self._solver.particle_size
+            particle_size = self._entity.particle_size
 
         positions_ = pu.shell_to_particles(
             p_size=particle_size,
@@ -238,7 +226,7 @@ class Emitter(RBC):
 
         dists = np.linalg.norm(positions_, axis=1)
         positions[dists < gs.EPS] = gs.EPS
-        vels = (speed / (dists + gs.EPS)) * positions_
+        vels = (speed / (dists[:, None] + gs.EPS)) * positions_
 
         n_particles = len(positions)
         if n_particles > self._entity.n_particles:
@@ -247,24 +235,13 @@ class Emitter(RBC):
                 f"of particles ({self._entity.n_particles})."
             )
 
-        self._solver._kernel_set_particles_pos(
-            self._sim.cur_substep_local,
-            self._entity.particle_start + self._next_particle,
-            n_particles,
-            positions,
+        particles_idx = torch.arange(
+            self._next_particle, self._next_particle + n_particles, dtype=gs.tc_int, device=gs.device
         )
-        self._solver._kernel_set_particles_vel(
-            self._sim.cur_substep_local,
-            self._entity.particle_start + self._next_particle,
-            n_particles,
-            vels,
-        )
-        self._solver._kernel_set_particles_active(
-            self._sim.cur_substep_local,
-            self._entity.particle_start + self._next_particle,
-            n_particles,
-            gs.ACTIVE,
-        )
+
+        self._entity.set_particles_pos(positions, particles_idx)
+        self._entity.set_particles_vel(vels, particles_idx)
+        self._entity.set_particles_active(gs.ACTIVE, particles_idx)
 
         self._next_particle += n_particles
 

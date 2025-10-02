@@ -198,7 +198,7 @@ class Simulator(RBC):
         self._para_level = self.scene._para_level
 
         # solvers
-        self._rigid_only = self.rigid_solver.is_active()
+        self._rigid_only = self.rigid_solver.is_active() and not isinstance(self._coupler, SAPCoupler)
         for solver in self._solvers:
             solver.build()
             if solver.is_active():

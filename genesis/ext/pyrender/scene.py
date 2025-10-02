@@ -15,6 +15,20 @@ from .node import Node
 from .utils import format_color_vector
 
 
+CORNER_INDICES = np.array(
+    [
+        [0, 1, 2],
+        [3, 1, 2],
+        [3, 4, 2],
+        [0, 4, 2],
+        [0, 1, 5],
+        [3, 1, 5],
+        [3, 4, 5],
+        [0, 4, 5],
+    ]
+)
+
+
 class Scene(object):
     """A hierarchical scene graph.
 
@@ -31,7 +45,6 @@ class Scene(object):
     """
 
     def __init__(self, nodes=None, bg_color=None, ambient_light=None, n_envs=None, name=None):
-
         if bg_color is None:
             bg_color = np.ones(4)
         else:
@@ -217,7 +230,8 @@ class Scene(object):
                     # Only take into account the centroid for floor plane
                     corners_local = mesh.centroid[np.newaxis]
                 else:
-                    corners_local = trimesh.bounds.corners(mesh.bounds)
+                    # corners_local = trimesh.bounds.corners(mesh.bounds)
+                    corners_local = mesh.bounds.reshape(-1)[CORNER_INDICES]
                 pose = self.get_pose(mesh_node)
                 corners_world = corners_local @ pose[:3, :3].T + pose[:3, 3]
                 corners.append(corners_world)

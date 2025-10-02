@@ -974,11 +974,17 @@ def func_contact_mpr_terrain(
     #         is_return = True
 
     if not is_return:
+        # move to terrain's frame
         geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = gu.ti_transform_pos_quat_by_trans_quat(
             ga_pos - geoms_state.pos[i_gb, i_b],
             ga_quat,
             ti.Vector.zero(gs.ti_float, 3),
             gu.ti_inv_quat(geoms_state.quat[i_gb, i_b]),
+        )
+        geoms_state.pos[i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
+        geoms_state.quat[i_gb, i_b] = gu.ti_identity_quat()
+        center_a = gu.ti_transform_by_trans_quat(
+            geoms_info.center[i_ga], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
         )
 
         for i_axis, i_m in ti.ndrange(3, 2):
@@ -1041,14 +1047,10 @@ def func_contact_mpr_terrain(
                                 or collider_state.prism[4, i_b][2] >= collider_state.xyz_max_min[5, i_b]
                                 or collider_state.prism[5, i_b][2] >= collider_state.xyz_max_min[5, i_b]
                             ):
-                                center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos, ga_quat)
                                 center_b = ti.Vector.zero(gs.ti_float, 3)
                                 for i_p in ti.static(range(6)):
                                     center_b = center_b + collider_state.prism[i_p, i_b]
                                 center_b = center_b / 6.0
-
-                                geoms_state.pos[i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
-                                geoms_state.quat[i_gb, i_b] = gu.ti_identity_quat()
 
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
                                     geoms_state,

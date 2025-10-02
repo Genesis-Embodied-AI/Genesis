@@ -175,16 +175,8 @@ class Mesh(RBC):
         Sample particles using the mesh volume.
         """
         if "pbs" in sampler:
-            try:
-                positions = pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
-            except gs.GenesisException:
-                gs.logger.warning("Failed to sample particles using 'pbs-32'. Falling back to 'random'.")
-                sampler = "random"
-
-        if sampler in ("random", "regular"):
-            positions = pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
-
-        return positions
+            return pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
+        return pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
 
     def clear_visuals(self):
         """

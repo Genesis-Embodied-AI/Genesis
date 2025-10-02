@@ -44,6 +44,7 @@ def main():
         gs.sensors.IMU(
             entity_idx=franka.idx,
             link_idx_local=end_effector.idx_local,
+            pos_offset=(0.0, 0.0, 0.15),
             # noise parameters
             acc_axes_skew=(0.0, 0.01, 0.02),
             gyro_axes_skew=(0.03, 0.04, 0.05),
@@ -54,22 +55,24 @@ def main():
             delay=0.01,
             jitter=0.01,
             interpolate=True,
+            # visualize
+            draw_debug=True,
         )
     )
     labels = {"lin_acc": ("acc_x", "acc_y", "acc_z"), "ang_vel": ("gyro_x", "gyro_y", "gyro_z")}
     if args.vis:
         if IS_PYQTGRAPH_AVAILABLE:
-            imu.start_recording(gs.recorders.PyQtPlot(title="IMU Measured Data", labels=labels))
+            imu.start_recording(gs.recorders.PyQtLinePlot(title="IMU Measured Data", labels=labels))
             scene.start_recording(
                 imu.read_ground_truth,
-                gs.recorders.PyQtPlot(title="IMU Ground Truth Data", labels=labels),
+                gs.recorders.PyQtLinePlot(title="IMU Ground Truth Data", labels=labels),
             )
         elif IS_MATPLOTLIB_AVAILABLE:
             gs.logger.info("pyqtgraph not found, falling back to matplotlib.")
-            imu.start_recording(gs.recorders.MPLPlot(title="IMU Measured Data", labels=labels))
+            imu.start_recording(gs.recorders.MPLLinePlot(title="IMU Measured Data", labels=labels))
             scene.start_recording(
                 imu.read_ground_truth,
-                gs.recorders.MPLPlot(title="IMU Ground Truth Data", labels=labels),
+                gs.recorders.MPLLinePlot(title="IMU Ground Truth Data", labels=labels),
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")

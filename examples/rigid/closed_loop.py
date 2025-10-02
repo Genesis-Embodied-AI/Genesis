@@ -43,8 +43,8 @@ def main_equality_weld(args):
     qpos[0], qpos[1], qpos[2] = 0.2, 0.2, 0.2
     rigid.qpos.from_numpy(qpos[:, None])
 
-    for i in range(1000):
-        time.sleep(1)
+    for i in range(20):
+        time.sleep(1.0)
         scene.step()
 
 

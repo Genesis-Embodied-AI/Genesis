@@ -160,7 +160,7 @@ class FEMEntity(Entity):
             If the tensor shape is not supported.
         """
         self._assert_active()
-        gs.logger.warning("Manally setting element velocities. This is not recommended and could break gradient flow.")
+        gs.logger.warning("Manually setting element velocities. This is not recommended and could break gradient flow.")
 
         vel = to_gs_tensor(vel)
 
@@ -802,10 +802,10 @@ class FEMEntity(Entity):
             envs_idx : array_like, optional
                 List of environment indices to apply the constraints to. If None, applies to all environments.
         """
-        if self._solver._use_implicit_solver:
-            if not self._solver._enable_vertex_constraints:
-                gs.logger.warning("Ignoring vertex constraint; FEM implicit solver needs to enable vertex constraints.")
-                return
+        if self._solver._use_implicit_solver and not self._solver._enable_vertex_constraints:
+            gs.raise_exception(
+                "This feature is disabled. Please set 'enable_vertex_constraints=True' when using FEM implicit solver."
+            )
 
         if not self._solver._constraints_initialized:
             self._solver.init_constraints()

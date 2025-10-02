@@ -702,7 +702,10 @@ def test_point_cloud(renderer_type, renderer, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_debug_draw(show_viewer):
+def test_draw_debug(show_viewer):
+    if "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ:
+        pytest.skip("Offscreen rendering of markers is forcibly disabled. Skipping...")
+
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -729,12 +732,12 @@ def test_debug_draw(show_viewer):
         radius=0.01,
         color=(1, 0, 0, 1),
     )
-    scene.draw_debug_sphere(
+    sphere_obj = scene.draw_debug_sphere(
         pos=(-0.3, 0.3, 0.0),
         radius=0.15,
         color=(0, 1, 0),
     )
-    scene.draw_debug_frame(
+    frame_obj = scene.draw_debug_frame(
         T=np.array(
             [
                 [1.0, 0.0, 0.0, -0.3],
@@ -747,14 +750,21 @@ def test_debug_draw(show_viewer):
         origin_size=0.03,
         axis_radius=0.02,
     )
-    scene.step()
-    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-    if "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ:
-        assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
-    else:
-        assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+    scene.visualizer.update()
+    rgb_array_orig, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert np.max(np.std(rgb_array_orig.reshape((-1, 3)), axis=0)) > 10.0
+
+    for _ in range(2):
+        poses = gu.trans_quat_to_T(2.0 * (np.random.rand(3, 3) - 0.5), np.random.rand(3, 4))
+        scene.visualizer.context.update_debug_objects([frame_obj, sphere_obj], poses)
+        scene.visualizer.update()
+        rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+        rgb_delta = np.minimum(np.abs(rgb_array.astype(np.int32) - rgb_array_orig.astype(np.int32)), 255)
+        assert np.max(np.std(rgb_delta.reshape((-1, 3)), axis=0)) > 10.0
+        rgb_array_orig = rgb_array
+
     scene.clear_debug_objects()
-    scene.step()
+    scene.visualizer.update()
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
@@ -964,6 +974,7 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
             nu=0.45,
             rho=10000.0,
             model="neohooken",
+            sampler="random",
             n_groups=4,
         ),
     )
@@ -972,7 +983,9 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
             pos=(0.0, 0.0, 0.65),
             size=(0.4, 0.4, 0.4),
         ),
-        material=gs.materials.SPH.Liquid(),
+        material=gs.materials.SPH.Liquid(
+            sampler="random",
+        ),
         surface=gs.surfaces.Default(
             color=(0.4, 0.8, 1.0),
             vis_mode="particle",
