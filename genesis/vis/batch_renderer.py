@@ -157,7 +157,7 @@ class GenesisGeomRetriever(GeomRetriever):
         args["tex_widths"] = np.array(mat_texture_widths, np.int32)
         args["tex_heights"] = np.array(mat_texture_heights, np.int32)
         args["tex_nchans"] = np.array(mat_texture_nchans, np.int32)
-        args["tex_offsets"] = np.array(mat_texture_offsets, np.int32)
+        args["tex_offsets"] = np.array(mat_texture_offsets, np.int64)
         args["tex_data"] = np.concatenate(mat_texture_data, axis=0) if mat_texture_data else np.array([], np.uint8)
         args["mat_tex_ids"] = (
             np.stack(mat_texture_ids, axis=0)

@@ -150,11 +150,11 @@ class Camera(RBC):
             if self._env_idx is not None:
                 gs.raise_exception("Binding a camera to one specific environment index not supported by BatchRender.")
         else:
+            self._rasterizer.add_camera(self)
             if self._raytracer is not None:
                 self._raytracer.add_camera(self)
                 self._is_batched = False
             else:
-                self._rasterizer.add_camera(self)
                 self._is_batched = self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid
                 if self._is_batched:
                     gs.logger.warning(
@@ -657,7 +657,7 @@ class Camera(RBC):
         # Refresh rendering backend to taken into account updated camera pose
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
-        elif self._batch_renderer is None:
+        if self._batch_renderer is None:
             self._rasterizer.update_camera(self)
 
     @gs.assert_built

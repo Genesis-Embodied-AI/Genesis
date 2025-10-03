@@ -125,7 +125,6 @@ class ImageTexture(Texture):
                     self.image_path = mu.check_exr_compression(self.image_path)
             else:
                 self.image_array = np.array(Image.open(self.image_path))
-                self.image_path = None
 
         elif self.image_array is not None:
             if not isinstance(self.image_array, np.ndarray):
