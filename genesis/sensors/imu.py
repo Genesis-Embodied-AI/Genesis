@@ -256,7 +256,7 @@ class IMUSensor(
         )
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
-            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
+            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx].unsqueeze(0)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,)
@@ -339,11 +339,12 @@ class IMUSensor(
 
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
-        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
-        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat))
+        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat)).flatten()
+        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat)).flatten()
 
         for debug_object in self.debug_objects:
             if debug_object is not None:
                 context.clear_debug_object(debug_object)
+
         self.debug_objects[0] = context.draw_debug_arrow(pos=pos[0], vec=acc_vec, color=self._options.debug_acc_color)
         self.debug_objects[1] = context.draw_debug_arrow(pos=pos[0], vec=gyro_vec, color=self._options.debug_gyro_color)

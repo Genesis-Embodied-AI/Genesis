@@ -4,7 +4,7 @@ import torch
 
 import genesis as gs
 
-from .utils import assert_allclose, assert_array_equal
+from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
 
 
 def expand_batch_dim(values: tuple[float, ...], n_envs: int) -> tuple[float, ...] | np.ndarray:
@@ -266,11 +266,7 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
         show_viewer=show_viewer,
     )
 
-    scene.add_entity(
-        gs.morphs.Plane(
-            is_free=False,  # TODO: remove after PR #1795 is merged
-        )
-    )
+    scene.add_entity(gs.morphs.Plane())
 
     box_obstacle = scene.add_entity(
         gs.morphs.Box(
@@ -306,7 +302,6 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
             radius=EXPECTED_DISTANCE,
             pos=SPHERE_POS,
             fixed=True,
-            is_free=False,  # TODO: remove after PR #1795 is merged
         ),
     )
     spherical_raycaster = scene.add_sensor(
@@ -362,3 +357,100 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
             scene.step()
 
         assert grid_raycaster.read().distances.min() > grid_distance_min, "Raycaster should hit falling obstacle"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_sensors_draw_debug(png_snapshot, n_envs):
+    """Test that sensor debug drawing works correctly and renders visible debug elements."""
+    CAM_RES = (640, 480)
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 2.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=40,
+            res=CAM_RES,
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=True,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    floating_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.0, 0.1),
+            draw_debug=True,
+        )
+    )
+
+    ground_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.4, 0.2, 0.1),
+            pos=(-0.25, 0.0, 0.05),
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=ground_box.idx,
+            draw_debug=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=ground_box.idx,
+            draw_debug=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(
+                resolution=0.1,
+                size=(0.4, 0.4),
+                direction=(0.0, 0.0, -1.0),
+            ),
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.0, -0.1),
+            return_world_frame=True,
+            only_cast_fixed=False,
+            draw_debug=True,
+            debug_sphere_radius=0.02,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.SphericalPattern(
+                n_points=(6, 6),
+                fov=(60.0, (-120.0, -60.0)),
+            ),
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.5, 0.0),
+            return_world_frame=False,
+            only_cast_fixed=True,
+            draw_debug=True,
+            debug_sphere_radius=0.01,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    for _ in range(5):
+        scene.step()
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb_arr, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
+
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
