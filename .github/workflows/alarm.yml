@@ -1,9 +1,13 @@
 name: Benchmark Comparison & Alarm Regression
 
+# on:
+#   workflow_run:
+#     workflows: ["Production"]
+#     types: [completed]
 on:
-  workflow_run:
-    workflows: ["Production"]
-    types: [completed]
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -14,9 +18,12 @@ permissions:
 jobs:
   comment-if-regressed:
     runs-on: ubuntu-latest
-    if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      contains(fromJson('["success","neutral"]'), github.event.workflow_run.conclusion)
+    # if: >
+    #   github.event.workflow_run.event == 'pull_request' &&
+    #   contains(fromJson('["success","neutral"]'), github.event.workflow_run.conclusion)
+
+    env:
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
 
     steps:
       - name: Setup Python
@@ -27,6 +34,9 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --quiet --upgrade wandb
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
 
       - name: Download artifacts from triggering run
         id: dl
