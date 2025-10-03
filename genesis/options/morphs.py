@@ -76,10 +76,7 @@ class Morph(Options):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     is_free : bool, optional
-        Whether the entity is free to move. Defaults to True. **This is only used for RigidEntity.**
-        This determines whether the entity's geoms have their vertices put into StructFreeVertsState or
-        StructFixedVertsState, and effectively whether they're stored per batch-element, or stored once and shared
-        for the entire batch. That affects correct processing of collision detection.
+        This parameter is deprecated.
     """
 
     # Note: pos, euler, quat store only initial varlues at creation time, and are unaffected by sim
@@ -89,10 +86,11 @@ class Morph(Options):
     visualization: bool = True
     collision: bool = True
     requires_jac_and_IK: bool = False
-    is_free: bool = True
+    is_free: bool | None = None
 
     def __init__(self, **data):
         super().__init__(**data)
+
         if self.pos is not None:
             if not isinstance(self.pos, tuple) or len(self.pos) != 3:
                 gs.raise_exception("`pos` should be a 3-tuple.")
@@ -115,6 +113,9 @@ class Morph(Options):
 
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")
+
+        if self.is_free is not None:
+            gs.logger.warning("Morph option 'is_free' has been removed. User-specified value will be ignored.")
 
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}>"
@@ -1101,7 +1102,6 @@ class Terrain(Morph):
         Lets users pick their own subterrain parameters.
     """
 
-    is_free: bool = False
     randomize: bool = False  # whether to randomize the terrain
     n_subterrains: Tuple[int, int] = (3, 3)  # number of subterrains in x and y directions
     subterrain_size: Tuple[float, float] = (12.0, 12.0)  # meter
