@@ -8,10 +8,8 @@ on:
 permissions:
   contents: read
   actions: read
-  issues: write
   pull-requests: write
   checks: write
-  statuses: write
 
 jobs:
   comment-if-regressed:
@@ -86,10 +84,11 @@ jobs:
           PR_COMMENT_PATH: pr_comment.md
           CHECK_BODY_PATH: check_output.md
         run: |
+          {
           python - <<'PY'
           import os, sys, json, math, re
-          import statistics as stats
           import wandb
+          from pathlib import Path
 
           # ---------- helpers ----------
           SHA_RE = re.compile(r"[0-9a-fA-F]{7,40}")
@@ -152,83 +151,109 @@ jobs:
               return f"**{s}**" if highlight else s
 
           # ----- thresholds -----
-          tol_rt = float(os.environ.get("RUNTIME_REGRESSION_TOLERANCE_PCT","10"))
-          tol_ct = float(os.environ.get("COMPILE_REGRESSION_TOLERANCE_PCT","10"))
-          MAX_REVISIONS = int(os.environ.get("MAX_REVISIONS","5"))
-          NO_CHANGE_PATIENCE = int(os.environ.get("NO_CHANGE_PATIENCE","100"))
+          tol_rt = float(os.environ.get("RUNTIME_REGRESSION_TOLERANCE_PCT"))
+          tol_ct = float(os.environ.get("COMPILE_REGRESSION_TOLERANCE_PCT"))
+          max_revisions = int(os.environ.get("MAX_REVISIONS"))
+          no_change_patience = int(os.environ.get("NO_CHANGE_PATIENCE"))
+
+          pr_comment_path = Path(os.environ.get("PR_COMMENT_PATH")).expanduser()
+          check_body_path = Path(os.environ.get("CHECK_BODY_PATH")).expanduser()
 
           # ----- load artifact (current results) -----
-          artifacts_path = os.path.abspath(os.environ.get("ARTIFACTS_DIR", "./artifacts"))
-          if not os.path.exists(artifacts_path):
-              open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"),"w").close()
-              open(os.environ.get("CHECK_BODY_PATH","check_output.md"),"w").close()
+          artifacts_dir = Path(os.environ.get("ARTIFACTS_DIR")).expanduser().resolve()
+          if not artifacts_dir.exists():
+              pr_comment_path.touch()
+              check_body_path.touch()
               sys.exit(0)
 
-          current_txt_path = None
-          for root, _, files in os.walk(artifacts_path):
-              for fname in files:
-                  if fname.startswith("speed_test") and fname.endswith(".txt"):
-                      current_txt_path = os.path.join(root, fname); break
-              if current_txt_path: break
+          current_txt_path = next(artifacts_dir.rglob("speed_test*.txt"), None)
           if current_txt_path is None:
-              open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"),"w").close()
-              open(os.environ.get("CHECK_BODY_PATH","check_output.md"),"w").close()
+              pr_comment_path.touch()
+              check_body_path.touch()
               sys.exit(0)
 
-          with open(current_txt_path, "r", encoding="utf-8") as f:
-              current_bm = artifacts_parse_speed_txt_lines(f.readlines())
+          current_bm = artifacts_parse_speed_txt_lines(current_txt_path.read_text(encoding="utf-8").splitlines())
 
           # ----- W&B baselines -----
           if not os.getenv("WANDB_API_KEY"):
-              try: wandb.login(anonymous="allow", relogin=True)
-              except Exception: pass
-          ENTITY = os.environ.get("WANDB_ENTITY","")
-          PROJECT= os.environ.get("WANDB_PROJECT","")
+              print("WANDB_API_KEY is not set")
+              sys.exit(0)
+          ENTITY = os.environ.get("WANDB_ENTITY")
+          PROJECT = os.environ.get("WANDB_PROJECT")
 
           api = wandb.Api()
           runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
 
-          by_rev = {}; rev_order = []; selected_revs=None; no_change=0
+          by_rev = {}
+          rev_order = []
+          selected_revs = None
+          no_change = 0
+
           for run in runs_iter:
-              if run.state != "finished": continue
+              if run.state != "finished": 
+                  continue
+              
               cfg = getattr(run, "config", None)
-              if cfg is None: continue
+              if cfg is None: 
+                  continue
+              
               cfg = json.loads(cfg)
-              raw_rev = cfg.get("revision"); raw_bid = cfg.get("benchmark_id")
+              raw_rev = cfg.get("revision")
+              raw_bid = cfg.get("benchmark_id")
               if not raw_rev or not raw_bid:
                   if selected_revs is not None:
                       no_change += 1
-                      if no_change >= NO_CHANGE_PATIENCE: break
+                      if no_change >= no_change_patience: 
+                          break
                   continue
-              rev = _norm_rev(raw_rev.get("value")); bid = raw_bid.get("value")
+
+              rev = _norm_rev(raw_rev.get("value"))
+              bid = raw_bid.get("value")
               if not rev or not bid:
                   if selected_revs is not None:
                       no_change += 1
-                      if no_change >= NO_CHANGE_PATIENCE: break
+                      if no_change >= no_change_patience: 
+                          break
                   continue
-              if selected_revs is not None and rev not in selected_revs:
+
+              if (selected_revs is not None) and (rev not in selected_revs):
                   no_change += 1
-                  if no_change >= NO_CHANGE_PATIENCE: break
+                  if no_change >= no_change_patience: 
+                      break
                   continue
-              if rev not in by_rev:
-                  by_rev[rev]={}; rev_order.append(rev)
-                  if len(rev_order) >= MAX_REVISIONS: selected_revs = set(rev_order)
+
+              if (rev not in by_rev):
+                  by_rev[rev]={}
+                  rev_order.append(rev)
+                  if len(rev_order) >= max_revisions: 
+                      selected_revs = set(rev_order)
 
               nbid = wandb_normalize_benchmark_id(bid)
-              if nbid not in by_rev[rev]:
-                  runtime_fps=None; compile_time=None; cnt=0
+              if (nbid not in by_rev[rev]):
+                  runtime_fps=None
+                  compile_time=None
+                  cnt=0
+
                   for row in run.scan_history(keys=["runtime_fps","compile_time"]):
                       runtime_fps = row.get("runtime_fps")
                       compile_time = row.get("compile_time")
-                      if runtime_fps is not None and compile_time is not None: break
+                      if (runtime_fps is not None) and (compile_time is not None): 
+                          break
                       cnt += 1
-                      if cnt >= 10: break
-                  by_rev[rev][nbid] = {"runtime_fps": runtime_fps, "compile_time": compile_time}
-                  if selected_revs is not None: no_change = 0
+                      if cnt >= 10: 
+                          break
+                  
+                  by_rev[rev][nbid] = {
+                      "runtime_fps": runtime_fps, 
+                      "compile_time": compile_time
+                  }
+                  if (selected_revs is not None): 
+                      no_change = 0
               else:
-                  if selected_revs is not None:
+                  if (selected_revs is not None):
                       no_change += 1
-                      if no_change >= NO_CHANGE_PATIENCE: break
+                      if no_change >= no_change_patience: 
+                          break
 
           def mean_of(metric, bid):
               vals=[]
@@ -236,8 +261,8 @@ jobs:
                   v = by_rev.get(r,{}).get(bid,{}).get(metric)
                   if isinstance(v,(int,float)) and not (isinstance(v,float) and math.isnan(v)):
                       vals.append(float(v))
-              return stats.mean(vals) if vals else None
-
+              return sum(vals) / max(len(vals), 1)
+              
           # ----- build TWO tables -----
           rows_rt = []
           rows_ct = []
@@ -297,12 +322,12 @@ jobs:
               comment_parts = [
                   ":warning: **Benchmark Regression Detected**",
                   *baseline_block,
-                  "",
+                  "\n",
                   f"Thresholds: runtime ≤ −{tol_rt:.0f}%, compile ≥ +{tol_ct:.0f}%",
-                  "",
+                  "\n",
                   "### Runtime FPS",
                   *table_rt,
-                  "",
+                  "\n",
                   "### Compile Time",
                   *table_ct,
               ]
@@ -311,25 +336,30 @@ jobs:
               comment_body = ""
 
           # write files
-          with open(os.environ.get("CHECK_BODY_PATH","check_output.md"), "w", encoding="utf-8") as f:
-              f.write(check_body+"\n")
-          with open(os.environ.get("PR_COMMENT_PATH","pr_comment.md"), "w", encoding="utf-8") as f:
-              f.write(comment_body+"\n")
+          check_body_path.write_text(check_body+"\n", encoding="utf-8")
+          pr_comment_path.write_text(comment_body+"\n", encoding="utf-8")
 
-          # flag for next steps
-          open("HAS_REGRESSIONS.txt","w").write("true\n" if reg_found else "false\n")
+          # exit with 1 if regressions are found, 0 otherwise
+          sys.exit(1 if reg_found else 0)
           PY
+          rc=$?
+          echo "HAS_REGRESSIONS=${rc}" >> "$GITHUB_ENV"
+          HAS_REGRESSIONS="${rc}"
+          } || true
 
           # expose outputs to later steps
-          echo "HAS_REGRESSIONS=$(cat HAS_REGRESSIONS.txt)" >> "$GITHUB_ENV"
-          {
-            echo 'CHECK_OUTPUT<<__EOF__'
-            cat check_output.md
-            echo '__EOF__'
-          } >> "$GITHUB_ENV"
-
+          if [ -f "check_output.md" ]; then
+            {
+              echo 'CHECK_OUTPUT<<__EOF__'
+              cat check_output.md
+              echo '__EOF__'
+            } >> "$GITHUB_ENV"
+          else
+            echo "CHECK_OUTPUT=" >> "$GITHUB_ENV"
+          fi
+          
           # only set SCRIPT_OUTPUT when we actually want to comment
-          if [ -s "pr_comment.md" ]; then
+          if [ "${HAS_REGRESSIONS}" = "1" ] && [ -s "pr_comment.md" ]; then
             {
               echo 'SCRIPT_OUTPUT<<__EOF__'
               cat pr_comment.md
@@ -364,7 +394,7 @@ jobs:
         with:
           script: |
             const sha = context.payload.workflow_run.head_sha;
-            const hasRegs = (process.env.HAS_REGRESSIONS || 'false').trim() === 'true';
+            const hasRegs = (process.env.HAS_REGRESSIONS || '0').trim() === '1';
             const conclusion = 'success';
             const summary = hasRegs
               ? '🔴 Regressions detected. See tables below.'
