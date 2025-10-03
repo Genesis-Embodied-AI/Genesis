@@ -5109,8 +5109,8 @@ def func_update_verts_for_geom(
 def func_update_all_verts(
     geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     n_verts = verts_info.geom_idx.shape[0]
     _B = geoms_state.pos.shape[1]
@@ -5140,7 +5140,7 @@ def kernel_update_all_verts(
         g_pos = geoms_state.pos[verts_info.geom_idx[i_v], i_b]
         g_quat = geoms_state.quat[verts_info.geom_idx[i_v], i_b]
         verts_state_idx = verts_info.verts_state_idx[i_v]
-        if verts_info.is_free[i_v]:
+        if not verts_info.is_fixed[i_v]:
             free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
                 verts_info.init_pos[i_v], g_pos, g_quat
             )

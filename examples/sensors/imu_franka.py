@@ -40,6 +40,7 @@ def main():
     end_effector = franka.get_link("hand")
     motors_dof = (0, 1, 2, 3, 4, 5, 6)
 
+    ########################## record sensor data ##########################
     imu = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=franka.idx,
@@ -86,6 +87,14 @@ def main():
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
+
+    imu.start_recording(
+        gs.recorders.CSVFile(filename="imu_data.csv"),
+    )
+    scene.start_recording(
+        data_func=lambda: imu.read().lin_acc,
+        rec_options=gs.recorders.NPZFile(filename="imu_data.npz"),
+    )
 
     ########################## build ##########################
     scene.build()

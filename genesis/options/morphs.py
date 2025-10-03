@@ -84,7 +84,7 @@ class Morph(Options):
     visualization: bool = True
     collision: bool = True
     requires_jac_and_IK: bool = False
-    is_free: bool = True
+    is_free: bool | None = None
 
     def __init__(self, **data):
         super().__init__(**data)

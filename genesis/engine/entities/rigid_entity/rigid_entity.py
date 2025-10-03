@@ -3003,7 +3003,7 @@ def _kernel_get_free_verts(
     tensor: ti.types.ndarray(),
     free_verts_idx_local: ti.types.ndarray(),
     verts_state_start: ti.i32,
-    free_verts_state: array_class.FreeVertsState,
+    free_verts_state: array_class.VertsState,
 ):
     n_verts = free_verts_idx_local.shape[0]
     _B = tensor.shape[0]
@@ -3017,7 +3017,7 @@ def _kernel_get_fixed_verts(
     tensor: ti.types.ndarray(),
     fixed_verts_idx_local: ti.types.ndarray(),
     verts_state_start: ti.i32,
-    fixed_verts_state: array_class.FixedVertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     n_verts = fixed_verts_idx_local.shape[0]
     _B = tensor.shape[0]

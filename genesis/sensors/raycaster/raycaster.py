@@ -19,7 +19,7 @@ from genesis.utils.geom import (
     transform_by_quat,
     transform_by_trans_quat,
 )
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, ti_to_torch
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array, ti_to_torch
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from ..base_sensor import (
@@ -150,12 +150,12 @@ def kernel_update_aabbs(
 
         for i in ti.static(range(3)):
             i_v = verts_info.verts_state_idx[faces_info.verts_idx[i_f][i]]
-            if verts_info.is_free[faces_info.verts_idx[i_f][i]]:
-                pos_v = free_verts_state.pos[i_v, i_b]
+            if verts_info.is_fixed[faces_info.verts_idx[i_f][i]]:
+                pos_v = fixed_verts_state.pos[i_v]
                 aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                 aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
             else:
-                pos_v = fixed_verts_state.pos[i_v]
+                pos_v = free_verts_state.pos[i_v, i_b]
                 aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                 aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
 
@@ -232,21 +232,21 @@ def kernel_cast_rays(
                     original_tri_idx = bvh_morton_codes[0, sorted_leaf_idx][1]
 
                     i_f = map_faces[original_tri_idx]
-                    is_free = verts_info.is_free[faces_info.verts_idx[i_f][0]]
+                    is_fixed = verts_info.is_fixed[faces_info.verts_idx[i_f][0]]
 
                     v0 = ti.Vector.zero(gs.ti_float, 3)
                     v1 = ti.Vector.zero(gs.ti_float, 3)
                     v2 = ti.Vector.zero(gs.ti_float, 3)
 
-                    if is_free:
-                        v0 = free_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][0]], i_b]
-                        v1 = free_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][1]], i_b]
-                        v2 = free_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][2]], i_b]
-
-                    else:
+                    if is_fixed:
                         v0 = fixed_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][0]]]
                         v1 = fixed_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][1]]]
                         v2 = fixed_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][2]]]
+
+                    else:
+                        v0 = free_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][0]], i_b]
+                        v1 = free_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][1]], i_b]
+                        v2 = free_verts_state.pos[verts_info.verts_state_idx[faces_info.verts_idx[i_f][2]], i_b]
 
                     # Perform the expensive ray-triangle intersection test
                     hit_result = ray_triangle_intersection(ray_start_world, ray_direction_world, v0, v1, v2)
@@ -365,6 +365,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    output_hits: torch.Tensor = make_tensor_field((0, 0))
 
 
 class RaycasterData(NamedTuple):
@@ -385,6 +386,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     ):
         super().__init__(options, shared_metadata, data_cls, manager)
         self.debug_objects: list["Mesh | None"] = []
+        self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
     @classmethod
     def _build_bvh(cls, shared_metadata: RaycasterSharedMetadata):
@@ -392,15 +394,11 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         torch_map_faces = torch.arange(n_faces, dtype=torch.int32, device=gs.device)
         if shared_metadata.only_cast_fixed:
             # count the number of faces in a fixed geoms
-            geom_is_fixed = torch.logical_not(ti_to_torch(shared_metadata.solver.geoms_info.is_free))
+            geom_is_fixed = ti_to_torch(shared_metadata.solver.geoms_info.is_fixed)
             faces_geom = ti_to_torch(shared_metadata.solver.faces_info.geom_idx)
             n_faces = torch.sum(geom_is_fixed[faces_geom]).item()
             if n_faces == 0:
-                gs.raise_exception(
-                    "No fixed geoms found in the scene. To use only_cast_fixed, "
-                    "at least some entities should have is_free=False."
-                    # TODO: update message after PR #1795 is merged
-                )
+                gs.raise_exception("No fixed geoms found in the scene.")
             torch_map_faces = torch.where(geom_is_fixed[faces_geom])[0]
 
         shared_metadata.map_faces = ti.field(ti.i32, (n_faces))
@@ -432,26 +430,33 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
+            self._shared_metadata.output_hits = torch.empty(
+                (self._manager._sim._B, 0), device=gs.device, dtype=gs.tc_float
+            )
             self._shared_metadata.only_cast_fixed = self._options.only_cast_fixed  # set for first only
             self._build_bvh(self._shared_metadata)
 
-        pattern = self._options.pattern
-        self._shared_metadata.patterns.append(pattern)
+        self._shared_metadata.patterns.append(self._options.pattern)
         pos_offset = self._shared_metadata.offsets_pos[0, -1, :]  # all envs have same offset on build
         quat_offset = self._shared_metadata.offsets_quat[0, -1, :]
 
-        ray_starts = pattern.ray_starts.reshape(-1, 3)
-        ray_starts = transform_by_trans_quat(ray_starts, pos_offset, quat_offset)
-        self._shared_metadata.ray_starts = torch.cat([self._shared_metadata.ray_starts, ray_starts])
+        ray_starts = self._options.pattern.ray_starts.reshape(-1, 3)
+        self.ray_starts = transform_by_trans_quat(ray_starts, pos_offset, quat_offset)
+        self._shared_metadata.ray_starts = torch.cat([self._shared_metadata.ray_starts, self.ray_starts])
 
-        ray_dirs = pattern.ray_dirs.reshape(-1, 3)
+        ray_dirs = self._options.pattern.ray_dirs.reshape(-1, 3)
         ray_dirs = transform_by_quat(ray_dirs, quat_offset)
         self._shared_metadata.ray_dirs = torch.cat([self._shared_metadata.ray_dirs, ray_dirs])
 
-        num_rays = math.prod(pattern.return_shape)
+        num_rays = math.prod(self._options.pattern.return_shape)
         self._shared_metadata.sensors_ray_start_idx.append(self._shared_metadata.total_n_rays)
 
         # These fields are used to properly index into the big cache tensor in kernel_cast_rays
+        self._shared_metadata.output_hits = concat_with_tensor(
+            self._shared_metadata.output_hits,
+            torch.empty((self._manager._sim._B, self._cache_size), device=gs.device, dtype=gs.tc_float),
+            dim=-1,
+        )
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
             self._shared_metadata.sensor_cache_offsets, self._cache_idx
         )
@@ -539,8 +544,12 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             sensor_cache_offsets=shared_metadata.sensor_cache_offsets,
             sensor_point_offsets=shared_metadata.sensor_point_offsets,
             sensor_point_counts=shared_metadata.sensor_point_counts,
-            output_hits=shared_ground_truth_cache,
+            output_hits=(
+                shared_ground_truth_cache if shared_ground_truth_cache.is_contiguous() else shared_metadata.output_hits
+            ),
         )
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_ground_truth_cache[:] = shared_metadata.output_hits
 
     @classmethod
     def _update_shared_cache(
@@ -561,8 +570,14 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         """
         data = self.read().points.reshape(self._manager._sim._B, -1, 3)
 
-        for env_idx, color in zip(range(data.shape[0]), itertools.cycle(DEBUG_COLORS)):
+        for env_idx, color in zip(context.rendered_envs_idx, itertools.cycle(DEBUG_COLORS)):
             points = data[env_idx]
+
+            if not self._options.return_world_frame:
+                # transform from local frame to world frame
+                quat = self._link.get_quat(envs_idx=env_idx)
+                pos = self._link.get_pos(envs_idx=env_idx)
+                points = tensor_to_array(transform_by_trans_quat(points + self.ray_starts, pos, quat))
 
             if self.debug_objects[env_idx] is not None:
                 context.clear_debug_object(self.debug_objects[env_idx])
