@@ -106,7 +106,7 @@ jobs:
               return out
 
           def fmt_num(v):
-              return f"{int(v):,}" if v.is_integer() else f"{v:.2f}"
+              return f"{int(v):,}" if isinstance(v, int) or v.is_integer() else f"{v:.2f}"
 
           def fmt_pct(v, *, highlight=False):
               s = f"{v:+.2f}%"
