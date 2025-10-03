@@ -238,6 +238,7 @@ class RigidSolver(Solver):
         self._static_rigid_sim_cache_key = array_class.get_static_rigid_sim_cache_key(self)
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
+            requires_grad=getattr(self.sim.options, "requires_grad", False),
             use_hibernation=getattr(self, "_use_hibernation", False),
             use_contact_island=getattr(self, "_use_contact_island", False),
             batch_links_info=getattr(self._options, "batch_links_info", False),
