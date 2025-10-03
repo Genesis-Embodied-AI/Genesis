@@ -1,15 +1,12 @@
 name: Examples (CPU)
 
 on:
-  workflow_dispatch:
-  push:
+  pull_request:
     branches:
       - main
-  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   run-examples:
