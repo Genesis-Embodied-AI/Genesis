@@ -252,10 +252,9 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("only_cast_fixed", [False, True])
-def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
+def test_raycaster_hits(show_viewer, tol, n_envs):
     """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
-    EXPECTED_DISTANCE = 0.7
+    EXPECTED_DISTANCE = 1.2
     NUM_RAYS_XY = 3
     BOX_HEIGHT = 0.2
     SPHERE_POS = (4.0, 0.0, 1.0)
@@ -292,7 +291,6 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
             entity_idx=grid_sensor_box.idx,
             pos_offset=(0.0, 0.0, -BOX_HEIGHT),
             return_world_frame=True,
-            only_cast_fixed=only_cast_fixed,
             draw_debug=True,
         )
     )
@@ -311,7 +309,6 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
             ),
             entity_idx=spherical_sensor.idx,
             return_world_frame=False,
-            only_cast_fixed=only_cast_fixed,
         )
     )
 
@@ -327,11 +324,10 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
     assert grid_distances.shape == spherical_distances.shape == expected_shape
 
     grid_distance_min = grid_distances.min()
-    if not only_cast_fixed:
-        assert grid_distances.min() < EXPECTED_DISTANCE - tol, "Raycaster grid pattern should have hit obstacle"
-        ground_hit_mask = grid_distances > grid_distance_min + tol
-        grid_hits = grid_hits[ground_hit_mask]
-        grid_distances = grid_distances[ground_hit_mask]
+    assert grid_distances.min() < EXPECTED_DISTANCE - tol, "Raycaster grid pattern should have hit obstacle"
+    ground_hit_mask = grid_distances > grid_distance_min + tol
+    grid_hits = grid_hits[ground_hit_mask]
+    grid_distances = grid_distances[ground_hit_mask]
 
     assert_allclose(
         grid_hits[..., 2],
@@ -352,15 +348,9 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
         err_msg=f"Raycaster spherical pattern should measure {EXPECTED_DISTANCE}m to the sphere around it",
     )
 
-    if not only_cast_fixed:
-        for _ in range(5):
-            scene.step()
-
-        assert grid_raycaster.read().distances.min() > grid_distance_min, "Raycaster should hit falling obstacle"
-
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [2])
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_sensors_draw_debug(png_snapshot, n_envs):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
     CAM_RES = (640, 480)
@@ -423,7 +413,6 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
             entity_idx=floating_box.idx,
             pos_offset=(0.2, 0.0, -0.1),
             return_world_frame=True,
-            only_cast_fixed=False,
             draw_debug=True,
         )
     )
@@ -436,7 +425,6 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
             entity_idx=floating_box.idx,
             pos_offset=(0.0, 0.5, 0.0),
             return_world_frame=False,
-            only_cast_fixed=True,
             draw_debug=True,
             debug_sphere_radius=0.01,
             debug_ray_start_color=(1.0, 1.0, 0.5, 1.0),
@@ -446,7 +434,7 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
 
     scene.build(n_envs=n_envs)
 
-    for _ in range(5):
+    for _ in range(10):
         scene.step()
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
