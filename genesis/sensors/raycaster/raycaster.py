@@ -1,4 +1,3 @@
-import itertools
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, Type
@@ -16,10 +15,11 @@ from genesis.utils.geom import (
     ti_normalize,
     ti_transform_by_quat,
     ti_transform_by_trans_quat,
+    trans_to_T,
     transform_by_quat,
     transform_by_trans_quat,
 )
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array, ti_to_torch
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, ti_to_torch
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from ..base_sensor import (
@@ -43,6 +43,9 @@ DEBUG_COLORS = (
     (0.2, 0.6, 1.0, 1.0),
     (1.0, 1.0, 0.2, 1.0),
 )
+# A constant stack size should be sufficient for BVH traversal.
+# https://madmann91.github.io/2021/01/06/bvhs-part-2.html
+# https://forums.developer.nvidia.com/t/thinking-parallel-part-ii-tree-traversal-on-the-gpu/148342
 STACK_SIZE = ti.static(64)
 
 
@@ -264,19 +267,24 @@ def kernel_cast_rays(
                         node_stack[stack_idx + 1] = node.right
                         stack_idx += 2
 
+        # print(f"Ray {i_p}: hit_face={hit_face}")
+
         # --- 3. Process Hit Result ---
         # The format of output_hits is: [sensor1 points][sensor1 ranges][sensor2 points][sensor2 ranges]...
         i_p_sensor = i_p - sensor_point_offsets[i_s]
         i_p_offset = sensor_cache_offsets[i_s]  # cumulative cache offset for this sensor
         n_points_in_sensor = sensor_point_counts[i_s]  # number of points in this sensor
 
+        i_p_dist = i_p_offset + n_points_in_sensor * 3 + i_p_sensor  # index for distance output
+
         if hit_face >= 0:
             dist = max_range
             # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
-            output_hits[i_b, i_p_offset + n_points_in_sensor * 3 + i_p_sensor] = dist
+            output_hits[i_b, i_p_dist] = dist
 
             if is_world_frame[i_s]:
                 hit_point = ray_start_world + dist * ray_direction_world
+
                 # Store points at: cache_offset + point_idx_in_sensor * 3
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
@@ -295,7 +303,7 @@ def kernel_cast_rays(
             output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = 0.0
             output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = 0.0
             output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = 0.0
-            output_hits[i_b, i_p_offset + n_points_in_sensor * 3 + i_p_sensor] = no_hit_values[i_s]
+            output_hits[i_b, i_p_dist] = no_hit_values[i_s]
 
 
 class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
@@ -318,7 +326,11 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
         Whether to only cast rays on fixed geoms. Defaults to False. This is a shared option, so the value of this
         option for the **first** Raycaster sensor will be the behavior for **all** Raycaster sensors.
     debug_sphere_radius: float, optional
-        The radius of each debug hit point sphere drawn in the scene. Defaults to 0.02.
+        The radius of each debug sphere drawn in the scene. Defaults to 0.02.
+    debug_ray_start_color: float, optional
+        The color of each debug ray start sphere drawn in the scene. Defaults to (0.5, 0.5, 1.0, 1.0).
+    debug_ray_hit_color: float, optional
+        The color of each debug ray hit point sphere drawn in the scene. Defaults to (1.0, 0.5, 0.5, 1.0).
     """
 
     pattern: RaycastPattern
@@ -329,6 +341,8 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
     only_cast_fixed: bool = False
 
     debug_sphere_radius: float = 0.02
+    debug_ray_start_color: tuple[float, float, float, float] = (0.5, 0.5, 1.0, 1.0)
+    debug_ray_hit_color: tuple[float, float, float, float] = (1.0, 0.5, 0.5, 1.0)
 
     def model_post_init(self, _):
         if self.min_range < 0.0:
@@ -433,6 +447,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             self._shared_metadata.output_hits = torch.empty(
                 (self._manager._sim._B, 0), device=gs.device, dtype=gs.tc_float
             )
+            self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
+                self._shared_metadata.sensor_cache_offsets, 0
+            )
             self._shared_metadata.only_cast_fixed = self._options.only_cast_fixed  # set for first only
             self._build_bvh(self._shared_metadata)
 
@@ -458,7 +475,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             dim=-1,
         )
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
-            self._shared_metadata.sensor_cache_offsets, self._cache_idx
+            self._shared_metadata.sensor_cache_offsets, self._cache_size
         )
         self._shared_metadata.sensor_point_offsets = concat_with_tensor(
             self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays
@@ -466,7 +483,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         self._shared_metadata.sensor_point_counts = concat_with_tensor(
             self._shared_metadata.sensor_point_counts, num_rays
         )
-
         self._shared_metadata.total_n_rays += num_rays
 
         self._shared_metadata.points_to_sensor_idx = concat_with_tensor(
@@ -481,9 +497,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         self._shared_metadata.max_ranges = concat_with_tensor(self._shared_metadata.max_ranges, self._options.max_range)
         no_hit_value = self._options.no_hit_value if self._options.no_hit_value is not None else self._options.max_range
         self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
-
-        if self._options.draw_debug:
-            self.debug_objects = [None] * self._manager._sim._B
 
     @classmethod
     def reset(cls, shared_metadata: RaycasterSharedMetadata, envs_idx):
@@ -566,22 +579,38 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         """
         Draw hit points as spheres in the scene.
 
-        Spheres will be different colors per environment.
+        Only draws for first rendered environment.
         """
-        data = self.read().points.reshape(self._manager._sim._B, -1, 3)
+        env_idx = context.rendered_envs_idx[0]
 
-        for env_idx, color in zip(context.rendered_envs_idx, itertools.cycle(DEBUG_COLORS)):
-            points = data[env_idx]
+        points = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None).points.reshape(-1, 3)
 
-            if not self._options.return_world_frame:
-                # transform from local frame to world frame
-                quat = self._link.get_quat(envs_idx=env_idx)
-                pos = self._link.get_pos(envs_idx=env_idx)
-                points = tensor_to_array(transform_by_trans_quat(points + self.ray_starts, pos, quat))
+        pos = self._link.get_pos(envs_idx=env_idx)
+        quat = self._link.get_quat(envs_idx=env_idx)
 
-            if self.debug_objects[env_idx] is not None:
-                context.clear_debug_object(self.debug_objects[env_idx])
+        ray_starts = transform_by_trans_quat(self.ray_starts, pos, quat)
 
-            self.debug_objects[env_idx] = context.draw_debug_spheres(
-                points, radius=self._options.debug_sphere_radius, color=color
+        if not self._options.return_world_frame:
+            points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
+
+        if not self.debug_objects:
+            self.debug_objects.append(
+                context.draw_debug_spheres(
+                    ray_starts,
+                    radius=self._options.debug_sphere_radius,
+                    color=self._options.debug_ray_start_color,
+                )
             )
+
+            for i_point in range(points.shape[0]):
+                self.debug_objects.append(
+                    context.draw_debug_sphere(
+                        points[i_point],
+                        radius=self._options.debug_sphere_radius,
+                        color=self._options.debug_ray_hit_color,
+                    )
+                )
+
+        else:
+            context.update_debug_objects([self.debug_objects[0]], trans_to_T(ray_starts).unsqueeze(0))
+            context.update_debug_objects(self.debug_objects[1:], trans_to_T(points).unsqueeze(0))

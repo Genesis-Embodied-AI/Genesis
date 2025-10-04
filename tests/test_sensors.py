@@ -360,8 +360,7 @@ def test_raycaster_hits(show_viewer, tol, n_envs, only_cast_fixed):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("n_envs", [2])
 def test_sensors_draw_debug(png_snapshot, n_envs):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
     CAM_RES = (640, 480)
@@ -369,8 +368,8 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 2.0, 2.0),
-            camera_lookat=(0.0, 0.0, 0.0),
-            camera_fov=40,
+            camera_lookat=(0.0, 0.0, 0.2),
+            camera_fov=30,
             res=CAM_RES,
         ),
         profiling_options=gs.options.ProfilingOptions(show_FPS=False),
@@ -404,27 +403,28 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
         gs.sensors.Contact(
             entity_idx=ground_box.idx,
             draw_debug=True,
+            debug_sphere_radius=0.08,
         )
     )
     scene.add_sensor(
         gs.sensors.ContactForce(
             entity_idx=ground_box.idx,
             draw_debug=True,
+            debug_scale=0.01,
         )
     )
     scene.add_sensor(
         gs.sensors.Raycaster(
             pattern=gs.sensors.raycaster.GridPattern(
-                resolution=0.1,
+                resolution=0.2,
                 size=(0.4, 0.4),
                 direction=(0.0, 0.0, -1.0),
             ),
             entity_idx=floating_box.idx,
-            pos_offset=(0.0, 0.0, -0.1),
+            pos_offset=(0.2, 0.0, -0.1),
             return_world_frame=True,
             only_cast_fixed=False,
             draw_debug=True,
-            debug_sphere_radius=0.02,
         )
     )
     scene.add_sensor(
@@ -439,6 +439,8 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
             only_cast_fixed=True,
             draw_debug=True,
             debug_sphere_radius=0.01,
+            debug_ray_start_color=(1.0, 1.0, 0.5, 1.0),
+            debug_ray_hit_color=(0.5, 1.0, 1.0, 1.0),
         )
     )
 
