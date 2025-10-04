@@ -267,8 +267,6 @@ def kernel_cast_rays(
                         node_stack[stack_idx + 1] = node.right
                         stack_idx += 2
 
-        # print(f"Ray {i_p}: hit_face={hit_face}")
-
         # --- 3. Process Hit Result ---
         # The format of output_hits is: [sensor1 points][sensor1 ranges][sensor2 points][sensor2 ranges]...
         i_p_sensor = i_p - sensor_point_offsets[i_s]
@@ -322,9 +320,6 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
         The value to return for no hit. Defaults to max_range if not specified.
     return_world_frame : bool, optional
         Whether to return points in the world frame. Defaults to False (local frame).
-    only_cast_fixed : bool, optional
-        Whether to only cast rays on fixed geoms. Defaults to False. This is a shared option, so the value of this
-        option for the **first** Raycaster sensor will be the behavior for **all** Raycaster sensors.
     debug_sphere_radius: float, optional
         The radius of each debug sphere drawn in the scene. Defaults to 0.02.
     debug_ray_start_color: float, optional
@@ -338,7 +333,6 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
     max_range: float = 20.0
     no_hit_value: float = Field(default_factory=lambda data: data["max_range"])
     return_world_frame: bool = False
-    only_cast_fixed: bool = False
 
     debug_sphere_radius: float = 0.02
     debug_ray_start_color: tuple[float, float, float, float] = (0.5, 0.5, 1.0, 1.0)
@@ -357,7 +351,7 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
 class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
     aabb: AABB | None = None
-    only_cast_fixed: bool = False
+    needs_aabb_update: bool = False
     map_faces: Any | None = None
     n_faces: int = 0
 
@@ -406,14 +400,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     def _build_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         n_faces = shared_metadata.solver.faces_info.geom_idx.shape[0]
         torch_map_faces = torch.arange(n_faces, dtype=torch.int32, device=gs.device)
-        if shared_metadata.only_cast_fixed:
-            # count the number of faces in a fixed geoms
-            geom_is_fixed = ti_to_torch(shared_metadata.solver.geoms_info.is_fixed)
-            faces_geom = ti_to_torch(shared_metadata.solver.faces_info.geom_idx)
-            n_faces = torch.sum(geom_is_fixed[faces_geom]).item()
-            if n_faces == 0:
-                gs.raise_exception("No fixed geoms found in the scene.")
-            torch_map_faces = torch.where(geom_is_fixed[faces_geom])[0]
 
         shared_metadata.map_faces = ti.field(ti.i32, (n_faces))
         shared_metadata.map_faces.from_torch(torch_map_faces)
@@ -444,13 +430,15 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
+            geom_is_fixed = ti_to_torch(self._shared_metadata.solver.geoms_info.is_fixed)
+            self._shared_metadata.needs_aabb_update = bool((~geom_is_fixed).any().item())
+
             self._shared_metadata.output_hits = torch.empty(
                 (self._manager._sim._B, 0), device=gs.device, dtype=gs.tc_float
             )
             self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
                 self._shared_metadata.sensor_cache_offsets, 0
             )
-            self._shared_metadata.only_cast_fixed = self._options.only_cast_fixed  # set for first only
             self._build_bvh(self._shared_metadata)
 
         self._shared_metadata.patterns.append(self._options.pattern)
@@ -515,7 +503,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
-        if not shared_metadata.only_cast_fixed:
+        if not shared_metadata.needs_aabb_update:
             rigid_solver_decomp.kernel_update_all_verts(
                 geoms_state=shared_metadata.solver.geoms_state,
                 verts_info=shared_metadata.solver.verts_info,
@@ -601,16 +589,13 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
                     color=self._options.debug_ray_start_color,
                 )
             )
-
-            for i_point in range(points.shape[0]):
-                self.debug_objects.append(
-                    context.draw_debug_sphere(
-                        points[i_point],
-                        radius=self._options.debug_sphere_radius,
-                        color=self._options.debug_ray_hit_color,
-                    )
+            self.debug_objects.append(
+                context.draw_debug_spheres(
+                    points,
+                    radius=self._options.debug_sphere_radius,
+                    color=self._options.debug_ray_hit_color,
                 )
-
+            )
         else:
             context.update_debug_objects([self.debug_objects[0]], trans_to_T(ray_starts).unsqueeze(0))
-            context.update_debug_objects(self.debug_objects[1:], trans_to_T(points).unsqueeze(0))
+            context.update_debug_objects([self.debug_objects[1]], trans_to_T(points).unsqueeze(0))

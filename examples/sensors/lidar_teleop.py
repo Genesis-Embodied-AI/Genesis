@@ -60,12 +60,7 @@ def main():
     parser.add_argument("-B", "--n_envs", type=int, default=0, help="Number of environments to replicate")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--use-box", action="store_true", help="Use Box as robot instead of Go2")
-    parser.add_argument(
-        "-f",
-        "--fixed",
-        action="store_true",
-        help="Load obstacles as fixed and cast only against fixed objects",
-    )
+    parser.add_argument("-f", "--fixed", action="store_true", help="Load obstacles as fixed.")
     parser.add_argument(
         "--pattern",
         type=str,
@@ -96,13 +91,26 @@ def main():
         angle = 2 * np.pi * i / NUM_CYLINDERS
         x = CYLINDER_RING_RADIUS * np.cos(angle)
         y = CYLINDER_RING_RADIUS * np.sin(angle)
-        scene.add_entity(gs.morphs.Cylinder(height=1.5, radius=0.3, pos=(x, y, 0.75)))
+        scene.add_entity(
+            gs.morphs.Cylinder(
+                height=1.5,
+                radius=0.3,
+                pos=(x, y, 0.75),
+                fixed=args.fixed,
+            )
+        )
 
     for i in range(NUM_BOXES):
         angle = 2 * np.pi * i / NUM_BOXES + np.pi / 6
         x = BOX_RING_RADIUS * np.cos(angle)
         y = BOX_RING_RADIUS * np.sin(angle)
-        scene.add_entity(gs.morphs.Box(size=(0.5, 0.5, 2.0), pos=(x, y, 1.0)))
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.5, 0.5, 2.0),
+                pos=(x, y, 1.0),
+                fixed=args.fixed,
+            )
+        )
 
     robot_kwargs = dict(
         pos=(0.0, 0.0, 0.35),
@@ -122,7 +130,6 @@ def main():
         pos_offset=pos_offset,
         euler_offset=(0.0, 0.0, 0.0),
         return_world_frame=True,
-        only_cast_fixed=args.fixed,
         draw_debug=True,
     )
 

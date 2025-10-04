@@ -173,8 +173,8 @@ class SphericalPattern(RaycastPattern):
 
     def __init__(
         self,
-        fov: tuple[float | tuple[float, float], float | tuple[float, float]] = (360.0, 30.0),
-        n_points: tuple[int, int] = (64, 128),
+        fov: tuple[float | tuple[float, float], float | tuple[float, float]] = (360.0, 60.0),
+        n_points: tuple[int, int] = (128, 64),
         angular_resolution: tuple[float | None, float | None] = (None, None),
         angles: tuple[Sequence[float] | None, Sequence[float] | None] = (None, None),
     ):
