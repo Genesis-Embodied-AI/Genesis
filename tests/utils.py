@@ -206,7 +206,7 @@ def get_hf_dataset(
 
             # Make sure that download was successful
             has_files = False
-            for path in Path(asset_path).rglob(pattern):
+            for path in Path(asset_path).glob(pattern):
                 if not path.is_file():
                     continue
 

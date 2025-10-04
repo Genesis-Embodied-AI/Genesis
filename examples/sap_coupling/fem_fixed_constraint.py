@@ -1,5 +1,6 @@
 import argparse
 import math
+import sys
 import torch
 import genesis as gs
 from huggingface_hub import snapshot_download
@@ -7,7 +8,7 @@ from huggingface_hub import snapshot_download
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-c", "--cpu", action="store_true", default=(sys.platform == "darwin"))
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -37,8 +38,9 @@ def main():
     asset_path = snapshot_download(
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
-        revision="69200ef57811078f39c65f1d9e2df679b3b025d7",
+        revision="4d96c3512df4421d4dd3d626055d0d1ebdfdd7cc",
         allow_patterns="cube8.obj",
+        max_workers=1,
     )
     cube = scene.add_entity(
         morph=gs.morphs.Mesh(

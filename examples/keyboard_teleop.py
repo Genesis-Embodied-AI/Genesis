@@ -13,6 +13,7 @@ space	- Press to close gripper, release to open gripper
 esc	- Quit
 """
 
+import os
 import random
 import threading
 
@@ -32,7 +33,11 @@ class KeyboardDevice:
         self.listener.start()
 
     def stop(self):
-        self.listener.stop()
+        try:
+            self.listener.stop()
+        except NotImplementedError:
+            # Dummy backend does not implement stop
+            pass
         self.listener.join()
 
     def on_press(self, key: keyboard.Key):
@@ -203,6 +208,9 @@ def run_sim(scene, entities, clients):
             robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
 
         scene.step()
+
+        if "PYTEST_VERSION" in os.environ:
+            break
 
 
 def main():
