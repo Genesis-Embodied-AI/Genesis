@@ -42,7 +42,6 @@ class RecorderManager:
         recorder : Recorder
             The created recorder object.
         """
-        rec_options.validate()
         recorder_cls = RecorderManager.RECORDER_TYPES_MAP[type(rec_options)]
         recorder = recorder_cls(self, rec_options, data_func)
         self._recorders.append(recorder)

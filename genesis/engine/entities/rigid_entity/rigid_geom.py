@@ -18,9 +18,9 @@ from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array, DeprecationError
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
     from genesis.engine.mesh import Mesh
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
     from .rigid_entity import RigidEntity
     from .rigid_link import RigidLink
@@ -1091,7 +1091,7 @@ def _kernel_get_vgeoms_quat(tensor: ti.types.ndarray(), vgeom_idx: ti.i32, vgeom
 
 @ti.kernel
 def _kernel_get_free_verts(
-    tensor: ti.types.ndarray(), verts_state_start: ti.i32, n_verts: ti.i32, free_verts_state: array_class.FreeVertsState
+    tensor: ti.types.ndarray(), verts_state_start: ti.i32, n_verts: ti.i32, free_verts_state: array_class.VertsState
 ):
     _B = free_verts_state.pos.shape[1]
     for i_v_, i, i_b in ti.ndrange(n_verts, 3, _B):
@@ -1104,7 +1104,7 @@ def _kernel_get_fixed_verts(
     tensor: ti.types.ndarray(),
     verts_state_start: ti.i32,
     n_verts: ti.i32,
-    fixed_verts_state: array_class.FixedVertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     for i_v_, i in ti.ndrange(n_verts, 3):
         i_v = i_v_ + verts_state_start

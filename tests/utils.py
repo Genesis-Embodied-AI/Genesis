@@ -32,7 +32,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "4d96c3512df4421d4dd3d626055d0d1ebdfdd7cc"
-HUGGINGFACE_SNAPSHOT_REVISION = "a6fd3b99364b927dd5367488e58cd251f254fa94"
+HUGGINGFACE_SNAPSHOT_REVISION = "30553e0f9ba871fcc5dd84b963afd7ece0b06b09"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -211,7 +211,7 @@ def get_hf_dataset(
                     continue
 
                 ext = path.suffix.lower()
-                if not ext in (URDF_FORMAT, MJCF_FORMAT, *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
+                if ext not in (URDF_FORMAT, MJCF_FORMAT, *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
                     continue
 
                 has_files = True
@@ -223,19 +223,19 @@ def get_hf_dataset(
                     try:
                         ET.parse(path)
                     except ET.ParseError as e:
-                        raise HTTPError(f"Impossible to parse XML file.") from e
+                        raise HTTPError("Impossible to parse XML file.") from e
                 elif path.suffix.lower() in IMAGE_EXTENSIONS:
                     try:
                         Image.open(path)
                     except UnidentifiedImageError as e:
-                        raise HTTPError(f"Impossible to parse Image file.") from e
+                        raise HTTPError("Impossible to parse Image file.") from e
                 elif path.suffix.lower() in MESH_EXTENSIONS:
                     # TODO: Validating mesh files is more tricky. Ignoring them for now.
                     pass
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError) as e:
+        except (HTTPError, FileNotFoundError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")

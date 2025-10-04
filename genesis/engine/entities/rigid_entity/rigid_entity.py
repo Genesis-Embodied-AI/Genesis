@@ -1,9 +1,9 @@
 from copy import copy
 from itertools import chain
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-import numpy as np
 import gstaichi as ti
+import numpy as np
 import torch
 import trimesh
 
@@ -11,9 +11,8 @@ import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
-from genesis.utils import geom as gu
 from genesis.utils import array_class
-from genesis.utils import linalg as lu
+from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
@@ -27,8 +26,8 @@ from .rigid_joint import RigidJoint
 from .rigid_link import RigidLink
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
     from genesis.engine.scene import Scene
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
 @ti.data_oriented
@@ -3004,7 +3003,7 @@ def _kernel_get_free_verts(
     tensor: ti.types.ndarray(),
     free_verts_idx_local: ti.types.ndarray(),
     verts_state_start: ti.i32,
-    free_verts_state: array_class.FreeVertsState,
+    free_verts_state: array_class.VertsState,
 ):
     n_verts = free_verts_idx_local.shape[0]
     _B = tensor.shape[0]
@@ -3018,7 +3017,7 @@ def _kernel_get_fixed_verts(
     tensor: ti.types.ndarray(),
     fixed_verts_idx_local: ti.types.ndarray(),
     verts_state_start: ti.i32,
-    fixed_verts_state: array_class.FixedVertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     n_verts = fixed_verts_idx_local.shape[0]
     _B = tensor.shape[0]
