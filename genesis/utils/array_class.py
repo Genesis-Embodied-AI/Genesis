@@ -368,7 +368,7 @@ def get_sort_buffer(solver):
     kwargs = {
         "value": V(dtype=gs.ti_float, shape=f_batch(2 * solver.n_geoms_)),
         "i_g": V(dtype=gs.ti_int, shape=f_batch(2 * solver.n_geoms_)),
-        "is_max": V(dtype=gs.ti_int, shape=f_batch(2 * solver.n_geoms_)),
+        "is_max": V(dtype=gs.ti_bool, shape=f_batch(2 * solver.n_geoms_)),
     }
     if use_ndarray:
         return StructSortBuffer(**kwargs)
@@ -1105,7 +1105,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
             "n_contacts": V(dtype=gs.ti_int, shape=(_B,)),
             "contact_pos": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
             "normal": V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
-            "is_col": V(dtype=gs.ti_int, shape=(_B,)),
+            "is_col": V(dtype=gs.ti_bool, shape=(_B,)),
             "penetration": V(dtype=gs.ti_float, shape=(_B,)),
             "distance": V(dtype=gs.ti_float, shape=(_B,)),
         }
@@ -1468,7 +1468,7 @@ def get_links_info(solver):
         "pos": V(dtype=gs.ti_vec3, shape=links_info_shape),
         "quat": V(dtype=gs.ti_vec4, shape=links_info_shape),
         "invweight": V(dtype=gs.ti_vec2, shape=links_info_shape),
-        "is_fixed": V(dtype=gs.ti_int, shape=links_info_shape),
+        "is_fixed": V(dtype=gs.ti_bool, shape=links_info_shape),
         "inertial_pos": V(dtype=gs.ti_vec3, shape=links_info_shape),
         "inertial_quat": V(dtype=gs.ti_vec4, shape=links_info_shape),
         "inertial_i": V(dtype=gs.ti_mat3, shape=links_info_shape),
@@ -1583,7 +1583,7 @@ class StructGeomsInfo:
     is_convex: V_ANNOTATION
     contype: V_ANNOTATION
     conaffinity: V_ANNOTATION
-    is_free: V_ANNOTATION
+    is_fixed: V_ANNOTATION
     is_decomposed: V_ANNOTATION
     needs_coup: V_ANNOTATION
     coup_friction: V_ANNOTATION
@@ -1613,11 +1613,11 @@ def get_geoms_info(solver):
         "edge_num": V(dtype=gs.ti_int, shape=shape),
         "edge_start": V(dtype=gs.ti_int, shape=shape),
         "edge_end": V(dtype=gs.ti_int, shape=shape),
-        "is_convex": V(dtype=gs.ti_int, shape=shape),
+        "is_convex": V(dtype=gs.ti_bool, shape=shape),
         "contype": V(dtype=gs.ti_int, shape=shape),
         "conaffinity": V(dtype=gs.ti_int, shape=shape),
-        "is_free": V(dtype=gs.ti_int, shape=shape),
-        "is_decomposed": V(dtype=gs.ti_int, shape=shape),
+        "is_fixed": V(dtype=gs.ti_bool, shape=shape),
+        "is_decomposed": V(dtype=gs.ti_bool, shape=shape),
         "needs_coup": V(dtype=gs.ti_int, shape=shape),
         "coup_friction": V(dtype=gs.ti_float, shape=shape),
         "coup_softness": V(dtype=gs.ti_float, shape=shape),
@@ -1657,7 +1657,7 @@ def get_geoms_state(solver):
         "quat": V(dtype=gs.ti_vec4, shape=shape),
         "aabb_min": V(dtype=gs.ti_vec3, shape=shape),
         "aabb_max": V(dtype=gs.ti_vec3, shape=shape),
-        "verts_updated": V(dtype=gs.ti_int, shape=shape),
+        "verts_updated": V(dtype=gs.ti_bool, shape=shape),
         "min_buffer_idx": V(dtype=gs.ti_int, shape=shape),
         "max_buffer_idx": V(dtype=gs.ti_int, shape=shape),
         "hibernated": V(dtype=gs.ti_int, shape=shape),
@@ -1687,7 +1687,7 @@ class StructVertsInfo:
     geom_idx: V_ANNOTATION
     init_center_pos: V_ANNOTATION
     verts_state_idx: V_ANNOTATION
-    is_free: V_ANNOTATION
+    is_fixed: V_ANNOTATION
 
 
 def get_verts_info(solver):
@@ -1698,7 +1698,7 @@ def get_verts_info(solver):
         "geom_idx": V(dtype=gs.ti_int, shape=shape),
         "init_center_pos": V(dtype=gs.ti_vec3, shape=shape),
         "verts_state_idx": V(dtype=gs.ti_int, shape=shape),
-        "is_free": V(dtype=gs.ti_int, shape=shape),
+        "is_fixed": V(dtype=gs.ti_bool, shape=shape),
     }
 
     if use_ndarray:

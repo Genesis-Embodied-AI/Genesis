@@ -301,11 +301,7 @@ class LBVH(RBC):
         # Fill histogram
         for i_b, i_g in ti.ndrange(self.n_batches, self.n_radix_sort_groups):
             start = i_g * self.group_size
-            end = ti.select(
-                i_g == self.n_radix_sort_groups - 1,
-                self.n_aabbs,
-                (i_g + 1) * self.group_size,
-            )
+            end = ti.select(i_g == self.n_radix_sort_groups - 1, self.n_aabbs, (i_g + 1) * self.group_size)
             for i_a in range(start, end):
                 code = ti.i32((self.morton_codes[i_b, i_a][1 - (i // 4)] >> ((i % 4) * 8)) & 0xFF)
                 self.offset[i_b, i_a] = self.hist_group[i_b, i_g, code]

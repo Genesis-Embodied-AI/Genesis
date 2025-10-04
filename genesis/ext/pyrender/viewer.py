@@ -405,8 +405,7 @@ class Viewer(pyglet.window.Window):
             self._initialized_event.wait()
             if not self._is_active:
                 if self._exception:
-                    raise self._exception
-                # Just to be extra careful, this fallback should never be triggered in practice.
+                    raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from self._exception
                 raise OpenGL.error.Error("Invalid OpenGL context.")
         else:
             if self.auto_start:
@@ -1291,6 +1290,7 @@ class Viewer(pyglet.window.Window):
                 # See: https://github.com/pyglet/pyglet/issues/1024
                 if not pyglet.window.xlib._have_utf8:
                     if self._run_in_thread:
+                        self.on_close()
                         self._exception = e
                         return
                     else:
@@ -1300,6 +1300,7 @@ class Viewer(pyglet.window.Window):
             except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException) as e:
                 if not confs:
                     if self._run_in_thread:
+                        self.on_close()
                         self._exception = e
                         return
                     else:

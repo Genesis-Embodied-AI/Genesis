@@ -105,7 +105,7 @@ class Viewer(RBC):
                         self._pyrender_viewer.start(auto_refresh=False)
                     self._pyrender_viewer.wait_until_initialized()
                 break
-            except OpenGL.error.Error:
+            except (OpenGL.error.Error, RuntimeError):
                 # Invalid OpenGL context. Trying another platform if any...
                 gs.logger.debug("Invalid OpenGL context.")
 

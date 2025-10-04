@@ -409,7 +409,7 @@ def func_gjk_contact(
     gjk_state.n_contacts[i_b] = n_contacts
     # If there are no contacts, we set the penetration and is_col to 0.
     # FIXME: When we use if statement here, it leads to a bug in some backends (e.g. x86 cpu). Need to investigate.
-    gjk_state.is_col[i_b] = 0 if n_contacts == 0 else gjk_state.is_col[i_b]
+    gjk_state.is_col[i_b] = False if n_contacts == 0 else gjk_state.is_col[i_b]
     gjk_state.penetration[i_b] = 0.0 if n_contacts == 0 else gjk_state.penetration[i_b]
 
 
