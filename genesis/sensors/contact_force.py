@@ -165,10 +165,10 @@ class ContactSensor(Sensor):
 
         Only draws for first rendered environment.
         """
-        env_idx = context.rendered_envs_idx[0]
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        pos = self._link.get_pos(envs_idx=env_idx)[0]
-        is_contact = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None).item()
+        pos = self._link.get_pos(envs_idx=env_idx).squeeze(0)
+        is_contact = self.read(envs_idx=env_idx).squeeze(0).item()
 
         if is_contact:
             if self.debug_object is None:
@@ -234,6 +234,7 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
 
     min_force: torch.Tensor = make_tensor_field((0, 3))
     max_force: torch.Tensor = make_tensor_field((0, 3))
+    output_forces: torch.Tensor = make_tensor_field((0, 0))
 
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
@@ -276,6 +277,13 @@ class ContactForceSensor(
             _to_tuple(self._options.max_force, length_per_value=3),
         )
 
+        if self._shared_metadata.output_forces.numel() == 0:
+            self._shared_metadata.output_forces.reshape(self._manager._sim._B, 0)
+        self._shared_metadata.output_forces = concat_with_tensor(
+            self._shared_metadata.output_forces,
+            torch.empty((self._manager._sim._B, 3), dtype=gs.tc_float, device=gs.device),
+        )
+
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
 
@@ -308,8 +316,10 @@ class ContactForceSensor(
             link_b.contiguous(),
             links_quat.contiguous(),
             shared_metadata.links_idx,
-            shared_ground_truth_cache,
+            shared_ground_truth_cache if shared_ground_truth_cache.is_contiguous() else shared_metadata.output_forces,
         )
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_ground_truth_cache[:] = shared_metadata.output_forces
 
     @classmethod
     def _update_shared_cache(
@@ -344,17 +354,12 @@ class ContactForceSensor(
         """
         env_idx = context.rendered_envs_idx[0]
 
-        pos = self._link.get_pos(envs_idx=env_idx)
-        quat = self._link.get_quat(envs_idx=env_idx)
+        pos = self._link.get_pos(envs_idx=env_idx).squeeze(0)
+        quat = self._link.get_quat(envs_idx=env_idx).squeeze(0)
 
-        # TODO: cleanup env handling
-        if self._manager._sim.n_envs > 0:
-            force = self.read(envs_idx=env_idx)
-            vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))[0]
-        else:
-            force = self.read()  # cannot specify envs_idx when n_envs=0
-            vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))
+        force = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
+        vec = tensor_to_array(transform_by_quat(force.squeeze(0) * self._options.debug_scale, quat))
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)
-        self.debug_object = context.draw_debug_arrow(pos=pos[0], vec=vec, color=self._options.debug_color)
+        self.debug_object = context.draw_debug_arrow(pos=pos, vec=vec, color=self._options.debug_color)

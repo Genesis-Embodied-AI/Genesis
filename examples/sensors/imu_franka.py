@@ -88,11 +88,8 @@ def main():
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
 
-    imu.start_recording(
-        gs.recorders.CSVFile(filename="imu_data.csv"),
-    )
     scene.start_recording(
-        data_func=lambda: imu.read().lin_acc,
+        data_func=lambda: imu.read()._asdict(),
         rec_options=gs.recorders.NPZFile(filename="imu_data.npz"),
     )
 
