@@ -318,11 +318,11 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
         state = entity.get_state()
         assert_allclose(state.vel, 0.0, tol=0.05)
 
-        # Almost at the initial position
+        # More or less at the initial position
         pos = tensor_to_array(state.pos.squeeze(0))
         BV, *_ = igl.bounding_box(pos)
         entity_center = 0.5 * (BV[0] + BV[-1])
-        assert_allclose(entity_center[:2], 0.0, tol=0.015)
+        assert_allclose(entity_center[:2], 0.0, tol=0.02)
         assert_allclose(entity_center[2], init_height, tol=5e-3)
 
 

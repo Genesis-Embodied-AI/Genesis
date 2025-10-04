@@ -6,6 +6,8 @@ on:
     branches:
       - main
   pull_request:
+    branches:
+      - main
 
 concurrency:
   # Cancel all workflows that are stil running if any when updating branches associated with PRs,

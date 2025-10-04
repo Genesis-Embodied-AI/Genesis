@@ -145,22 +145,11 @@ def gs_static_child(args: list[str]):
 
 
 @pytest.mark.required
-# Disable genesis initialization at worker level
-@pytest.mark.parametrize("backend", [None])
-# should not affect expected_num_contacts
-@pytest.mark.parametrize("use_ndarray", [False, True])
-# should not affect expected_num_contacts
-# note that using `backend` instead of `test_backend`, breaks genesis pytest...
+@pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
-# should not affect expected_num_contacts
+@pytest.mark.parametrize("use_ndarray", [False, True])
 @pytest.mark.parametrize("enable_pure", [False, True])
-@pytest.mark.parametrize(
-    "enable_multicontact, expected_num_contacts",
-    [
-        (False, 1),
-        (True, 4),
-    ],
-)
+@pytest.mark.parametrize("enable_multicontact, expected_num_contacts", [(False, 1), (True, 4)])
 def test_static(
     enable_multicontact: bool,
     expected_num_contacts: int,
@@ -246,11 +235,9 @@ def gs_num_envs_child(args: list[str]):
 
 
 @pytest.mark.required
-# Disable genesis initialization at worker level
-@pytest.mark.parametrize("backend", [None])
-@pytest.mark.parametrize("enable_pure", [False, True])  # should not affect result
-# Note that using `backend` instead of `test_backend`, breaks genesis pytest...
-@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
+@pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
+@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
+@pytest.mark.parametrize("enable_pure", [False, True])
 @pytest.mark.parametrize("use_ndarray", [False, True])
 def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
     # Change n_envs each time, and check effect on reading from cache
@@ -353,8 +340,8 @@ def change_scene(args: list[str]):
 
 
 @pytest.mark.required
-# Disable genesis initialization at worker level
-@pytest.mark.parametrize("backend", [None])
+@pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
+@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
 @pytest.mark.parametrize(
     "list_n_objs_n_envs",
     [
@@ -362,9 +349,7 @@ def change_scene(args: list[str]):
         # [(3, 0), (1, 1), (2, 2)],  # FIXME: This does not work with gpu, needs to investigate (cache key changes).
     ],
 )
-@pytest.mark.parametrize("enable_pure", [True])  # should not affect result
-# note that using `backend` instead of `test_backend`, breaks genesis pytest...
-@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])  # should not affect result
+@pytest.mark.parametrize("enable_pure", [True])
 def test_ndarray_no_compile(
     enable_pure: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
