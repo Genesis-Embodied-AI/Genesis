@@ -1460,7 +1460,7 @@ def func_narrow_phase_convex_vs_convex(
                     and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX
                 )
             ):
-                if ti.static(sys.platform == "darwin"):
+                if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
                     func_convex_convex_contact(
                         i_ga=i_ga,
                         i_gb=i_gb,
@@ -1485,32 +1485,6 @@ def func_narrow_phase_convex_vs_convex(
                         support_field_info=support_field_info,
                         support_field_static_config=support_field_static_config,
                     )
-                else:
-                    if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
-                        func_convex_convex_contact(
-                            i_ga=i_ga,
-                            i_gb=i_gb,
-                            i_b=i_b,
-                            links_state=links_state,
-                            links_info=links_info,
-                            geoms_state=geoms_state,
-                            geoms_info=geoms_info,
-                            geoms_init_AABB=geoms_init_AABB,
-                            verts_info=verts_info,
-                            faces_info=faces_info,
-                            static_rigid_sim_config=static_rigid_sim_config,
-                            static_rigid_sim_cache_key=static_rigid_sim_cache_key,
-                            collider_state=collider_state,
-                            collider_info=collider_info,
-                            collider_static_config=collider_static_config,
-                            mpr_state=mpr_state,
-                            mpr_static_config=mpr_static_config,
-                            gjk_state=gjk_state,
-                            gjk_static_config=gjk_static_config,
-                            sdf_info=sdf_info,
-                            support_field_info=support_field_info,
-                            support_field_static_config=support_field_static_config,
-                        )
 
 
 @ti.kernel(pure=gs.use_pure)
@@ -1536,22 +1510,21 @@ def func_narrow_phase_convex_specializations(
             if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
                 i_ga, i_gb = i_gb, i_ga
 
-            if ti.static(sys.platform != "darwin"):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
-                    func_plane_box_contact(
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        geoms_state,
-                        geoms_info,
-                        geoms_init_AABB,
-                        verts_info,
-                        static_rigid_sim_config,
-                        static_rigid_sim_cache_key,
-                        collider_state,
-                        collider_info,
-                        collider_static_config,
-                    )
+            if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
+                func_plane_box_contact(
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    geoms_state,
+                    geoms_info,
+                    geoms_init_AABB,
+                    verts_info,
+                    static_rigid_sim_config,
+                    static_rigid_sim_cache_key,
+                    collider_state,
+                    collider_info,
+                    collider_static_config,
+                )
 
             if ti.static(static_rigid_sim_config.box_box_detection):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.BOX and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
@@ -2032,23 +2005,7 @@ def func_convex_convex_contact(
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
 ):
-    if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
-        if ti.static(sys.platform == "darwin"):
-            func_plane_box_contact(
-                i_ga=i_ga,
-                i_gb=i_gb,
-                i_b=i_b,
-                geoms_state=geoms_state,
-                geoms_info=geoms_info,
-                geoms_init_AABB=geoms_init_AABB,
-                verts_info=verts_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                static_rigid_sim_cache_key=static_rigid_sim_cache_key,
-                collider_state=collider_state,
-                collider_info=collider_info,
-                collider_static_config=collider_static_config,
-            )
-    else:
+    if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
         # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
         # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
         # criteria to get rid of redundant contact points seems to be a better option.
