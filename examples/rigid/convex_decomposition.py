@@ -40,8 +40,9 @@ def main():
         asset_path = snapshot_download(
             repo_type="dataset",
             repo_id="Genesis-Intelligence/assets",
-            revision="69200ef57811078f39c65f1d9e2df679b3b025d7",
+            revision="4d96c3512df4421d4dd3d626055d0d1ebdfdd7cc",
             allow_patterns=f"{asset_name}/*",
+            max_workers=1,
         )
         scene.add_entity(
             gs.morphs.MJCF(

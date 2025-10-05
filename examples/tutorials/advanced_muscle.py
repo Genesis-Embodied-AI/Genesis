@@ -65,7 +65,7 @@ robot_fem = scene.add_entity(
 )
 
 ########################## build ##########################
-scene.build(n_envs=5)
+scene.build(n_envs=2)
 
 ########################## run ##########################
 scene.reset()

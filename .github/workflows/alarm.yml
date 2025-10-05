@@ -62,8 +62,9 @@ jobs:
           ARTIFACTS_DIR: ${{ steps.dl.outputs.download-path }}
           PR_COMMENT_PATH: pr_comment.md
           CHECK_BODY_PATH: check_output.md
+          EXIT_CODE_REGRESSION: 42
         run: |
-          { python - << 'PY'; HAS_REGRESSIONS=$?; } || true
+          { python - << 'PY'; EXIT_CODE=$?; } || true
 
           import os, sys, json, math, re
           import wandb
@@ -276,18 +277,18 @@ jobs:
           check_body_path.write_text(check_body + "\n", encoding="utf-8")
           pr_comment_path.write_text(comment_body + "\n", encoding="utf-8")
 
-          # Exit with 1 if regressions are found, 0 otherwise
-          sys.exit(1 if reg_found else 0)
+          # Exit with 42 if regressions are found, 0 otherwise
+          sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]) if reg_found else 0)
           PY
 
           # Enable command trace to ease debugging
           set -o xtrace
 
           # Expose outputs to later steps
-          if [ -f "${CHECK_BODY_PATH}" ]; then
+          if [ -f "$CHECK_BODY_PATH" ]; then
             {
               echo 'CHECK_OUTPUT<<__EOF__'
-              cat "${CHECK_BODY_PATH}"
+              cat "$CHECK_BODY_PATH"
               echo '__EOF__'
             } >> "$GITHUB_ENV"
           else
@@ -295,15 +296,18 @@ jobs:
           fi
 
           # Only set SCRIPT_OUTPUT when we actually want to comment
-          if [ "${HAS_REGRESSIONS}" = "1" ] && [ -s "${PR_COMMENT_PATH}" ]; then
+          if [ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && [ -s "$PR_COMMENT_PATH" ]; then
             {
               echo 'SCRIPT_OUTPUT<<__EOF__'
-              cat "${PR_COMMENT_PATH}"
+              cat "$PR_COMMENT_PATH"
               echo '__EOF__'
             } >> "$GITHUB_ENV"
           else
             echo "SCRIPT_OUTPUT=" >> "$GITHUB_ENV"
           fi
+
+          # Export regression status
+          echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
       - name: Add PR comment
         if: ${{ env.SCRIPT_OUTPUT != '' }}
         uses: actions/github-script@v8
@@ -312,7 +316,6 @@ jobs:
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
-            const prNumber = ;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
