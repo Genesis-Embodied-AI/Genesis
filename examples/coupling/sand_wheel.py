@@ -104,7 +104,7 @@ def main():
             color=(1.0, 0.9, 0.6, 1.0),
         ),
     )
-    scene.build(n_envs=5)
+    scene.build(n_envs=2)
 
     horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
     for i in range(horizon):

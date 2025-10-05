@@ -11,32 +11,25 @@ import pytest
 EXAMPLES_DIR = Path(__file__).parents[1] / "examples"
 
 ALLOW_PATTERNS = {
-    "/rigid/",
-    "/coupling/",
-    "/collision/",
+    "*.py",
+    "rigid/**/*.py",
+    "coupling/**/*.py",
+    "collision/**/*.py",
+    "sap_coupling/**/*.py",
+    "sensors/**/*.py",
+    "tutorial/**/*.py",
+    "drone/interactive_drone.py",
+    "drone/fly_route.py",
 }
-ALLOW_TOPLEVEL_SCRIPT_NAMES = {
-    "smoke.py",
-    "elastic_dragon.py",
-    "fem_hard_and_soft_constraint.py",
-}
-SKIP_DIR_NAMES = {
-    "rendering",
-    "speed_benchmark",
-    "tutorials",
-    "drone",
-    "locomotion",
-    "manipulation",
-}
-SKIP_BASENAMES = {
-    "keyboard_teleop.py",
-    "render_async.py",
+IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
-    "multi_gpu.py",
-    "cut_dragon.py",
     "differentiable_push.py",
-    "single_franka_batch_render.py",  # FIXME: it will have segfault on exit
-    "fem_cube_linked_with_arm.py",  # FIXME: memory bug
+    "multi_gpu.py",
+    "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit
+    "single_franka_batch_render.py",  # FIXME: segfault on exit
+    "imu_franka.py",  # FIXME: broken
+    "contact_force_go2.py",  # FIXME: broken
+    "cut_dragon.py",  # FIXME: Only supported on Linux
 }
 
 TIMEOUT = 400.0
@@ -49,40 +42,31 @@ pytestmark = [
 ]
 
 
-def _is_skipped_example(path: Path) -> bool:
-    parts = set(p.name for p in path.parents if p.name)
-    if parts & SKIP_DIR_NAMES:
-        return True
-    if path.name in SKIP_BASENAMES:
-        return True
-    return False
-
-
 def _discover_examples():
     if not EXAMPLES_DIR.exists():
         raise ValueError(f"Example directory '{EXAMPLES_DIR}' does not exist.")
 
-    # Keep a conservative subset known to be headless-friendly
     files = []
-    for path in EXAMPLES_DIR.rglob("*.py"):
-        # Prefer common, quick, non-interactive categories
-        if any(pattern in str(path) for pattern in ALLOW_PATTERNS) and not _is_skipped_example(path):
-            files.append(path)
-        # Allow a few top-level simple demos
-        elif path.parent == EXAMPLES_DIR and path.name in ALLOW_TOPLEVEL_SCRIPT_NAMES:
-            files.append(path)
+    for pattern in ALLOW_PATTERNS:
+        for path in EXAMPLES_DIR.glob(pattern):
+            if path.name not in IGNORE_SCRIPT_NAMES:
+                files.append(path)
 
-    return files
+    return sorted(files)
 
 
 @pytest.mark.examples
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("file", _discover_examples(), ids=lambda p: p.relative_to(EXAMPLES_DIR).as_posix())
 def test_example(file: Path):
+    # Disable keyboard control and monitoring when running the unit tests
+    env = os.environ.copy()
+    env["PYNPUT_BACKEND"] = "dummy"
+
     path_rel = file.relative_to(EXAMPLES_DIR).as_posix()
     try:
         result = subprocess.run(
-            [sys.executable, str(file)], capture_output=True, text=True, check=False, timeout=TIMEOUT
+            [sys.executable, str(file)], env=env, capture_output=True, text=True, check=False, timeout=TIMEOUT
         )
     except subprocess.TimeoutExpired as e:
         err_msg = f"Timeout running example {path_rel}."
