@@ -14,6 +14,7 @@ from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
 NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
+USD_COLOR_TOL = 1e-07  # Parsing from .usd loses a little precision in color
 
 
 def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
@@ -295,6 +296,25 @@ def test_usd_parse(usd_filename):
         check_gs_textures(
             gs_glb_material.emissive_texture, gs_usd_material.emissive_texture, 0.0, material_name, "emissive"
         )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
+def test_usd_parse_nodegraph(usd_file):
+    asset_path = get_hf_dataset(pattern=usd_file)
+    usd_file = os.path.join(asset_path, usd_file)
+    gs_usd_meshes = usda_utils.parse_mesh_usd(
+        usd_file,
+        group_by_material=True,
+        scale=1.0,
+        surface=gs.surfaces.Default(),
+    )
+    texture0 = gs_usd_meshes[0].surface.diffuse_texture
+    texture1 = gs_usd_meshes[1].surface.diffuse_texture
+    assert isinstance(texture0, gs.textures.ColorTexture)
+    assert isinstance(texture1, gs.textures.ColorTexture)
+    assert_allclose(texture0.color, (0.8, 0.2, 0.2), rtol=USD_COLOR_TOL)
+    assert_allclose(texture1.color, (0.2, 0.6, 0.9), rtol=USD_COLOR_TOL)
 
 
 @pytest.mark.required
