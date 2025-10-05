@@ -200,12 +200,12 @@ class Visualizer(RBC):
             else:
                 gs.raise_exception("Viewer closed.")
 
-    def update_visual_states(self):
+    def update_visual_states(self, force_render: bool = False):
         """
         Update all visualization-only variables here.
         """
         # Early return if already updated previously
-        if self._t >= self.scene._t:
+        if not force_render and self._t >= self.scene._t:
             return
 
         for camera in self._cameras:
