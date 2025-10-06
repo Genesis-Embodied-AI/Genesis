@@ -305,8 +305,8 @@ class BatchRenderer(RBC):
             lights_intensity_tensor=_make_tensor([light.intensity for light in self._lights]),
         )
 
-    def update_scene(self):
-        self._visualizer._context.update()
+    def update_scene(self, force_render: bool = False):
+        self._visualizer._context.update(force_render)
 
     def render(self, rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=False):
         """
@@ -356,7 +356,7 @@ class BatchRenderer(RBC):
             return tuple(arr if req else None for req, arr in zip(request, cached))
 
         # Update scene
-        self.update_scene()
+        self.update_scene(force_render)
 
         # Render only what is needed (flags still passed to renderer)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)

@@ -923,9 +923,9 @@ class RasterizerContext:
     def clear_debug_objects(self):
         self.clear_external_nodes()
 
-    def update(self):
+    def update(self, force_render: bool = False):
         # Early return if already updated previously
-        if self._t >= self.scene._t:
+        if not force_render and self._t >= self.scene._t:
             return
 
         self._t = self.scene._t
@@ -934,7 +934,7 @@ class RasterizerContext:
         self.clear_dynamic_nodes()
 
         # update variables not used in simulation
-        self.visualizer.update_visual_states()
+        self.visualizer.update_visual_states(force_render)
 
         # Reset scene bounds to trigger recomputation. They are involved in shadow map
         self._scene._bounds = None
