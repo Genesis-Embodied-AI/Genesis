@@ -373,7 +373,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    output_hits: torch.Tensor = make_tensor_field((0, 0))
+    output_hits: torch.Tensor = make_tensor_field((0, 0))  # FIXME: remove once we have contiguous cache slices
 
 
 class RaycasterData(NamedTuple):

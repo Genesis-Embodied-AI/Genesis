@@ -234,7 +234,7 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
 
     min_force: torch.Tensor = make_tensor_field((0, 3))
     max_force: torch.Tensor = make_tensor_field((0, 3))
-    output_forces: torch.Tensor = make_tensor_field((0, 0))
+    output_forces: torch.Tensor = make_tensor_field((0, 0))  # FIXME: remove once we have contiguous cache slices
 
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
@@ -299,7 +299,11 @@ class ContactForceSensor(
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         force, link_a, link_b = all_contacts["force"], all_contacts["link_a"], all_contacts["link_b"]
 
-        shared_ground_truth_cache.fill_(0.0)
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_metadata.output_forces.fill_(0.0)
+        else:
+            shared_ground_truth_cache.fill_(0.0)
+
         if link_a.shape[-1] == 0:
             return  # no contacts
 

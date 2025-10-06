@@ -394,6 +394,7 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
             entity_idx=ground_box.idx,
             draw_debug=True,
             debug_sphere_radius=0.08,
+            debug_color=(1.0, 0.5, 1.0, 1.0),
         )
     )
     scene.add_sensor(
@@ -427,14 +428,14 @@ def test_sensors_draw_debug(png_snapshot, n_envs):
             return_world_frame=False,
             draw_debug=True,
             debug_sphere_radius=0.01,
-            debug_ray_start_color=(1.0, 1.0, 0.5, 1.0),
+            debug_ray_start_color=(1.0, 1.0, 0.0, 1.0),
             debug_ray_hit_color=(0.5, 1.0, 1.0, 1.0),
         )
     )
 
     scene.build(n_envs=n_envs)
 
-    for _ in range(10):
+    for _ in range(5):
         scene.step()
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
