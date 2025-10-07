@@ -104,11 +104,12 @@ class Collider:
 
     def _init_collision_fields(self) -> None:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
-        n_possible_pairs, collision_pair_validity = self._compute_collision_pair_validity()
+        n_possible_pairs_, collision_pair_validity = self._compute_collision_pair_validity()
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
 
         # Initialize [state], which stores every MUTABLE collision data.
+        n_possible_pairs = max(n_possible_pairs_, 1)
         self._collider_state = array_class.get_collider_state(
             self._solver, self._solver._static_rigid_sim_config, n_possible_pairs, self._collider_static_config
         )
@@ -121,7 +122,7 @@ class Collider:
         )
         self._init_collision_pair_validity(collision_pair_validity)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
-        self._init_max_contact_pairs(n_possible_pairs)
+        self._init_max_contact_pairs(n_possible_pairs_)
         self._init_terrain_state()
 
         # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state / info.
