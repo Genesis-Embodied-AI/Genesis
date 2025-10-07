@@ -79,7 +79,7 @@ dev = [
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
     "pytest-rerunfailures<16.0",
     "syrupy",
-    "huggingface_hub",
+    "huggingface_hub[hf_xet]",
     "wandb",
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
