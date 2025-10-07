@@ -2012,7 +2012,7 @@ def func_add_contact(
         # print(self._warn_msg_max_collision_pairs)
         pass
     else:
-        
+
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
