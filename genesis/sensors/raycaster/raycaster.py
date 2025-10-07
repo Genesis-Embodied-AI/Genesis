@@ -232,7 +232,7 @@ def kernel_cast_rays(
                 if node.left == -1:  # is leaf node
                     # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
-                    original_tri_idx = bvh_morton_codes[0, sorted_leaf_idx][1]
+                    original_tri_idx = ti.cast(bvh_morton_codes[0, sorted_leaf_idx][1], ti.i32)
 
                     i_f = map_faces[original_tri_idx]
                     is_fixed = verts_info.is_fixed[faces_info.verts_idx[i_f][0]]

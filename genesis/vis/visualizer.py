@@ -1,5 +1,3 @@
-import os
-
 import genesis as gs
 from genesis.repr_base import RBC
 

@@ -1225,8 +1225,8 @@ class Viewer(pyglet.window.Window):
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
         try:
-            import pyglet.window.xlib
-            xlib_exceptions = (pyglet.window.xlib.XlibException,)
+            import pyglet.window.xlib, pyglet.display.xlib
+            xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
             xlib_exceptions = ()
 
