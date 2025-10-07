@@ -212,7 +212,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         """
         raise NotImplementedError(f"{cls.__name__} has not implemented `get_cache_dtype()`.")
 
-    def _draw_debug(self, context: "RasterizerContext"):
+    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         """
         Draw debug shapes for the sensor in the scene.
         """

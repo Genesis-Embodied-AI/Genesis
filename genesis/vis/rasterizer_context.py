@@ -803,8 +803,8 @@ class RasterizerContext:
                         update_data = self._scene.reorder_vertices(node, vertices)
                         buffer_updates[self._scene.get_buffer_id(node, "pos")] = update_data
 
-    def update_sensors(self):
-        self.sim._sensor_manager.draw_debug(self)
+    def update_sensors(self, buffer_updates):
+        self.sim._sensor_manager.draw_debug(self, buffer_updates)
 
     def on_lights(self):
         for light in self.lights:
@@ -907,15 +907,20 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def update_debug_objects(self, objs, poses):
-        poses = tensor_to_array(poses)
+    def get_buffer_debug_objects(self, objs, poses):
         buffer_updates = {}
         for obj, pose in zip(objs, poses):
+            pose = tensor_to_array(pose)
+            if pose.ndim != 3:
+                pose = np.tile(pose[np.newaxis], (max(self.scene.n_envs, 1), 1, 1))
             obj._bounds = None
             obj.primitives[0].poses = pose
             node = self.external_nodes[obj.name]
-            buffer_updates[self._scene.get_buffer_id(node, "model")] = poses.swapaxes(-2, -1)
-        self.jit.update_buffer(buffer_updates)
+            buffer_updates[self._scene.get_buffer_id(node, "model")] = pose.transpose((0, 2, 1))
+        return buffer_updates
+
+    def update_debug_objects(self, objs, poses):
+        self.jit.update_buffer(self.get_buffer_debug_objects(objs, poses))
 
     def clear_debug_object(self, obj):
         self.clear_external_node(obj)
@@ -949,7 +954,7 @@ class RasterizerContext:
         self.update_sph(self.buffer)
         self.update_pbd(self.buffer)
         self.update_fem(self.buffer)
-        self.update_sensors()
+        self.update_sensors(self.buffer)
 
     def add_light(self, light):
         # light direction is light pose's -z frame

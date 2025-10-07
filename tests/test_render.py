@@ -969,7 +969,6 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
         depth=False,
         seg=False,
         normal=False,
-        force_render=True,
     )
 
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot

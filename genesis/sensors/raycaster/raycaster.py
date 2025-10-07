@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, Type
 
 import gstaichi as ti
+import numpy as np
 import torch
 from pydantic import Field
 
@@ -563,7 +564,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         buffered_data.append(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
-    def _draw_debug(self, context: "RasterizerContext"):
+    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         """
         Draw hit points as spheres in the scene.
 
@@ -582,20 +583,23 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
 
         if not self.debug_objects:
-            self.debug_objects.append(
-                context.draw_debug_spheres(
-                    ray_starts,
-                    radius=self._options.debug_sphere_radius,
-                    color=self._options.debug_ray_start_color,
+            for ray_start in ray_starts:
+                self.debug_objects.append(
+                    context.draw_debug_sphere(
+                        ray_start,
+                        radius=self._options.debug_sphere_radius,
+                        color=self._options.debug_ray_start_color,
+                    )
                 )
-            )
-            self.debug_objects.append(
-                context.draw_debug_spheres(
-                    points,
-                    radius=self._options.debug_sphere_radius,
-                    color=self._options.debug_ray_hit_color,
+            for point in points:
+                self.debug_objects.append(
+                    context.draw_debug_sphere(
+                        point,
+                        radius=self._options.debug_sphere_radius,
+                        color=self._options.debug_ray_hit_color,
+                    )
                 )
-            )
         else:
-            context.update_debug_objects([self.debug_objects[0]], trans_to_T(ray_starts).unsqueeze(0))
-            context.update_debug_objects([self.debug_objects[1]], trans_to_T(points).unsqueeze(0))
+            buffer_updates.update(
+                context.get_buffer_debug_objects(self.debug_objects, trans_to_T(torch.cat([ray_starts, points], dim=0)))
+            )

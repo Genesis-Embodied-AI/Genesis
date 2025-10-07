@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Type
 
+import numpy as np
 import torch
 
 from genesis.utils.ring_buffer import TensorRingBuffer
@@ -86,10 +87,10 @@ class SensorManager:
                     self._buffered_data[dtype][:, cache_slice],
                 )
 
-    def draw_debug(self, context: "RasterizerContext"):
+    def draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         for sensor in self.sensors:
             if sensor._options.draw_debug:
-                sensor._draw_debug(context)
+                sensor._draw_debug(context, buffer_updates)
 
     def reset(self, envs_idx=None):
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
