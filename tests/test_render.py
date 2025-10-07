@@ -971,6 +971,12 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
         normal=False,
     )
 
+    if sys.platform == "darwin":
+        glinfo = pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        if renderer == "Apple Software Renderer":
+            pytest.xfail("Tile ground colors are altered on Apple Software Renderer.")
+
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 

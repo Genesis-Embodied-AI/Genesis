@@ -1235,12 +1235,14 @@ class Viewer(pyglet.window.Window):
         confs = [
             pyglet.gl.Config(
                 depth_size=24,
+                alpha_size=8,  # This parameter is essential to ensure proper pixel matching across platforms
                 double_buffer=True,  # Double buffering to avoid flickering
                 major_version=TARGET_OPEN_GL_MAJOR,
                 minor_version=TARGET_OPEN_GL_MINOR,
             ),
             pyglet.gl.Config(
                 depth_size=24,
+                alpha_size=8,
                 double_buffer=True,
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,
