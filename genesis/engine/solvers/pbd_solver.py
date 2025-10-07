@@ -923,6 +923,7 @@ class PBDSolver(Solver):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_attach_pbd_to_rigid_link(particles_idx, envs_idx, link_idx, links_state)
 
+    @ti.kernel
     def _kernel_get_particles_vel(
         self,
         particle_start: ti.i32,
