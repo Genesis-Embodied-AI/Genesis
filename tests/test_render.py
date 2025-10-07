@@ -1052,7 +1052,7 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-def test_render_planes(tmp_path, png_snapshot, renderer):
+def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
 
     for test_idx, (plane_size, tile_size) in enumerate(

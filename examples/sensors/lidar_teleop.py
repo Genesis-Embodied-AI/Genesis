@@ -1,4 +1,5 @@
 import argparse
+import os
 import threading
 
 import numpy as np
@@ -40,7 +41,11 @@ class KeyboardDevice:
         self.listener.start()
 
     def stop(self):
-        self.listener.stop()
+        try:
+            self.listener.stop()
+        except NotImplementedError:
+            # Dummy backend does not implement stop
+            pass
         self.listener.join()
 
     def on_press(self, key: "keyboard.Key"):
@@ -225,6 +230,8 @@ def main():
             apply_pose_to_all_envs(target_pos, euler_to_quat(target_euler))
             scene.step()
 
+            if "PYTEST_VERSION" in os.environ:
+                break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:

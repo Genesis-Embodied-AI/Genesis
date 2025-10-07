@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import numpy as np
 from tqdm import tqdm
@@ -21,14 +22,20 @@ def main():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=args.timestep),
-        vis_options=gs.options.VisOptions(show_world_frame=False),
+        sim_options=gs.options.SimOptions(
+            dt=args.timestep,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=args.vis,
     )
 
@@ -112,7 +119,7 @@ def main():
     rate = np.deg2rad(2.0)
 
     try:
-        steps = int(args.seconds / args.timestep)
+        steps = int(args.seconds / args.timestep) if "PYTEST_VERSION" not in os.environ else 5
         for i in tqdm(range(steps)):
             scene.step()
 
