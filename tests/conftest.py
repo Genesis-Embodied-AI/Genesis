@@ -45,7 +45,6 @@ if not has_display and has_egl:
     # It is necessary to configure pyglet in headless mode if necessary before importing Genesis.
     # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
     os.environ["PYGLET_HEADLESS"] = "1"
-    os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
 
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 

@@ -1,3 +1,5 @@
+import os
+
 import genesis as gs
 from genesis.repr_base import RBC
 
@@ -42,7 +44,7 @@ class Visualizer(RBC):
         self._context = RasterizerContext(vis_options)
 
         try:
-            screen_height, _, screen_scale = gs.utils.try_get_display_size()
+            screen_height, _screen_width, screen_scale = gs.utils.try_get_display_size()
             self._has_display = True
         except Exception as e:
             if show_viewer:
