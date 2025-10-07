@@ -18,10 +18,8 @@ def main():
     )
     parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
     parser.add_argument("-c", "--cpu", action="store_true", default=True)
-
     args = parser.parse_args()
 
-    args.cpu = True if "PYTEST_VERSION" in os.environ else args.cpu
     steps = int(1.0 / dt if "PYTEST_VERSION" not in os.environ else 5)
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)

@@ -24,7 +24,7 @@ jobs:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_HUB_DOWNLOAD_TIMEOUT: 60
-      GENESIS_IMAGE_VER: "1_1"
+      GENESIS_IMAGE_VER: "1_3"
       TIMEOUT_MINUTES: 180
       FORCE_COLOR: 1
       PY_COLORS: 1
@@ -46,7 +46,7 @@ jobs:
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          mkdir -p "${HOME}/.cache"
+          mkdir -p "${HOME}/.cache" "${HOME}/.local"
 
           # TODO: USD baking does not currently support Python 3.11 since
           # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
@@ -54,15 +54,16 @@ jobs:
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
-          "${{ github.workspace }}":/root/workspace,\
-          "${HOME}/.cache":/root/.cache \
+          "${HOME}/.local":/root/.local,\
+          "${HOME}/.cache":/root/.cache,\
+          "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
-            --export=NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN \
+            --export=NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN,PYTHONUSERBASE=/root/.local,BASH_ENV=/root/.bashrc \
             --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -c "
-              pip install --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
-              pip install -e '.[dev,render,usd]' && \
+              pip install --no-input --user --extra-index-url https://pypi.nvidia.com/ omniverse-kit && \
+              pip install --no-input --user '.[dev,render,usd]' && \
               pytest -v --backend gpu --dev --forked ./tests
             "
 
@@ -71,7 +72,7 @@ jobs:
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN,PYTHONUSERBASE=/root/.local,BASH_ENV=/root/.bashrc"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
@@ -80,6 +81,7 @@ jobs:
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
+          "${HOME}/.local":/root/.local,\
           /mnt/data/artifacts:/mnt/data/artifacts,\
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
@@ -91,7 +93,7 @@ jobs:
               tmate -S /tmp/tmate.sock new-session -d && \
               tmate -S /tmp/tmate.sock wait tmate-ready && \
               tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
-              pip install -e '.[dev,render]' && \
+              pip install --no-input --user '.[dev,render]' && \
               pytest --print -x -m 'benchmarks' ./tests && \
               cat speed_test*.txt > '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
               : # tmate -S /tmp/tmate.sock wait tmate-exit

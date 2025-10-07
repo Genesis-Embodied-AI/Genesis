@@ -1400,20 +1400,21 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
                 and returned, which is slower.
     """
     assert rotvec.ndim >= 1
+    B = rotvec.shape[:-1]
     if out is None:
-        out_ = np.empty((*rotvec.shape[:-1], 4), dtype=rotvec.dtype)
+        out_ = np.empty((*B, 4), dtype=rotvec.dtype)
     else:
-        assert out.shape == (*rotvec.shape[:-1], 4)
+        assert out.shape == (*B, 4)
         out_ = out
 
-    # Compute unit axis and positive angle separately
-    angle = np.sqrt(np.sum(np.square(rotvec), -1))
+    # Split unit axis and positive angle
+    angle = np.sqrt(np.sum(np.square(rotvec.reshape((-1, 3))), -1)).reshape(B)
     # FIXME: Taylor expansion should be used to handle angle ~ 0.0
-    axis = rotvec / np.maximum(angle, gs.EPS)
+    axis = rotvec / np.maximum(angle[..., None], gs.EPS)
 
     # Compute the quaternion representation
     out_[..., 0] = np.cos(0.5 * angle)
-    out_[..., 1:] = np.sin(0.5 * angle) * axis
+    out_[..., 1:] = np.sin(0.5 * angle[..., None]) * axis
 
     return out_
 

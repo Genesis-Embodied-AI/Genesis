@@ -129,6 +129,7 @@ class Camera(RBC):
         self._attached_offset_T = None
 
         self._followed_entity = None
+        self._follow_pos_rel = None
         self._follow_fixed_axis = None
         self._follow_smoothing = None
         self._follow_fix_orientation = None
@@ -150,11 +151,11 @@ class Camera(RBC):
             if self._env_idx is not None:
                 gs.raise_exception("Binding a camera to one specific environment index not supported by BatchRender.")
         else:
+            self._rasterizer.add_camera(self)
             if self._raytracer is not None:
                 self._raytracer.add_camera(self)
                 self._is_batched = False
             else:
-                self._rasterizer.add_camera(self)
                 self._is_batched = self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid
                 if self._is_batched:
                     gs.logger.warning(
@@ -281,7 +282,23 @@ class Camera(RBC):
         if self._attached_link is not None:
             gs.raise_exception("Impossible to following an entity with a camera that is already attached.")
 
+        if self._is_built:
+            env_idx = self._env_idx if self._is_batched and self._env_idx is not None else ()
+            pos_rel = self._pos[env_idx] - entity.get_pos(self._env_idx, unsafe=True)
+            if self._env_idx is not None:
+                pos_rel = pos_rel.squeeze(0)
+        else:
+            pos_rel = self._initial_pos - torch.tensor(entity.base_link.pos, dtype=gs.tc_float, device=gs.device)
+            if self._env_idx is None:
+                if self._visualizer._context.rendered_envs_idx is not None:
+                    pos_rel = pos_rel.expand((len(self._visualizer._context.rendered_envs_idx), 1))
+                else:
+                    # Falling back to adding batch dimension to allow broadcasting.
+                    # Note that it is not possible to expand / tile because the batch size is unknown before build.
+                    pos_rel = pos_rel.unsqueeze(0)
+
         self._followed_entity = entity
+        self._follow_pos_rel = pos_rel
         self._follow_fixed_axis = fixed_axis
         self._follow_smoothing = smoothing
         self._follow_fix_orientation = fix_orientation
@@ -293,6 +310,7 @@ class Camera(RBC):
         Calling this method has no effect if the camera is not currently following any entity.
         """
         self._followed_entity = None
+        self._follow_pos_rel = None
         self._follow_fixed_axis = None
         self._follow_smoothing = None
         self._follow_fix_orientation = None
@@ -315,16 +333,23 @@ class Camera(RBC):
             camera_lookat = self._lookat[env_idx].clone()
             camera_pos = self._pos[env_idx].clone()
 
-        # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
+        # Query entity and relative camera positions
         entity_pos = self._followed_entity.get_pos(self._env_idx, unsafe=True)
-        camera_pos -= self._initial_pos
+        follow_pos_rel = self._follow_pos_rel
+        if not self._is_batched:
+            follow_pos_rel = follow_pos_rel.squeeze(0)
+
+        # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
+        camera_pos -= follow_pos_rel
         if self._follow_smoothing is not None:
             camera_pos[:] = self._follow_smoothing * camera_pos + (1.0 - self._follow_smoothing) * entity_pos
             if not self._follow_fix_orientation:
                 camera_lookat[:] = self._follow_smoothing * camera_lookat + (1.0 - self._follow_smoothing) * entity_pos
         else:
             camera_pos[:] = entity_pos
-        camera_pos += self._initial_pos
+            camera_lookat[:] = entity_pos
+
+        camera_pos += follow_pos_rel
 
         # Fix the camera's position along the specified axis if requested
         for i_a, fixed_axis in enumerate(self._follow_fixed_axis):
@@ -428,16 +453,16 @@ class Camera(RBC):
             )
         elif self._raytracer is not None:
             if rgb_:
-                self._raytracer.update_scene()
+                self._raytracer.update_scene(force_render)
                 rgb_arr = self._raytracer.render_camera(self)
 
             if depth or segmentation or normal:
-                self._rasterizer.update_scene()
+                self._rasterizer.update_scene(force_render)
                 _, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                     self, False, depth, segmentation, normal=normal
                 )
         else:
-            self._rasterizer.update_scene()
+            self._rasterizer.update_scene(force_render)
             rgb_arr, depth_arr, seg_idxc_arr, normal_arr = self._rasterizer.render_camera(
                 self, rgb_, depth, segmentation, normal=normal
             )
@@ -526,7 +551,7 @@ class Camera(RBC):
             # FIXME: Avoid converting to numpy
             depth_arr = tensor_to_array(depth_arr)
         else:
-            self._rasterizer.update_scene()
+            self._rasterizer.update_scene(force_render=False)
             _, depth_arr, _, _ = self._rasterizer.render_camera(
                 self, rgb=False, depth=True, segmentation=False, normal=False
             )
@@ -657,7 +682,7 @@ class Camera(RBC):
         # Refresh rendering backend to taken into account updated camera pose
         if self._raytracer is not None:
             self._raytracer.update_camera(self)
-        elif self._batch_renderer is None:
+        if self._batch_renderer is None:
             self._rasterizer.update_camera(self)
 
     @gs.assert_built

@@ -139,9 +139,9 @@ def _func_support_world(
     g_pos = geoms_state.pos[i_g, i_b]
     g_quat = geoms_state.quat[i_g, i_b]
     d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
-    v, vid = _func_support_mesh(support_field_info, support_field_static_config, d_mesh, i_g)
-    v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
-    return v_, vid
+    v_, vid = _func_support_mesh(support_field_info, support_field_static_config, d_mesh, i_g)
+    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
+    return v, v_, vid
 
 
 @ti.func
@@ -207,10 +207,18 @@ def _func_support_sphere(
     sphere_radius = geoms_info.data[i_g][0]
 
     # Shrink the sphere to a point
-    res = sphere_center
+    v = sphere_center
+    v_ = ti.Vector.zero(gs.ti_float, 3)
+    vid = -1
     if not shrink:
-        res += d * sphere_radius
-    return res
+        v += d * sphere_radius
+
+        # Local position of the support point
+        g_quat = geoms_state.quat[i_g, i_b]
+        local_d = gu.ti_inv_transform_by_quat(d, g_quat)
+        v_ = local_d * sphere_radius
+
+    return v, v_, vid
 
 
 @ti.func
@@ -308,7 +316,7 @@ def _func_support_box(
     vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
     vid += geoms_info.vert_start[i_g]
     v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
-    return v, vid
+    return v, v_, vid
 
 
 @ti.func

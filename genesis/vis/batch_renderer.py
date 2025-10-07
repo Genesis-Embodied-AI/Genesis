@@ -157,7 +157,7 @@ class GenesisGeomRetriever(GeomRetriever):
         args["tex_widths"] = np.array(mat_texture_widths, np.int32)
         args["tex_heights"] = np.array(mat_texture_heights, np.int32)
         args["tex_nchans"] = np.array(mat_texture_nchans, np.int32)
-        args["tex_offsets"] = np.array(mat_texture_offsets, np.int32)
+        args["tex_offsets"] = np.array(mat_texture_offsets, np.int64)
         args["tex_data"] = np.concatenate(mat_texture_data, axis=0) if mat_texture_data else np.array([], np.uint8)
         args["mat_tex_ids"] = (
             np.stack(mat_texture_ids, axis=0)
@@ -305,8 +305,8 @@ class BatchRenderer(RBC):
             lights_intensity_tensor=_make_tensor([light.intensity for light in self._lights]),
         )
 
-    def update_scene(self):
-        self._visualizer._context.update()
+    def update_scene(self, force_render: bool = False):
+        self._visualizer._context.update(force_render)
 
     def render(self, rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=False):
         """
@@ -356,7 +356,7 @@ class BatchRenderer(RBC):
             return tuple(arr if req else None for req, arr in zip(request, cached))
 
         # Update scene
-        self.update_scene()
+        self.update_scene(force_render)
 
         # Render only what is needed (flags still passed to renderer)
         cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)

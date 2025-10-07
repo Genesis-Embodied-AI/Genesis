@@ -2,6 +2,7 @@ import os
 import sys
 
 import numpy as np
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -9,14 +10,12 @@ import genesis.utils.mesh as mu
 import genesis.utils.misc as miscu
 import genesis.utils.particle as pu
 from genesis.engine import entities
-import trimesh
 
-LRP_PATH = os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin")
 try:
-    sys.path.append(LRP_PATH)
+    sys.path.append(os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin"))
     import LuisaRenderPy
 except ImportError as e:
-    gs.raise_exception(f"Failed to import LuisaRenderer. {e.__class__.__name__}: {e}")
+    gs.raise_exception_from(f"Failed to import LuisaRenderer.", e)
 
 logging_class = {
     "debug": LuisaRenderPy.LogLevel.DEBUG,
@@ -164,7 +163,7 @@ class Raytracer:
             self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
 
         LuisaRenderPy.init(
-            context_path=LRP_PATH,
+            context_path=os.path.dirname(LuisaRenderPy.__file__),
             context_id=str(gs.UID()),
             backend="cuda" if gs.platform != "macOS" else "metal",
             device_index=self.device_index,
@@ -641,8 +640,8 @@ class Raytracer:
     def reset(self):
         self._t = -1
 
-    def update_scene(self):
-        if self._t >= self.scene.t:
+    def update_scene(self, force_render: bool = False):
+        if not force_render and self._t >= self.scene.t:
             if self.camera_updated:
                 self._scene.update_scene(time=self._t)
                 self.camera_updated = False
@@ -652,7 +651,7 @@ class Raytracer:
         self._t = self.scene.t
 
         # update variables not used in simulation
-        self.visualizer.update_visual_states()
+        self.visualizer.update_visual_states(force_render)
 
         # tool entities
         if self.sim.tool_solver.is_active():

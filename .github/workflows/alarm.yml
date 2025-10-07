@@ -316,7 +316,6 @@ jobs:
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
-            const prNumber = ;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

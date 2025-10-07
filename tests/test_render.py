@@ -332,7 +332,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         )
         cam_1 = scene.add_camera(
             res=CAM_RES,
-            pos=(1.5, -0.5, 1.5),
+            pos=(0.8, -0.5, 0.8),
             lookat=(0.0, 0.0, 0.5),
             fov=45,
             near=0.05,
@@ -587,6 +587,79 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
         seg = tensor_to_array(seg)
         assert_array_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
+
+
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_camera_follow_entity(n_envs, show_viewer):
+    CAM_RES = (100, 100)
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[1] if n_envs else None,
+            segmentation_level="entity",
+        ),
+        show_viewer=False,
+    )
+    for pos in ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0)):
+        obj = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=pos,
+            ),
+        )
+        cam = scene.add_camera(
+            res=CAM_RES,
+            pos=(0.0, 0.0, 0.0),
+            lookat=(1.0, 0, 0.0),
+            env_idx=1 if n_envs else None,
+            GUI=show_viewer,
+        )
+        cam.follow_entity(obj, smoothing=None)
+
+    scene.build(n_envs=n_envs)
+
+    # First render
+    seg_mask = None
+    for entity_idx, cam in enumerate(scene.visualizer.cameras, 1):
+        _, _, seg, _ = cam.render(rgb=False, segmentation=True)
+        assert (np.unique(seg) == (0, entity_idx)).all()
+        if seg_mask is None:
+            seg_mask = seg != 0
+        else:
+            assert ((seg != 0) == seg_mask).all()
+
+    # Second render - same
+    for i, obj in enumerate(scene.entities):
+        obj.set_pos((10.0, 0.0, i), envs_idx=([1] if n_envs else None))
+    force_render = True
+    for entity_idx, cam in enumerate(scene.visualizer.cameras, 1):
+        _, _, seg, _ = cam.render(rgb=False, segmentation=True, force_render=force_render)
+        assert (np.unique(seg) == (0, entity_idx)).all()
+        assert ((seg != 0) == seg_mask).all()
+        force_render = False
+
+    # Third render - All objects but all different
+    for i, obj in enumerate(scene.entities):
+        obj.set_pos((0.1 * ((i // 2) % 2 - 1), 0.1 * (i % 2), 0.1 * i), envs_idx=([1] if n_envs else None))
+    force_render = True
+    seg_masks = []
+    for cam in scene.visualizer.cameras:
+        _, _, seg, _ = cam.render(rgb=False, segmentation=True, force_render=force_render)
+        assert (np.unique(seg) == np.arange(len(scene.entities) + 1)).all()
+        seg_masks.append(seg != 0)
+        force_render = False
+    assert np.diff(seg_masks, axis=0).any(axis=(1, 2)).all()
+
+    # Track a trajectory over time
+    for i in range(3):
+        pos = 2.0 * (np.random.rand(3) - 0.5)
+        quat = gu.rotvec_to_quat(np.pi * (np.random.rand(3) - 0.5))
+        obj.set_pos(pos + np.array([10.0, 0.0, 0.0]), envs_idx=([1] if n_envs else None))
+        obj.set_quat(quat, envs_idx=([1] if n_envs else None))
+        _, _, seg, _ = cam.render(segmentation=True, force_render=True)
+        assert (np.unique(seg) == (0, entity_idx)).all()
+        assert not seg[tuple([*range(0, res // 3), *range(2 * res // 3, res)] for res in CAM_RES)].any()
 
 
 @pytest.mark.required

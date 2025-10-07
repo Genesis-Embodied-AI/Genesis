@@ -71,7 +71,7 @@ def main():
         ),
     )
     ########################## build ##########################
-    scene.build(n_envs=5)
+    scene.build(n_envs=2)
 
     horizon = 800 if "PYTEST_VERSION" not in os.environ else 5
 
