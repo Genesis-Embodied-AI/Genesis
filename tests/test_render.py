@@ -872,13 +872,14 @@ def test_draw_debug(renderer, show_viewer):
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
-    CAM_RES = (640, 480)
-
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 2.0, 2.0),
             camera_lookat=(0.0, 0.0, 0.2),
-            res=CAM_RES,
+            # Force screen-independent low-quality resolution when running unit tests for consistency
+            res=(640, 480),
+            # Enable running in background thread if supported by the platform
+            run_in_thread=(sys.platform == "linux"),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -962,7 +963,13 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
     rgb_arr, *_ = pyrender_viewer.render_offscreen(
-        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+        pyrender_viewer._camera_node,
+        pyrender_viewer._renderer,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+        force_render=True,
     )
 
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
