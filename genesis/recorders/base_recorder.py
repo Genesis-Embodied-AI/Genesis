@@ -33,7 +33,7 @@ class RecorderOptions(Options):
     buffer_size: int = 0
     buffer_full_wait_time: float = 0.1
 
-    def validate(self):
+    def model_post_init(self, context):
         """Validate the recorder options values before the recorder is added to the scene."""
         if self.hz is not None and self.hz < gs.EPS:
             gs.raise_exception(f"[{type(self).__name__}] recording hz should be greater than 0.")

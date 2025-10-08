@@ -1,4 +1,5 @@
 import argparse
+import os
 
 from tqdm import tqdm
 
@@ -8,11 +9,11 @@ from genesis.recorders.plotters import IS_MATPLOTLIB_AVAILABLE, IS_PYQTGRAPH_AVA
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-dt", "--timestep", type=float, default=1e-2, help="Simulation time step")
+    parser.add_argument("-dt", "--timestep", type=float, default=0.01, help="Simulation time step")
     parser.add_argument("-v", "--vis", action="store_true", default=True, help="Show visualization GUI")
     parser.add_argument("-nv", "--no-vis", action="store_false", dest="vis", help="Disable visualization GUI")
     parser.add_argument("-c", "--cpu", action="store_true", help="Use CPU instead of GPU")
-    parser.add_argument("-t", "--seconds", type=float, default=2, help="Number of seconds to simulate")
+    parser.add_argument("-t", "--seconds", type=float, default=2.0, help="Number of seconds to simulate")
     parser.add_argument("-f", "--force", action="store_true", default=True, help="Use ContactForceSensor (xyz float)")
     parser.add_argument("-nf", "--no-force", action="store_false", dest="force", help="Use ContactSensor (boolean)")
 
@@ -23,19 +24,25 @@ def main():
 
     ########################## scene setup ##########################
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=args.timestep),
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=True,
-            constraint_timeconst=max(0.01, 2 * args.timestep),
+        sim_options=gs.options.SimOptions(
+            dt=args.timestep,
         ),
-        vis_options=gs.options.VisOptions(show_world_frame=True),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        rigid_options=gs.options.RigidOptions(
+            constraint_timeconst=max(0.01, 2 * args.timestep),
+            use_gjk_collision=True,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=True,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=args.vis,
     )
 
     scene.add_entity(gs.morphs.Plane())
 
-    foot_link_names = ["FR_foot", "FL_foot", "RR_foot", "RL_foot"]
+    foot_link_names = ("FR_foot", "FL_foot", "RR_foot", "RL_foot")
     go2 = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
@@ -79,7 +86,7 @@ def main():
     scene.build()
 
     try:
-        steps = int(args.seconds / args.timestep)
+        steps = int(args.seconds / args.timestep) if "PYTEST_VERSION" not in os.environ else 5
         for _ in tqdm(range(steps)):
             scene.step()
     except KeyboardInterrupt:

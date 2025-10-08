@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Type
 
+import numpy as np
 import torch
 
 from genesis.utils.ring_buffer import TensorRingBuffer
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class SensorManager:
-    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], tuple[Type["Sensor"], Type["SharedSensorMetadata"]]] = {}
+    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], tuple[Type["Sensor"], Type["SharedSensorMetadata"], Type[tuple]]] = {}
 
     def __init__(self, sim):
         self._sim = sim
@@ -27,11 +28,11 @@ class SensorManager:
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate(self._sim.scene)
-        sensor_cls, metadata_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
+        sensor_cls, metadata_cls, data_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:
             self._sensors_metadata[sensor_cls] = metadata_cls()
-        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
+        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), data_cls, self)
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
 
@@ -86,10 +87,10 @@ class SensorManager:
                     self._buffered_data[dtype][:, cache_slice],
                 )
 
-    def draw_debug(self, context: "RasterizerContext"):
+    def draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         for sensor in self.sensors:
             if sensor._options.draw_debug:
-                sensor._draw_debug(context)
+                sensor._draw_debug(context, buffer_updates)
 
     def reset(self, envs_idx=None):
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
@@ -119,9 +120,11 @@ class SensorManager:
         return tuple([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
 
 
-def register_sensor(options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"]):
+def register_sensor(
+    options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"], data_cls: Type[tuple]
+):
     def _impl(sensor_cls: Type["Sensor"]):
-        SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls, metadata_cls
+        SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls, metadata_cls, data_cls
         return sensor_cls
 
     return _impl
