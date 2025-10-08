@@ -93,7 +93,7 @@ def main():
             gravity=(0.0, 0.0, -1.0),
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(6.0, 6.0, 4.0),
+            camera_pos=(-6.0, 0.0, 4.0),
             camera_lookat=(0.0, 0.0, 0.5),
             max_FPS=60,
         ),
