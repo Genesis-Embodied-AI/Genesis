@@ -92,9 +92,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if show_viewer:
         config.option.numprocesses = 0
 
-    # Force headless rendering if available and the interactive viewer is disabled
-    if not show_viewer and has_egl:
-        pyglet.options["headless"] = True
+    # Force headless rendering if available and the interactive viewer is disabled.
+    # FIXME: It breaks rendering on some platform...
+    # if not show_viewer and has_egl:
+    #     pyglet.options["headless"] = True
 
     # Disable low-level parallelization if distributed framework is enabled.
     # FIXME: It should be set to `max(int(physical_core_count / num_workers), 1)`, but 'num_workers' may be unknown.
