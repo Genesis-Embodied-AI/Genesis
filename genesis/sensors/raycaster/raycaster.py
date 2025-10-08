@@ -352,7 +352,6 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
 class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
     aabb: AABB | None = None
-    needs_aabb_update: bool = False
     map_faces: Any | None = None
     n_faces: int = 0
 
@@ -432,7 +431,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
             geom_is_fixed = ti_to_torch(self._shared_metadata.solver.geoms_info.is_fixed)
-            self._shared_metadata.needs_aabb_update = bool((~geom_is_fixed).any().item())
 
             self._shared_metadata.output_hits = torch.empty(
                 (self._manager._sim._B, 0), device=gs.device, dtype=gs.tc_float
@@ -504,22 +502,21 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor
     ):
-        if not shared_metadata.needs_aabb_update:
-            rigid_solver_decomp.kernel_update_all_verts(
-                geoms_state=shared_metadata.solver.geoms_state,
-                verts_info=shared_metadata.solver.verts_info,
-                free_verts_state=shared_metadata.solver.free_verts_state,
-                fixed_verts_state=shared_metadata.solver.fixed_verts_state,
-            )
+        rigid_solver_decomp.kernel_update_all_verts(
+            geoms_state=shared_metadata.solver.geoms_state,
+            verts_info=shared_metadata.solver.verts_info,
+            free_verts_state=shared_metadata.solver.free_verts_state,
+            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
+        )
 
-            kernel_update_aabbs(
-                map_faces=shared_metadata.map_faces,
-                free_verts_state=shared_metadata.solver.free_verts_state,
-                fixed_verts_state=shared_metadata.solver.fixed_verts_state,
-                verts_info=shared_metadata.solver.verts_info,
-                faces_info=shared_metadata.solver.faces_info,
-                aabb_state=shared_metadata.aabb,
-            )
+        kernel_update_aabbs(
+            map_faces=shared_metadata.map_faces,
+            free_verts_state=shared_metadata.solver.free_verts_state,
+            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
+            verts_info=shared_metadata.solver.verts_info,
+            faces_info=shared_metadata.solver.faces_info,
+            aabb_state=shared_metadata.aabb,
+        )
 
         links_pos = shared_metadata.solver.get_links_pos(links_idx=shared_metadata.links_idx)
         links_quat = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
@@ -535,8 +532,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             faces_info=shared_metadata.solver.faces_info,
             bvh_nodes=shared_metadata.bvh.nodes,
             bvh_morton_codes=shared_metadata.bvh.morton_codes,
-            links_pos=links_pos.contiguous(),
-            links_quat=links_quat.contiguous(),
+            links_pos=links_pos,
+            links_quat=links_quat,
             ray_starts=shared_metadata.ray_starts,
             ray_directions=shared_metadata.ray_dirs,
             max_ranges=shared_metadata.max_ranges,

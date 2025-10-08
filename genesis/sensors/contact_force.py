@@ -267,12 +267,10 @@ class ContactForceSensor(
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
         self._shared_metadata.min_force = concat_with_tensor(
-            self._shared_metadata.min_force,
-            _to_tuple(self._options.min_force, length_per_value=3),
+            self._shared_metadata.min_force, self._options.min_force, expand=(1, 3)
         )
         self._shared_metadata.max_force = concat_with_tensor(
-            self._shared_metadata.max_force,
-            _to_tuple(self._options.max_force, length_per_value=3),
+            self._shared_metadata.max_force, self._options.max_force, expand=(1, 3)
         )
 
         if self._shared_metadata.output_forces.numel() == 0:
