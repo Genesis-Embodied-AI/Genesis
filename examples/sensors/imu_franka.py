@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import numpy as np
 from tqdm import tqdm
@@ -21,14 +22,20 @@ def main():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=args.timestep),
-        vis_options=gs.options.VisOptions(show_world_frame=False),
+        sim_options=gs.options.SimOptions(
+            dt=args.timestep,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=args.vis,
     )
 
@@ -40,6 +47,7 @@ def main():
     end_effector = franka.get_link("hand")
     motors_dof = (0, 1, 2, 3, 4, 5, 6)
 
+    ########################## record sensor data ##########################
     imu = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=franka.idx,
@@ -59,25 +67,38 @@ def main():
             draw_debug=True,
         )
     )
-    labels = {"lin_acc": ("acc_x", "acc_y", "acc_z"), "ang_vel": ("gyro_x", "gyro_y", "gyro_z")}
     if args.vis:
+        xyz = ("x", "y", "z")
+        labels = {"lin_acc": xyz, "true_lin_acc": xyz, "ang_vel": xyz, "true_ang_vel": xyz}
+
+        def data_func():
+            data = imu.read()
+            true_data = imu.read_ground_truth()
+            return {
+                "lin_acc": data.lin_acc,
+                "true_lin_acc": true_data.lin_acc,
+                "ang_vel": data.ang_vel,
+                "true_ang_vel": true_data.ang_vel,
+            }
+
         if IS_PYQTGRAPH_AVAILABLE:
-            imu.start_recording(gs.recorders.PyQtLinePlot(title="IMU Measured Data", labels=labels))
             scene.start_recording(
-                imu.read_ground_truth,
+                data_func,
                 gs.recorders.PyQtLinePlot(title="IMU Ground Truth Data", labels=labels),
             )
         elif IS_MATPLOTLIB_AVAILABLE:
             gs.logger.info("pyqtgraph not found, falling back to matplotlib.")
-            imu.start_recording(gs.recorders.MPLLinePlot(title="IMU Measured Data", labels=labels))
             scene.start_recording(
-                imu.read_ground_truth,
+                data_func,
                 gs.recorders.MPLLinePlot(title="IMU Ground Truth Data", labels=labels),
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
 
-    imu.start_recording(gs.recorders.NPZFile(filename="imu_data.npz"))
+    scene.start_recording(
+        data_func=lambda: imu.read()._asdict(),
+        rec_options=gs.recorders.NPZFile(filename="imu_data.npz"),
+    )
 
     ########################## build ##########################
     scene.build()
@@ -98,7 +119,7 @@ def main():
     rate = np.deg2rad(2.0)
 
     try:
-        steps = int(args.seconds / args.timestep)
+        steps = int(args.seconds / args.timestep) if "PYTEST_VERSION" not in os.environ else 5
         for i in tqdm(range(steps)):
             scene.step()
 

@@ -142,7 +142,7 @@ class Viewer(RBC):
         pose = gu.pos_lookat_up_to_T(self._camera_init_pos, self._camera_init_lookat, self._camera_up)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self, auto_refresh=None):
+    def update(self, auto_refresh=None, force=False):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -150,7 +150,7 @@ class Viewer(RBC):
 
         with self.lock:
             # Update context
-            self.context.update()
+            self.context.update(force)
 
             # Refresh viewer by default if and if this is possible
             if auto_refresh is None:

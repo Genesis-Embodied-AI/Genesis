@@ -44,8 +44,8 @@ except ImportError:
 if not has_display and has_egl:
     # It is necessary to configure pyglet in headless mode if necessary before importing Genesis.
     # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
+    pyglet.options["headless"] = True
     os.environ["PYGLET_HEADLESS"] = "1"
-    os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
 
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
@@ -91,6 +91,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     show_viewer = config.getoption("--vis")
     if show_viewer:
         config.option.numprocesses = 0
+
+    # Force headless rendering if available and the interactive viewer is disabled
+    if not show_viewer and has_egl:
+        pyglet.options["headless"] = True
 
     # Disable low-level parallelization if distributed framework is enabled.
     # FIXME: It should be set to `max(int(physical_core_count / num_workers), 1)`, but 'num_workers' may be unknown.

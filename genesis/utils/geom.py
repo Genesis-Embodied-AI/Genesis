@@ -1584,6 +1584,31 @@ def transform_inertia_by_T(inertia_tensor, T, mass):
     return R @ inertia_tensor @ R.T + translation_inertia
 
 
+def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Convert spherical coordinates to Cartesian coordinates.
+
+    Parameters
+    ----------
+    theta : torch.Tensor
+        Horizontal angles in radians.
+    phi : torch.Tensor
+        Vertical angles in radians.
+
+    Returns
+    -------
+    vectors : torch.Tensor
+        Vectors in cartesian coordinates as tensor of shape (..., 3).
+    """
+    cos_phi = torch.cos(phi)
+
+    x = torch.cos(theta) * cos_phi  # forward
+    y = torch.sin(theta) * cos_phi  # left
+    z = torch.sin(phi)  # up
+
+    return torch.stack([x, y, z], dim=-1)
+
+
 def slerp(q0, q1, t):
     """
     Perform spherical linear interpolation between two quaternions.

@@ -1225,8 +1225,8 @@ class Viewer(pyglet.window.Window):
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
         try:
-            import pyglet.window.xlib
-            xlib_exceptions = (pyglet.window.xlib.XlibException,)
+            import pyglet.window.xlib, pyglet.display.xlib
+            xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
             xlib_exceptions = ()
 
@@ -1235,12 +1235,14 @@ class Viewer(pyglet.window.Window):
         confs = [
             pyglet.gl.Config(
                 depth_size=24,
+                alpha_size=8,  # This parameter is essential to ensure proper pixel matching across platforms
                 double_buffer=True,  # Double buffering to avoid flickering
                 major_version=TARGET_OPEN_GL_MAJOR,
                 minor_version=TARGET_OPEN_GL_MINOR,
             ),
             pyglet.gl.Config(
                 depth_size=24,
+                alpha_size=8,
                 double_buffer=True,
                 major_version=MIN_OPEN_GL_MAJOR,
                 minor_version=MIN_OPEN_GL_MINOR,

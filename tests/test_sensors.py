@@ -4,7 +4,7 @@ import torch
 
 import genesis as gs
 
-from .utils import assert_allclose, assert_array_equal
+from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
 
 
 def expand_batch_dim(values: tuple[float, ...], n_envs: int) -> tuple[float, ...] | np.ndarray:
@@ -84,12 +84,12 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     # IMU should calculate "classical linear acceleration" using the local frame without accounting for gravity
     # acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
-    assert_allclose(imu_biased.read()["lin_acc"], expand_batch_dim(BIAS, n_envs), tol=tol)
-    assert_allclose(imu_biased.read()["ang_vel"], expand_batch_dim(BIAS, n_envs), tol=tol)
-    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=tol)
-    assert_allclose(imu_delayed.read()["ang_vel"], 0.0, tol=tol)
-    assert_allclose(imu_noisy.read()["lin_acc"], 0.0, tol=1e-1)
-    assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=1e-1)
+    assert_allclose(imu_biased.read().lin_acc, expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu_biased.read().ang_vel, expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=tol)
+    assert_allclose(imu_delayed.read().ang_vel, 0.0, tol=tol)
+    assert_allclose(imu_noisy.read().lin_acc, 0.0, tol=1e-1)
+    assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=1e-1)
 
     # shift COM to induce angular velocity
     com_shift = torch.tensor([[0.1, 0.1, 0.1]])
@@ -109,21 +109,21 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(DELAY_STEPS):
         scene.step()
 
-    assert_array_equal(imu_delayed.read()["lin_acc"], true_imu_delayed_reading["lin_acc"])
-    assert_array_equal(imu_delayed.read()["ang_vel"], true_imu_delayed_reading["ang_vel"])
+    assert_array_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
+    assert_array_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
 
     # let box collide with ground
     for _ in range(20):
         scene.step()
 
-    assert_array_equal(imu_biased.read_ground_truth()["lin_acc"], imu_delayed.read_ground_truth()["lin_acc"])
-    assert_array_equal(imu_biased.read_ground_truth()["ang_vel"], imu_delayed.read_ground_truth()["ang_vel"])
+    assert_array_equal(imu_biased.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
+    assert_array_equal(imu_biased.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
 
     with np.testing.assert_raises(AssertionError, msg="Angular velocity should not be zero due to COM shift"):
-        assert_allclose(imu_biased.read_ground_truth()["ang_vel"], 0.0, tol=tol)
+        assert_allclose(imu_biased.read_ground_truth().ang_vel, 0.0, tol=tol)
 
     with np.testing.assert_raises(AssertionError, msg="Delayed data should not be equal to the ground truth data"):
-        assert_array_equal(imu_delayed.read()["lin_acc"] - imu_delayed.read_ground_truth()["lin_acc"], 0.0)
+        assert_array_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
 
     zero_com_shift = torch.tensor([[0.0, 0.0, 0.0]])
     box.set_COM_shift(zero_com_shift.expand((n_envs, 1, 3)) if n_envs > 0 else zero_com_shift)
@@ -132,22 +132,22 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(80):
         scene.step()
 
-    assert_allclose(imu_skewed.read()["lin_acc"], -GRAVITY, tol=5e-6)
+    assert_allclose(imu_skewed.read().lin_acc, -GRAVITY, tol=5e-6)
     assert_allclose(
-        imu_biased.read()["lin_acc"],
+        imu_biased.read().lin_acc,
         expand_batch_dim((BIAS[0], BIAS[1], BIAS[2] - GRAVITY), n_envs),
         tol=5e-6,
     )
-    assert_allclose(imu_biased.read()["ang_vel"], expand_batch_dim(BIAS, n_envs), tol=1e-5)
+    assert_allclose(imu_biased.read().ang_vel, expand_batch_dim(BIAS, n_envs), tol=1e-5)
 
     scene.reset()
 
-    assert_allclose(imu_biased.read()["lin_acc"], 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
-    assert_allclose(imu_delayed.read()["lin_acc"], 0.0, tol=gs.EPS)
-    assert_allclose(imu_noisy.read()["ang_vel"], 0.0, tol=gs.EPS)
+    assert_allclose(imu_biased.read().lin_acc, 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
+    assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=gs.EPS)
+    assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
 
     scene.step()
-    assert_allclose(imu_biased.read()["lin_acc"], expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu_biased.read().lin_acc, expand_batch_dim(BIAS, n_envs), tol=tol)
 
 
 @pytest.mark.required
@@ -247,4 +247,103 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
         expand_batch_dim((BIAS[0], BIAS[1], -GRAVITY / 2), n_envs),
         tol=NOISE * 10,
         err_msg="ContactForceSensor should read bias and noise and -gravity (normal) force clipped by max_force.",
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_raycaster_hits(show_viewer, tol, n_envs):
+    """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
+    EXPECTED_DISTANCE = 1.2
+    NUM_RAYS_XY = 3
+    BOX_HEIGHT = 0.2
+    SPHERE_POS = (4.0, 0.0, 1.0)
+    RAYCAST_GRID_SIZE = 0.5
+
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    box_obstacle = scene.add_entity(
+        gs.morphs.Box(
+            size=(RAYCAST_GRID_SIZE / 2.0, RAYCAST_GRID_SIZE / 2.0, BOX_HEIGHT),
+            # pos=(0.0, 0.0, -BOX_HEIGHT),  # init below ground to not interfere with first raycast
+            pos=(RAYCAST_GRID_SIZE, RAYCAST_GRID_SIZE, EXPECTED_DISTANCE / 2.0 + BOX_HEIGHT / 2.0),
+        ),
+    )
+    grid_sensor_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, EXPECTED_DISTANCE + BOX_HEIGHT),
+            fixed=True,
+        ),
+    )
+    grid_raycaster = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(
+                resolution=1.0 / (NUM_RAYS_XY - 1.0),
+                size=(1.0, 1.0),
+                direction=(0.0, 0.0, -1.0),  # pointing downwards to ground
+            ),
+            entity_idx=grid_sensor_box.idx,
+            pos_offset=(0.0, 0.0, -BOX_HEIGHT),
+            return_world_frame=True,
+            draw_debug=True,
+        )
+    )
+
+    spherical_sensor = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=EXPECTED_DISTANCE,
+            pos=SPHERE_POS,
+            fixed=True,
+        ),
+    )
+    spherical_raycaster = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.SphericalPattern(
+                n_points=(NUM_RAYS_XY, NUM_RAYS_XY),
+            ),
+            entity_idx=spherical_sensor.idx,
+            return_world_frame=False,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    grid_hits = grid_raycaster.read().points
+    grid_distances = grid_raycaster.read().distances
+    spherical_distances = spherical_raycaster.read().distances
+
+    expected_shape = (NUM_RAYS_XY, NUM_RAYS_XY) if n_envs == 0 else (n_envs, NUM_RAYS_XY, NUM_RAYS_XY)
+    assert grid_distances.shape == spherical_distances.shape == expected_shape
+
+    grid_distance_min = grid_distances.min()
+    assert grid_distances.min() < EXPECTED_DISTANCE - tol, "Raycaster grid pattern should have hit obstacle"
+    ground_hit_mask = grid_distances > grid_distance_min + tol
+    grid_hits = grid_hits[ground_hit_mask]
+    grid_distances = grid_distances[ground_hit_mask]
+
+    assert_allclose(
+        grid_hits[..., 2],
+        0.0,
+        tol=tol,
+        err_msg="Raycaster grid pattern should hit ground (z≈0)",
+    )
+    assert_allclose(
+        grid_distances,
+        EXPECTED_DISTANCE,
+        tol=tol,
+        err_msg=f"Raycaster grid pattern should measure {EXPECTED_DISTANCE}m to ground plane",
+    )
+    assert_allclose(
+        spherical_distances,
+        EXPECTED_DISTANCE,
+        tol=1e-2,  # since sphere mesh is discretized, we need a larger tolerance here
+        err_msg=f"Raycaster spherical pattern should measure {EXPECTED_DISTANCE}m to the sphere around it",
     )
