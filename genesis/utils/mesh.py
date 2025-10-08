@@ -259,6 +259,7 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
 
     return visual
 
+
 def get_mesh_scale(verts):
     # compute mesh scale using bbox diagonal
     v = np.asarray(verts, dtype=np.float64, order="C")
@@ -266,20 +267,21 @@ def get_mesh_scale(verts):
     bmax = v.max(axis=0)
     ext = bmax - bmin
     scale = float(np.linalg.norm(ext))
-    
+
     return scale
+
 
 def convex_decompose(mesh, coacd_options):
     # compute mesh scale
     mesh_scale = get_mesh_scale(mesh.vertices)
-    
+
     # rescale mesh vertices to remove scale factor, and quantize to int
     if not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0):
         _vertices = mesh.vertices / mesh_scale
         _vertices = np.round(_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64, order="C")
     else:
         _vertices = mesh.vertices
-    
+
     # compute file name via hashing for caching
     cvx_path = get_cvx_path(_vertices, mesh.faces, coacd_options)
 
@@ -292,7 +294,7 @@ def convex_decompose(mesh, coacd_options):
                 loaded_cache = pkl.load(file)
             mesh_parts = loaded_cache[:-1]
             cached_mesh_scale = loaded_cache[-1]
-            
+
             # rescale loaded mesh parts
             if not (np.isinf(cached_mesh_scale) or np.isnan(cached_mesh_scale) or cached_mesh_scale <= 0.0):
                 rescale_factor = mesh_scale / cached_mesh_scale
