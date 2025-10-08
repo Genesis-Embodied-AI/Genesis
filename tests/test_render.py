@@ -33,12 +33,11 @@ class RENDERER_TYPE(enum.IntEnum):
 def renderer(renderer_type):
     if renderer_type == RENDERER_TYPE.RASTERIZER:
         return gs.renderers.Rasterizer()
-    elif renderer_type == RENDERER_TYPE.RAYTRACER:
+    if renderer_type == RENDERER_TYPE.RAYTRACER:
         return gs.renderers.RayTracer()
-    else:
-        return gs.renderers.BatchRenderer(
-            use_rasterizer=renderer_type == RENDERER_TYPE.BATCHRENDER_RASTERIZER,
-        )
+    return gs.renderers.BatchRenderer(
+        use_rasterizer=renderer_type == RENDERER_TYPE.BATCHRENDER_RASTERIZER,
+    )
 
 
 @pytest.fixture(scope="function")
@@ -114,15 +113,33 @@ def test_render_api(show_viewer, renderer_type, renderer):
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-def test_deterministic(tmp_path, show_viewer, tol):
+def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
             env_separate_rigid=False,
         ),
+        renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
     plane = scene.add_entity(
         morph=gs.morphs.Plane(),
         surface=gs.surfaces.Aluminium(
@@ -264,7 +281,7 @@ def test_deterministic(tmp_path, show_viewer, tol):
                 rgb_array, *_ = cam.render(
                     rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
                 )
-                assert np.max(np.std(rgb_array.reshape((-1, 3)), axis=0)) > 10.0
+                assert tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max() > 10.0
                 robots_rgb_arrays.append(rgb_array)
             steps_rgb_arrays.append(robots_rgb_arrays)
 
@@ -296,6 +313,8 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         renderer=renderer,
+        show_viewer=False,
+        show_FPS=False,
     )
     plane = scene.add_entity(
         morph=gs.morphs.Plane(),
@@ -522,6 +541,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         ),
         renderer=renderer,
         show_viewer=False,
+        show_FPS=False,
     )
 
     robot = scene.add_entity(
@@ -589,9 +609,10 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         assert_array_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
 
 
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_camera_follow_entity(n_envs, show_viewer):
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_camera_follow_entity(n_envs, renderer, show_viewer):
     CAM_RES = (100, 100)
 
     scene = gs.Scene(
@@ -599,7 +620,9 @@ def test_camera_follow_entity(n_envs, show_viewer):
             rendered_envs_idx=[1] if n_envs else None,
             segmentation_level="entity",
         ),
+        renderer=renderer,
         show_viewer=False,
+        show_FPS=False,
     )
     for pos in ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0)):
         obj = scene.add_entity(
@@ -775,18 +798,19 @@ def test_point_cloud(renderer_type, renderer, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_draw_debug(show_viewer):
+def test_draw_debug(renderer, show_viewer):
     if "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ:
         pytest.skip("Offscreen rendering of markers is forcibly disabled. Skipping...")
 
     scene = gs.Scene(
+        renderer=renderer,
         show_viewer=show_viewer,
+        show_FPS=False,
     )
     cam = scene.add_camera(
         pos=(3.5, 0.5, 2.5),
         lookat=(0.0, 0.0, 0.5),
         up=(0.0, 0.0, 1.0),
-        fov=40,
         res=(640, 640),
         GUI=show_viewer,
     )
@@ -843,9 +867,123 @@ def test_draw_debug(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_viewer):
+def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
+    """Test that sensor debug drawing works correctly and renders visible debug elements."""
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 2.0),
+            camera_lookat=(0.0, 0.0, 0.2),
+            # Force screen-independent low-quality resolution when running unit tests for consistency
+            res=(640, 480),
+            # Enable running in background thread if supported by the platform
+            run_in_thread=(sys.platform == "linux"),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    floating_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.0, 0.1),
+            draw_debug=True,
+        )
+    )
+
+    ground_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.4, 0.2, 0.1),
+            pos=(-0.25, 0.0, 0.05),
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=ground_box.idx,
+            draw_debug=True,
+            debug_sphere_radius=0.08,
+            debug_color=(1.0, 0.5, 1.0, 1.0),
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=ground_box.idx,
+            draw_debug=True,
+            debug_scale=0.01,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(
+                resolution=0.2,
+                size=(0.4, 0.4),
+                direction=(0.0, 0.0, -1.0),
+            ),
+            entity_idx=floating_box.idx,
+            pos_offset=(0.2, 0.0, -0.1),
+            return_world_frame=True,
+            draw_debug=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.SphericalPattern(
+                n_points=(6, 6),
+                fov=(60.0, (-120.0, -60.0)),
+            ),
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.5, 0.0),
+            return_world_frame=False,
+            draw_debug=True,
+            debug_sphere_radius=0.01,
+            debug_ray_start_color=(1.0, 1.0, 0.0, 1.0),
+            debug_ray_hit_color=(0.5, 1.0, 1.0, 1.0),
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    for _ in range(5):
+        scene.step()
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb_arr, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node,
+        pyrender_viewer._renderer,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+    )
+
+    if sys.platform == "darwin":
+        glinfo = pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        if renderer == "Apple Software Renderer":
+            pytest.xfail("Tile ground colors are altered on Apple Software Renderer.")
+
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snapshot, show_viewer):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
     # Mock 'get_save_filename' to avoid poping up an interactive dialog
@@ -878,7 +1016,9 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
             # 'EventLoop.run() must be called from the same thread that imports pyglet.app'.
             run_in_thread=(sys.platform == "linux"),
         ),
+        renderer=renderer,
         show_viewer=True,
+        show_FPS=False,
     )
     cube = scene.add_entity(
         gs.morphs.Box(
@@ -922,9 +1062,9 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, png_snapshot, show_
 
 @pytest.mark.parametrize(
     "renderer_type",
-    [RENDERER_TYPE.RASTERIZER],
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-def test_render_planes(tmp_path, png_snapshot, renderer):
+def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
 
     for test_idx, (plane_size, tile_size) in enumerate(
@@ -936,7 +1076,26 @@ def test_render_planes(tmp_path, png_snapshot, renderer):
     ):
         scene = gs.Scene(
             renderer=renderer,
+            show_viewer=False,
+            show_FPS=False,
         )
+        if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
+            scene.add_light(
+                pos=(0.0, 0.0, 1.5),
+                dir=(1.0, 1.0, -2.0),
+                directional=True,
+                castshadow=True,
+                cutoff=45.0,
+                intensity=0.5,
+            )
+            scene.add_light(
+                pos=(4.0, -4.0, 4.0),
+                dir=(-1.0, 1.0, -1.0),
+                directional=False,
+                castshadow=True,
+                cutoff=45.0,
+                intensity=0.5,
+            )
         plane = scene.add_entity(
             gs.morphs.Plane(plane_size=plane_size, tile_size=tile_size),
         )
@@ -1002,6 +1161,7 @@ def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
             visualize_sph_boundary=True,
         ),
         show_viewer=True,
+        show_FPS=False,
     )
 
     plane = scene.add_entity(

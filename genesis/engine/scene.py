@@ -773,7 +773,7 @@ class Scene(RBC):
         env_spacing=(0.0, 0.0),
         n_envs_per_row: int | None = None,
         center_envs_at_origin=True,
-        compile_kernels=True,
+        compile_kernels=None,
     ):
         """
         Builds the scene once all entities have been added. This operation is required before running the simulation.
@@ -781,16 +781,23 @@ class Scene(RBC):
         Parameters
         ----------
         n_envs : int
-            Number of parallel environments to create. If `n_envs` is 0, the scene will not have a batching dimension. If `n_envs` is greater than 0, the first dimension of all the input and returned states will be the batch dimension.
+            Number of parallel environments to create.
+            If `n_envs` is 0, the scene will not have a batching dimension. When greater than 0, the first dimension of
+            all the input and returned states will be the batch dimension.
         env_spacing : tuple of float, shape (2,)
-            The spacing between adjacent environments in the scene. This is for visualization purposes only and does not change simulation-related poses.
+            The spacing between adjacent environments in the scene.
+            This is for visualization purposes only and does not change simulation-related poses.
         n_envs_per_row : int
             The number of environments per row for visualization. If None, it will be set to `sqrt(n_envs)`.
         center_envs_at_origin : bool
             Whether to put the center of all the environments at the origin (for visualization only).
-        compile_kernels : bool
-            Whether to compile the simulation kernels inside `build()`. If False, the kernels will not be compiled (or loaded if found in the cache) until the first call of `scene.step()`. This is useful for cases you don't want to run the actual simulation, but rather just want to visualize the created scene.
+        compile_kernels : bool, optional
+            This parameter is deprecated and will be removed in future release.
         """
+        if compile_kernels is not None:
+            warn_once("`compile_kernels` is deprecated and will be removed in future release.")
+            compile_kernels = True
+
         with gs.logger.timer(f"Building scene ~~~<{self._uid}>~~~..."):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
@@ -803,10 +810,9 @@ class Scene(RBC):
 
             self._is_built = True
 
-        if compile_kernels:
-            with gs.logger.timer("Compiling simulation kernels..."):
-                self._sim.step()
-                self._reset()
+        with gs.logger.timer("Compiling simulation kernels..."):
+            self._sim.step()
+            self._reset()
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):

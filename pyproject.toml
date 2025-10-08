@@ -11,7 +11,7 @@ requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
     "gstaichi==2.5.0",
-    "pydantic>=2.7.1",
+    "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
     "scipy>=1.14",
@@ -79,7 +79,7 @@ dev = [
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
     "pytest-rerunfailures<16.0",
     "syrupy",
-    "huggingface_hub",
+    "huggingface_hub[hf_xet]",
     "wandb",
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
@@ -154,7 +154,7 @@ addopts = [
     "--random-order-seed=0",
     # "--max-worker-restart=0",
     "--durations=0",
-    "--durations-min=40.0",
+    "--durations-min=100.0",
     "-m not (benchmarks or examples)",
 ]
 filterwarnings = [
