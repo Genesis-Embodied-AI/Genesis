@@ -394,7 +394,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         manager: "gs.SensorManager",
     ):
         super().__init__(options, shared_metadata, data_cls, manager)
-        self.debug_objects: list["Mesh | None"] = []
+        self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
     @classmethod
@@ -582,24 +582,19 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         if not self._options.return_world_frame:
             points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
 
-        if not self.debug_objects:
-            for ray_start in ray_starts:
-                self.debug_objects.append(
-                    context.draw_debug_sphere(
-                        ray_start,
-                        radius=self._options.debug_sphere_radius,
-                        color=self._options.debug_ray_start_color,
-                    )
-                )
-            for point in points:
-                self.debug_objects.append(
-                    context.draw_debug_sphere(
-                        point,
-                        radius=self._options.debug_sphere_radius,
-                        color=self._options.debug_ray_hit_color,
-                    )
-                )
-        else:
-            buffer_updates.update(
-                context.get_buffer_debug_objects(self.debug_objects, trans_to_T(torch.cat([ray_starts, points], dim=0)))
-            )
+        for debug_object in self.debug_objects:
+            context.clear_debug_object(debug_object)
+        self.debug_objects.clear()
+
+        self.debug_objects += [
+            context.draw_debug_spheres(
+                ray_starts,
+                radius=self._options.debug_sphere_radius,
+                color=self._options.debug_ray_start_color,
+            ),
+            context.draw_debug_spheres(
+                points,
+                radius=self._options.debug_sphere_radius,
+                color=self._options.debug_ray_hit_color,
+            ),
+        ]

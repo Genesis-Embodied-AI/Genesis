@@ -170,16 +170,14 @@ class ContactSensor(Sensor):
         pos = self._link.get_pos(envs_idx=env_idx).squeeze(0)
         is_contact = self.read(envs_idx=env_idx).item()
 
-        if is_contact:
-            if self.debug_object is None:
-                self.debug_object = context.draw_debug_sphere(
-                    pos=pos, radius=self._options.debug_sphere_radius, color=self._options.debug_color
-                )
-            else:
-                buffer_updates.update(context.get_buffer_debug_objects([self.debug_object], [trans_to_T(pos)]))
-        elif self.debug_object is not None:
+        if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)
-            self.debug_object = None
+            self.debug_objects = None
+
+        if is_contact:
+            self.debug_object = context.draw_debug_sphere(
+                pos=pos, radius=self._options.debug_sphere_radius, color=self._options.debug_color
+            )
 
 
 # ==========================================================================================================
@@ -366,4 +364,6 @@ class ContactForceSensor(
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)
+            self.debug_object = None
+
         self.debug_object = context.draw_debug_arrow(pos=pos, vec=vec, color=self._options.debug_color)
