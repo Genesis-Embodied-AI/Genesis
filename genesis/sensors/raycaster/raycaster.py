@@ -140,15 +140,13 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
 
 @ti.kernel
 def kernel_update_aabbs(
-    map_faces: ti.template(),
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     aabb_state: array_class.AABBState,
 ):
-    for i_b, i_f_ in ti.ndrange(free_verts_state.pos.shape[1], map_faces.shape[0]):
-        i_f = map_faces[i_f_]
+    for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
         aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-ti.math.inf)
 
@@ -166,7 +164,6 @@ def kernel_update_aabbs(
 
 @ti.kernel
 def kernel_cast_rays(
-    map_faces: ti.template(),
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
@@ -193,7 +190,7 @@ def kernel_cast_rays(
     each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
     """
 
-    n_triangles = map_faces.shape[0]
+    n_triangles = faces_info.verts_idx.shape[0]
     n_points = ray_starts.shape[0]
     # batch, point
     for i_b, i_p in ti.ndrange(output_hits.shape[0], n_points):
@@ -233,9 +230,8 @@ def kernel_cast_rays(
                 if node.left == -1:  # is leaf node
                     # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
-                    original_tri_idx = ti.cast(bvh_morton_codes[0, sorted_leaf_idx][1], ti.i32)
+                    i_f = ti.cast(bvh_morton_codes[0, sorted_leaf_idx][1], ti.i32)
 
-                    i_f = map_faces[original_tri_idx]
                     is_fixed = verts_info.is_fixed[faces_info.verts_idx[i_f][0]]
 
                     v0 = ti.Vector.zero(gs.ti_float, 3)
@@ -352,8 +348,6 @@ class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
 class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
     aabb: AABB | None = None
-    map_faces: Any | None = None
-    n_faces: int = 0
 
     sensors_ray_start_idx: list[int] = field(default_factory=list)
     total_n_rays: int = 0
@@ -399,13 +393,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     @classmethod
     def _build_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         n_faces = shared_metadata.solver.faces_info.geom_idx.shape[0]
-        torch_map_faces = torch.arange(n_faces, dtype=torch.int32, device=gs.device)
 
-        shared_metadata.map_faces = ti.field(ti.i32, (n_faces))
-        shared_metadata.map_faces.from_torch(torch_map_faces)
-        shared_metadata.n_faces = n_faces
-
-        shared_metadata.aabb = AABB(n_batches=shared_metadata.solver.free_verts_state.pos.shape[1], n_aabbs=n_faces)
+        n_envs = shared_metadata.solver.free_verts_state.pos.shape[1]
+        shared_metadata.aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
 
         rigid_solver_decomp.kernel_update_all_verts(
             geoms_state=shared_metadata.solver.geoms_state,
@@ -415,7 +405,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         )
 
         kernel_update_aabbs(
-            map_faces=shared_metadata.map_faces,
             free_verts_state=shared_metadata.solver.free_verts_state,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             verts_info=shared_metadata.solver.verts_info,
@@ -430,8 +419,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
-            geom_is_fixed = ti_to_torch(self._shared_metadata.solver.geoms_info.is_fixed)
-
             self._shared_metadata.output_hits = torch.empty(
                 (self._manager._sim._B, 0), device=gs.device, dtype=gs.tc_float
             )
@@ -510,7 +497,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         )
 
         kernel_update_aabbs(
-            map_faces=shared_metadata.map_faces,
             free_verts_state=shared_metadata.solver.free_verts_state,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             verts_info=shared_metadata.solver.verts_info,
@@ -525,7 +511,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             links_quat = links_quat.unsqueeze(0)
 
         kernel_cast_rays(
-            map_faces=shared_metadata.map_faces,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             free_verts_state=shared_metadata.solver.free_verts_state,
             verts_info=shared_metadata.solver.verts_info,

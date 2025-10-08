@@ -73,16 +73,6 @@ def main():
     if IS_PYNPUT_AVAILABLE:
         kb = KeyboardDevice()
         kb.start()
-
-        print("Keyboard Controls:")
-        # Avoid using same keys as interactive viewer keyboard controls
-        print("[↑/↓/←/→]: Move XY")
-        print("[j/k]: Down/Up")
-        print("[n/m]: Roll CCW/CW")
-        print("[,/.]: Pitch Up/Down")
-        print("[o/p]: Yaw CCW/CW")
-        print("[\\]: Reset")
-        print("[esc]: Quit")
     else:
         print("Keyboard teleop is disabled since pynput is not installed. To install, run `pip install pynput`.")
 
@@ -179,6 +169,17 @@ def main():
         sensor = scene.add_sensor(gs.sensors.Lidar(pattern=pattern_cfg, **sensor_kwargs))
 
     scene.build(n_envs=args.n_envs)
+
+    if IS_PYNPUT_AVAILABLE:
+        # Avoid using same keys as interactive viewer keyboard controls
+        print("Keyboard Controls:")
+        print("[↑/↓/←/→]: Move XY")
+        print("[j/k]: Down/Up")
+        print("[n/m]: Roll CCW/CW")
+        print("[,/.]: Pitch Up/Down")
+        print("[o/p]: Yaw CCW/CW")
+        print("[\\]: Reset")
+        print("[esc]: Quit")
 
     init_pos = np.array([0.0, 0.0, 0.35], dtype=np.float32)
     init_euler = np.array([0.0, 0.0, 0.0], dtype=np.float32)

@@ -298,11 +298,11 @@ class SAPCoupler(RBC):
         self.MarchingTetsEdgeTable = ti.field(gs.ti_ivec4, shape=len(MARCHING_TETS_EDGE_TABLE))
         self.MarchingTetsEdgeTable.from_numpy(np.array(MARCHING_TETS_EDGE_TABLE, dtype=gs.np_int))
 
-        self.TetEdges = ti.field(gs.ti_ivec2, shape=len(TET_EDGES))
+        self.TetEdges = ti.field(gs.ti_ivec2, shape=(len(TET_EDGES),))
         self.TetEdges.from_numpy(np.array(TET_EDGES, dtype=gs.np_int))
 
     def _init_hydroelastic_fem_fields_and_info(self):
-        self.fem_pressure = ti.field(gs.ti_float, shape=(self.fem_solver.n_vertices))
+        self.fem_pressure = ti.field(gs.ti_float, shape=(self.fem_solver.n_vertices,))
         fem_pressure_np = np.concatenate([fem_entity.pressure_field_np for fem_entity in self.fem_solver.entities])
         self.fem_pressure.from_numpy(fem_pressure_np)
         self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_elements))
@@ -439,13 +439,13 @@ class SAPCoupler(RBC):
         )
 
     def _init_sap_fields(self):
-        self.batch_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
+        self.batch_active = ti.field(dtype=gs.ti_bool, shape=(self.sim._B,), needs_grad=False)
         sap_state = ti.types.struct(
             gradient_norm=gs.ti_float,  # norm of the gradient
             momentum_norm=gs.ti_float,  # norm of the momentum
             impulse_norm=gs.ti_float,  # norm of the impulse
         )
-        self.sap_state = sap_state.field(shape=self.sim._B, needs_grad=False, layout=ti.Layout.SOA)
+        self.sap_state = sap_state.field(shape=(self.sim._B,), needs_grad=False, layout=ti.Layout.SOA)
 
     def _init_fem_fields(self):
         fem_state_v = ti.types.struct(
@@ -516,7 +516,7 @@ class SAPCoupler(RBC):
         )
 
     def _init_pcg_fields(self):
-        self.batch_pcg_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
+        self.batch_pcg_active = ti.field(dtype=gs.ti_bool, shape=(self.sim._B,), needs_grad=False)
 
         pcg_state = ti.types.struct(
             rTr=gs.ti_float,
@@ -528,10 +528,10 @@ class SAPCoupler(RBC):
             beta=gs.ti_float,
         )
 
-        self.pcg_state = pcg_state.field(shape=self.sim._B, needs_grad=False, layout=ti.Layout.SOA)
+        self.pcg_state = pcg_state.field(shape=(self.sim._B,), needs_grad=False, layout=ti.Layout.SOA)
 
     def _init_linesearch_fields(self):
-        self.batch_linesearch_active = ti.field(dtype=gs.ti_bool, shape=self.sim._B, needs_grad=False)
+        self.batch_linesearch_active = ti.field(dtype=gs.ti_bool, shape=(self.sim._B,), needs_grad=False)
 
         linesearch_state = ti.types.struct(
             prev_energy=gs.ti_float,
@@ -553,7 +553,7 @@ class SAPCoupler(RBC):
             minus_dalpha_prev=gs.ti_float,  # previous negative stepsize
         )
 
-        self.linesearch_state = linesearch_state.field(shape=self.sim._B, needs_grad=False, layout=ti.Layout.SOA)
+        self.linesearch_state = linesearch_state.field(shape=(self.sim._B,), needs_grad=False, layout=ti.Layout.SOA)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- Main ----------------------------------------

@@ -126,9 +126,9 @@ class LBVH(RBC):
         # Maximum stack depth for traversal
         self.max_stack_depth = 64
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(self.n_batches, self.n_aabbs))
-        self.aabb_min = ti.field(gs.ti_vec3, shape=(self.n_batches))
-        self.aabb_max = ti.field(gs.ti_vec3, shape=(self.n_batches))
-        self.scale = ti.field(gs.ti_vec3, shape=(self.n_batches))
+        self.aabb_min = ti.field(gs.ti_vec3, shape=(self.n_batches,))
+        self.aabb_max = ti.field(gs.ti_vec3, shape=(self.n_batches,))
+        self.scale = ti.field(gs.ti_vec3, shape=(self.n_batches,))
         self.morton_codes = ti.field(ti.types.vector(2, ti.u32), shape=(self.n_batches, self.n_aabbs))
 
         # Histogram for radix sort
@@ -172,7 +172,7 @@ class LBVH(RBC):
         self.internal_node_ready = ti.field(gs.ti_bool, shape=(self.n_batches, self.n_aabbs - 1))
 
         # Query results, vec3 of batch id, self id, query id
-        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_query_results))
+        self.query_result = ti.field(gs.ti_ivec3, shape=(self.max_query_results,))
         # Count of query results
         self.query_result_count = ti.field(ti.i32, shape=())
 

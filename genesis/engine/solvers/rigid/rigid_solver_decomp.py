@@ -910,9 +910,9 @@ class RigidSolver(Solver):
             )
 
             self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
-            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
-            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
-            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
+            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=(2,))
+            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=(2,))
+            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=(6,))
 
             self.terrain_hf.from_numpy(hf)
             self.terrain_rc.from_numpy(rc)
