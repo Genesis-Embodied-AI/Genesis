@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 
 import genesis as gs
 
@@ -12,7 +13,7 @@ pytestmark = [
 
 
 def test_rigid_mpm_muscle(show_viewer):
-    ball_pos_init = (0.8, 0.6, 0.12)
+    BALL_POS_INIT = (0.8, 0.6, 0.12)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -42,7 +43,7 @@ def test_rigid_mpm_muscle(show_viewer):
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/simple/two_link_arm.urdf",
-            pos=(0.5, 0.5, 0.3),
+            pos=(0.45, 0.45, 0.2),
             euler=(0.0, 0.0, 0.0),
             scale=0.2,
             fixed=True,
@@ -63,7 +64,7 @@ def test_rigid_mpm_muscle(show_viewer):
     )
     ball = scene.add_entity(
         morph=gs.morphs.Sphere(
-            pos=ball_pos_init,
+            pos=BALL_POS_INIT,
             radius=0.12,
         ),
         material=gs.materials.Rigid(rho=1000, friction=0.5),
@@ -71,12 +72,14 @@ def test_rigid_mpm_muscle(show_viewer):
     scene.build()
 
     scene.reset()
-    for i in range(370):
-        robot.control_dofs_velocity(np.array([1.0 * np.sin(2 * np.pi * i * 0.001)] * robot.n_dofs))
+    for i in range(150):
+        robot.control_dofs_velocity(np.array([2.0 * np.sin(2 * np.pi * i * 0.006)] * robot.n_dofs))
         scene.step()
 
-    with np.testing.assert_raises(AssertionError):
-        assert_allclose(ball.get_pos(), ball_pos_init, atol=1e-2)
+    ball_pos_delta = ball.get_pos() - torch.tensor(BALL_POS_INIT, dtype=gs.tc_float, device=gs.device)
+    assert_allclose(ball_pos_delta[..., 0], 0.0, tol=1e-2)
+    assert ((0.02 < ball_pos_delta[1]) & (ball_pos_delta[1] < 0.05)).all()
+    assert_allclose(ball_pos_delta[..., 2], 0.0, tol=1e-3)
 
 
 @pytest.mark.required
