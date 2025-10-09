@@ -292,8 +292,8 @@ def convex_decompose(mesh, coacd_options):
         try:
             with open(cvx_path, "rb") as file:
                 loaded_cache = pkl.load(file)
-            mesh_parts = loaded_cache[:-1]
-            cached_mesh_scale = loaded_cache[-1]
+            mesh_parts = loaded_cache["mesh_parts"]
+            cached_mesh_scale = loaded_cache["mesh_scale"]
 
             # rescale loaded mesh parts
             if not (np.isinf(cached_mesh_scale) or np.isnan(cached_mesh_scale) or cached_mesh_scale <= 0.0):
@@ -304,7 +304,7 @@ def convex_decompose(mesh, coacd_options):
             else:
                 # if cached mesh scale is invalid, ignore cache
                 is_cached_loaded = False
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:
@@ -333,11 +333,13 @@ def convex_decompose(mesh, coacd_options):
             mesh_parts = []
             for vs, fs in result:
                 mesh_parts.append(trimesh.Trimesh(vs, fs))
-            mesh_parts.append(mesh_scale)
-
+            cache = {
+                "mesh_parts": mesh_parts,
+                "mesh_scale": mesh_scale,
+            }
             os.makedirs(os.path.dirname(cvx_path), exist_ok=True)
             with open(cvx_path, "wb") as file:
-                pkl.dump(mesh_parts, file)
+                pkl.dump(cache, file)
 
     return mesh_parts
 
