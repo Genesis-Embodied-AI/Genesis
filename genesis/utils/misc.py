@@ -3,6 +3,7 @@ import datetime
 import functools
 import logging
 import math
+import numbers
 import os
 import platform
 import random
@@ -316,7 +317,9 @@ def concat_with_tensor(
 ):
     """Helper method to concatenate a value (not necessarily a tensor) with a tensor."""
     if not isinstance(value, torch.Tensor):
-        value = torch.tensor([value], dtype=tensor.dtype, device=tensor.device)
+        if isinstance(value, (numbers.Real, np.floating, numbers.Integral, np.integer)):
+            value = [value]
+        value = torch.tensor(value, dtype=tensor.dtype, device=tensor.device)
     if expand is not None:
         value = value.expand(*expand)
     if dim < 0:

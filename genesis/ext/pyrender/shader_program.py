@@ -226,7 +226,7 @@ class ShaderProgram(object):
         # Call correct uniform function
         elif isinstance(value, (numbers.Real, np.floating)):
             glUniform1f(loc, float(value))
-        elif isinstance(value, (numbers.Integer, np.integer)):
+        elif isinstance(value, (numbers.Integral, np.integer)):
             if unsigned:
                 glUniform1ui(loc, int(value))
             else:

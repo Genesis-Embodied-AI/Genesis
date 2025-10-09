@@ -65,27 +65,31 @@ def main():
     parser.add_argument("-B", "--n_envs", type=int, default=0, help="Number of environments to replicate")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--use-box", action="store_true", help="Use Box as robot instead of Go2")
-    parser.add_argument("-f", "--fixed", action="store_true", help="Load obstacles as fixed.")
     parser.add_argument(
-        "--pattern",
-        type=str,
-        default="spherical",
-        choices=["spherical", "depth", "grid"],
-        help="Sensor pattern type",
+        "--pattern", type=str, default="spherical", choices=("spherical", "depth", "grid"), help="Sensor pattern type"
     )
-
     args = parser.parse_args()
+
+    if IS_PYNPUT_AVAILABLE:
+        kb = KeyboardDevice()
+        kb.start()
+    else:
+        print("Keyboard teleop is disabled since pynput is not installed. To install, run `pip install pynput`.")
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -1.0),
+        ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(6.0, 6.0, 4.0),
+            camera_pos=(-6.0, 0.0, 4.0),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=60,
             max_FPS=60,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=True,
+        ),
         show_viewer=True,
     )
 
@@ -101,7 +105,7 @@ def main():
                 height=1.5,
                 radius=0.3,
                 pos=(x, y, 0.75),
-                fixed=args.fixed,
+                fixed=True,
             )
         )
 
@@ -111,23 +115,33 @@ def main():
         y = BOX_RING_RADIUS * np.sin(angle)
         scene.add_entity(
             gs.morphs.Box(
-                size=(0.5, 0.5, 2.0),
+                size=(0.5, 0.5, 2.0 * (i + 1) / NUM_BOXES),
                 pos=(x, y, 1.0),
-                fixed=args.fixed,
+                fixed=False,
             )
         )
 
-    robot_kwargs = dict(
+    entity_kwargs = dict(
         pos=(0.0, 0.0, 0.35),
         quat=(1.0, 0.0, 0.0, 0.0),
         fixed=True,
     )
 
     if args.use_box:
-        robot = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), **robot_kwargs))
+        robot = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                **entity_kwargs,
+            )
+        )
         pos_offset = (0.0, 0.0, 0.2)
     else:
-        robot = scene.add_entity(gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf", **robot_kwargs))
+        robot = scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/go2/urdf/go2.urdf",
+                **entity_kwargs,
+            )
+        )
         pos_offset = (0.3, 0.0, 0.1)
 
     sensor_kwargs = dict(
@@ -157,11 +171,8 @@ def main():
     scene.build(n_envs=args.n_envs)
 
     if IS_PYNPUT_AVAILABLE:
-        kb = KeyboardDevice()
-        kb.start()
-
-        print("Keyboard Controls:")
         # Avoid using same keys as interactive viewer keyboard controls
+        print("Keyboard Controls:")
         print("[↑/↓/←/→]: Move XY")
         print("[j/k]: Down/Up")
         print("[n/m]: Roll CCW/CW")
@@ -169,8 +180,6 @@ def main():
         print("[o/p]: Yaw CCW/CW")
         print("[\\]: Reset")
         print("[esc]: Quit")
-    else:
-        print("Keyboard teleop is disabled since pynput is not installed. To install, run `pip install pynput`.")
 
     init_pos = np.array([0.0, 0.0, 0.35], dtype=np.float32)
     init_euler = np.array([0.0, 0.0, 0.0], dtype=np.float32)
