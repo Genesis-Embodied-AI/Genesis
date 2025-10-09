@@ -1,0 +1,95 @@
+name: Generate Release Notes
+
+# This workflow can be triggered manually or integrated into your release process
+on:
+  workflow_dispatch:
+    inputs:
+      since_tag:
+        description: 'Starting tag/reference (e.g., v0.3.3)'
+        required: true
+        type: string
+      version:
+        description: 'Version for the release notes (e.g., 0.4.0)'
+        required: true
+        type: string
+      output_file:
+        description: 'Output file name (default: release_notes.md)'
+        required: false
+        type: string
+        default: 'release_notes.md'
+
+  # Optionally trigger on release creation
+  release:
+    types: [created]
+
+jobs:
+  generate-release-notes:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Full history is needed to analyze all merged PRs
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      
+      - name: Generate release notes (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python scripts/generate_release_notes.py \
+            --since "${{ github.event.inputs.since_tag }}" \
+            --version "${{ github.event.inputs.version }}" \
+            --output "${{ github.event.inputs.output_file }}"
+      
+      - name: Generate release notes (release trigger)
+        if: github.event_name == 'release'
+        run: |
+          # Extract previous tag (you might need to adjust this logic)
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "${{ github.event.release.tag_name }}" | head -1)
+          
+          python scripts/generate_release_notes.py \
+            --since "${PREVIOUS_TAG}" \
+            --version "${{ github.event.release.tag_name }}" \
+            --output "release_notes_${{ github.event.release.tag_name }}.md"
+      
+      - name: Upload release notes as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: |
+            release_notes*.md
+            *.md
+      
+      - name: Display generated release notes
+        run: |
+          echo "Generated release notes:"
+          echo "========================="
+          if [ -f "release_notes.md" ]; then
+            cat release_notes.md
+          elif [ -f "release_notes_${{ github.event.release.tag_name }}.md" ]; then
+            cat "release_notes_${{ github.event.release.tag_name }}.md"
+          fi
+
+      # Optional: Create a PR to update RELEASE.md
+      - name: Create PR to update RELEASE.md
+        if: github.event_name == 'workflow_dispatch'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Update RELEASE.md with auto-generated release notes for ${{ github.event.inputs.version }}"
+          title: "Auto-generated release notes for ${{ github.event.inputs.version }}"
+          body: |
+            This PR contains auto-generated release notes for version ${{ github.event.inputs.version }}.
+            
+            Please review the generated content and make any necessary edits before merging.
+            
+            The release notes include all contributors from merged PRs, including co-authors.
+          branch: "release-notes/${{ github.event.inputs.version }}"
+          add-paths: |
+            release_notes.md
+            RELEASE.md
