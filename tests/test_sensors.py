@@ -254,14 +254,22 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_raycaster_hits(show_viewer, tol, n_envs):
     """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
-    NUM_RAYS_XY = 3
-    SPHERE_POS = (4.0, 0.0, 1.0)
+    NUM_RAYS_XY = (3, 5)
+    SPHERE_POS = (2.5, 0.5, 1.0)
     BOX_SIZE = 0.05
     RAYCAST_BOX_SIZE = 0.1
-    RAYCAST_GRID_SIZE = 1.0
+    RAYCAST_GRID_SIZE_X = 1.0
     RAYCAST_HEIGHT = 1.0
 
     scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-3.0, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), 2 * RAYCAST_HEIGHT),
+            camera_lookat=(1.5, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), RAYCAST_HEIGHT),
+        ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(0,),
+            env_separate_rigid=False,
+        ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
@@ -279,7 +287,7 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
     spherical_raycaster = scene.add_sensor(
         gs.sensors.Raycaster(
             pattern=gs.sensors.raycaster.SphericalPattern(
-                n_points=(NUM_RAYS_XY, NUM_RAYS_XY),
+                n_points=NUM_RAYS_XY,
             ),
             entity_idx=spherical_sensor.idx,
             return_world_frame=False,
@@ -297,12 +305,13 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
             fixed=True,
         ),
     )
-    grid_res = RAYCAST_GRID_SIZE / (NUM_RAYS_XY - 1)
+    grid_res = RAYCAST_GRID_SIZE_X / (NUM_RAYS_XY[0] - 1)
+    grid_size_y = grid_res * (NUM_RAYS_XY[1] - 1)
     grid_raycaster = scene.add_sensor(
         gs.sensors.Raycaster(
             pattern=gs.sensors.raycaster.GridPattern(
                 resolution=grid_res,
-                size=(1.0, 1.0),
+                size=(RAYCAST_GRID_SIZE_X, grid_size_y),
                 direction=(0.0, 0.0, -1.0),  # pointing downwards to ground
             ),
             entity_idx=grid_sensor.idx,
@@ -322,7 +331,7 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
     obstacle_2 = scene.add_entity(
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(RAYCAST_GRID_SIZE, RAYCAST_GRID_SIZE, RAYCAST_HEIGHT + RAYCAST_BOX_SIZE + BOX_SIZE),
+            pos=(RAYCAST_GRID_SIZE_X, grid_size_y, RAYCAST_HEIGHT + RAYCAST_BOX_SIZE + BOX_SIZE),
         ),
     )
 
@@ -331,11 +340,10 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
     batch_shape = (n_envs,) if n_envs > 0 else ()
 
     # Validate grid raycast
-    # TODO: Check use different (global) offset positions for each environments
     for obstacle_pos, sensor_pos, hit_ij in (
-        (None, None, (-1, -1)),
-        ((grid_res, grid_res, BOX_SIZE), None, (-1, -1)),
-        (None, (RAYCAST_GRID_SIZE, RAYCAST_GRID_SIZE, RAYCAST_HEIGHT + 0.5 * RAYCAST_BOX_SIZE), (0, 0)),
+        (None, None, (-1, -2)),
+        ((grid_res, grid_res, BOX_SIZE), None, (-1, -2)),
+        (None, (*(grid_res * (e - 2) for e in NUM_RAYS_XY), RAYCAST_HEIGHT + 0.5 * RAYCAST_BOX_SIZE), (1, 0)),
     ):
         # Update obstacle and/or sensor position if necessary
         if obstacle_pos is not None:
@@ -350,37 +358,41 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
         # Fetch updated sensor data
         grid_hits = grid_raycaster.read().points
         grid_distances = grid_raycaster.read().distances
-        assert grid_distances.shape == (*batch_shape, NUM_RAYS_XY, NUM_RAYS_XY)
+        assert grid_distances.shape == (*batch_shape, *NUM_RAYS_XY)
 
         # Check hits
         grid_sensor_origin = grid_sensor.get_pos()
-        x = torch.linspace(-0.5, 0.5, NUM_RAYS_XY) + grid_sensor_origin[..., [0]]
-        y = torch.linspace(-0.5, 0.5, NUM_RAYS_XY) + grid_sensor_origin[..., [1]]
-        # xg, yg = torch.meshgrid(x, y, indexing="xy")
-        xg = x.unsqueeze(-2).expand((*batch_shape, NUM_RAYS_XY, -1))
-        yg = y.unsqueeze(-1).expand((*batch_shape, -1, NUM_RAYS_XY))
-        zg = torch.zeros((*batch_shape, NUM_RAYS_XY, NUM_RAYS_XY))
+        x = torch.linspace(-0.5, 0.5, NUM_RAYS_XY[0]) * RAYCAST_GRID_SIZE_X + grid_sensor_origin[..., [0]]
+        y = torch.linspace(-0.5, 0.5, NUM_RAYS_XY[1]) * grid_size_y + grid_sensor_origin[..., [1]]
+        # xg, yg = torch.meshgrid(x, y, indexing="ij")
+        xg = x.unsqueeze(-1).expand((*batch_shape, -1, NUM_RAYS_XY[1]))
+        yg = y.unsqueeze(-2).expand((*batch_shape, NUM_RAYS_XY[0], -1))
+        zg = torch.zeros((*batch_shape, *NUM_RAYS_XY))
         zg[(..., *hit_ij)] = obstacle_pos[..., 2] + 0.5 * BOX_SIZE
         grid_hits_ref = torch.stack([xg, yg, zg], dim=-1)
         assert_allclose(grid_hits, grid_hits_ref, tol=gs.EPS)
 
         # Check distances
-        grid_distances_ref = torch.full((*batch_shape, NUM_RAYS_XY, NUM_RAYS_XY), RAYCAST_HEIGHT)
+        grid_distances_ref = torch.full((*batch_shape, *NUM_RAYS_XY), RAYCAST_HEIGHT)
         grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - obstacle_pos[..., 2] - 0.5 * BOX_SIZE
         assert_allclose(grid_distances, grid_distances_ref, tol=gs.EPS)
 
     # Validate spherical raycast
     spherical_distances = spherical_raycaster.read().distances
-    assert spherical_distances.shape == (*batch_shape, NUM_RAYS_XY, NUM_RAYS_XY)
+    assert spherical_distances.shape == (*batch_shape, *NUM_RAYS_XY)
     # Note that the tolerance must be large bevcause the sphere geometry is discretized
     assert_allclose(spherical_distances, RAYCAST_HEIGHT, tol=5e-3)
 
     # Simulate for a while and check again that the ray is casted properly
+    offset = torch.from_numpy(np.random.rand(*batch_shape, 3)).to(dtype=gs.tc_float, device=gs.device)
+    for entity in (grid_sensor, obstacle_1, obstacle_2):
+        entity.set_pos(entity.get_pos() + offset)
     for _ in range(100):
         scene.step()
 
     grid_distances = grid_raycaster.read().distances
-    grid_distances_ref = torch.full((*batch_shape, NUM_RAYS_XY, NUM_RAYS_XY), RAYCAST_HEIGHT)
-    grid_distances_ref[..., (NUM_RAYS_XY - 1) // 2, (NUM_RAYS_XY - 1) // 2] = RAYCAST_HEIGHT - BOX_SIZE
+    grid_distances_ref = torch.full((*batch_shape, *NUM_RAYS_XY), RAYCAST_HEIGHT)
+    grid_distances_ref[(..., -1, -2)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
+    grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
