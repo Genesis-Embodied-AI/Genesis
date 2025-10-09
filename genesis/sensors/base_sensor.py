@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Generic, Sequence, TypeVar
+from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
 
 import gstaichi as ti
 import numpy as np
@@ -16,6 +16,7 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.scene import Scene
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -63,9 +64,11 @@ class SensorOptions(Options):
     update_ground_truth_only: bool = False
     draw_debug: bool = False
 
-    def validate(self, scene):
+    def validate(self, scene: "Scene"):
         """
         Validate the sensor options values before the sensor is added to the scene.
+
+        Use pydantic's model_post_init() for validation that does not require scene context.
         """
         delay_hz = self.delay / scene._sim.dt
         if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
@@ -75,6 +78,7 @@ class SensorOptions(Options):
             )
 
 
+# Note: dataclass is used as opposed to pydantic.BaseModel since torch.Tensors are not supported by default
 @dataclass
 class SharedSensorMetadata:
     """
@@ -103,7 +107,9 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
     the shared cache to return the correct data.
     """
 
-    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
+    def __init__(
+        self, sensor_options: "SensorOptions", sensor_idx: int, data_cls: Type[tuple], sensor_manager: "SensorManager"
+    ):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
@@ -114,14 +120,13 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         self._delay_ts = round(self._options.delay / self._dt)
 
         self._cache_slices: list[slice] = []
-        self._return_format = self._get_return_format()
-        is_return_dict = isinstance(self._return_format, dict)
-        if is_return_dict:
-            self._return_shapes = self._return_format.values()
-            self._get_formatted_data = self._get_formatted_data_dict
-        else:
-            self._return_shapes = (self._return_format,)
-            self._get_formatted_data = self._get_formatted_data_tuple
+        self._return_data_class = data_cls
+        return_format = self._get_return_format()
+        assert len(return_format) > 0
+        if isinstance(return_format[0], int):
+            return_format = (return_format,)
+        self._return_shapes: tuple[tuple[int, ...], ...] = return_format
+
         self._cache_size = 0
         for shape in self._return_shapes:
             data_size = np.prod(shape)
@@ -163,17 +168,15 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         """
         pass
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]] | tuple[int, ...]:
+    def _get_return_format(self) -> tuple[int | tuple[int, ...], ...]:
         """
         Get the data format of the read() return value.
 
         Returns
         -------
-        return_format : dict | tuple
-            - If tuple, the final shape of the read() return value.
-                e.g. (2, 3) means read() will return a tensor of shape (2, 3).
-            - If dict a dictionary with string keys and tensor values will be returned.
-                e.g. {"pos": (3,), "quat": (4,)} returns a dict of tensors [0:3] and [3:7] from the cache.
+        return_format : tuple[tuple[int, ...], ...]
+            The output shape(s) of the tensor data returned by read(), e.g. (2, 3) means read() will return a single
+            tensor of shape (2, 3) and ((3,), (3,)) would return two tensors of shape (3,).
         """
         raise NotImplementedError(f"{type(self).__name__} has not implemented `get_return_format()`.")
 
@@ -209,7 +212,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         """
         raise NotImplementedError(f"{cls.__name__} has not implemented `get_cache_dtype()`.")
 
-    def _draw_debug(self, context: "RasterizerContext"):
+    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         """
         Draw debug shapes for the sensor in the scene.
         """
@@ -306,9 +309,9 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
 
             tensor_start += tensor_size
 
-    def _get_return_values(self, tensor: torch.Tensor, envs_idx=None) -> list[torch.Tensor]:
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor:
         """
-        Preprares the given tensor into multiple tensors matching `self._return_shapes`.
+        Returns tensor(s) matching the return format.
 
         Note that this method does not clone the data tensor, it should have been cloned by the caller.
         """
@@ -319,20 +322,13 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
 
         for i, shape in enumerate(self._return_shapes):
             field_data = tensor_chunk[..., self._cache_slices[i]].reshape((len(envs_idx), *shape))
-
             if self._manager._sim.n_envs == 0:
                 field_data = field_data.squeeze(0)
             return_values.append(field_data)
 
-        return return_values
-
-    def _get_formatted_data_dict(self, tensor: torch.Tensor, envs_idx=None) -> dict[str, torch.Tensor]:
-        """Returns a dictionary of tensors matching the return format."""
-        return dict(zip(self._return_format.keys(), self._get_return_values(tensor, envs_idx)))
-
-    def _get_formatted_data_tuple(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor:
-        """Returns a tensor matching the return format."""
-        return self._get_return_values(tensor, envs_idx)[0]
+        if len(return_values) == 1:
+            return return_values[0]
+        return self._return_data_class(*return_values)
 
     def _sanitize_envs_idx(self, envs_idx) -> torch.Tensor:
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
@@ -359,7 +355,7 @@ class RigidSensorOptionsMixin:
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
-    def validate(self, scene):
+    def validate(self, scene: "Scene"):
         super().validate(scene)
         if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
@@ -436,16 +432,12 @@ class NoisySensorOptionsMixin:
         The standard deviation of the additive white noise.
     random_walk : float | tuple[float, ...], optional
         The standard deviation of the random walk, which acts as accumulated bias drift.
-    delay : float, optional
-        The delay in seconds, affecting how outdated the sensor data is when it is read.
     jitter : float, optional
         The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
         Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
     interpolate : bool, optional
         If True, the sensor data is interpolated between data points for delay + jitter.
         Otherwise, the sensor data at the closest time step will be used. Default is False.
-    update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth data, and not the measured data.
     """
 
     resolution: float | tuple[float, ...] = 0.0
@@ -455,8 +447,7 @@ class NoisySensorOptionsMixin:
     jitter: float = 0.0
     interpolate: bool = False
 
-    def validate(self, scene):
-        super().validate(scene)
+    def model_post_init(self, _):
         if self.jitter > 0 and not self.interpolate:
             gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
         if self.jitter > self.delay:

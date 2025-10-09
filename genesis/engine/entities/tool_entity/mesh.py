@@ -58,7 +58,7 @@ class Mesh:
         # init ti fields
         self.init_vertices = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
         self.init_vertex_normals = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.n_vertices))
-        self.faces = ti.field(dtype=gs.ti_int, shape=(self.n_faces))
+        self.faces = ti.field(dtype=gs.ti_int, shape=(self.n_faces,))
 
         self.init_vertices.from_numpy(self.raw_vertices)
         self.init_vertex_normals.from_numpy(self.raw_vertex_normals)

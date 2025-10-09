@@ -24,7 +24,7 @@ jobs:
       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_HUB_DOWNLOAD_TIMEOUT: 60
-      GENESIS_IMAGE_VER: "1_3"
+      GENESIS_IMAGE_VER: "1_4"
       TIMEOUT_MINUTES: 180
       FORCE_COLOR: 1
       PY_COLORS: 1

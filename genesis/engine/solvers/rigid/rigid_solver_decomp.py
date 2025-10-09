@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
 import numpy as np
@@ -7,28 +6,24 @@ import numpy.typing as npt
 import torch
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-
+import genesis.utils.geom as gu
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
-from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
-from genesis.styles import colors, formats
 from genesis.utils import linalg as lu
-from genesis.utils.misc import ti_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
+from genesis.utils.sdf_decomp import SDF
 
-from ....utils.sdf_decomp import SDF
 from ..base_solver import Solver
+from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .collider_decomp import Collider
 from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     import genesis.engine.solvers.rigid.array_class
-
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
@@ -915,9 +910,9 @@ class RigidSolver(Solver):
             )
 
             self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
-            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
-            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
-            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
+            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=(2,))
+            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=(2,))
+            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=(6,))
 
             self.terrain_hf.from_numpy(hf)
             self.terrain_rc.from_numpy(rc)
@@ -5069,8 +5064,8 @@ def kernel_update_verts_for_geoms(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     n_geoms = geoms_idx.shape[0]
     _B = geoms_state.verts_updated.shape[1]
@@ -5086,8 +5081,8 @@ def func_update_verts_for_geom(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     if not geoms_state.verts_updated[i_g, i_b]:
         if geoms_info.is_fixed[i_g]:
@@ -5114,8 +5109,8 @@ def func_update_verts_for_geom(
 def func_update_all_verts(
     geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     n_verts = verts_info.geom_idx.shape[0]
     _B = geoms_state.pos.shape[1]
@@ -5133,6 +5128,16 @@ def func_update_all_verts(
 
 
 @ti.kernel(pure=gs.use_pure)
+def kernel_update_all_verts(
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+):
+    func_update_all_verts(geoms_state, verts_info, free_verts_state, fixed_verts_state)
+
+
+@ti.kernel
 def kernel_update_geom_aabbs(
     geoms_state: array_class.GeomsState,
     geoms_init_AABB: array_class.GeomsInitAABB,

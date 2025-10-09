@@ -1,8 +1,6 @@
 import os
 import sys
 import subprocess
-import shutil
-import shlex
 from pathlib import Path
 
 import pytest
@@ -27,8 +25,6 @@ IGNORE_SCRIPT_NAMES = {
     "multi_gpu.py",
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit
     "single_franka_batch_render.py",  # FIXME: segfault on exit
-    "imu_franka.py",  # FIXME: broken
-    "contact_force_go2.py",  # FIXME: broken
     "cut_dragon.py",  # FIXME: Only supported on Linux
 }
 

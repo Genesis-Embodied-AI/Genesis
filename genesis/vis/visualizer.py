@@ -42,7 +42,7 @@ class Visualizer(RBC):
         self._context = RasterizerContext(vis_options)
 
         try:
-            screen_height, _, screen_scale = gs.utils.try_get_display_size()
+            screen_height, _screen_width, screen_scale = gs.utils.try_get_display_size()
             self._has_display = True
         except Exception as e:
             if show_viewer:
@@ -196,7 +196,7 @@ class Visualizer(RBC):
             self.reset()
         elif self._viewer is not None:
             if self._viewer.is_alive():
-                self._viewer.update(auto_refresh=auto)
+                self._viewer.update(auto_refresh=auto, force=force)
             else:
                 gs.raise_exception("Viewer closed.")
 
