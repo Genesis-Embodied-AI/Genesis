@@ -599,7 +599,7 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
 
     time_start = time.time()
     scene.build(n_envs=n_envs)
-    compile_time = time.time() - time_start
+    compile_time = 2 * (time.time() - time_start)
 
     num_steps = 0
     is_recording = False

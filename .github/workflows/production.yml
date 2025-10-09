@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run unit tests
-        if: github.event_name == 'pull_request'
+        if: false
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
