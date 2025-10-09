@@ -569,21 +569,18 @@ def test_convex_decompose_cache(monkeypatch):
     )
     scene.build()
 
-    assert len(seen_paths) == 2, "Expected 2 cache paths, got %d" % len(seen_paths)
-    assert len(seen_results) == 2, "Expected 2 convex decomposition results, got %d" % len(seen_results)
+    assert len(seen_paths) == 2
+    assert len(seen_results) == 2
 
     # scaled mesh should have the same cache path as the original mesh
     cached_path = seen_paths[0]
     scaled_path = seen_paths[-1]
-    assert cached_path == scaled_path, "Cached path and scaled path should be the same"
+    assert cached_path == scaled_path
 
     # check if the scaled parts match the scaled version of the original parts
     cached_parts = seen_results[0]
     scaled_parts = seen_results[-1]
-    assert len(scaled_parts) == len(cached_parts), "Expected %d scaled parts, got %d" % (
-        len(cached_parts),
-        len(scaled_parts),
-    )
+    assert len(scaled_parts) == len(cached_parts)
     for scaled_part, cached_part in zip(scaled_parts, cached_parts):
         assert_allclose(scaled_part.vertices, cached_part.vertices * (second_scale / first_scale), rtol=1e-6)
-        assert_allclose(scaled_part.faces, cached_part.faces, atol=0)
+        assert_array_equal(scaled_part.faces, cached_part.faces)
