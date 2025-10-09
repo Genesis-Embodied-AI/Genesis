@@ -1,9 +1,9 @@
-from typing import TYPE_CHECKING
-from math import pi
+import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import numpy as np
 import gstaichi as ti
+import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -36,8 +36,8 @@ class SupportField:
 
     def _get_direction_grid(self):
         support_res = self._support_field_static_config.support_res
-        theta = np.arange(support_res) / support_res * 2 * pi - pi
-        phi = np.arange(support_res) / support_res * pi
+        theta = np.arange(support_res) / support_res * 2 * math.pi - math.pi
+        phi = np.arange(support_res) / support_res * math.pi
 
         spherical_coords = np.zeros([support_res, support_res, 2])
         spherical_coords[:, :, 0] = theta[:, None]
@@ -162,8 +162,8 @@ def _func_support_mesh(
     v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
     vid = 0
 
-    ii = (theta + pi) / pi / 2 * support_res
-    jj = phi / pi * support_res
+    ii = (theta + math.pi) / math.pi / 2 * support_res
+    jj = phi / math.pi * support_res
 
     for i4 in range(4):
         i, j = gs.ti_int(0), gs.ti_int(0)
@@ -356,8 +356,8 @@ def _func_count_supports_mesh(
     support_res = gs.ti_int(support_field_static_config.support_res)
     dot_max = gs.ti_float(-1e20)
 
-    ii = (theta + pi) / pi / 2 * support_res
-    jj = phi / pi * support_res
+    ii = (theta + math.pi) / math.pi / 2 * support_res
+    jj = phi / math.pi * support_res
 
     count = gs.ti_int(0)
     for i4 in range(4):
