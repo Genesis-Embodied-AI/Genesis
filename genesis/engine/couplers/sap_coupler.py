@@ -224,6 +224,12 @@ class SAPCoupler(RBC):
     # ------------------------------------------------------------------------------------
 
     def build(self) -> None:
+        if gs.utils.array_class.use_ndarray == True:
+            gs.raise_exception(
+                "SAPCoupler does not support ndarray yet. please set environment variable \
+                GS_USE_NDARRAY=0 GS_BETA_PURE=0 when running your code"
+            )
+
         self._B = self.sim._B
         self.contact_handlers = []
         self._enable_rigid_fem_contact &= self.rigid_solver.is_active() and self.fem_solver.is_active()
