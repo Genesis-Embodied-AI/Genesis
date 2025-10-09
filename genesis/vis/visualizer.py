@@ -196,7 +196,7 @@ class Visualizer(RBC):
             self.reset()
         elif self._viewer is not None:
             if self._viewer.is_alive():
-                self._viewer.update(auto_refresh=auto)
+                self._viewer.update(auto_refresh=auto, force=force)
             else:
                 gs.raise_exception("Viewer closed.")
 

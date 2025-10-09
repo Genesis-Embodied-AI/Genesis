@@ -910,9 +910,9 @@ class RigidSolver(Solver):
             )
 
             self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
-            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
-            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
-            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
+            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=(2,))
+            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=(2,))
+            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=(6,))
 
             self.terrain_hf.from_numpy(hf)
             self.terrain_rc.from_numpy(rc)
@@ -5134,20 +5134,7 @@ def kernel_update_all_verts(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
 ):
-    n_verts = verts_info.geom_idx.shape[0]
-    _B = geoms_state.pos.shape[1]
-    for i_v, i_b in ti.ndrange(n_verts, _B):
-        g_pos = geoms_state.pos[verts_info.geom_idx[i_v], i_b]
-        g_quat = geoms_state.quat[verts_info.geom_idx[i_v], i_b]
-        verts_state_idx = verts_info.verts_state_idx[i_v]
-        if not verts_info.is_fixed[i_v]:
-            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v], g_pos, g_quat
-            )
-        elif i_b == 0:
-            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v], g_pos, g_quat
-            )
+    func_update_all_verts(geoms_state, verts_info, free_verts_state, fixed_verts_state)
 
 
 @ti.kernel

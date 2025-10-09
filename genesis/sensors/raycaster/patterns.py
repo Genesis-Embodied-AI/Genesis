@@ -93,7 +93,7 @@ class GridPattern(RaycastPattern):
         self._ray_dirs[:] = self.direction.expand((*self._return_shape, 3))
 
     def compute_ray_starts(self):
-        grid_x, grid_y = torch.meshgrid(*self.coords, indexing="xy")
+        grid_x, grid_y = torch.meshgrid(*self.coords, indexing="ij")
         self._ray_starts[..., 0] = grid_x
         self._ray_starts[..., 1] = grid_y
         self._ray_starts[..., 2] = 0.0
