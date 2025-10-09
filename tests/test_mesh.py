@@ -8,6 +8,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.usda as usda_utils
+import genesis.utils.mesh as mesh_utils
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
@@ -510,3 +511,76 @@ def test_splashsurf_surface_reconstruction(show_viewer):
     )
     scene.build()
     cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+
+
+@pytest.mark.required
+def test_convex_decompose_cache(monkeypatch):
+    # Check if the convex decomposition cache is correctly tracked regardless of the scale
+
+    # Monkeypatch the get_cvx_path function to track the cache path
+    seen_paths = []
+    real_get_cvx_path = mesh_utils.get_cvx_path
+
+    def wrapped_get_cvx_path(verts, faces, opts):
+        path = real_get_cvx_path(verts, faces, opts)
+        seen_paths.append(path)
+        return path
+
+    monkeypatch.setattr(mesh_utils, "get_cvx_path", wrapped_get_cvx_path)
+
+    # Monkeypatch the convex_decompose function to track the convex decomposition result
+    seen_results = []
+    real_convex_decompose = mesh_utils.convex_decompose
+
+    def wrapped_convex_decompose(mesh, opts):
+        result = real_convex_decompose(mesh, opts)
+        seen_results.append(result)
+        return result
+
+    monkeypatch.setattr(mesh_utils, "convex_decompose", wrapped_convex_decompose)
+
+    # First scene building to create the cache
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    first_scale = 2.0
+    duck = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=first_scale,
+            pos=(0, 0, 1.0),
+            quat=(0, 0, 0, 1),
+        ),
+    )
+    scene.build()
+
+    # Second scene building, duck with different scale, translation, and rotation
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    second_scale = 4.0
+    duck = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=second_scale,
+            pos=(1.0, 0, 1.0),
+            quat=(1, 0, 0, 0),
+        ),
+    )
+    scene.build()
+
+    assert len(seen_paths) == 2
+    assert len(seen_results) == 2
+
+    # scaled mesh should have the same cache path as the original mesh
+    cached_path = seen_paths[0]
+    scaled_path = seen_paths[-1]
+    assert cached_path == scaled_path
+
+    # check if the scaled parts match the scaled version of the original parts
+    cached_parts = seen_results[0]
+    scaled_parts = seen_results[-1]
+    assert len(scaled_parts) == len(cached_parts)
+    for scaled_part, cached_part in zip(scaled_parts, cached_parts):
+        assert_allclose(scaled_part.vertices, cached_part.vertices * (second_scale / first_scale), rtol=1e-6)
+        assert_array_equal(scaled_part.faces, cached_part.faces)
