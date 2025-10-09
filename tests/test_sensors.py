@@ -255,13 +255,21 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
 def test_raycaster_hits(show_viewer, tol, n_envs):
     """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
     NUM_RAYS_XY = (3, 5)
-    SPHERE_POS = (4.0, 0.0, 1.0)
+    SPHERE_POS = (2.5, 0.5, 1.0)
     BOX_SIZE = 0.05
     RAYCAST_BOX_SIZE = 0.1
     RAYCAST_GRID_SIZE_X = 1.0
     RAYCAST_HEIGHT = 1.0
 
     scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-3.0, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), 2 * RAYCAST_HEIGHT),
+            camera_lookat=(1.5, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), RAYCAST_HEIGHT),
+        ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(0,),
+            env_separate_rigid=False,
+        ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
@@ -386,5 +394,5 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
     grid_distances_ref = torch.full((*batch_shape, *NUM_RAYS_XY), RAYCAST_HEIGHT)
     grid_distances_ref[(..., -1, -2)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
-    grid_distances_ref += offset[..., 2]
+    grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
