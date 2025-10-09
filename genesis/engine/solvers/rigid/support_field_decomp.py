@@ -1,9 +1,9 @@
-from typing import TYPE_CHECKING
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import numpy as np
 import gstaichi as ti
+import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
