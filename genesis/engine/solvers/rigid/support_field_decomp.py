@@ -154,8 +154,8 @@ def _func_support_mesh(
     """
     support point at mesh frame coordinate.
     """
-    theta = ti.atan2(d_mesh[1], d_mesh[0])  # [-math.pi, math.pi]
-    phi = ti.acos(d_mesh[2])  # [0, math.pi]
+    theta = ti.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
+    phi = ti.acos(d_mesh[2])  # [0, pi]
 
     support_res = gs.ti_int(support_field_static_config.support_res)
     dot_max = gs.ti_float(-1e20)
