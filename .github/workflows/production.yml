@@ -94,7 +94,7 @@ jobs:
               tmate -S /tmp/tmate.sock wait tmate-ready && \
               tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
               pip install --no-input --user '.[dev,render]' && \
-              pytest --print -x -m 'benchmarks' ./tests && \
+              GS_USE_NDARRAY=0 GS_BETA_PURE=0 pytest --print -x -m 'benchmarks' ./tests && \
               cat speed_test*.txt > '/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt'
               : # tmate -S /tmp/tmate.sock wait tmate-exit
             "

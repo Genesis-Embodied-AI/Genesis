@@ -115,7 +115,7 @@ jobs:
           pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Black Format Check
-        if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
+        if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.13'
         run: |
           pip install black
           black --line-length 120 --check .
