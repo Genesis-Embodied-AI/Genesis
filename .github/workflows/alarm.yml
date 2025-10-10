@@ -315,8 +315,8 @@ jobs:
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
-            # Getting PR number when using 'workflow_run' is tricky.
-            # For reference, see: https://stackoverflow.com/a/75420270/4820605
+            // Getting PR number when using 'workflow_run' is tricky.
+            // For reference, see: https://stackoverflow.com/a/75420270/4820605
             const pr_number = (
               await github.rest.repos.listPullRequestsAssociatedWithCommit({
                 commit_sha: context.sha,
