@@ -315,15 +315,22 @@ jobs:
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
-            const prs = (context.payload.workflow_run.pull_requests || []);
-            if (!prs.length) {
+            // Getting PR number when using 'workflow_run' is tricky. For reference, see:
+            // * https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run
+            // * https://stackoverflow.com/a/75420270/4820605
+            const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.payload.workflow_run.repository.owner,
+              repo: context.payload.workflow_run.repository.name,
+              commit_sha: context.payload.workflow_run.head_sha,
+            });
+            if (!data || !data.length) {
               core.info('No associated PR; skipping comment.');
               return;
             }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: prs[0].number,
+              issue_number: data[0].number,
               body: process.env.COMMENT_BODY
             });
       - name: Publish PR check
