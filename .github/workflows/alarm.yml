@@ -315,19 +315,15 @@ jobs:
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
-            // Getting PR number when using 'workflow_run' is tricky.
-            // For reference, see: https://stackoverflow.com/a/75420270/4820605
-            const pr_number = (
-              await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                commit_sha: context.payload.workflow_run.head_sha,
-              })
-            ).data[0].number;
+            const prs = (context.payload.workflow_run.pull_requests || []);
+            if (!prs.length) {
+              core.info('No associated PR; skipping comment.');
+              return;
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: pr_number,
+              issue_number: prs[0].number,
               body: process.env.COMMENT_BODY
             });
       - name: Publish PR check
