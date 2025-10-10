@@ -276,6 +276,11 @@ class BasePyQtPlotter(BasePlotter):
     Base class for PyQt based plotters.
     """
 
+    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+        super().__init__(manager, options, data_func)
+        if threading.current_thread() is not threading.main_thread():
+            raise gs.GenesisException("Impossible to run PyQtPlotter outside the main thread.")
+
     def build(self):
         if not IS_PYQTGRAPH_AVAILABLE:
             gs.raise_exception(
@@ -307,12 +312,12 @@ class BasePyQtPlotter(BasePlotter):
             except Exception as e:
                 gs.logger.warning(f"[{type(self).__name__}] Error closing window: {e}")
             finally:
-                self.widget = None
                 self.plot_widgets.clear()
+                self.widget = None
 
     @property
     def run_in_thread(self) -> bool:
-        return True
+        return False
 
     def get_image_array(self):
         """
@@ -384,14 +389,16 @@ class PyQtLinePlotter(BasePyQtPlotter):
             plot_widget.showGrid(x=True, y=True, alpha=0.3)
             plot_widget.addLegend()
 
-            self.plot_widgets.append(plot_widget)
-
             # create lines for this subplot
             subplot_curves = []
 
             for color, channel_label in zip(COLORS, channel_labels):
                 curve = plot_widget.plot(pen=pg.mkPen(color=color, width=2), name=channel_label)
                 subplot_curves.append(curve)
+
+            self.plot_widgets.append(plot_widget)
+            if self.show_window:
+                plot_widget.show()
 
             self.curves[subplot_key] = subplot_curves
 
@@ -500,8 +507,12 @@ class BaseMPLPlotter(BasePlotter):
 
     @property
     def run_in_thread(self) -> bool:
-        # matplotlib throws NSInternalInconsistencyException when trying to use threading for visualization on macOS
-        return not self.show_window or gs.platform != "macOS"
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        if self._is_built:
+            assert self.fig is not None
+            return isinstance(self.fig.canvas, FigureCanvasAgg)
+        return not self.show_window
 
 
 class MPLLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
