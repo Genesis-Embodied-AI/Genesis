@@ -319,7 +319,7 @@ jobs:
             // * https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run
             // * https://stackoverflow.com/a/75420270/4820605
             const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner: context.payload.workflow_run.head_repository.owner.name,
+              owner: context.payload.workflow_run.head_repository,
               repo: context.payload.workflow_run.head_repository.name,
               commit_sha: context.payload.workflow_run.head_sha,
             });
