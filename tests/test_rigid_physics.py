@@ -222,7 +222,7 @@ def chain_capsule_hinge_capsule(asset_tmp_path):
     return _build_chain_capsule_hinge(asset_tmp_path, enable_mesh=False)
 
 
-def _build_multi_pendulum(n):
+def _build_multi_pendulum(n, joint_damping, joint_friction):
     """Generate an URDF model of a multi-link pendulum with n segments."""
     urdf = ET.Element("robot", name="multi_pendulum")
 
@@ -238,6 +238,7 @@ def _build_multi_pendulum(n):
         ET.SubElement(joint, "parent", link=parent_link)
         ET.SubElement(joint, "child", link=f"PendulumArm_{i}")
         ET.SubElement(joint, "limit", effort=str(100.0 * (n - i)), velocity="30.0")
+        ET.SubElement(joint, "dynamics", damping=str(joint_damping), friction=str(joint_friction))
 
         # Arm link
         arm = ET.SubElement(urdf, "link", name=f"PendulumArm_{i}")
@@ -276,14 +277,19 @@ def _build_multi_pendulum(n):
     return urdf
 
 
-@pytest.fixture(scope="session")
-def pendulum(asset_tmp_path):
-    return _build_multi_pendulum(n=1)
+@pytest.fixture
+def pendulum_with_joint_dynamics(joint_damping, joint_friction):
+    return _build_multi_pendulum(n=1, joint_damping=joint_damping, joint_friction=joint_friction)
 
 
 @pytest.fixture(scope="session")
-def double_pendulum(asset_tmp_path):
-    return _build_multi_pendulum(n=2)
+def pendulum():
+    return _build_multi_pendulum(n=1, joint_damping=0.0, joint_friction=0.0)
+
+
+@pytest.fixture(scope="session")
+def double_pendulum():
+    return _build_multi_pendulum(n=2, joint_damping=0.0, joint_friction=0.0)
 
 
 @pytest.fixture(scope="session")
@@ -2300,6 +2306,25 @@ def test_urdf_mimic(show_viewer, tol):
 
     gs_qpos = scene.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(gs_qpos[-1], gs_qpos[-2], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["pendulum_with_joint_dynamics"])
+@pytest.mark.parametrize("joint_damping, joint_friction", [(1.0, 2.0)])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
+    scene = gs.Scene()
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=xml_path,
+            pos=(0, 0, 0.8),
+            convexify=True,
+        ),
+    )
+    assert_allclose(robot.joints[0].dofs_damping, 0.0, tol=gs.EPS)
+    assert_allclose(robot.joints[1].dofs_damping, joint_damping, tol=gs.EPS)
+    assert_allclose(robot.joints[0].dofs_frictionloss, 0.0, tol=gs.EPS)
+    assert_allclose(robot.joints[1].dofs_frictionloss, joint_friction, tol=gs.EPS)
 
 
 @pytest.mark.required
