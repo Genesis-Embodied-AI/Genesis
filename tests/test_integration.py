@@ -212,6 +212,12 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
     GRAPPER_POS_START = (0.65, 0.0, 0.13)
     GRAPPER_POS_END = (0.65, 0.0, 0.18)
 
+    if gs.utils.array_class.use_ndarray == True:
+        pytest.xfail(
+            reason="SAPCoupler does not support ndarray yet. please set environment variable \
+            GS_USE_NDARRAY=0 GS_BETA_PURE=0"
+        )
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60,
