@@ -132,7 +132,6 @@ def main():
             )
             franka.control_dofs_position(qpos[:-2], motors_dof)
             scene.draw_debug_sphere(pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5))
-
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
