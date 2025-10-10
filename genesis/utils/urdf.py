@@ -218,7 +218,6 @@ def parse_urdf(morph, surface):
             j_info["n_qs"] = 1
             j_info["n_dofs"] = 1
             j_info["init_qpos"] = np.zeros(1)
-
         elif joint.joint_type == "continuous":
             j_info["dofs_motion_ang"] = np.array([joint.axis])
             j_info["dofs_motion_vel"] = np.zeros((1, 3))
@@ -229,7 +228,6 @@ def parse_urdf(morph, surface):
             j_info["n_qs"] = 1
             j_info["n_dofs"] = 1
             j_info["init_qpos"] = np.zeros(1)
-
         elif joint.joint_type == "prismatic":
             j_info["dofs_motion_ang"] = np.zeros((1, 3))
             j_info["dofs_motion_vel"] = np.array([joint.axis])
@@ -247,7 +245,6 @@ def parse_urdf(morph, surface):
             j_info["n_qs"] = 1
             j_info["n_dofs"] = 1
             j_info["init_qpos"] = np.zeros(1)
-
         elif joint.joint_type == "floating":
             j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
             j_info["dofs_motion_vel"] = np.eye(6, 3)
@@ -258,28 +255,30 @@ def parse_urdf(morph, surface):
             j_info["n_qs"] = 7
             j_info["n_dofs"] = 6
             j_info["init_qpos"] = np.concatenate([gu.zero_pos(), gu.identity_quat()])
-
         else:
             gs.raise_exception(f"Unsupported URDF joint type: {joint.joint_type}")
 
-        j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
-        j_info["dofs_frictionloss"] = np.zeros(j_info["n_dofs"])
         j_info["sol_params"] = gu.default_solver_params()
-        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
-        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
+        j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
-        j_info["dofs_damping"] = np.zeros(j_info["n_dofs"])
+        joint_friction, joint_damping = 0.0, 0.0
+        if joint.dynamics is not None:
+            joint_friction, joint_damping = joint.dynamics.friction, joint.dynamics.damping
+        j_info["dofs_frictionloss"] = np.full(j_info["n_dofs"], joint_friction)
+        j_info["dofs_damping"] = np.full(j_info["n_dofs"], joint_damping)
         j_info["dofs_armature"] = np.zeros(j_info["n_dofs"])
         if joint.joint_type not in ("floating", "fixed") and morph.default_armature is not None:
             j_info["dofs_armature"] = np.full((j_info["n_dofs"],), morph.default_armature)
 
+        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
+        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
         if joint.safety_controller is not None:
             if joint.safety_controller.k_position is not None:
                 j_info["dofs_kp"] = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
             if joint.safety_controller.k_velocity is not None:
                 j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
 
+        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
         if joint.limit is not None and joint.limit.effort is not None:
             j_info["dofs_force_range"] = np.tile([-joint.limit.effort, joint.limit.effort], (j_info["n_dofs"], 1))
 
