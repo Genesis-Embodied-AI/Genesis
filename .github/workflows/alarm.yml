@@ -319,9 +319,9 @@ jobs:
             // For reference, see: https://stackoverflow.com/a/75420270/4820605
             const pr_number = (
               await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                commit_sha: context.sha,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
+                commit_sha: context.payload.workflow_run.head_sha,
               })
             ).data[0].number;
             await github.rest.issues.createComment({
@@ -339,17 +339,15 @@ jobs:
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
         with:
           script: |
-            const sha = context.payload.workflow_run.head_sha;
-            const hasRegs = (process.env.HAS_REGRESSIONS || '0').trim() === '1';
             const conclusion = 'success';
-            const summary = hasRegs
+            const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
               ? '🔴 Regressions detected. See tables below.'
               : '✅ No regressions detected. See tables below.';
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
+              head_sha: context.payload.workflow_run.head_sha,
               name: process.env.CHECK_NAME,
-              head_sha: sha,
               status: 'completed',
               conclusion,
               output: {
