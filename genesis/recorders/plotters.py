@@ -312,7 +312,8 @@ class BasePyQtPlotter(BasePlotter):
 
     @property
     def run_in_thread(self) -> bool:
-        return True
+        # TODO: Test on platforms and check which can run in thread
+        return False
 
     def get_image_array(self):
         """
@@ -500,8 +501,8 @@ class BaseMPLPlotter(BasePlotter):
 
     @property
     def run_in_thread(self) -> bool:
-        # matplotlib throws NSInternalInconsistencyException when trying to use threading for visualization on macOS
-        return not self.show_window or gs.platform != "macOS"
+        # TODO: Test on platforms and check which can run in thread
+        return False
 
 
 class MPLLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
