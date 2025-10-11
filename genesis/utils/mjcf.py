@@ -44,9 +44,17 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
         # Detect whether it is a URDF file or a Mujoco MJCF file
         root = xml.getroot()
         is_urdf_file = root.tag == "robot"
+        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
+
+        # Parse all included sub-models recursively
+        while (elem := mjcf.find("include")) is not None:
+            include_path = str(Path(asset_path) / elem.attrib["file"])
+            include_xml = ET.parse(include_path)
+            for child in include_xml.getroot():
+                mjcf.append(child)
+            mjcf.remove(elem)
 
         # Make sure compiler options are defined
-        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
         compiler = mjcf.find("compiler")
         if compiler is None:
             compiler = ET.SubElement(mjcf, "compiler")
