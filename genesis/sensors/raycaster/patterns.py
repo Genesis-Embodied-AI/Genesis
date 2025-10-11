@@ -199,45 +199,30 @@ class SphericalPattern(RaycastPattern):
 # ============================== Camera Patterns ==============================
 
 
-def _compute_focal_lengths(
-    width: int, height: int, fov_horizontal: float | None, fov_vertical: float | None
-) -> tuple[float, float]:
-    """
-    Helper function to compute focal lengths given image dimensions and FOV.
-    """
-    if fov_horizontal is not None and fov_vertical is None:
-        fh_rad = math.radians(fov_horizontal)
-        fv_rad = 2.0 * math.atan((height / width) * math.tan(fh_rad / 2.0))
-    elif fov_vertical is not None and fov_horizontal is None:
-        fv_rad = math.radians(fov_vertical)
-        fh_rad = 2.0 * math.atan((width / height) * math.tan(fv_rad / 2.0))
-    else:
-        fh_rad = math.radians(fov_horizontal)
-        fv_rad = math.radians(fov_vertical)
-
-    fx = width / (2.0 * math.tan(fh_rad / 2.0))
-    fy = height / (2.0 * math.tan(fv_rad / 2.0))
-
-    return fx, fy
-
-
 class DepthCameraPattern(RaycastPattern):
-    """Configuration for pinhole depth camera ray casting.
+    """
+    Configuration for pinhole depth camera ray casting.
+
+    You can configure the camera intrinsics in several ways:
+    1. Provide fx and fy directly (and optionally cx, cy)
+    2. Provide fov_horizontal only (fy computed to maintain aspect ratio)
+    3. Provide fov_vertical only (fx computed to maintain aspect ratio)
+    4. Provide both fov_horizontal and fov_vertical
+
+    If cx or cy are not provided, they default to the image center.
 
     Parameters
     ----------
-    width : int
-        Image width in pixels.
-    height : int
-        Image height in pixels.
+    res: tuple[int, int]
+        The resolution of the camera, specified as a tuple (width, height).
     fx : float | None
-        Focal length in x direction (pixels). Computed from FOV if None.
+        Focal length in x direction in pixels. Computed from fov_horizontal if None.
     fy : float | None
-        Focal length in y direction (pixels). Computed from FOV if None.
+        Focal length in y direction in pixels. Computed from fov_vertical if None.
     cx : float | None
-        Principal point x coordinate (pixels). Defaults to image center if None.
+        Principal point x coordinate in pixels. Defaults to image center if None.
     cy : float | None
-        Principal point y coordinate (pixels). Defaults to image center if None.
+        Principal point y coordinate in pixels. Defaults to image center if None.
     fov_horizontal : float
         Horizontal field of view in degrees. Used to compute fx if fx is None.
     fov_vertical : float | None
@@ -246,8 +231,7 @@ class DepthCameraPattern(RaycastPattern):
 
     def __init__(
         self,
-        width: int = 128,
-        height: int = 96,
+        res: tuple[int, int] = (128, 96),
         fx: float | None = None,
         fy: float | None = None,
         cx: float | None = None,
@@ -255,18 +239,33 @@ class DepthCameraPattern(RaycastPattern):
         fov_horizontal: float = 90.0,
         fov_vertical: float | None = None,
     ):
+        self.width, self.height = res
 
-        if width <= 0 or height <= 0:
-            gs.raise_exception(f"[{type(self).__name__}] Image dimensions must be positive. Got: ({width}, {height})")
+        if self.width <= 0 or self.height <= 0:
+            gs.raise_exception(f"[{type(self).__name__}] Image dimensions must be positive. Got: {res}")
 
-        self.width = width
-        self.height = height
-        self.fx = fx
-        self.fy = fy
-        self.cx = cx
-        self.cy = cy
-        self.fov_horizontal = fov_horizontal
-        self.fov_vertical = fov_vertical
+        if fx is None or fy is None:
+            # Calculate focal length
+            if fov_horizontal is not None and fov_vertical is None:
+                fh_rad = math.radians(fov_horizontal)
+                fv_rad = 2.0 * math.atan((self.height / self.width) * math.tan(fh_rad / 2.0))
+            elif fov_vertical is not None and fov_horizontal is None:
+                fv_rad = math.radians(fov_vertical)
+                fh_rad = 2.0 * math.atan((self.width / self.height) * math.tan(fv_rad / 2.0))
+            else:
+                fh_rad = math.radians(fov_horizontal)
+                fv_rad = math.radians(fov_vertical)
+            fx = self.width / (2.0 * math.tan(fh_rad / 2.0))
+            fy = self.height / (2.0 * math.tan(fv_rad / 2.0))
+        if cx is None:
+            cx = self.width * 0.5
+        if cy is None:
+            cy = self.height * 0.5
+
+        self.fx: float = fx
+        self.fy: float = fy
+        self.cx: float = cx
+        self.cy: float = cy
 
         super().__init__()
 
@@ -274,23 +273,13 @@ class DepthCameraPattern(RaycastPattern):
         return (self.height, self.width)
 
     def compute_ray_dirs(self):
-        W, H = int(self.width), int(self.height)
-
-        fx, fy, cx, cy = self.fx, self.fy, self.cx, self.cy
-        if fx is None or fy is None:
-            fx, fy = _compute_focal_lengths(W, H, self.fov_horizontal, self.fov_vertical)
-        if cx is None:
-            cx = W * 0.5
-        if cy is None:
-            cy = H * 0.5
-
-        u = torch.arange(0, W, dtype=gs.tc_float, device=gs.device) + 0.5
-        v = torch.arange(0, H, dtype=gs.tc_float, device=gs.device) + 0.5
+        u = torch.arange(0, self.width, dtype=gs.tc_float, device=gs.device) + 0.5
+        v = torch.arange(0, self.height, dtype=gs.tc_float, device=gs.device) + 0.5
         uu, vv = torch.meshgrid(u, v, indexing="xy")
 
         # standard camera frame coordinates
-        x_c = (uu - cx) / fx
-        y_c = (vv - cy) / fy
+        x_c = (uu - self.cx) / self.fx
+        y_c = (vv - self.cy) / self.fy
         z_c = torch.ones_like(x_c)
 
         # transform to robotics camera frame
