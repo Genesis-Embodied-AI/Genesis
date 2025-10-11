@@ -24,10 +24,8 @@ class DepthCameraSensor(RaycasterSensor):
 
     def build(self):
         super().build()
-        self._shape = ((self._manager._sim._B,) if self._manager._sim.n_envs > 0 else ()) + (
-            self._options.pattern.height,
-            self._options.pattern.width,
-        )
+        batch_shape = (self._manager._sim._B,) if self._manager._sim.n_envs > 0 else ()
+        self._shape = (*batch_shape, self._options.pattern.height, self._options.pattern.width)
 
     def read_image(self) -> torch.Tensor:
         """
