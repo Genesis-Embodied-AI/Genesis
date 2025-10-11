@@ -52,18 +52,19 @@ class SupportField:
     def _compute_support(self) -> None:
         v = self._get_direction_grid()
         v1 = v.reshape([-1, 3])
+        num_v = len(v1)
+
         support_v = []
         support_vid = []
         support_cell_start = []
         start = 0
         if self.solver.n_geoms > 0:
             init_pos = self.solver.verts_info.init_pos.to_numpy()
+            geoms_vert_start = self.solver.geoms_info.vert_start.to_numpy()
+            geoms_vert_end = self.solver.geoms_info.vert_end.to_numpy()
             for i_g in range(self.solver.n_geoms):
-                vert_start = self.solver.geoms_info.vert_start[i_g]
-                vert_end = self.solver.geoms_info.vert_end[i_g]
-                this_pos = init_pos[vert_start:vert_end]
+                this_pos = init_pos[geoms_vert_start[i_g] : geoms_vert_end[i_g]]
 
-                num_v = v1.shape[0]
                 window_size = int(5e8 // this_pos.shape[0])
                 max_indices = np.empty(num_v, dtype=np.intp)
 
