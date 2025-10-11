@@ -2287,8 +2287,10 @@ def test_mjcf_parsing_with_include():
     scene = gs.Scene()
     robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
     robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
     scene.build()
     assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
+    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
 
 
 @pytest.mark.required
