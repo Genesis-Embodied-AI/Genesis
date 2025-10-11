@@ -4,7 +4,7 @@ import torch
 
 import genesis as gs
 
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_array_equal
 
 
 def expand_batch_dim(values: tuple[float, ...], n_envs: int) -> tuple[float, ...] | np.ndarray:
@@ -252,7 +252,7 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_raycaster_hits(show_viewer, tol, n_envs):
+def test_raycaster_hits(show_viewer, n_envs):
     """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
     NUM_RAYS_XY = (3, 5)
     SPHERE_POS = (2.5, 0.5, 1.0)
@@ -322,6 +322,18 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
             debug_ray_hit_color=(0.0, 1.0, 0.0, 1.0),
         )
     )
+    depth_camera = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.raycaster.DepthCameraPattern(
+                res=NUM_RAYS_XY[::-1],
+            ),
+            entity_idx=spherical_sensor.idx,
+            draw_debug=show_viewer,
+            debug_ray_start_color=(0.0, 0.0, 0.0, 0.0),
+            debug_ray_hit_color=(0.0, 0.0, 1.0, 1.0),
+        ),
+    )
+
     obstacle_1 = scene.add_entity(
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
@@ -382,6 +394,11 @@ def test_raycaster_hits(show_viewer, tol, n_envs):
     assert spherical_distances.shape == (*batch_shape, *NUM_RAYS_XY)
     # Note that the tolerance must be large bevcause the sphere geometry is discretized
     assert_allclose(spherical_distances, RAYCAST_HEIGHT, tol=5e-3)
+
+    # Check that we can read image from depth camera
+    assert_array_equal(depth_camera.read_image().shape, batch_shape + NUM_RAYS_XY)
+    # Note that the tolerance must be large bevcause the sphere geometry is discretized
+    assert_allclose(depth_camera.read_image(), RAYCAST_HEIGHT, tol=5e-3)
 
     # Simulate for a while and check again that the ray is casted properly
     offset = torch.from_numpy(np.random.rand(*batch_shape, 3)).to(dtype=gs.tc_float, device=gs.device)
