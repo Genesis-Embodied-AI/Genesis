@@ -291,7 +291,7 @@ class Camera(RBC):
             pos_rel = self._initial_pos - torch.tensor(entity.base_link.pos, dtype=gs.tc_float, device=gs.device)
             if self._env_idx is None:
                 if self._visualizer._context.rendered_envs_idx is not None:
-                    pos_rel = pos_rel.expand((len(self._visualizer._context.rendered_envs_idx), 1))
+                    pos_rel = pos_rel.expand((len(self._visualizer._context.rendered_envs_idx), 3))
                 else:
                     # Falling back to adding batch dimension to allow broadcasting.
                     # Note that it is not possible to expand / tile because the batch size is unknown before build.
