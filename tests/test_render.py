@@ -617,7 +617,7 @@ def test_camera_follow_entity(n_envs, renderer, show_viewer):
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            rendered_envs_idx=[1] if n_envs else None,
+            rendered_envs_idx=[max(n_envs - 1, 0)],
             segmentation_level="entity",
         ),
         renderer=renderer,
