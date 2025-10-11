@@ -1440,6 +1440,7 @@ class RigidEntity(Entity):
                 self._solver.entities_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
+                False,
             )
 
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.PARTIAL)
@@ -1466,6 +1467,7 @@ class RigidEntity(Entity):
                 self._solver.entities_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
+                False,
             )
 
     # ------------------------------------------------------------------------------------

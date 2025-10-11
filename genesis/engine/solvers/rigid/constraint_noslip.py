@@ -40,6 +40,7 @@ def kernel_build_efc_AR_b(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
             )
 
             # AR[r, c] = J[c, :] * tmp
@@ -196,6 +197,7 @@ def kernel_dual_finish(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
         )
 
         for i_d in range(n_dofs):
@@ -288,6 +290,7 @@ def compute_A_diag(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
             )
 
             # Ai = Ji * tmp

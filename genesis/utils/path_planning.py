@@ -429,6 +429,7 @@ class RRT(PathPlanner):
                         entities_info,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,
+                        False,
                     )
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
                         i_b,
@@ -798,6 +799,7 @@ class RRTConnect(PathPlanner):
                         entities_info,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,
+                        False,
                     )
                     gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms(
                         i_b,

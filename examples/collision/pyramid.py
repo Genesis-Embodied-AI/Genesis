@@ -8,7 +8,7 @@ def main():
     parser.add_argument("--pile_type", type=str, default="falling", choices=["static", "falling"])
     parser.add_argument("--num_cubes", type=int, default=5, choices=range(5, 11))
     parser.add_argument("--cpu", action="store_true", help="Use CPU backend instead of GPU")
-    parser.add_argument("--steps", type=int, default=100)
+    parser.add_argument("--steps", type=int, default=10000)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
 
     args = parser.parse_args()
@@ -23,6 +23,7 @@ def main():
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
+            requires_grad=True,
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=False,
