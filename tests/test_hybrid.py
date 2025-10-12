@@ -12,6 +12,7 @@ pytestmark = [
 ]
 
 
+@pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     BALL_POS_INIT = (0.8, 0.6, 0.12)
 
