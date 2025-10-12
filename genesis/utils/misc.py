@@ -255,6 +255,10 @@ def get_gsd_cache_dir():
     return os.path.join(get_cache_dir(), "gsd")
 
 
+def get_gnd_cache_dir():
+    return os.path.join(get_cache_dir(), "terrain")
+
+
 def get_cvx_cache_dir():
     return os.path.join(get_cache_dir(), "cvx")
 
