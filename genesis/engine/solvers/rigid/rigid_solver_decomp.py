@@ -2267,7 +2267,7 @@ class RigidSolver(Solver):
         from genesis.engine.couplers import LegacyCoupler
 
         if not isinstance(self.sim.coupler, LegacyCoupler):
-            raise gs.GenesisException("Method only supported when using 'LegacyCoupler' coupler type.")
+            gs.raise_exception("Method only supported when using 'LegacyCoupler' coupler type.")
 
         aabb_min = ti_to_torch(self.geoms_state.aabb_min, envs_idx, transpose=True, unsafe=unsafe)
         aabb_max = ti_to_torch(self.geoms_state.aabb_max, envs_idx, transpose=True, unsafe=unsafe)

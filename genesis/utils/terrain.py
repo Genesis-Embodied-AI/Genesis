@@ -57,7 +57,7 @@ def parse_terrain(morph: Terrain, surface):
                 heightfield = pkl.load(fd)
         except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
             # Do not ignore error in case of corrupted cache, to make sure the user is aware of it
-            raise gs.GenesisException(f"Corrupted cache for terrain heightmap: {gnd_file_path}")
+            gs.raise_exception(f"Corrupted cache for terrain heightmap: {gnd_file_path}")
 
     if heightfield is None:
         subterrain_rows = int(morph.subterrain_size[0] / morph.horizontal_scale + gs.EPS) + 1

@@ -48,7 +48,7 @@ class Base(Material):
         if sampler is None:
             sampler = "pbs" if gs.platform == "Linux" else "random"
         if not (sampler in ("pbs", "random", "regular") or sampler.startswith("pdb-")):
-            raise gs.GenesisException(
+            gs.raise_exception(
                 f"Particle sampler must be either 'pbs(-[0-9]*)', 'random' or 'regular. Got '{sampler}'."
             )
 
