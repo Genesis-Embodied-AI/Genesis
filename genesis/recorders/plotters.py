@@ -281,7 +281,7 @@ class BasePyQtPlotter(BasePlotter):
     def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
         super().__init__(manager, options, data_func)
         if threading.current_thread() is not threading.main_thread():
-            raise gs.GenesisException("Impossible to run PyQtPlotter in background thread.")
+            gs.raise_exception("Impossible to run PyQtPlotter in background thread.")
 
     def build(self):
         if not IS_PYQTGRAPH_AVAILABLE:
@@ -432,7 +432,7 @@ class BaseMPLPlotter(BasePlotter):
     def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
         super().__init__(manager, options, data_func)
         if threading.current_thread() is not threading.main_thread():
-            raise gs.GenesisException("Impossible to run MPLPlotter in background thread.")
+            gs.raise_exception("Impossible to run MPLPlotter in background thread.")
 
     def build(self):
         if not IS_MATPLOTLIB_AVAILABLE:
