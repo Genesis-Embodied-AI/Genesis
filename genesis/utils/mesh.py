@@ -1,8 +1,10 @@
 import hashlib
 import json
+import marshal
 import math
 import os
 import pickle as pkl
+from itertools import chain
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from .misc import (
     get_cvx_cache_dir,
     get_exr_cache_dir,
     get_gsd_cache_dir,
+    get_gnd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
@@ -102,71 +105,71 @@ def get_asset_path(file):
 
 
 def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    hashkey = get_hashkey(
-        verts.tobytes(),
-        faces.tobytes(),
-        str(sdf_cell_size).encode(),
-        str(sdf_min_res).encode(),
-        str(sdf_max_res).encode(),
-    )
+    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
+def get_gnd_path(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains):
+    hashkey = get_hashkey(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains)
+    return os.path.join(get_gnd_cache_dir(), f"{hashkey}.gnd")
+
+
 def get_cvx_path(verts, faces, coacd_options):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(coacd_options.__dict__).encode())
+    hashkey = get_hashkey(verts, faces, coacd_options.__dict__)
     return os.path.join(get_cvx_cache_dir(), f"{hashkey}.cvx")
 
 
 def get_ptc_path(verts, faces, p_size, sampler):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(p_size).encode(), sampler.encode())
+    hashkey = get_hashkey(verts, faces, p_size, sampler)
     return os.path.join(get_ptc_cache_dir(), f"{hashkey}.ptc")
 
 
 def get_tet_path(verts, faces, tet_cfg):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(tet_cfg).encode())
+    hashkey = get_hashkey(verts, faces, tet_cfg)
     return os.path.join(get_tet_cache_dir(), f"{hashkey}.tet")
 
 
 def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
-    hashkey = get_hashkey(
-        verts.tobytes(), faces.tobytes(), str(edge_len_abs).encode(), str(edge_len_ratio).encode(), str(fix).encode()
-    )
+    hashkey = get_hashkey(verts, faces, edge_len_abs, edge_len_ratio, fix)
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
 
 
 def get_exr_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
 
 
 def get_usd_zip_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "zip", hashkey)
 
 
 def get_usd_bake_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "bake", hashkey)
-
-
-def get_file_hashkey(file):
-    file_obj = Path(file)
-    return get_hashkey(file_obj.resolve().as_posix().encode(), str(file_obj.stat().st_size).encode())
 
 
 def get_hashkey(*args):
     hasher = hashlib.sha256()
-    for arg in args:
+    for arg in (*args, gs.__version__.encode()):
+        if isinstance(arg, Path):
+            file_stats = arg.stat()
+            arg = (str(arg).encode(), file_stats.st_size, file_stats.st_mtime)
+        if isinstance(arg, str):
+            arg = arg.encode()
+        elif not isinstance(arg, bytes):
+            try:
+                arg = bytes(memoryview(arg))
+            except TypeError:
+                arg = marshal.dumps(arg)
         hasher.update(arg)
-    hasher.update(gs.__version__.encode())
     return hasher.hexdigest()
 
 
 def load_mesh(file):
-    if isinstance(file, str):
+    if isinstance(file, (str, Path)):
         return trimesh.load(file, force="mesh", skip_texture=True)
-    else:
-        return file
+    return file
 
 
 def normalize_mesh(mesh):

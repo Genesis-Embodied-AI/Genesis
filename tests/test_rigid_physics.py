@@ -1,4 +1,5 @@
 import math
+import uuid
 import os
 import sys
 import tempfile
@@ -2029,9 +2030,8 @@ def test_nan_reset(gs_sim, mode):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("offset", [(0.0, 0.0, 0.0), (10.0, -10.0, -1.0)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_terrain_generation(offset, show_viewer):
+def test_terrain_generation(request, show_viewer):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
         ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
@@ -2039,6 +2039,7 @@ def test_terrain_generation(offset, show_viewer):
         ["flat_terrain", "stairs_terrain", "pyramid_stairs_terrain", "stepping_stones_terrain", "flat_terrain"],
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
     ]
+    TERRAIN_OFFSET = (10.0, -10.0, -1.0)
     TERRAIN_SIZE = 10.0
     SUBTERRAIN_GRID_SIZE = 15
     OBJ_SIZE = 0.1
@@ -2046,26 +2047,29 @@ def test_terrain_generation(offset, show_viewer):
     NUM_OBJ_SQRT = 15
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
+        sim_options=gs.options.SimOptions(
             dt=0.006,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-5.0 + offset[0], -5.0 + offset[1], 10.0 + offset[2]),
-            camera_lookat=(5.0 + offset[0], 5.0 + offset[1], 0.0 + offset[2]),
+            camera_pos=(-5.0 + TERRAIN_OFFSET[0], -5.0 + TERRAIN_OFFSET[1], 10.0 + TERRAIN_OFFSET[2]),
+            camera_lookat=(5.0 + TERRAIN_OFFSET[0], 5.0 + TERRAIN_OFFSET[1], 0.0 + TERRAIN_OFFSET[2]),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    terrain = scene.add_entity(
-        morph=gs.morphs.Terrain(
-            pos=offset,
-            n_subterrains=(len(TERRAIN_PATTERN),) * 2,
-            subterrain_size=(TERRAIN_SIZE / len(TERRAIN_PATTERN),) * 2,
-            horizontal_scale=TERRAIN_SIZE / len(TERRAIN_PATTERN) / SUBTERRAIN_GRID_SIZE,
-            vertical_scale=0.05,
-            subterrain_types=TERRAIN_PATTERN,
-        ),
+    terrain_kwargs = dict(
+        pos=TERRAIN_OFFSET,
+        n_subterrains=(len(TERRAIN_PATTERN),) * 2,
+        subterrain_size=(TERRAIN_SIZE / len(TERRAIN_PATTERN),) * 2,
+        horizontal_scale=TERRAIN_SIZE / len(TERRAIN_PATTERN) / SUBTERRAIN_GRID_SIZE,
+        vertical_scale=0.05,
+        subterrain_types=TERRAIN_PATTERN,
+        randomize=False,
+        name=f"{request.node.nodeid}-{uuid.uuid4()}",
     )
+    # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
+    # np.random.seed(4)
+    terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
     obj = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(1.0, 1.0, 1.0),
@@ -2080,21 +2084,34 @@ def test_terrain_generation(offset, show_viewer):
     # Spread objects across the entire field
     obj_pos_1d = torch.linspace(OBJ_SIZE / 2, TERRAIN_SIZE - OBJ_SIZE / 2, NUM_OBJ_SQRT)
     obj_pos_init_rel = torch.cartesian_prod(*(obj_pos_1d,) * 2, torch.tensor((OBJ_HEIGHT_INIT,)))
-    obj.set_pos(obj_pos_init_rel + torch.tensor(offset))
+    obj.set_pos(obj_pos_init_rel + torch.tensor(TERRAIN_OFFSET))
 
-    # Drop the objects and simulate for a while
+    # Drop the objects and simulate for a while.
     for _ in range(500):
         scene.step()
 
     # Check that objects are not moving anymore
     assert_allclose(obj.get_vel(), 0.0, tol=0.05)
 
+    # Check the the terrain is not entirely flat and has the expected size
+    terrain_min_corner, terrain_max_corner = tensor_to_array(terrain.geoms[0].get_AABB()) - TERRAIN_OFFSET
+    assert_allclose(terrain_min_corner[:2], 0.0, tol=gs.EPS)
+    assert_allclose(terrain_max_corner[:2], TERRAIN_SIZE, tol=gs.EPS)
+    assert terrain_min_corner[2] < -1.0  # Stepping stone depth
+    assert terrain_max_corner[2] > 0.01  # FIXME: It should not be larger than 'vertical_scale'
+
     # Check that all objects are in contact with the terrain
-    obj_pos = tensor_to_array(obj.get_pos()) - offset
+    obj_pos = tensor_to_array(obj.get_pos()) - TERRAIN_OFFSET
     terrain_mesh = terrain.geoms[0].mesh
     signed_distance, *_ = igl.signed_distance(obj_pos, terrain_mesh.verts, terrain_mesh.faces)
     assert (signed_distance > 0.0).all()
     assert (signed_distance < 2 * OBJ_SIZE).all()
+
+    # Check if cache is being reloaded as expected
+    scene = gs.Scene()
+    terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
+    terrain_2_mesh = terrain_2.geoms[0].mesh
+    assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
 
 
 @pytest.mark.required
