@@ -302,7 +302,7 @@ def test_raycaster_hits(show_viewer, n_envs):
             size=(RAYCAST_BOX_SIZE, RAYCAST_BOX_SIZE, RAYCAST_BOX_SIZE),
             pos=(0.0, 0.0, RAYCAST_HEIGHT + 0.5 * RAYCAST_BOX_SIZE),
             collision=False,
-            fixed=True,
+            fixed=False,
         ),
     )
     grid_res = RAYCAST_GRID_SIZE_X / (NUM_RAYS_XY[0] - 1)
@@ -404,8 +404,13 @@ def test_raycaster_hits(show_viewer, n_envs):
     offset = torch.from_numpy(np.random.rand(*batch_shape, 3)).to(dtype=gs.tc_float, device=gs.device)
     for entity in (grid_sensor, obstacle_1, obstacle_2):
         entity.set_pos(entity.get_pos() + offset)
+    grid_sensor_pos = grid_sensor.get_pos()
     for _ in range(100):
         scene.step()
+    grid_sensor.set_pos(grid_sensor_pos)
+    scene.sim._sensor_manager.step()
+    if show_viewer:
+        scene.visualizer.update(force=True)
 
     grid_distances = grid_raycaster.read().distances
     grid_distances_ref = torch.full((*batch_shape, *NUM_RAYS_XY), RAYCAST_HEIGHT)
