@@ -44,9 +44,23 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
         # Detect whether it is a URDF file or a Mujoco MJCF file
         root = xml.getroot()
         is_urdf_file = root.tag == "robot"
+        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
+
+        # Parse all included sub-models recursively
+        root_parent_stack = [(mjcf, Path(""))]
+        while root_parent_stack:
+            xml_root, parent_path = root_parent_stack.pop()
+            for elem in tuple(xml_root.findall("include")):
+                include_path = parent_path / elem.attrib["file"]
+                include_root = ET.parse(Path(asset_path) / include_path).getroot()
+                for include_elem in include_root.findall(".//mesh"):
+                    include_elem.attrib["file"] = str(include_path.parent / include_elem.attrib["file"])
+                for child in include_root:
+                    mjcf.append(child)
+                mjcf.remove(elem)
+                root_parent_stack.append((include_root, include_path))
 
         # Make sure compiler options are defined
-        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
         compiler = mjcf.find("compiler")
         if compiler is None:
             compiler = ET.SubElement(mjcf, "compiler")
@@ -107,7 +121,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 mesh_path = elem.get("filename")
                 if mesh_path.startswith("package://"):
                     mesh_path = mesh_path[10:]
-                elem.set("filename", os.path.abspath(os.path.join(asset_path, mesh_path)))
+                elem.set("filename", str((Path(asset_path) / mesh_path).resolve()))
 
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
             # Parse updated URDF file as a string

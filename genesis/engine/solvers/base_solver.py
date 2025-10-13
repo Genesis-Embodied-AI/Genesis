@@ -6,7 +6,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import ti_to_torch
+from genesis.utils.misc import ti_to_torch, tensor_to_array
 from genesis.engine.entities.base_entity import Entity
 from genesis.repr_base import RBC
 
@@ -46,18 +46,18 @@ class Solver(RBC):
         if self._gravity is None:
             gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return
-        g = np.asarray(gravity, dtype=gs.np_float)
+        g_np = tensor_to_array(gravity, dtype=gs.np_float)
         if envs_idx is None:
-            if g.ndim == 1:
-                g = np.tile(g, (self._B, 1))
-            assert g.shape == (self._B, 3), "Input gravity array should match (n_envs, 3)"
-            self._gravity.from_numpy(g)
+            if g_np.ndim == 1:
+                g_np = np.tile(g_np, (self._B, 1))
+            assert g_np.shape == (self._B, 3), "Input gravity array should match (n_envs, 3)"
+            self._gravity.from_numpy(g_np)
         else:
             envs_idx = np.atleast_1d(np.array(envs_idx, dtype=gs.np_int))
-            if g.ndim == 1:
-                g = np.tile(g, (len(envs_idx), 1))
-            assert g.shape == (len(envs_idx), 3), "Input gravity array should match (len(envs_idx), 3)"
-            _kernel_set_gravity(g, envs_idx, self._gravity)
+            if g_np.ndim == 1:
+                g_np = np.tile(g_np, (len(envs_idx), 1))
+            assert g_np.shape == (len(envs_idx), 3), "Input gravity array should match (len(envs_idx), 3)"
+            _kernel_set_gravity(g_np, envs_idx, self._gravity)
 
     def get_gravity(self, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)

@@ -179,7 +179,7 @@ class SAPCoupler(RBC):
         self._hydroelastic_stiffness = options.hydroelastic_stiffness
         self._point_contact_stiffness = options.point_contact_stiffness
         if gs.ti_float == ti.f32:
-            raise gs.GenesisException(
+            gs.raise_exception(
                 "SAPCoupler does not support 32bits precision. Please specify precision='64' when initializing Genesis."
             )
         if options.fem_floor_contact_type == "tet":
@@ -317,7 +317,7 @@ class SAPCoupler(RBC):
         for geom in self.rigid_solver.geoms:
             if geom.contype or geom.conaffinity:
                 if geom.type == gs.GEOM_TYPE.PLANE:
-                    raise gs.GenesisException("Primitive plane not supported as user-specified collision geometries.")
+                    gs.raise_exception("Primitive plane not supported as user-specified collision geometries.")
                 volume = geom.get_trimesh().volume
                 tet_cfg = {"nobisect": False, "maxvolume": volume / 100}
                 verts, elems = eu.split_all_surface_tets(*eu.mesh_to_elements(file=geom.get_trimesh(), tet_cfg=tet_cfg))

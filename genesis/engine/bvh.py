@@ -114,7 +114,7 @@ class LBVH(RBC):
 
     def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
         if aabb.n_aabbs < 2:
-            raise gs.GenesisException("The number of AABBs must be larger than 2.")
+            gs.raise_exception("The number of AABBs must be larger than 2.")
         n_radix_sort_groups = min(aabb.n_aabbs, n_radix_sort_groups)
 
         self.aabbs = aabb.aabbs
