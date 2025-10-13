@@ -6,7 +6,7 @@ from genesis.repr_base import RBC
 # A constant stack size should be sufficient for BVH traversal.
 # https://madmann91.github.io/2021/01/06/bvhs-part-2.html
 # https://forums.developer.nvidia.com/t/thinking-parallel-part-ii-tree-traversal-on-the-gpu/148342
-STACK_SIZE = ti.static(64)
+STACK_SIZE = 64
 
 
 @ti.data_oriented
