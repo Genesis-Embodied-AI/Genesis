@@ -642,6 +642,8 @@ class Mesh(FileMorph, TetGenMixin):
         **This is only used for RigidEntity.**
     parse_glb_with_trimesh : bool, optional
         Whether to use trimesh to load glb files. Defaults to False, in which case pygltflib will be used.
+    parse_glb_with_zup : bool, optional
+        Whether to use zup to load glb files. Defaults to False.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
     contype : int, optional
@@ -679,6 +681,7 @@ class Mesh(FileMorph, TetGenMixin):
     """
 
     parse_glb_with_trimesh: bool = False
+    parse_glb_with_zup: bool = False
 
     # Rigid specific
     fixed: bool = False
