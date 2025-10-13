@@ -10,7 +10,7 @@ from pydantic import Field
 import genesis as gs
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
 import genesis.utils.array_class as array_class
-from genesis.engine.bvh import AABB, LBVH
+from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
 from genesis.sensors.sensor_manager import register_sensor
 from genesis.utils.geom import (
     ti_normalize,
@@ -35,18 +35,6 @@ from .patterns import RaycastPattern
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
-
-
-DEBUG_COLORS = (
-    (1.0, 0.2, 0.2, 1.0),
-    (0.2, 1.0, 0.2, 1.0),
-    (0.2, 0.6, 1.0, 1.0),
-    (1.0, 1.0, 0.2, 1.0),
-)
-# A constant stack size should be sufficient for BVH traversal.
-# https://madmann91.github.io/2021/01/06/bvhs-part-2.html
-# https://forums.developer.nvidia.com/t/thinking-parallel-part-ii-tree-traversal-on-the-gpu/148342
-STACK_SIZE = ti.static(64)
 
 
 @ti.func
@@ -209,6 +197,8 @@ def kernel_cast_rays(
         ray_direction_world = ti_normalize(ti_transform_by_quat(ray_dir_local, link_quat))
 
         # --- 2. BVH Traversal ---
+        # FIXME: this duplicates the logic in LBVH.query() which also does traversal
+
         max_range = max_ranges[i_s]
         hit_face = -1
 
@@ -416,7 +406,12 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             n_faces = self._shared_metadata.solver.faces_info.geom_idx.shape[0]
             n_envs = self._shared_metadata.solver.free_verts_state.pos.shape[1]
             self._shared_metadata.aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
-            self._shared_metadata.bvh = LBVH(self._shared_metadata.aabb)
+
+            # FIXME: Empirically, the values 0 and 64 seem to be sufficient and decrease memory usage.
+            # Should these parameters be exposed to the user?
+            self._shared_metadata.bvh = LBVH(
+                self._shared_metadata.aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64
+            )
             self._update_bvh(self._shared_metadata)
 
         self._shared_metadata.patterns.append(self._options.pattern)
