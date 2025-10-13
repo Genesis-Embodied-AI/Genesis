@@ -92,9 +92,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if show_viewer:
         config.option.numprocesses = 0
 
-    # Force headless rendering if available and the interactive viewer is disabled
-    if not show_viewer and has_egl:
-        pyglet.options["headless"] = True
+    # Force headless rendering if available and the interactive viewer is disabled.
+    # FIXME: It breaks rendering on some platform...
+    # if not show_viewer and has_egl:
+    #     pyglet.options["headless"] = True
 
     # Disable low-level parallelization if distributed framework is enabled.
     # FIXME: It should be set to `max(int(physical_core_count / num_workers), 1)`, but 'num_workers' may be unknown.
@@ -184,15 +185,14 @@ def pytest_xdist_auto_num_workers(config):
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
     # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
     # does not completely release memory between each test.
-    if sys.platform in ("darwin", "win32"):
-        ram_memory_per_worker = 3.0
-        vram_memory_per_worker = 1.0  # Does not really makes sense on Apple Silicon
+    if sys.platform in "darwin":
+        ram_memory_per_worker = vram_memory_per_worker = 3.0
     elif config.option.forked:
         ram_memory_per_worker = 5.5
-        vram_memory_per_worker = 1.2
+        vram_memory_per_worker = 1.8
     else:
         ram_memory_per_worker = 7.5
-        vram_memory_per_worker = 1.6
+        vram_memory_per_worker = 2.5
     num_workers = min(
         physical_core_count,
         max(int(ram_memory / ram_memory_per_worker), 1),

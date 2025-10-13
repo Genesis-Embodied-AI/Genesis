@@ -1725,7 +1725,7 @@ class SpatialHasher:
         self.slot_size = ti.field(gs.ti_int, shape=(self.n_slots, self._B))
         # element index offset in each slot
         self.slot_start = ti.field(gs.ti_int, shape=(self.n_slots, self._B))
-        self.cur_cnt = ti.field(gs.ti_int, shape=self._B)
+        self.cur_cnt = ti.field(gs.ti_int, shape=(self._B,))
 
     @ti.func
     def compute_reordered_idx(self, n, pos, active, reordered_idx):

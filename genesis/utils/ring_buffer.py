@@ -82,7 +82,7 @@ class TensorRingBuffer:
             if copy:
                 tensor = tensor.clone()
         elif copy == False:
-            raise gs.GenesisException("Allocating memory is necessary but 'copy=False'.")
+            gs.raise_exception("Allocating memory is necessary but 'copy=False'.")
         return tensor
 
     def get(self, idx: int) -> torch.Tensor:

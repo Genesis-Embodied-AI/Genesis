@@ -910,9 +910,9 @@ class RigidSolver(Solver):
             )
 
             self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
-            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
-            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
-            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
+            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=(2,))
+            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=(2,))
+            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=(6,))
 
             self.terrain_hf.from_numpy(hf)
             self.terrain_rc.from_numpy(rc)
@@ -1619,6 +1619,15 @@ class RigidSolver(Solver):
             pos = pos.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+
+        # Raise exception for fixed links with at least one geom, except if setting same location for all envs at once
+        set_all_envs = (torch.sort(envs_idx).values == self._scene._envs_idx).all()
+        has_fixed_geoms = any(
+            link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
+        )
+        if has_fixed_geoms and not (set_all_envs and (torch.diff(pos, dim=0).abs() < gs.EPS).all()):
+            gs.raise_exception("Impossible to set env-specific pos for fixed links with at least one geometry.")
+
         kernel_set_links_pos(
             relative,
             pos,
@@ -1661,6 +1670,14 @@ class RigidSolver(Solver):
             quat = quat.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+
+        set_all_envs = (torch.sort(envs_idx).values == self._scene._envs_idx).all()
+        has_fixed_geoms = any(
+            link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
+        )
+        if has_fixed_geoms and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
+            gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
+
         kernel_set_links_quat(
             relative,
             quat,
@@ -2267,7 +2284,7 @@ class RigidSolver(Solver):
         from genesis.engine.couplers import LegacyCoupler
 
         if not isinstance(self.sim.coupler, LegacyCoupler):
-            raise gs.GenesisException("Method only supported when using 'LegacyCoupler' coupler type.")
+            gs.raise_exception("Method only supported when using 'LegacyCoupler' coupler type.")
 
         aabb_min = ti_to_torch(self.geoms_state.aabb_min, envs_idx, transpose=True, unsafe=unsafe)
         aabb_max = ti_to_torch(self.geoms_state.aabb_max, envs_idx, transpose=True, unsafe=unsafe)
@@ -5134,20 +5151,7 @@ def kernel_update_all_verts(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
 ):
-    n_verts = verts_info.geom_idx.shape[0]
-    _B = geoms_state.pos.shape[1]
-    for i_v, i_b in ti.ndrange(n_verts, _B):
-        g_pos = geoms_state.pos[verts_info.geom_idx[i_v], i_b]
-        g_quat = geoms_state.quat[verts_info.geom_idx[i_v], i_b]
-        verts_state_idx = verts_info.verts_state_idx[i_v]
-        if not verts_info.is_fixed[i_v]:
-            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v], g_pos, g_quat
-            )
-        elif i_b == 0:
-            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v], g_pos, g_quat
-            )
+    func_update_all_verts(geoms_state, verts_info, free_verts_state, fixed_verts_state)
 
 
 @ti.kernel

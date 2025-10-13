@@ -1,5 +1,6 @@
 import io
 import itertools
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -34,6 +35,9 @@ try:
 except ImportError:
     pass
 
+MPL_PLOTTER_RESCALE_MIN_X = 0.5
+MPL_PLOTTER_RESCALE_RATIO_X = 0.15
+MPL_PLOTTER_RESCALE_RATIO_Y = 0.15
 
 COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y"))
 
@@ -69,12 +73,14 @@ class BasePlotterOptions(RecorderOptions):
 class BasePlotter(Recorder):
 
     def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+        if options.show_window is None:
+            options.show_window = has_display()
+
         super().__init__(manager, options, data_func)
         self._frames_buffer: list[np.ndarray] = []
 
     def build(self):
         super().build()
-        self.show_window = self._options.show_window if self._options.show_window is not None else has_display()
 
         self.video_writer = None
         if self._options.save_to_filename:
@@ -164,8 +170,8 @@ class LinePlotHelper:
     """
 
     def __init__(self, options: LinePlotterMixinOptions, data: dict[str, Sequence] | Sequence):
-        self._x_data: list[float] = []
-        self._y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+        self.x_data: list[float] = []
+        self.y_data: defaultdict[str, defaultdict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
         self._history_length = options.history_length
 
         # Note that these attributes will be set during first data processing or initialization
@@ -210,8 +216,8 @@ class LinePlotHelper:
             self._subplot_structure = {"main": plot_labels}
 
     def clear_data(self):
-        self._x_data.clear()
-        self._y_data.clear()
+        self.x_data.clear()
+        self.y_data.clear()
 
     def process(self, data, cur_time):
         """Process new data point and update plot."""
@@ -228,7 +234,7 @@ class LinePlotHelper:
             processed_data = {"main": data}
 
         # Update time data
-        self._x_data.append(cur_time)
+        self.x_data.append(cur_time)
 
         # Update y data for each subplot
         for subplot_key, subplot_data in processed_data.items():
@@ -242,25 +248,21 @@ class LinePlotHelper:
 
             for i, channel_label in enumerate(channel_labels):
                 if i < len(subplot_data):
-                    self._y_data[subplot_key][channel_label].append(float(subplot_data[i]))
+                    self.y_data[subplot_key][channel_label].append(float(subplot_data[i]))
 
         # Maintain rolling history window
-        if len(self._x_data) > self._history_length:
-            self._x_data.pop(0)
-            for subplot_key in self._y_data:
-                for channel_label in self._y_data[subplot_key]:
+        if len(self.x_data) > self._history_length:
+            self.x_data.pop(0)
+            for subplot_key in self.y_data:
+                for channel_label in self.y_data[subplot_key]:
                     try:
-                        self._y_data[subplot_key][channel_label].pop(0)
+                        self.y_data[subplot_key][channel_label].pop(0)
                     except IndexError:
                         break  # empty, nothing to do.
 
     @property
-    def x_data(self):
-        return self._x_data
-
-    @property
-    def y_data(self):
-        return self._y_data
+    def history_length(self):
+        return self._history_length
 
     @property
     def is_dict_data(self):
@@ -275,6 +277,11 @@ class BasePyQtPlotter(BasePlotter):
     """
     Base class for PyQt based plotters.
     """
+
+    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+        super().__init__(manager, options, data_func)
+        if threading.current_thread() is not threading.main_thread():
+            gs.raise_exception("Impossible to run PyQtPlotter in background thread.")
 
     def build(self):
         if not IS_PYQTGRAPH_AVAILABLE:
@@ -292,8 +299,8 @@ class BasePyQtPlotter(BasePlotter):
         else:
             self.app = pg.QtWidgets.QApplication.instance()
 
-        self.widget = pg.GraphicsLayoutWidget(show=self.show_window, title=self._options.title)
-        if self.show_window:
+        self.widget = pg.GraphicsLayoutWidget(show=self._options.show_window, title=self._options.title)
+        if self._options.show_window:
             gs.logger.info(f"[{type(self).__name__}] created PyQtGraph window")
         self.widget.resize(*self._options.window_size)
 
@@ -307,12 +314,12 @@ class BasePyQtPlotter(BasePlotter):
             except Exception as e:
                 gs.logger.warning(f"[{type(self).__name__}] Error closing window: {e}")
             finally:
-                self.widget = None
                 self.plot_widgets.clear()
+                self.widget = None
 
     @property
     def run_in_thread(self) -> bool:
-        return True
+        return False
 
     def get_image_array(self):
         """
@@ -384,14 +391,16 @@ class PyQtLinePlotter(BasePyQtPlotter):
             plot_widget.showGrid(x=True, y=True, alpha=0.3)
             plot_widget.addLegend()
 
-            self.plot_widgets.append(plot_widget)
-
             # create lines for this subplot
             subplot_curves = []
 
             for color, channel_label in zip(COLORS, channel_labels):
                 curve = plot_widget.plot(pen=pg.mkPen(color=color, width=2), name=channel_label)
                 subplot_curves.append(curve)
+
+            self.plot_widgets.append(plot_widget)
+            if self._options.show_window:
+                plot_widget.show()
 
             self.curves[subplot_key] = subplot_curves
 
@@ -420,6 +429,11 @@ class BaseMPLPlotter(BasePlotter):
     Base class for matplotlib based plotters.
     """
 
+    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+        super().__init__(manager, options, data_func)
+        if threading.current_thread() is not threading.main_thread():
+            gs.raise_exception("Impossible to run MPLPlotter in background thread.")
+
     def build(self):
         if not IS_MATPLOTLIB_AVAILABLE:
             gs.raise_exception(
@@ -438,7 +452,7 @@ class BaseMPLPlotter(BasePlotter):
         self.figsize = (self._options.window_size[0] / dpi, self._options.window_size[1] / dpi)
 
     def _show_fig(self):
-        if self.show_window:
+        if self._options.show_window:
             self.fig.show()
             gs.logger.info(f"[{type(self).__name__}] created matplotlib window")
 
@@ -500,8 +514,14 @@ class BaseMPLPlotter(BasePlotter):
 
     @property
     def run_in_thread(self) -> bool:
-        # matplotlib throws NSInternalInconsistencyException when trying to use threading for visualization on macOS
-        return not self.show_window or gs.platform != "macOS"
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        if sys.platform == "darwin":
+            return False
+        if self._is_built:
+            assert self.fig is not None
+            return isinstance(self.fig.canvas, FigureCanvasAgg)
+        return not self._options.show_window
 
 
 class MPLLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
@@ -548,7 +568,8 @@ class MPLLinePlotter(BaseMPLPlotter):
 
         self.axes: list[plt.Axes] = []
         self.lines: dict[str, list[plt.Line2D]] = {}
-        self.backgrounds: list[Any] = []
+        self.caches_bbox: list[Any] = []
+        self.cache_xmax: float = -1
 
         # Create figure and subplots
         n_subplots = len(self.line_plot.subplot_structure)
@@ -583,7 +604,7 @@ class MPLLinePlotter(BaseMPLPlotter):
         self.fig.canvas.draw()
 
         for ax in self.axes:
-            self.backgrounds.append(self.fig.canvas.copy_from_bbox(ax.bbox))
+            self.caches_bbox.append(self.fig.canvas.copy_from_bbox(ax.bbox))
 
         self._show_fig()
 
@@ -594,44 +615,58 @@ class MPLLinePlotter(BaseMPLPlotter):
     def _update_plot(self):
         self._lock.acquire()
 
-        # Update each subplot
-        for subplot_idx, (subplot_key, subplot_lines) in enumerate(self.lines.items()):
-            ax = self.axes[subplot_idx]
+        # Update limits for each subplot if necessary
+        limits_changed = False
+        if len(self.line_plot.x_data) > 1:
+            # First, check if the limits on y-axis must be extended to display all the available data
+            subplots_ylim_data = []
+            must_update_limit_y = False
+            for ax, subplot_key in zip(self.axes, self.lines.keys()):
+                subplot_y_data = self.line_plot.y_data[subplot_key]
+                subplot_ylim_data = None
+                if subplot_y_data:
+                    all_y_values = list(itertools.chain.from_iterable(subplot_y_data.values()))
+                    subplot_ylim_data = y_min_data, y_max_data = min(all_y_values), max(all_y_values)
+                    y_min_plot, y_max_plot = ax.get_ylim()
+                    if y_min_data < y_min_plot or y_max_plot < y_max_data:
+                        must_update_limit_y = True
+                subplots_ylim_data.append(subplot_ylim_data)
 
-            # Check if axis limits need updating for this subplot
-            limits_changed = False
-            if self.line_plot.x_data:
-                x_min, x_max = min(self.line_plot.x_data), max(self.line_plot.x_data)
-                x_range = x_max - x_min
-                if x_range == 0:
-                    x_range = 1
-                new_x_limits = (x_min - x_range * 0.05, x_max + x_range * 0.05)
-                if new_x_limits != ax.get_xlim():
-                    ax.set_xlim(new_x_limits)
-                    limits_changed = True
+            # Next, adjust the limits on x-axis if they must be extended or adjusting y-axis is already planned
+            x_limits_changed = False
+            x_min_plot, x_max_plot = ax.get_xlim()
+            x_min_data, x_max_data = self.line_plot.x_data[0], self.line_plot.x_data[-1]
+            if must_update_limit_y or x_min_plot < 0.0 or x_max_plot < x_max_data:
+                x_min_plot = max(0.0, x_min_data)
+                x_max_plot = x_max_data + max(
+                    MPL_PLOTTER_RESCALE_RATIO_X * (x_max_data - x_min_data), MPL_PLOTTER_RESCALE_MIN_X
+                )
+                ax.set_xlim((x_min_plot - gs.EPS, x_max_plot + gs.EPS))
+                x_limits_changed = True
 
-                # Update y limits based on all data in this subplot
-                all_y_values = []
-                for channel_label in self.line_plot.y_data[subplot_key]:
-                    all_y_values.extend(self.line_plot.y_data[subplot_key][channel_label])
+            # Finally, adjust the limits on y-axis if either x- or y-axis must be extended
+            if x_limits_changed or must_update_limit_y:
+                for ax, subplot_ylim_data in zip(self.axes, subplots_ylim_data):
+                    if subplot_ylim_data is not None:
+                        y_min_data, y_max_data = subplot_ylim_data
+                        y_min_plot = y_min_data - MPL_PLOTTER_RESCALE_RATIO_Y * (y_max_data - y_min_data)
+                        y_max_plot = y_max_data + MPL_PLOTTER_RESCALE_RATIO_Y * (y_max_data - y_min_data)
+                        ax.set_ylim((y_min_plot - gs.EPS, y_max_plot + gs.EPS))
+                limits_changed = True
 
-                if all_y_values:
-                    y_min, y_max = min(all_y_values), max(all_y_values)
-                    y_range = y_max - y_min
-                    if y_range == 0:
-                        y_range = 1
-                    new_y_limits = (y_min - y_range * 0.1, y_max + y_range * 0.1)
-                    if new_y_limits != ax.get_ylim():
-                        ax.set_ylim(new_y_limits)
-                        limits_changed = True
+        # Must redraw the entire figure if the limits have changed
+        if limits_changed:
+            self.fig.canvas.draw()
 
-            # If limits changed, redraw background for this subplot
-            if limits_changed:
-                self.fig.canvas.draw()
-                self.backgrounds[subplot_idx] = self.fig.canvas.copy_from_bbox(ax.bbox)
+        # Update background if the entire figure has been updated, or the buffer size has been exceeded
+        if limits_changed or (len(self.line_plot.x_data) > 1 and self.cache_xmax < self.line_plot.x_data[0] + gs.EPS):
+            self.caches_bbox = [self.fig.canvas.copy_from_bbox(ax.bbox) for ax in self.axes]
+            self.cache_xmax = self.line_plot.x_data[-2]
 
+        # Update lines for each subplot
+        for ax, cache_bbox, (subplot_key, subplot_lines) in zip(self.axes, self.caches_bbox, self.lines.items()):
             # Restore background and update line data for this subplot
-            self.fig.canvas.restore_region(self.backgrounds[subplot_idx])
+            self.fig.canvas.restore_region(cache_bbox)
 
             # Update lines
             channel_labels = self.line_plot.subplot_structure[subplot_key]
@@ -650,7 +685,8 @@ class MPLLinePlotter(BaseMPLPlotter):
         super().cleanup()
         self.line_plot.clear_data()
         self.lines.clear()
-        self.backgrounds.clear()
+        self.caches_bbox.clear()
+        self.cache_xmax = -1
 
 
 class MPLImagePlotterOptions(BasePlotterOptions):

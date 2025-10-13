@@ -312,17 +312,27 @@ jobs:
         if: ${{ env.SCRIPT_OUTPUT != '' }}
         uses: actions/github-script@v8
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
           COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
         with:
           script: |
+            // Getting PR number when using 'workflow_run' is tricky. For reference, see:
+            // * https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run
+            // * https://stackoverflow.com/a/75420270/4820605
+            const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.payload.workflow_run.head_repository.owner.login,
+              repo: context.payload.workflow_run.head_repository.name,
+              commit_sha: context.payload.workflow_run.head_sha,
+            });
+            if (!data || !data.length) {
+              core.info('No associated PR; skipping comment.');
+              return;
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: Number(process.env.PR_NUMBER),
+              issue_number: data[0].number,
               body: process.env.COMMENT_BODY
             });
-
       - name: Publish PR check
         if: always()
         uses: actions/github-script@v8
@@ -332,17 +342,15 @@ jobs:
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
         with:
           script: |
-            const sha = context.payload.workflow_run.head_sha;
-            const hasRegs = (process.env.HAS_REGRESSIONS || '0').trim() === '1';
             const conclusion = 'success';
-            const summary = hasRegs
+            const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
               ? '🔴 Regressions detected. See tables below.'
               : '✅ No regressions detected. See tables below.';
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
+              head_sha: context.payload.workflow_run.head_sha,
               name: process.env.CHECK_NAME,
-              head_sha: sha,
               status: 'completed',
               conclusion,
               output: {

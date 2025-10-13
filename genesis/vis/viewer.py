@@ -42,6 +42,10 @@ class Viewer(RBC):
         self._camera_fov = options.camera_fov
         self._enable_interaction = options.enable_interaction
 
+        # Validate viewer options
+        if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
+            gs.raise_exception("ViewerOptions.camera_(pos|lookat|up) must be sequences of length 3.")
+
         if options.enable_interaction and gs.backend != gs.cpu:
             gs.logger.warning("Interaction code is slow on GPU. Switch to CPU backend or disable interaction.")
 

@@ -1,8 +1,10 @@
 import hashlib
 import json
+import marshal
 import math
 import os
 import pickle as pkl
+from itertools import chain
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from .misc import (
     get_cvx_cache_dir,
     get_exr_cache_dir,
     get_gsd_cache_dir,
+    get_gnd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
@@ -31,6 +34,7 @@ from .misc import (
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
+CVX_PATH_QUANTIZE_FACTOR = 1e-6
 
 
 class MeshInfo:
@@ -101,71 +105,71 @@ def get_asset_path(file):
 
 
 def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    hashkey = get_hashkey(
-        verts.tobytes(),
-        faces.tobytes(),
-        str(sdf_cell_size).encode(),
-        str(sdf_min_res).encode(),
-        str(sdf_max_res).encode(),
-    )
+    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
+def get_gnd_path(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains):
+    hashkey = get_hashkey(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains)
+    return os.path.join(get_gnd_cache_dir(), f"{hashkey}.gnd")
+
+
 def get_cvx_path(verts, faces, coacd_options):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(coacd_options.__dict__).encode())
+    hashkey = get_hashkey(verts, faces, coacd_options.__dict__)
     return os.path.join(get_cvx_cache_dir(), f"{hashkey}.cvx")
 
 
 def get_ptc_path(verts, faces, p_size, sampler):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(p_size).encode(), sampler.encode())
+    hashkey = get_hashkey(verts, faces, p_size, sampler)
     return os.path.join(get_ptc_cache_dir(), f"{hashkey}.ptc")
 
 
 def get_tet_path(verts, faces, tet_cfg):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(tet_cfg).encode())
+    hashkey = get_hashkey(verts, faces, tet_cfg)
     return os.path.join(get_tet_cache_dir(), f"{hashkey}.tet")
 
 
 def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
-    hashkey = get_hashkey(
-        verts.tobytes(), faces.tobytes(), str(edge_len_abs).encode(), str(edge_len_ratio).encode(), str(fix).encode()
-    )
+    hashkey = get_hashkey(verts, faces, edge_len_abs, edge_len_ratio, fix)
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
 
 
 def get_exr_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
 
 
 def get_usd_zip_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "zip", hashkey)
 
 
 def get_usd_bake_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "bake", hashkey)
-
-
-def get_file_hashkey(file):
-    file_obj = Path(file)
-    return get_hashkey(file_obj.resolve().as_posix().encode(), str(file_obj.stat().st_size).encode())
 
 
 def get_hashkey(*args):
     hasher = hashlib.sha256()
-    for arg in args:
+    for arg in (*args, gs.__version__.encode()):
+        if isinstance(arg, Path):
+            file_stats = arg.stat()
+            arg = (str(arg).encode(), file_stats.st_size, file_stats.st_mtime)
+        if isinstance(arg, str):
+            arg = arg.encode()
+        elif not isinstance(arg, bytes):
+            try:
+                arg = bytes(memoryview(arg))
+            except TypeError:
+                arg = marshal.dumps(arg)
         hasher.update(arg)
-    hasher.update(gs.__version__.encode())
     return hasher.hexdigest()
 
 
 def load_mesh(file):
-    if isinstance(file, str):
+    if isinstance(file, (str, Path)):
         return trimesh.load(file, force="mesh", skip_texture=True)
-    else:
-        return file
+    return file
 
 
 def normalize_mesh(mesh):
@@ -259,9 +263,30 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     return visual
 
 
+def get_mesh_scale(verts):
+    # compute mesh scale using bbox diagonal
+    v = np.asarray(verts, dtype=np.float64, order="C")
+    bmin = v.min(axis=0)
+    bmax = v.max(axis=0)
+    ext = bmax - bmin
+    scale = float(np.linalg.norm(ext))
+
+    return scale
+
+
 def convex_decompose(mesh, coacd_options):
+    # compute mesh scale
+    mesh_scale = get_mesh_scale(mesh.vertices)
+
+    # rescale mesh vertices to remove scale factor, and quantize to int
+    if not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0):
+        _vertices = mesh.vertices / mesh_scale
+        _vertices = np.round(_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64, order="C")
+    else:
+        _vertices = mesh.vertices
+
     # compute file name via hashing for caching
-    cvx_path = get_cvx_path(mesh.vertices, mesh.faces, coacd_options)
+    cvx_path = get_cvx_path(_vertices, mesh.faces, coacd_options)
 
     # loading pre-computed cache if available
     is_cached_loaded = False
@@ -269,9 +294,20 @@ def convex_decompose(mesh, coacd_options):
         gs.logger.debug("Convex decomposition file (.cvx) found in cache.")
         try:
             with open(cvx_path, "rb") as file:
-                mesh_parts = pkl.load(file)
-            is_cached_loaded = True
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
+                loaded_cache = pkl.load(file)
+            mesh_parts = loaded_cache["mesh_parts"]
+            cached_mesh_scale = loaded_cache["mesh_scale"]
+
+            # rescale loaded mesh parts
+            if not (np.isinf(cached_mesh_scale) or np.isnan(cached_mesh_scale) or cached_mesh_scale <= 0.0):
+                rescale_factor = mesh_scale / cached_mesh_scale
+                for mesh_part in mesh_parts:
+                    mesh_part.vertices *= rescale_factor
+                is_cached_loaded = True
+            else:
+                # if cached mesh scale is invalid, ignore cache
+                is_cached_loaded = False
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:
@@ -300,10 +336,13 @@ def convex_decompose(mesh, coacd_options):
             mesh_parts = []
             for vs, fs in result:
                 mesh_parts.append(trimesh.Trimesh(vs, fs))
-
+            cache = {
+                "mesh_parts": mesh_parts,
+                "mesh_scale": mesh_scale,
+            }
             os.makedirs(os.path.dirname(cvx_path), exist_ok=True)
             with open(cvx_path, "wb") as file:
-                pkl.dump(mesh_parts, file)
+                pkl.dump(cache, file)
 
     return mesh_parts
 
