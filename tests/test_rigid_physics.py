@@ -1199,7 +1199,20 @@ def test_set_root_pose(relative, show_viewer, tol):
             euler=CUBE_EULER_ZERO,
         ),
     )
-    scene.build()
+    scene.build(n_envs=2)
+
+    # Make sure that it is not possible to end up in an inconsistent state for fixed geometries
+    if robot.geoms[0].is_fixed:
+        pos_delta = torch.as_tensor(np.random.rand(2, 3), dtype=gs.tc_float, device=gs.device)
+        with pytest.raises(gs.GenesisException):
+            robot.set_pos(pos_delta)
+        with pytest.raises(gs.GenesisException):
+            robot.set_pos(pos_delta[[0]], envs_idx=[0])
+        quat_delta = torch.as_tensor(np.random.rand(2, 4), dtype=gs.tc_float, device=gs.device)
+        with pytest.raises(gs.GenesisException):
+            robot.set_quat(pos_delta)
+        with pytest.raises(gs.GenesisException):
+            robot.set_quat(pos_delta[[0]], envs_idx=[0])
 
     robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
@@ -1219,14 +1232,15 @@ def test_set_root_pose(relative, show_viewer, tol):
             assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init, tol=tol)
             assert_allclose(entity.get_AABB(), entity_aabb_init, tol=tol)
 
-            pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device)
+            pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device).expand((2, 3))
             entity.set_pos(pos_delta, relative=relative)
+
             pos_ref = pos_delta + pos_zero if relative else pos_delta
             assert_allclose(entity.get_pos(), pos_ref, tol=tol)
             assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init + (pos_ref - pos_zero), tol=tol)
             assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
 
-            quat_delta = torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device)
+            quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
             quat_delta /= torch.linalg.norm(quat_delta)
             entity.set_quat(quat_delta, relative=relative)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
