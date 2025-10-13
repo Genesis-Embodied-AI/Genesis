@@ -345,8 +345,13 @@ class Mesh(RBC):
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                    if morph.parse_glb_with_zup:
+                        for mesh in meshes:
+                            mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
                 else:
-                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                    meshes = gltf_utils.parse_mesh_glb(
+                        morph.file, morph.group_by_material, morph.scale, surface, morph.parse_glb_with_zup
+                    )
             elif morph.is_format(gs.options.morphs.USD_FORMATS):
                 import genesis.utils.usda as usda_utils
 
@@ -395,7 +400,7 @@ class Mesh(RBC):
 
     def apply_transform(self, T):
         """
-        Apply a 4x4 transformation matrix to the mesh.
+        Apply a 4x4 transformation matrix (translation on the right column) to the mesh.
         """
         self._mesh.apply_transform(T)
 
