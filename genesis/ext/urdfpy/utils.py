@@ -244,6 +244,10 @@ def load_meshes(filename):
     """
     meshes = trimesh.load(filename, process=False)
 
+    if filename.endswith((".gltf", ".glb")):
+        T = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+        meshes.apply_transform(T)
+
     # If we got a scene, dump the meshes
     if isinstance(meshes, trimesh.Scene):
         meshes = list(meshes.dump())
