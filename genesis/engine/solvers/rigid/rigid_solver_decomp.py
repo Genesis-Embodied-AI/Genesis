@@ -1269,15 +1269,24 @@ class RigidSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active():
+            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
+            from genesis.engine.couplers import IPCCoupler
+            if isinstance(self.sim.coupler, IPCCoupler):
+                return
+
+            # Run Genesis rigid simulation step
             self.substep()
 
     def substep_pre_coupling_grad(self, f):
         pass
 
     def substep_post_coupling(self, f):
-        from genesis.engine.couplers import SAPCoupler
+        from genesis.engine.couplers import SAPCoupler, IPCCoupler
 
-        if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
+        if not self.is_active():
+            return
+
+        if isinstance(self.sim.coupler, SAPCoupler):
             update_qacc_from_qvel_delta(
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
@@ -1301,6 +1310,10 @@ class RigidSolver(Solver):
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
+        elif isinstance(self.sim.coupler, IPCCoupler):
+            # For IPCCoupler, perform full rigid body computation in post-coupling phase
+            # This allows IPC to handle rigid bodies during the coupling phase
+            self.substep()
 
     def substep_post_coupling_grad(self, f):
         pass
