@@ -1,12 +1,13 @@
 import queue
 import threading
 import time
-from typing import Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, TypeVar
 
 import genesis as gs
 from genesis.options import Options
 
-from .recorder_manager import RecorderManager
+if TYPE_CHECKING:
+    from .recorder_manager import RecorderManager
 
 T = TypeVar("T")
 
@@ -32,7 +33,7 @@ class RecorderOptions(Options):
     buffer_size: int = 0
     buffer_full_wait_time: float = 0.1
 
-    def validate(self):
+    def model_post_init(self, context):
         """Validate the recorder options values before the recorder is added to the scene."""
         if self.hz is not None and self.hz < gs.EPS:
             gs.raise_exception(f"[{type(self).__name__}] recording hz should be greater than 0.")
@@ -50,7 +51,7 @@ class Recorder(Generic[T]):
     done through the RecorderManager.
     """
 
-    def __init__(self, manager: RecorderManager, options: RecorderOptions, data_func: Callable[[], T]):
+    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
         self._options = options
         self._manager = manager
         self._data_func = data_func

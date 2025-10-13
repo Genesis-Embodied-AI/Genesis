@@ -1,8 +1,10 @@
 import hashlib
 import json
+import marshal
 import math
 import os
 import pickle as pkl
+from itertools import chain
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from .misc import (
     get_cvx_cache_dir,
     get_exr_cache_dir,
     get_gsd_cache_dir,
+    get_gnd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
@@ -31,6 +34,7 @@ from .misc import (
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
+CVX_PATH_QUANTIZE_FACTOR = 1e-6
 
 
 class MeshInfo:
@@ -101,71 +105,71 @@ def get_asset_path(file):
 
 
 def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    hashkey = get_hashkey(
-        verts.tobytes(),
-        faces.tobytes(),
-        str(sdf_cell_size).encode(),
-        str(sdf_min_res).encode(),
-        str(sdf_max_res).encode(),
-    )
+    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
+def get_gnd_path(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains):
+    hashkey = get_hashkey(name, subterrain_types, subterrain_size, horizontal_scale, vertical_scale, n_subterrains)
+    return os.path.join(get_gnd_cache_dir(), f"{hashkey}.gnd")
+
+
 def get_cvx_path(verts, faces, coacd_options):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(coacd_options.__dict__).encode())
+    hashkey = get_hashkey(verts, faces, coacd_options.__dict__)
     return os.path.join(get_cvx_cache_dir(), f"{hashkey}.cvx")
 
 
 def get_ptc_path(verts, faces, p_size, sampler):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(p_size).encode(), sampler.encode())
+    hashkey = get_hashkey(verts, faces, p_size, sampler)
     return os.path.join(get_ptc_cache_dir(), f"{hashkey}.ptc")
 
 
 def get_tet_path(verts, faces, tet_cfg):
-    hashkey = get_hashkey(verts.tobytes(), faces.tobytes(), str(tet_cfg).encode())
+    hashkey = get_hashkey(verts, faces, tet_cfg)
     return os.path.join(get_tet_cache_dir(), f"{hashkey}.tet")
 
 
 def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
-    hashkey = get_hashkey(
-        verts.tobytes(), faces.tobytes(), str(edge_len_abs).encode(), str(edge_len_ratio).encode(), str(fix).encode()
-    )
+    hashkey = get_hashkey(verts, faces, edge_len_abs, edge_len_ratio, fix)
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
 
 
 def get_exr_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_exr_cache_dir(), f"{hashkey}.exr")
 
 
 def get_usd_zip_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "zip", hashkey)
 
 
 def get_usd_bake_path(file_path):
-    hashkey = get_file_hashkey(file_path)
+    hashkey = get_hashkey(Path(file_path))
     return os.path.join(get_usd_cache_dir(), "bake", hashkey)
-
-
-def get_file_hashkey(file):
-    file_obj = Path(file)
-    return get_hashkey(file_obj.resolve().as_posix().encode(), str(file_obj.stat().st_size).encode())
 
 
 def get_hashkey(*args):
     hasher = hashlib.sha256()
-    for arg in args:
+    for arg in (*args, gs.__version__.encode()):
+        if isinstance(arg, Path):
+            file_stats = arg.stat()
+            arg = (str(arg).encode(), file_stats.st_size, file_stats.st_mtime)
+        if isinstance(arg, str):
+            arg = arg.encode()
+        elif not isinstance(arg, bytes):
+            try:
+                arg = bytes(memoryview(arg))
+            except TypeError:
+                arg = marshal.dumps(arg)
         hasher.update(arg)
-    hasher.update(gs.__version__.encode())
     return hasher.hexdigest()
 
 
 def load_mesh(file):
-    if isinstance(file, str):
+    if isinstance(file, (str, Path)):
         return trimesh.load(file, force="mesh", skip_texture=True)
-    else:
-        return file
+    return file
 
 
 def normalize_mesh(mesh):
@@ -259,9 +263,30 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     return visual
 
 
+def get_mesh_scale(verts):
+    # compute mesh scale using bbox diagonal
+    v = np.asarray(verts, dtype=np.float64, order="C")
+    bmin = v.min(axis=0)
+    bmax = v.max(axis=0)
+    ext = bmax - bmin
+    scale = float(np.linalg.norm(ext))
+
+    return scale
+
+
 def convex_decompose(mesh, coacd_options):
+    # compute mesh scale
+    mesh_scale = get_mesh_scale(mesh.vertices)
+
+    # rescale mesh vertices to remove scale factor, and quantize to int
+    if not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0):
+        _vertices = mesh.vertices / mesh_scale
+        _vertices = np.round(_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64, order="C")
+    else:
+        _vertices = mesh.vertices
+
     # compute file name via hashing for caching
-    cvx_path = get_cvx_path(mesh.vertices, mesh.faces, coacd_options)
+    cvx_path = get_cvx_path(_vertices, mesh.faces, coacd_options)
 
     # loading pre-computed cache if available
     is_cached_loaded = False
@@ -269,9 +294,20 @@ def convex_decompose(mesh, coacd_options):
         gs.logger.debug("Convex decomposition file (.cvx) found in cache.")
         try:
             with open(cvx_path, "rb") as file:
-                mesh_parts = pkl.load(file)
-            is_cached_loaded = True
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
+                loaded_cache = pkl.load(file)
+            mesh_parts = loaded_cache["mesh_parts"]
+            cached_mesh_scale = loaded_cache["mesh_scale"]
+
+            # rescale loaded mesh parts
+            if not (np.isinf(cached_mesh_scale) or np.isnan(cached_mesh_scale) or cached_mesh_scale <= 0.0):
+                rescale_factor = mesh_scale / cached_mesh_scale
+                for mesh_part in mesh_parts:
+                    mesh_part.vertices *= rescale_factor
+                is_cached_loaded = True
+            else:
+                # if cached mesh scale is invalid, ignore cache
+                is_cached_loaded = False
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:
@@ -300,10 +336,13 @@ def convex_decompose(mesh, coacd_options):
             mesh_parts = []
             for vs, fs in result:
                 mesh_parts.append(trimesh.Trimesh(vs, fs))
-
+            cache = {
+                "mesh_parts": mesh_parts,
+                "mesh_scale": mesh_scale,
+            }
             os.makedirs(os.path.dirname(cvx_path), exist_ok=True)
             with open(cvx_path, "wb") as file:
-                pkl.dump(mesh_parts, file)
+                pkl.dump(cache, file)
 
     return mesh_parts
 
@@ -712,62 +751,67 @@ def transform_tets_mesh_verts(vertices, positions, zs=None):
 @lru_cache(maxsize=32)
 def _create_unit_sphere_impl(subdivisions):
     mesh = trimesh.creation.icosphere(radius=1.0, subdivisions=subdivisions)
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
-    vertices, faces, face_normals = _create_unit_sphere_impl(subdivisions=subdivisions)
+    vertices, faces, attrs = _create_unit_sphere_impl(subdivisions=subdivisions)
     vertices = vertices * radius
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
     return mesh
 
 
 @lru_cache(maxsize=32)
 def _create_unit_cylinder_impl(sections):
     mesh = trimesh.creation.cylinder(radius=1.0, height=1.0, sections=sections)
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
-    vertices, faces, face_normals = _create_unit_cylinder_impl(sections=sections)
+    vertices, faces, attrs = _create_unit_cylinder_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
     return mesh
 
 
 @lru_cache(maxsize=32)
 def _create_unit_cone_impl(sections):
     mesh = trimesh.creation.cone(radius=1.0, height=1.0, sections=sections)
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_cone(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
-    vertices, faces, face_normals = _create_unit_cone_impl(sections=sections)
+    vertices, faces, attrs = _create_unit_cone_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
-    face_normals = face_normals / (radius, radius, height)
-    face_normals /= np.linalg.norm(face_normals, axis=-1, keepdims=True)
+    for name, normals in attrs.items():
+        normals = normals / (radius, radius, height)
+        normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+        attrs[name] = normals
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
     return mesh
 
 
@@ -815,10 +859,11 @@ def create_line(start, end, radius=0.002, color=(1.0, 1.0, 1.0, 1.0), sections=1
 @lru_cache(maxsize=1)
 def _create_unit_box_impl():
     mesh = trimesh.creation.box(extents=[1.0, 1.0, 1.0])
-    vertices, faces, face_normals = mesh.vertices.copy(), mesh.faces.copy(), mesh.face_normals.copy()
-    for data in (vertices, faces, face_normals):
+    vertices, faces = mesh.vertices.copy(), mesh.faces.copy()
+    attrs = {"vertex_normals": mesh.vertex_normals.copy(), "face_normals": mesh.face_normals.copy()}
+    for data in (vertices, faces, *attrs.values()):
         data.flags.writeable = False
-    return vertices, faces, face_normals
+    return vertices, faces, attrs
 
 
 def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=False, wireframe_radius=0.002):
@@ -849,42 +894,45 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
         box_edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
 
         n_verts = 0
-        vertices, faces, face_normals = [], [], []
+        vertices, faces, attrs = [], [], {}
         for v_start, v_end in box_edges:
             p_start, p_end = box_vertices[v_start], box_vertices[v_end]
             vec = p_end - p_start
             length = np.linalg.norm(vec)
 
-            line_vertices, line_faces, line_face_normals = _create_unit_cylinder_impl(sections=12)
+            line_vertices, line_faces, line_attrs = _create_unit_cylinder_impl(sections=12)
             line_vertices = line_vertices * (wireframe_radius, wireframe_radius, length)
             line_vertices[:, -1] += length / 2.0
             line_vertices = gu.transform_by_trans_R(line_vertices, p_start, gu.z_up_to_R(vec))
 
             vertices.append(line_vertices)
             faces.append(line_faces + n_verts)
-            face_normals.append(line_face_normals)
+            for name, value in line_attrs.items():
+                attrs.setdefault(name, []).append(value)
             n_verts += len(line_vertices)
 
         for vertex in box_vertices:
-            sphere_vertices, sphere_faces, sphere_face_normals = _create_unit_sphere_impl(subdivisions=3)
+            sphere_vertices, sphere_faces, sphere_attrs = _create_unit_sphere_impl(subdivisions=3)
 
             vertices.append(sphere_vertices * wireframe_radius + vertex)
             faces.append(sphere_faces + n_verts)
-            face_normals.append(sphere_face_normals)
+            for name, value in sphere_attrs.items():
+                attrs.setdefault(name, []).append(value)
             n_verts += len(sphere_vertices)
 
         vertices = np.concatenate(vertices)
         faces = np.concatenate(faces)
-        face_normals = np.concatenate(face_normals)
+        for name, values in attrs.items():
+            attrs[name] = np.concatenate(values)
     else:
-        vertices, faces, face_normals = _create_unit_box_impl()
+        vertices, faces, attrs = _create_unit_box_impl()
         vertices = vertices * extents + pos
 
     visual = trimesh.visual.ColorVisuals()
     visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
-    mesh._cache.cache["face_normals"] = face_normals
+    mesh._cache.cache.update(attrs)
 
     return mesh
 
@@ -981,7 +1029,7 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
+    # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
     import pyvista as pv
     import tetgen
 
@@ -1052,3 +1100,4 @@ def check_exr_compression(exr_path):
         exr_path = new_exr_path
 
     exr_file.close()
+    return exr_path

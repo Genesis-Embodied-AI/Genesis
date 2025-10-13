@@ -1400,20 +1400,21 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
                 and returned, which is slower.
     """
     assert rotvec.ndim >= 1
+    B = rotvec.shape[:-1]
     if out is None:
-        out_ = np.empty((*rotvec.shape[:-1], 4), dtype=rotvec.dtype)
+        out_ = np.empty((*B, 4), dtype=rotvec.dtype)
     else:
-        assert out.shape == (*rotvec.shape[:-1], 4)
+        assert out.shape == (*B, 4)
         out_ = out
 
-    # Compute unit axis and positive angle separately
-    angle = np.sqrt(np.sum(np.square(rotvec), -1))
+    # Split unit axis and positive angle
+    angle = np.sqrt(np.sum(np.square(rotvec.reshape((-1, 3))), -1)).reshape(B)
     # FIXME: Taylor expansion should be used to handle angle ~ 0.0
-    axis = rotvec / np.maximum(angle, gs.EPS)
+    axis = rotvec / np.maximum(angle[..., None], gs.EPS)
 
     # Compute the quaternion representation
     out_[..., 0] = np.cos(0.5 * angle)
-    out_[..., 1:] = np.sin(0.5 * angle) * axis
+    out_[..., 1:] = np.sin(0.5 * angle[..., None]) * axis
 
     return out_
 
@@ -1583,6 +1584,31 @@ def transform_inertia_by_T(inertia_tensor, T, mass):
     return R @ inertia_tensor @ R.T + translation_inertia
 
 
+def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Convert spherical coordinates to Cartesian coordinates.
+
+    Parameters
+    ----------
+    theta : torch.Tensor
+        Horizontal angles in radians.
+    phi : torch.Tensor
+        Vertical angles in radians.
+
+    Returns
+    -------
+    vectors : torch.Tensor
+        Vectors in cartesian coordinates as tensor of shape (..., 3).
+    """
+    cos_phi = torch.cos(phi)
+
+    x = torch.cos(theta) * cos_phi  # forward
+    y = torch.sin(theta) * cos_phi  # left
+    z = torch.sin(phi)  # up
+
+    return torch.stack([x, y, z], dim=-1)
+
+
 def slerp(q0, q1, t):
     """
     Perform spherical linear interpolation between two quaternions.
@@ -1699,7 +1725,7 @@ class SpatialHasher:
         self.slot_size = ti.field(gs.ti_int, shape=(self.n_slots, self._B))
         # element index offset in each slot
         self.slot_start = ti.field(gs.ti_int, shape=(self.n_slots, self._B))
-        self.cur_cnt = ti.field(gs.ti_int, shape=self._B)
+        self.cur_cnt = ti.field(gs.ti_int, shape=(self._B,))
 
     @ti.func
     def compute_reordered_idx(self, n, pos, active, reordered_idx):

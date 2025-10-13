@@ -1,19 +1,70 @@
 # Genesis Release Note
 
+## 0.3.4
+
+This minor release mainly introduces first-class sensor support (IMU, Contact Sensor, LiDAR, Depth camera and more), incl. recording and plotting facilities. The rigid-rigid hydroelastic contact model has also been added. As usual, a fair share of bugs have been fixed, with unit test coverage gradually improving.
+
+### Behavior Changing
+
+* Support rendering deformable body for batched env. (@YilingQiao) (#1697)
+* More sensible defaults for camera far, near. (@duburcqa) (#1678)
+* Fix invweight and meaninertia not always considering scale and dofs armature. (@duburcqa) (#1696)
+
+### New Features
+
+* Refactor 'FrameImageExporter' to improve performance and support normal & segmentation. (@duburcqa) (#1671)
+* Add support of normal & segmentation for Madrona Batch Rendering. (@ACMLCZH) (#1563)
+* Add 'noslip' optional post-processing step to suppress slip/drift. (@YilingQiao) (#1669)
+* Add first-class data recorders and plotters. (@Milotrince) (#1646, #1718)
+* Add rigid-rigid hydroelastic contact model. (@Libero0809) (#1572)
+* Add option to display sensor information in the interactive viewer. (@Milotrince) (#1770)
+* Add support of differentiable contact detection (Work In Progress). (@SonSang) (#1701)
+* Add Raycaster sensor (Lidar and DepthCamera). (@Milotrince, @duburcqa, @jgillick) (#1726, #1772, #1809, #1815)
+* Add full support gstaichi ndarray to Rigid Body solver. (@YilingQiao, @SonSang, @duburcqa) (#1674, #1682, #1683, #1690, #1693, #1695)
+* Add full support gstaichi fast caching mechanism. (@hughperkins, @YilingQiao) (#1709, #1720, #1730, #1812)
+
+### Bug Fixes
+
+* Fix data races in getting contact and equality constraints. (@YilingQiao) (#1676)
+* Fix MPM muscle activation. (@YilingQiao) (#1692)
+* Fix non-flat terrain support. (@Kashu7100, @YilingQiao, @duburcqa) (#1691, #1777, #1779)
+* Disable mesh processing when loading URDF for consistency. (@duburcqa) (#1708)
+* Fix segfault at exit when running viewer in background thread with offscreen cameras. (@duburcqa) (#1703)
+* Fix all the example scripts. (@YilingQiao, @duburcqa) (#1743, #1773, #1724, #1785, #1787, #1801, #1804)
+* Fix logics for duplicating collision geometries as visual in MJCF. (@hokindeng, @duburcqa) (#1732, #1750)
+* Randomize uniform terrain along both axes. (@jgillick) (#1747)
+* Fix contact sensors always returning zeros. (@Milotrince) (#1761)
+* Fix LBVH stuck in infinite loop for small number of AABBs. (@duburcqa) (#1766)
+* Fix broken interactive viewer backend fallback mechanism. (@duburcqa) (#1797)
+* Fix camera follow entity. (@duburcqa) (#1805)
+* Fix compound joints for 'set_dofs_position'. (@duburcqa) (#1678)
+* Fix some mesh-related issues (@ACMLCZH) (#1800)
+
+### Miscellaneous
+
+* Fix support of 'pyglet<2.0'. (@Kashu7100) (#1670)
+* Add vision-based manipulation example (@yun-long) (#1493)
+* Reduce max_collision_pairs to save memory (@YilingQiao) (#1672)
+* Remove 'gs clean' utility. (@duburcqa) (#1723)
+* Rename 'get_aabb' in 'get_AABB' and add deprecation warning. (@duburcqa) (#1778)
+* Improve interactive viewer performance. (@duburcqa) (#1784)
+* Raise exception in cause of particle sampling failure. (@duburcqa) (#1792)
+* Remove 'is_free' that was confusing and partially redundant with 'is_fixed'. (@duburcqa) (#1795)
+
 ## 0.3.3
 
 This minor release fixes a few non-blocking rendering issues for the Rasterizer backend.
 
 ### Bug Fixes
 
-* [BUG FIX] Fix shadow map not properly rendered for objects far away from floor plane. (@duburcqa) (#1664)
-* [BUG FIX] Fix genesis import failure if tkinter is failing at init on MacOS. (@duburcqa) (#1666)
-* [BUG FIX] Fix default visualization mode for emitter surface. (@duburcqa) (#1665)
+* Fix shadow map not properly rendered for objects far away from floor plane. (@duburcqa) (#1664)
+* Fix genesis import failure if tkinter is failing at init on MacOS. (@duburcqa) (#1666)
+* Fix default visualization mode for emitter surface. (@duburcqa) (#1665)
 
 ### Miscellaneous
 
-* [MISC] Expose parameters for ground plane tiling. (@yuhongyi) (#1657)
-* [MISC] Add support of 'ti.ndarray' to 'ti_field_to_torch' and rename in 'ti_to_torch'. (@duburcqa) (#1661)
+* Expose parameters for ground plane tiling. (@yuhongyi) (#1657)
+* Add support of 'ti.ndarray' to 'ti_field_to_torch' and rename in 'ti_to_torch'. (@duburcqa) (#1661)
 
 ## 0.3.2
 

@@ -275,15 +275,12 @@ class ParticleEntity(Entity):
 
                 sampler = self.sampler
                 if "pbs" in sampler:
-                    try:
-                        particles_i = pu.trimesh_to_particles_pbs(
-                            mesh=mesh_i,
-                            p_size=self._particle_size,
-                            sampler=sampler,
-                        )
-                    except gs.GenesisException:
-                        sampler = "random"
-                if "pbs" not in sampler:
+                    particles_i = pu.trimesh_to_particles_pbs(
+                        mesh=mesh_i,
+                        p_size=self._particle_size,
+                        sampler=sampler,
+                    )
+                else:
                     particles_i = pu.trimesh_to_particles_simple(
                         mesh=mesh_i,
                         p_size=self._particle_size,
@@ -531,7 +528,7 @@ class ParticleEntity(Entity):
 
     def set_position(self, value, envs_idx=None, *, unsafe=False):
         """
-        Set the position of all the particles individually, or the center of masswrt the initial configuration of the
+        Set the position of all the particles individually, or the center of mass wrt the initial configuration of the
         particles as a whole.
 
         Parameters

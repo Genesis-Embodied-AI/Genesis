@@ -31,8 +31,8 @@ from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "f9d031501cba5e279f1fc77d4f3b9ccd9156ccf7"
-HUGGINGFACE_SNAPSHOT_REVISION = "74f5b178fb96dfa17a05d98585af8e212db9b4e6"
+HUGGINGFACE_ASSETS_REVISION = "16e4eae0024312b84518f4b555dd630d6b34095a"
+HUGGINGFACE_SNAPSHOT_REVISION = "bfd02a635579cbd5aefa7027df54a433f8ad1915"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -206,12 +206,12 @@ def get_hf_dataset(
 
             # Make sure that download was successful
             has_files = False
-            for path in Path(asset_path).rglob(pattern):
+            for path in Path(asset_path).glob(pattern):
                 if not path.is_file():
                     continue
 
                 ext = path.suffix.lower()
-                if not ext in (URDF_FORMAT, MJCF_FORMAT, *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
+                if ext not in (URDF_FORMAT, MJCF_FORMAT, *IMAGE_EXTENSIONS, *MESH_EXTENSIONS):
                     continue
 
                 has_files = True
@@ -223,19 +223,19 @@ def get_hf_dataset(
                     try:
                         ET.parse(path)
                     except ET.ParseError as e:
-                        raise HTTPError(f"Impossible to parse XML file.") from e
+                        raise HTTPError("Impossible to parse XML file.") from e
                 elif path.suffix.lower() in IMAGE_EXTENSIONS:
                     try:
                         Image.open(path)
                     except UnidentifiedImageError as e:
-                        raise HTTPError(f"Impossible to parse Image file.") from e
+                        raise HTTPError("Impossible to parse Image file.") from e
                 elif path.suffix.lower() in MESH_EXTENSIONS:
                     # TODO: Validating mesh files is more tricky. Ignoring them for now.
                     pass
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError) as e:
+        except (HTTPError, FileNotFoundError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
@@ -246,7 +246,8 @@ def get_hf_dataset(
     return asset_path
 
 
-def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=""):
+def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=None):
+    # Determine absolute and relative tolerance from input arguments
     assert (tol is not None) ^ (atol is not None or rtol is not None)
     if tol is not None:
         atol = tol
@@ -256,23 +257,28 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     if atol is None:
         atol = 0.0
 
+    # Convert input arguments as numpy arrays
     args = [actual, desired]
     for i, arg in enumerate(args):
-        if isinstance(arg, torch.Tensor):
-            arg = tensor_to_array(arg)
-        elif isinstance(arg, (tuple, list)):
-            arg = [tensor_to_array(val) for val in arg]
-        args[i] = np.asanyarray(arg)
+        if isinstance(arg, (tuple, list)):
+            arg = np.stack([tensor_to_array(val) for val in arg], axis=0)
+        args[i] = tensor_to_array(arg)
 
+    # Early return without checking anything is both arrays are empty (0D arrays have size 1).
     if all(e.size == 0 for e in args):
         return
 
-    args = np.broadcast_arrays(*map(np.squeeze, args))
+    # Try to make sure both arrays have the exact same shape.
+    # First, try to broadcast both matrices. Then it is does not work, squeeze them before trying again.
+    try:
+        args = np.broadcast_arrays(*args)
+    except ValueError:
+        args = np.broadcast_arrays(*map(np.squeeze, args))
 
     np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
-def assert_array_equal(actual, desired, *, err_msg=""):
+def assert_array_equal(actual, desired, *, err_msg=None):
     assert_allclose(actual, desired, atol=0.0, rtol=0.0, err_msg=err_msg)
 
 

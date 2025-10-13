@@ -44,9 +44,23 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
         # Detect whether it is a URDF file or a Mujoco MJCF file
         root = xml.getroot()
         is_urdf_file = root.tag == "robot"
+        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
+
+        # Parse all included sub-models recursively
+        root_parent_stack = [(mjcf, Path(""))]
+        while root_parent_stack:
+            xml_root, parent_path = root_parent_stack.pop()
+            for elem in tuple(xml_root.findall("include")):
+                include_path = parent_path / elem.attrib["file"]
+                include_root = ET.parse(Path(asset_path) / include_path).getroot()
+                for include_elem in include_root.findall(".//mesh"):
+                    include_elem.attrib["file"] = str(include_path.parent / include_elem.attrib["file"])
+                for child in include_root:
+                    mjcf.append(child)
+                mjcf.remove(elem)
+                root_parent_stack.append((include_root, include_path))
 
         # Make sure compiler options are defined
-        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
         compiler = mjcf.find("compiler")
         if compiler is None:
             compiler = ET.SubElement(mjcf, "compiler")
@@ -107,7 +121,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 mesh_path = elem.get("filename")
                 if mesh_path.startswith("package://"):
                     mesh_path = mesh_path[10:]
-                elem.set("filename", os.path.abspath(os.path.join(asset_path, mesh_path)))
+                elem.set("filename", str((Path(asset_path) / mesh_path).resolve()))
 
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
             # Parse updated URDF file as a string
@@ -423,7 +437,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             tmesh = trimesh.creation.icosphere(radius=radius)
         gs_type = gs.GEOM_TYPE.SPHERE
-        geom_data = np.array([radius])
+        geom_data = np.array([radius * scale])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
         if is_col:
@@ -432,7 +446,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             tmesh = trimesh.creation.icosphere(radius=1.0)
         tmesh.apply_transform(np.diag([*geom_size, 1]))
         gs_type = gs.GEOM_TYPE.ELLIPSOID
-        geom_data = geom_size
+        geom_data = geom_size * scale
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CAPSULE:
         radius = geom_size[0]
@@ -442,14 +456,14 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             tmesh = trimesh.creation.capsule(radius=radius, height=height)
         gs_type = gs.GEOM_TYPE.CAPSULE
-        geom_data = np.array([radius, height])
+        geom_data = np.array([radius * scale, height * scale])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_CYLINDER:
         radius = geom_size[0]
         height = geom_size[1] * 2
         tmesh = trimesh.creation.cylinder(radius=radius, height=height)
         gs_type = gs.GEOM_TYPE.CYLINDER
-        geom_data = np.array([radius, height])
+        geom_data = np.array([radius * scale, height * scale])
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_BOX:
         tmesh = trimesh.creation.box(extents=geom_size * 2)
@@ -470,7 +484,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
                 uv_coordinates = uv_coordinates * mj_mat.texrepeat
                 visual = TextureVisuals(uv=uv_coordinates, image=Image.fromarray(image_array))
                 tmesh.visual = visual
-        geom_data = 2 * geom_size
+        geom_data = 2 * geom_size * scale
 
     elif mj_geom.type == mujoco.mjtGeom.mjGEOM_MESH:
         mj_mesh = mj.mesh(mj_geom.dataid[0])

@@ -54,20 +54,18 @@ class PygletPlatform(Platform):
                 depth_size=24, double_buffer=True, major_version=MIN_OPEN_GL_MAJOR, minor_version=MIN_OPEN_GL_MINOR
             ),
         ]
-        for conf in confs:
+        while confs:
+            conf = confs.pop(0)
             try:
                 self._window = pyglet.window.Window(config=conf, visible=False, resizable=False, width=1, height=1)
                 break
-            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException):
-                pass
-
-        if not self._window:
-            raise ValueError(
-                "Failed to initialize Pyglet window with an OpenGL >= 3+ "
-                "context. If you're logged in via SSH, ensure that you're "
-                "running your script with vglrun (i.e. VirtualGL). The "
-                'internal error message was "{}"'.format(e)
-            )
+            except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException) as e:
+                if not confs:
+                    raise ValueError(
+                        "Failed to initialize Pyglet window with an OpenGL >= 3+ "
+                        "context. If you're logged in via SSH, ensure that you're "
+                        "running your script with vglrun (i.e. VirtualGL)."
+                    ) from e
 
     def make_current(self):
         if self._window:

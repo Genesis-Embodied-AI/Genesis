@@ -131,16 +131,6 @@ def main():
         motors_dof_idx,
     )
     print("=== stiffness ===\n", franka.get_dofs_stiffness())
-    franka.set_dofs_invweight(
-        np.array(
-            [
-                [5.5882, 0.9693, 6.8053, 3.9007, 7.8085, 6.6139, 9.4213, 8.6984, 8.6984],
-                [8.6984, 8.6984, 9.4213, 6.6139, 7.8085, 3.9007, 6.8053, 0.9693, 5.5882],
-            ]
-        ),
-        motors_dof_idx,
-    )
-    print("=== invweight ===\n", franka.get_dofs_invweight())
     franka.set_dofs_damping(
         np.array(
             [
@@ -150,7 +140,12 @@ def main():
         ),
         motors_dof_idx,
     )
-    print("=== damping ===\n", franka.get_dofs_damping())
+    print("=== set mass ===\n", franka.get_dofs_damping())
+    original_mass = franka.get_mass()
+    new_mass = original_mass * 2
+    franka.set_mass(new_mass)
+
+    print("=== invweight ===\n", franka.get_dofs_invweight())
     links_inertial_mass = np.array(
         [
             [0.6298, 4.9707, 0.6469, 3.2286, 3.5879, 1.2259, 1.6666, 0.7355, 0.7300, 0.0150, 0.0150],
@@ -166,19 +161,6 @@ def main():
         ),
         links_idx,
     )
-    inv_weight = franka.get_links_invweight().cpu().numpy()
-    linear_inv_weight = np.array(
-        [
-            [0.0, 3.6037e-05, 0.00030664, 0.025365, 0.036351, 0.072328, 0.089559, 0.11661, 0.11288, 3.0179, 3.0179],
-            [3.0179, 3.0179, 0.11288, 0.11661, 0.089559, 0.072328, 0.036351, 0.025365, 0.00030664, 3.6037e-05, 0.0],
-        ]
-    )
-    inv_weight[:, :, 0] = linear_inv_weight  # inv_weight has a linear and angular part
-    franka.set_links_invweight(
-        inv_weight.copy(),  # to make it contiguous
-        links_idx,
-    )
-    print("=== links invweight ===\n", franka.get_links_invweight())
 
     # Hard reset
     for i in range(150):

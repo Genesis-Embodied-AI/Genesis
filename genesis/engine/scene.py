@@ -273,6 +273,22 @@ class Scene(RBC):
         if not isinstance(renderer_options, RendererOptions):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
+        # Validate rigid_options against sim_options
+        if rigid_options.box_box_detection is None:
+            rigid_options.box_box_detection = not sim_options.requires_grad
+        elif rigid_options.box_box_detection and sim_options.requires_grad:
+            gs.raise_exception(
+                "`rigid_options.box_box_detection` cannot be True when `sim_options.requires_grad` is True."
+            )
+        if not rigid_options.use_gjk_collision and sim_options.requires_grad:
+            gs.raise_exception(
+                "`rigid_options.use_gjk_collision` cannot be False when `sim_options.requires_grad` is True."
+            )
+        if rigid_options.enable_mujoco_compatibility and sim_options.requires_grad:
+            gs.raise_exception(
+                "`rigid_options.enable_mujoco_compatibility` cannot be True when `sim_options.requires_grad` is True."
+            )
+
     def destroy(self):
         if getattr(self, "_recorder_manager", None) is not None:
             if self._recorder_manager.is_recording:
@@ -757,7 +773,7 @@ class Scene(RBC):
         env_spacing=(0.0, 0.0),
         n_envs_per_row: int | None = None,
         center_envs_at_origin=True,
-        compile_kernels=True,
+        compile_kernels=None,
     ):
         """
         Builds the scene once all entities have been added. This operation is required before running the simulation.
@@ -765,16 +781,23 @@ class Scene(RBC):
         Parameters
         ----------
         n_envs : int
-            Number of parallel environments to create. If `n_envs` is 0, the scene will not have a batching dimension. If `n_envs` is greater than 0, the first dimension of all the input and returned states will be the batch dimension.
+            Number of parallel environments to create.
+            If `n_envs` is 0, the scene will not have a batching dimension. When greater than 0, the first dimension of
+            all the input and returned states will be the batch dimension.
         env_spacing : tuple of float, shape (2,)
-            The spacing between adjacent environments in the scene. This is for visualization purposes only and does not change simulation-related poses.
+            The spacing between adjacent environments in the scene.
+            This is for visualization purposes only and does not change simulation-related poses.
         n_envs_per_row : int
             The number of environments per row for visualization. If None, it will be set to `sqrt(n_envs)`.
         center_envs_at_origin : bool
             Whether to put the center of all the environments at the origin (for visualization only).
-        compile_kernels : bool
-            Whether to compile the simulation kernels inside `build()`. If False, the kernels will not be compiled (or loaded if found in the cache) until the first call of `scene.step()`. This is useful for cases you don't want to run the actual simulation, but rather just want to visualize the created scene.
+        compile_kernels : bool, optional
+            This parameter is deprecated and will be removed in future release.
         """
+        if compile_kernels is not None:
+            warn_once("`compile_kernels` is deprecated and will be removed in future release.")
+            compile_kernels = True
+
         with gs.logger.timer(f"Building scene ~~~<{self._uid}>~~~..."):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
@@ -787,10 +810,9 @@ class Scene(RBC):
 
             self._is_built = True
 
-        if compile_kernels:
-            with gs.logger.timer("Compiling simulation kernels..."):
-                self._sim.step()
-                self._reset()
+        with gs.logger.timer("Compiling simulation kernels..."):
+            self._sim.step()
+            self._reset()
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):
@@ -1243,12 +1265,12 @@ class Scene(RBC):
         return rgb_out, depth_out, seg_out, normal_out
 
     @gs.assert_built
-    def clear_debug_object(self, object):
+    def clear_debug_object(self, obj):
         """
         Clears all the debug objects in the scene.
         """
         with self._visualizer.viewer_lock:
-            self._visualizer.context.clear_debug_object(object)
+            self._visualizer.context.clear_debug_object(obj)
 
     @gs.assert_built
     def clear_debug_objects(self):

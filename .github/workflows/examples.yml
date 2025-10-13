@@ -1,0 +1,73 @@
+name: Examples (CPU)
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-examples:
+    runs-on: ubuntu-24.04
+    name: ubuntu-24.04-3.12-examples
+
+    env:
+      HF_HUB_DOWNLOAD_TIMEOUT: 60
+      FORCE_COLOR: 1
+      PY_COLORS: 1
+      GS_CACHE_FILE_PATH: ".cache/genesis"
+      TI_OFFLINE_CACHE: "1"
+      TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
+      TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
+      TI_ENABLE_CUDA: "0"
+      TI_ENABLE_METAL: "0"
+      TI_ENABLE_OPENGL: "0"
+      TI_ENABLE_VULKAN: "0"
+      TI_DEBUG: "0"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: ubuntu-24.04-3.12-examples
+          restore-keys: |
+            ubuntu-24.04-3.12-examples-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Mesa OpenGL driver for headless rendering
+        run: |
+          sudo apt-get update
+          sudo apt install -y \
+              libglu1-mesa \
+              libegl-mesa0 \
+              libgl1-mesa-dev
+
+      - name: Install Python deps
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e '.[dev]' pynput
+
+      - name: Run examples suite
+        run: |
+          pytest -v -m examples tests/test_examples.py
+
+      - name: Save cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: ubuntu-24.04-3.12-examples-${{ github.run_id }}-${{ github.run_attempt }}

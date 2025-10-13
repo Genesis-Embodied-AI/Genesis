@@ -42,6 +42,10 @@ class Viewer(RBC):
         self._camera_fov = options.camera_fov
         self._enable_interaction = options.enable_interaction
 
+        # Validate viewer options
+        if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
+            gs.raise_exception("ViewerOptions.camera_(pos|lookat|up) must be sequences of length 3.")
+
         if options.enable_interaction and gs.backend != gs.cpu:
             gs.logger.warning("Interaction code is slow on GPU. Switch to CPU backend or disable interaction.")
 
@@ -105,7 +109,7 @@ class Viewer(RBC):
                         self._pyrender_viewer.start(auto_refresh=False)
                     self._pyrender_viewer.wait_until_initialized()
                 break
-            except OpenGL.error.Error:
+            except (OpenGL.error.Error, RuntimeError):
                 # Invalid OpenGL context. Trying another platform if any...
                 gs.logger.debug("Invalid OpenGL context.")
 
@@ -142,7 +146,7 @@ class Viewer(RBC):
         pose = gu.pos_lookat_up_to_T(self._camera_init_pos, self._camera_init_lookat, self._camera_up)
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
-    def update(self, auto_refresh=None):
+    def update(self, auto_refresh=None, force=False):
         if self._followed_entity is not None:
             self.update_following()
 
@@ -150,7 +154,7 @@ class Viewer(RBC):
 
         with self.lock:
             # Update context
-            self.context.update()
+            self.context.update(force)
 
             # Refresh viewer by default if and if this is possible
             if auto_refresh is None:

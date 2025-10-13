@@ -11,12 +11,10 @@ from typing import Any, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.misc as mu
 
 from .misc import CoacdOptions
 from .options import Options
-
 
 URDF_FORMAT = ".urdf"
 MJCF_FORMAT = ".xml"
@@ -76,10 +74,7 @@ class Morph(Options):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     is_free : bool, optional
-        Whether the entity is free to move. Defaults to True. **This is only used for RigidEntity.**
-        This determines whether the entity's geoms have their vertices put into StructFreeVertsState or
-        StructFixedVertsState, and effectively whether they're stored per batch-element, or stored once and shared
-        for the entire batch. That affects correct processing of collision detection.
+        This parameter is deprecated.
     """
 
     # Note: pos, euler, quat store only initial varlues at creation time, and are unaffected by sim
@@ -89,10 +84,11 @@ class Morph(Options):
     visualization: bool = True
     collision: bool = True
     requires_jac_and_IK: bool = False
-    is_free: bool = True
+    is_free: bool | None = None
 
     def __init__(self, **data):
         super().__init__(**data)
+
         if self.pos is not None:
             if not isinstance(self.pos, tuple) or len(self.pos) != 3:
                 gs.raise_exception("`pos` should be a 3-tuple.")
@@ -115,6 +111,9 @@ class Morph(Options):
 
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")
+
+        if self.is_free is not None:
+            gs.logger.warning("Morph option 'is_free' has been removed. User-specified value will be ignored.")
 
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}>"
@@ -1094,14 +1093,15 @@ class Terrain(Morph):
         The height field to generate the terrain. If specified, all other configurations will be ignored.
         Defaults to None.
     name : str, optional
-        The name of the terrain to save
+        The name of the terrain. If specified, the terrain will only be generated once for a given set of options and
+        later loaded from cache, instead of being re-generated systematically when building the scene. This holds true
+        no matter if `randomize` is True.
     from_stored : str, optional
-        The path of the stored terrain to load
+        This parameter is deprecated.
     subterrain_parameters : dictionary, optional
         Lets users pick their own subterrain parameters.
     """
 
-    is_free: bool = False
     randomize: bool = False  # whether to randomize the terrain
     n_subterrains: Tuple[int, int] = (3, 3)  # number of subterrains in x and y directions
     subterrain_size: Tuple[float, float] = (12.0, 12.0)  # meter
@@ -1114,7 +1114,7 @@ class Terrain(Morph):
         ["random_uniform_terrain", "pyramid_stairs_terrain", "sloped_terrain"],
     ]
     height_field: Any = None
-    name: str = "default"  # name to store and reuse the terrain
+    name: str | None = None
     from_stored: Any = None
     subterrain_parameters: dict[str, dict] | None = None
 
@@ -1180,6 +1180,14 @@ class Terrain(Morph):
             self.subterrain_size[1], self.horizontal_scale
         ):
             gs.raise_exception("`subterrain_size` should be divisible by `horizontal_scale`.")
+
+        if self.from_stored is not None:
+            if self.name is None:
+                self.name = self.from_stored
+            else:
+                if self.from_stored != self.name:
+                    gs.raise_exception("Terrain option 'from_stored' is deprecated and inconsistent with 'name'.")
+            gs.logger.warning("Terrain option 'from_stored' is deprecated. Please use 'name' instead.")
 
     @property
     def default_params(self):

@@ -42,7 +42,7 @@ class Visualizer(RBC):
         self._context = RasterizerContext(vis_options)
 
         try:
-            screen_height, _, screen_scale = gs.utils.try_get_display_size()
+            screen_height, _screen_width, screen_scale = gs.utils.try_get_display_size()
             self._has_display = True
         except Exception as e:
             if show_viewer:
@@ -65,15 +65,16 @@ class Visualizer(RBC):
                     viewer_options.run_in_thread = True
                 elif gs.platform == "macOS":
                     viewer_options.run_in_thread = False
-                    gs.logger.warning(
-                        "Mac OS detected. The interactive viewer will only be responsive if a simulation is running."
-                    )
                 elif gs.platform == "Windows":
                     viewer_options.run_in_thread = True
             if gs.platform == "macOS" and viewer_options.run_in_thread:
                 gs.raise_exception("Running viewer in background thread is not supported on MacOS.")
 
             self._viewer = Viewer(viewer_options, self._context)
+            if not viewer_options.run_in_thread:
+                gs.logger.warning(
+                    "Interactive viewer running in main thread. It will only be responsive if a simulation is running."
+                )
 
         # Rasterizer is always needed for depth and segmentation mask rendering.
         self._rasterizer = Rasterizer(self._viewer, self._context)
@@ -195,16 +196,16 @@ class Visualizer(RBC):
             self.reset()
         elif self._viewer is not None:
             if self._viewer.is_alive():
-                self._viewer.update(auto_refresh=auto)
+                self._viewer.update(auto_refresh=auto, force=force)
             else:
                 gs.raise_exception("Viewer closed.")
 
-    def update_visual_states(self):
+    def update_visual_states(self, force_render: bool = False):
         """
         Update all visualization-only variables here.
         """
         # Early return if already updated previously
-        if self._t >= self.scene._t:
+        if not force_render and self._t >= self.scene._t:
             return
 
         for camera in self._cameras:

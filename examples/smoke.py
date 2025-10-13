@@ -1,4 +1,6 @@
+import argparse
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -72,14 +74,22 @@ class Jet(object):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--num_steps", type=int, default=200)
+    parser.add_argument("-c", "--cpu", action="store_true", default=True)
+    args = parser.parse_args()
+
+    args.num_steps = 1 if "PYTEST_VERSION" in os.environ else args.num_steps
+    substeps = 1 if "PYTEST_VERSION" in os.environ else 10
+    res = 32 if "PYTEST_VERSION" in os.environ else 384
+    args.cpu = True if "PYTEST_VERSION" in os.environ else args.cpu
 
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="debug")
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="debug")
 
     video_path = Path(__file__).parent / "video"
     video_path.mkdir(exist_ok=True, parents=True)
 
-    res = 384
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-2,
@@ -120,10 +130,7 @@ def main():
 
     scene.build()
 
-    num_steps = 200
-    substeps = 10
-
-    for i in range(num_steps):
+    for i in range(args.num_steps):
 
         scalars = scene.sim.solvers[-1].grid.q.to_numpy().astype(np.float32)  # (res, res, res, 3)
         scalars[scalars < 1e-4] = 0

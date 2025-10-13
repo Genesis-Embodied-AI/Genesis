@@ -1,23 +1,19 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, NamedTuple, Type
 
 import gstaichi as ti
 import numpy as np
 import torch
 
 import genesis as gs
-from genesis.utils.geom import (
-    inv_transform_by_trans_quat,
-    transform_quat_by_quat,
-)
-from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.utils.geom import inv_transform_by_trans_quat, transform_by_quat, transform_quat_by_quat
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
     MaybeTuple3FType,
     NoisySensorMetadataMixin,
     NoisySensorMixin,
     NoisySensorOptionsMixin,
-    NumericType,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     RigidSensorOptionsMixin,
@@ -29,7 +25,9 @@ from .base_sensor import (
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
+    from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.rasterizer_context import RasterizerContext
 
 Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
@@ -84,14 +82,6 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
 
     Parameters
     ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this IMU sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this IMU sensor is attached.
-    pos_offset : tuple[float, float, float], optional
-        The positional offset of the IMU sensor from the RigidLink.
-    euler_offset : tuple[float, float, float], optional
-        The rotational offset of the IMU sensor from the RigidLink in degrees.
     acc_resolution : float, optional
         The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
         Default is 0.0, which means no quantization is applied.
@@ -118,16 +108,14 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
         The standard deviation of the white noise for each axis of the gyroscope.
     gyro_random_walk : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the gyroscope.
-    delay : float, optional
-        The delay in seconds, affecting how outdated the sensor data is when it is read.
-    jitter : float, optional
-        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
-        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
-    interpolate : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
-    update_ground_truth_only : bool, optional
-        If True, the sensor will only update the ground truth data, and not the measured data.
+    debug_acc_color : float, optional
+        The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
+    debug_acc_scale: float, optional
+        The scale factor for the debug acceleration arrow. Defaults to 0.01.
+    debug_gyro_color : float, optional
+        The rgba color of the debug gyroscope arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
+    debug_gyro_scale: float, optional
+        The scale factor for the debug gyroscope arrow. Defaults to 0.01.
     """
 
     acc_resolution: MaybeTuple3FType = 0.0
@@ -141,8 +129,12 @@ class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions
     acc_random_walk: MaybeTuple3FType = 0.0
     gyro_random_walk: MaybeTuple3FType = 0.0
 
-    def validate(self, scene):
-        super().validate(scene)
+    debug_acc_color: tuple[float, float, float, float] = (0.0, 1.0, 1.0, 0.5)
+    debug_acc_scale: float = 0.01
+    debug_gyro_color: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.5)
+    debug_gyro_scale: float = 0.01
+
+    def model_post_init(self, _):
         self._validate_axes_skew(self.acc_axes_skew)
         self._validate_axes_skew(self.gyro_axes_skew)
 
@@ -165,13 +157,31 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
     gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
 
-@register_sensor(IMUOptions, IMUSharedMetadata)
+class IMUData(NamedTuple):
+    lin_acc: torch.Tensor
+    ang_vel: torch.Tensor
+
+
+@register_sensor(IMUOptions, IMUSharedMetadata, IMUData)
 @ti.data_oriented
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
     NoisySensorMixin[IMUSharedMetadata],
     Sensor[IMUSharedMetadata],
 ):
+    def __init__(
+        self,
+        options: IMUOptions,
+        shared_metadata: IMUSharedMetadata,
+        data_cls: Type[IMUData],
+        manager: "gs.SensorManager",
+    ):
+        super().__init__(options, shared_metadata, data_cls, manager)
+
+        self.debug_objects: list["Mesh"] = []
+        self.quat_offset: torch.Tensor
+        self.pos_offset: torch.Tensor
+
     @gs.assert_built
     def set_acc_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
@@ -244,12 +254,12 @@ class IMUSensor(
             expand=(self._manager._sim._B, 2, 3, 3),
             dim=1,
         )
+        if self._options.draw_debug:
+            self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
+            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx].unsqueeze(0)
 
-    def _get_return_format(self) -> dict[str, tuple[int, ...]]:
-        return {
-            "lin_acc": (3,),
-            "ang_vel": (3,),
-        }
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+        return (3,), (3,)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
@@ -310,3 +320,36 @@ class IMUSensor(
         # apply additive noise and bias to the shared cache
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+
+    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+        """
+        Draw debug arrow for the IMU acceleration.
+
+        Only draws for first rendered environment.
+        """
+        env_idx = context.rendered_envs_idx[0]
+
+        quat = self._link.get_quat(envs_idx=env_idx)
+        pos = self._link.get_pos(envs_idx=env_idx) + transform_by_quat(self.pos_offset, quat)
+
+        # cannot specify envs_idx for read() when n_envs=0
+        data = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
+        acc_vec = data.lin_acc * self._options.debug_acc_scale
+        gyro_vec = data.ang_vel * self._options.debug_gyro_scale
+
+        # transform from local frame to world frame
+        offset_quat = transform_quat_by_quat(self.quat_offset, quat)
+        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat)).flatten()
+        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat)).flatten()
+
+        for debug_object in self.debug_objects:
+            context.clear_debug_object(debug_object)
+        self.debug_objects.clear()
+
+        self.debug_objects += filter(
+            None,
+            (
+                context.draw_debug_arrow(pos=pos[0], vec=acc_vec, color=self._options.debug_acc_color),
+                context.draw_debug_arrow(pos=pos[0], vec=gyro_vec, color=self._options.debug_gyro_color),
+            ),
+        )

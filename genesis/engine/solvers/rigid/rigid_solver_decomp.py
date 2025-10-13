@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
 import numpy as np
@@ -7,29 +6,24 @@ import numpy.typing as npt
 import torch
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-
+import genesis.utils.geom as gu
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
-from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
-from genesis.styles import colors, formats
 from genesis.utils import linalg as lu
-from genesis.utils.misc import ti_to_torch, DeprecationError, ALLOCATE_TENSOR_WARNING
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
+from genesis.utils.sdf_decomp import SDF
 
-from ....utils.sdf_decomp import SDF
 from ..base_solver import Solver
+from .collider_decomp import Collider
 from .constraint_solver_decomp import ConstraintSolver
 from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
-from .collider_decomp import Collider
 from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     import genesis.engine.solvers.rigid.array_class
-
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
@@ -142,11 +136,6 @@ class RigidSolver(Solver):
         else:
             EntityClass = RigidEntity
 
-        if morph.is_free:
-            verts_state_start = self.n_free_verts
-        else:
-            verts_state_start = self.n_fixed_verts
-
         morph._enable_mujoco_compatibility = self._enable_mujoco_compatibility
 
         entity = EntityClass(
@@ -164,7 +153,8 @@ class RigidSolver(Solver):
             geom_start=self.n_geoms,
             cell_start=self.n_cells,
             vert_start=self.n_verts,
-            verts_state_start=verts_state_start,
+            free_verts_state_start=self.n_free_verts,
+            fixed_verts_state_start=self.n_fixed_verts,
             face_start=self.n_faces,
             edge_start=self.n_edges,
             vgeom_start=self.n_vgeoms,
@@ -243,6 +233,7 @@ class RigidSolver(Solver):
         self._static_rigid_sim_cache_key = array_class.get_static_rigid_sim_cache_key(self)
         self._static_rigid_sim_config = self.StaticRigidSimConfig(
             para_level=self.sim._para_level,
+            requires_grad=getattr(self.sim.options, "requires_grad", False),
             use_hibernation=getattr(self, "_use_hibernation", False),
             use_contact_island=getattr(self, "_use_contact_island", False),
             batch_links_info=getattr(self._options, "batch_links_info", False),
@@ -303,6 +294,7 @@ class RigidSolver(Solver):
             self._init_constraint_solver()
 
             self._init_invweight_and_meaninertia(force_update=False)
+            self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
 
     def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True, unsafe=False):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
@@ -322,21 +314,6 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             qpos = qpos.squeeze(0)
         self.set_qpos(qpos, envs_idx=envs_idx if self.n_envs > 0 else None)
-        kernel_forward_kinematics_links_geoms(
-            envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            geoms_state=self.geoms_state,
-            geoms_info=self.geoms_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
-        )
 
         # Compute mass matrix without any implicit damping terms
         # TODO: This kernel could be optimized to take `envs_idx` as input if performance is critical.
@@ -672,16 +649,13 @@ class RigidSolver(Solver):
                 static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
-        self.qpos0 = self._rigid_global_info.qpos0
-        if self.n_qs > 0:
-            init_qpos = self._batch_array(self.init_qpos)
-            self.qpos0.from_numpy(init_qpos)
-
         # Check if the initial configuration is out-of-bounds
         self.qpos = self._rigid_global_info.qpos
+        self.qpos0 = self._rigid_global_info.qpos0
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
             init_qpos = self._batch_array(self.init_qpos)
+            self.qpos0.from_numpy(init_qpos)
             for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
                     is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
@@ -720,7 +694,7 @@ class RigidSolver(Solver):
                     [np.arange(geom.verts_state_start, geom.verts_state_start + geom.n_verts) for geom in geoms],
                     dtype=gs.np_int,
                 ),
-                is_free=np.concatenate([np.full(geom.n_verts, geom.is_free) for geom in geoms], dtype=gs.np_int),
+                is_fixed=np.concatenate([np.full(geom.n_verts, geom.is_fixed) for geom in geoms], dtype=gs.np_bool),
                 # taichi variables
                 verts_info=self.verts_info,
                 faces_info=self.faces_info,
@@ -790,15 +764,15 @@ class RigidSolver(Solver):
                 geoms_edge_end=np.array([geom.edge_end for geom in geoms], dtype=gs.np_int),
                 geoms_verts_state_end=np.array([geom.verts_state_end for geom in geoms], dtype=gs.np_int),
                 geoms_data=np.array([geom.data for geom in geoms], dtype=gs.np_float),
-                geoms_is_convex=np.array([geom.is_convex for geom in geoms], dtype=gs.np_int),
+                geoms_is_convex=np.array([geom.is_convex for geom in geoms], dtype=gs.np_bool),
                 geoms_needs_coup=np.array([geom.needs_coup for geom in geoms], dtype=gs.np_int),
                 geoms_contype=np.array([geom.contype for geom in geoms], dtype=np.int32),
                 geoms_conaffinity=np.array([geom.conaffinity for geom in geoms], dtype=np.int32),
                 geoms_coup_softness=np.array([geom.coup_softness for geom in geoms], dtype=gs.np_float),
                 geoms_coup_friction=np.array([geom.coup_friction for geom in geoms], dtype=gs.np_float),
                 geoms_coup_restitution=np.array([geom.coup_restitution for geom in geoms], dtype=gs.np_float),
-                geoms_is_free=np.array([geom.is_free for geom in geoms], dtype=gs.np_int),
-                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_int),
+                geoms_is_fixed=np.array([geom.is_fixed for geom in geoms], dtype=gs.np_bool),
+                geoms_is_decomp=np.array([geom.metadata.get("decomposed", False) for geom in geoms], dtype=gs.np_bool),
                 # taichi variables
                 geoms_info=self.geoms_info,
                 geoms_state=self.geoms_state,
@@ -927,7 +901,7 @@ class RigidSolver(Solver):
                 entity_idx = entity_idx[0]
             entity = self._entities[entity_idx]
 
-            scale = entity.terrain_scale
+            scale = np.asarray(entity.terrain_scale, dtype=gs.np_float)
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
             hf = entity.terrain_hf.astype(gs.np_float, copy=False) * scale[1]
             xyz_maxmin = np.array(
@@ -936,9 +910,9 @@ class RigidSolver(Solver):
             )
 
             self.terrain_hf = ti.field(dtype=gs.ti_float, shape=hf.shape)
-            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=2)
-            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=2)
-            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=6)
+            self.terrain_rc = ti.field(dtype=gs.ti_int, shape=(2,))
+            self.terrain_scale = ti.field(dtype=gs.ti_float, shape=(2,))
+            self.terrain_xyz_maxmin = ti.field(dtype=gs.ti_float, shape=(6,))
 
             self.terrain_hf.from_numpy(hf)
             self.terrain_rc.from_numpy(rc)
@@ -1108,7 +1082,7 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-    def _func_update_geoms(self, envs_idx):
+    def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
         kernel_update_geoms(
             envs_idx,
             entities_info=self.entities_info,
@@ -1117,6 +1091,8 @@ class RigidSolver(Solver):
             links_state=self.links_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
+            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+            force_update_fixed_geoms=force_update_fixed_geoms,
         )
 
     # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
@@ -1643,6 +1619,15 @@ class RigidSolver(Solver):
             pos = pos.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+
+        # Raise exception for fixed links with at least one geom, except if setting same location for all envs at once
+        set_all_envs = (torch.sort(envs_idx).values == self._scene._envs_idx).all()
+        has_fixed_geoms = any(
+            link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
+        )
+        if has_fixed_geoms and not (set_all_envs and (torch.diff(pos, dim=0).abs() < gs.EPS).all()):
+            gs.raise_exception("Impossible to set env-specific pos for fixed links with at least one geometry.")
+
         kernel_set_links_pos(
             relative,
             pos,
@@ -1685,6 +1670,14 @@ class RigidSolver(Solver):
             quat = quat.unsqueeze(0)
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+
+        set_all_envs = (torch.sort(envs_idx).values == self._scene._envs_idx).all()
+        has_fixed_geoms = any(
+            link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
+        )
+        if has_fixed_geoms and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
+            gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
+
         kernel_set_links_quat(
             relative,
             quat,
@@ -1735,7 +1728,7 @@ class RigidSolver(Solver):
         kernel_set_links_COM_shift(com, links_idx, envs_idx, self.links_state, self._static_rigid_sim_config)
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
-        _, links_idx, envs_idx = self._sanitize_1D_io_variables(
+        mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
             mass,
             links_idx,
             self.n_links,
@@ -2287,13 +2280,14 @@ class RigidSolver(Solver):
     def get_geoms_friction(self, geoms_idx=None, *, unsafe=False):
         return ti_to_torch(self.geoms_info.friction, geoms_idx, None, unsafe=unsafe)
 
-    def get_aabb(self, entities_idx=None, envs_idx=None, *, unsafe=False):
-        aabb_min = ti_to_torch(
-            self.geoms_state.aabb_min, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
-        )
-        aabb_max = ti_to_torch(
-            self.geoms_state.aabb_max, row_mask=envs_idx, col_mask=None, transpose=True, unsafe=unsafe
-        )
+    def get_AABB(self, entities_idx=None, envs_idx=None, *, unsafe=False):
+        from genesis.engine.couplers import LegacyCoupler
+
+        if not isinstance(self.sim.coupler, LegacyCoupler):
+            gs.raise_exception("Method only supported when using 'LegacyCoupler' coupler type.")
+
+        aabb_min = ti_to_torch(self.geoms_state.aabb_min, envs_idx, transpose=True, unsafe=unsafe)
+        aabb_max = ti_to_torch(self.geoms_state.aabb_max, envs_idx, transpose=True, unsafe=unsafe)
 
         aabb = torch.stack([aabb_min, aabb_max], dim=-2)
 
@@ -2454,9 +2448,12 @@ class RigidSolver(Solver):
             self.links_state,
         )
 
-    def update_verts_for_geom(self, i_g):
-        kernel_update_verts_for_geom(
-            i_g,
+    def update_verts_for_geoms(self, geoms_idx):
+        _, geoms_idx, _ = self._sanitize_1D_io_variables(
+            None, geoms_idx, self.n_geoms, None, idx_name="geoms_idx", skip_allocation=True, unsafe=False
+        )
+        kernel_update_verts_for_geoms(
+            geoms_idx,
             self.geoms_state,
             self.geoms_info,
             self.verts_info,
@@ -2532,13 +2529,13 @@ class RigidSolver(Solver):
     def n_free_verts(self):
         if self.is_built:
             return self._n_free_verts
-        return sum(entity.n_verts if entity.is_free else 0 for entity in self._entities)
+        return sum(link.n_verts if not link.is_fixed else 0 for link in self.links)
 
     @property
     def n_fixed_verts(self):
         if self.is_built:
             return self._n_fixed_verts
-        return sum(entity.n_verts if not entity.is_free else 0 for entity in self._entities)
+        return sum(link.n_verts if link.is_fixed else 0 for link in self.links)
 
     @property
     def n_vverts(self):
@@ -2931,7 +2928,7 @@ def kernel_init_vert_fields(
     verts_geom_idx: ti.types.ndarray(),
     init_center_pos: ti.types.ndarray(),
     verts_state_idx: ti.types.ndarray(),
-    is_free: ti.types.ndarray(),
+    is_fixed: ti.types.ndarray(),
     # taichi variables
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
@@ -2951,7 +2948,7 @@ def kernel_init_vert_fields(
 
         verts_info.geom_idx[i_v] = verts_geom_idx[i_v]
         verts_info.verts_state_idx[i_v] = verts_state_idx[i_v]
-        verts_info.is_free[i_v] = is_free[i_v]
+        verts_info.is_fixed[i_v] = is_fixed[i_v]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_f in range(n_faces):
@@ -3023,7 +3020,7 @@ def kernel_init_geom_fields(
     geoms_coup_softness: ti.types.ndarray(),
     geoms_coup_friction: ti.types.ndarray(),
     geoms_coup_restitution: ti.types.ndarray(),
-    geoms_is_free: ti.types.ndarray(),
+    geoms_is_fixed: ti.types.ndarray(),
     geoms_is_decomp: ti.types.ndarray(),
     # taichi variables
     geoms_info: array_class.GeomsInfo,
@@ -3076,7 +3073,7 @@ def kernel_init_geom_fields(
         geoms_info.coup_friction[i_g] = geoms_coup_friction[i_g]
         geoms_info.coup_restitution[i_g] = geoms_coup_restitution[i_g]
 
-        geoms_info.is_free[i_g] = geoms_is_free[i_g]
+        geoms_info.is_fixed[i_g] = geoms_is_fixed[i_g]
         geoms_info.is_decomposed[i_g] = geoms_is_decomp[i_g]
 
         # compute init AABB.
@@ -4081,6 +4078,7 @@ def func_update_cartesian_space(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    force_update_fixed_geoms: ti.template(),
 ):
     func_forward_kinematics(
         i_b,
@@ -4125,6 +4123,7 @@ def func_update_cartesian_space(
         links_state=links_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
+        force_update_fixed_geoms=force_update_fixed_geoms,
     )
 
 
@@ -4162,6 +4161,7 @@ def kernel_step_1(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                force_update_fixed_geoms=False,
             )
 
     func_forward_dynamics(
@@ -4327,6 +4327,7 @@ def kernel_step_2(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                force_update_fixed_geoms=False,
             )
 
 
@@ -4362,6 +4363,7 @@ def kernel_forward_kinematics_links_geoms(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            force_update_fixed_geoms=True,
         )
 
 
@@ -5009,6 +5011,7 @@ def kernel_update_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
+    force_update_fixed_geoms: ti.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -5021,6 +5024,7 @@ def kernel_update_geoms(
             links_state,
             rigid_global_info,
             static_rigid_sim_config,
+            force_update_fixed_geoms,
         )
 
 
@@ -5033,16 +5037,31 @@ def func_update_geoms(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    force_update_fixed_geoms: ti.template(),
 ):
     """
     NOTE: this only update geom pose, not its verts and else.
     """
     n_geoms = geoms_info.pos.shape[0]
     if ti.static(static_rigid_sim_config.use_hibernation):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
             i_e = rigid_global_info.awake_entities[i_e_, i_b]
             for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
+                if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
+                    (
+                        geoms_state.pos[i_g, i_b],
+                        geoms_state.quat[i_g, i_b],
+                    ) = gu.ti_transform_pos_quat_by_trans_quat(
+                        geoms_info.pos[i_g],
+                        geoms_info.quat[i_g],
+                        links_state.pos[geoms_info.link_idx[i_g], i_b],
+                        links_state.quat[geoms_info.link_idx[i_g], i_b],
+                    )
+
+                    geoms_state.verts_updated[i_g, i_b] = False
+    else:
+        for i_g in range(n_geoms):
+            if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
                 (
                     geoms_state.pos[i_g, i_b],
                     geoms_state.quat[i_g, i_b],
@@ -5053,34 +5072,22 @@ def func_update_geoms(
                     links_state.quat[geoms_info.link_idx[i_g], i_b],
                 )
 
-                geoms_state.verts_updated[i_g, i_b] = 0
-    else:
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_g in range(n_geoms):
-            (
-                geoms_state.pos[i_g, i_b],
-                geoms_state.quat[i_g, i_b],
-            ) = gu.ti_transform_pos_quat_by_trans_quat(
-                geoms_info.pos[i_g],
-                geoms_info.quat[i_g],
-                links_state.pos[geoms_info.link_idx[i_g], i_b],
-                links_state.quat[geoms_info.link_idx[i_g], i_b],
-            )
-
-            geoms_state.verts_updated[i_g, i_b] = 0
+                geoms_state.verts_updated[i_g, i_b] = False
 
 
 @ti.kernel(pure=gs.use_pure)
-def kernel_update_verts_for_geom(
-    i_g: ti.i32,
+def kernel_update_verts_for_geoms(
+    geoms_idx: ti.types.ndarray(),
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
+    n_geoms = geoms_idx.shape[0]
     _B = geoms_state.verts_updated.shape[1]
-    for i_b in range(_B):
+    for i_g_, i_b in ti.ndrange(n_geoms, _B):
+        i_g = geoms_idx[i_g_]
         func_update_verts_for_geom(i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state)
 
 
@@ -5091,44 +5098,63 @@ def func_update_verts_for_geom(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    free_verts_state: array_class.FreeVertsState,
-    fixed_verts_state: array_class.FixedVertsState,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
     if not geoms_state.verts_updated[i_g, i_b]:
-        if geoms_info.is_free[i_g]:
-            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
-                verts_state_idx = verts_info.verts_state_idx[i_v]
-                free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                    verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
-                )
-            geoms_state.verts_updated[i_g, i_b] = 1
-        elif i_b == 0:
+        if geoms_info.is_fixed[i_g]:
             for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
                 verts_state_idx = verts_info.verts_state_idx[i_v]
                 fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
                 )
-            geoms_state.verts_updated[i_g, 0] = 1
+
+            _B = geoms_state.verts_updated.shape[1]
+            for j_b in range(_B):
+                geoms_state.verts_updated[i_g, j_b] = True
+        else:
+            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+                verts_state_idx = verts_info.verts_state_idx[i_v]
+                free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                    verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
+                )
+
+            geoms_state.verts_updated[i_g, i_b] = True
 
 
 @ti.func
-def func_update_all_verts(self):
-    ti.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
-    for i_v, i_b in ti.ndrange(self.n_verts, self._B):
-        g_pos = self.geoms_state.pos[self.verts_info.geom_idx[i_v], i_b]
-        g_quat = self.geoms_state.quat[self.verts_info.geom_idx[i_v], i_b]
-        verts_state_idx = self.verts_info.verts_state_idx[i_v]
-        if self.verts_info.is_free[i_v]:
-            self.free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                self.verts_info.init_pos[i_v], g_pos, g_quat
+def func_update_all_verts(
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+):
+    n_verts = verts_info.geom_idx.shape[0]
+    _B = geoms_state.pos.shape[1]
+    for i_v, i_b in ti.ndrange(n_verts, _B):
+        i_g = verts_info.geom_idx[i_v]
+        verts_state_idx = verts_info.verts_state_idx[i_v]
+        if verts_info.is_fixed[i_v]:
+            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
             )
-        elif i_b == 0:
-            self.fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                self.verts_info.init_pos[i_v], g_pos, g_quat
+        else:
+            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
+                verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
             )
 
 
 @ti.kernel(pure=gs.use_pure)
+def kernel_update_all_verts(
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+):
+    func_update_all_verts(geoms_state, verts_info, free_verts_state, fixed_verts_state)
+
+
+@ti.kernel
 def kernel_update_geom_aabbs(
     geoms_state: array_class.GeomsState,
     geoms_init_AABB: array_class.GeomsInitAABB,

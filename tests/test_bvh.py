@@ -16,11 +16,11 @@ pytestmark = [
 def lbvh(n_aabbs, n_batches):
     """Fixture for a LBVH tree"""
     aabb = AABB(n_batches=n_batches, n_aabbs=n_aabbs)
-    min = np.random.rand(n_batches, n_aabbs, 3).astype(np.float32) * 20.0
-    max = min + np.random.rand(n_batches, n_aabbs, 3).astype(np.float32)
+    aabbs_min = np.random.rand(n_batches, n_aabbs, 3).astype(gs.np_float) * 20.0
+    aabbs_max = aabbs_min + np.random.rand(n_batches, n_aabbs, 3).astype(gs.np_float)
 
-    aabb.aabbs.min.from_numpy(min)
-    aabb.aabbs.max.from_numpy(max)
+    aabb.aabbs.min.from_numpy(aabbs_min)
+    aabb.aabbs.max.from_numpy(aabbs_max)
 
     lbvh = LBVH(aabb, max_n_query_result_per_aabb=32)
     lbvh.build()

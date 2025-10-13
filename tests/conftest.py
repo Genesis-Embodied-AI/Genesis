@@ -42,9 +42,10 @@ except ImportError:
     has_egl = False
 
 if not has_display and has_egl:
-    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis
+    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis.
+    # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
     pyglet.options["headless"] = True
-    os.environ["GS_VIEWER_ALLOW_OFFSCREEN"] = "1"
+    os.environ["PYGLET_HEADLESS"] = "1"
 
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
@@ -90,6 +91,11 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     show_viewer = config.getoption("--vis")
     if show_viewer:
         config.option.numprocesses = 0
+
+    # Force headless rendering if available and the interactive viewer is disabled.
+    # FIXME: It breaks rendering on some platform...
+    # if not show_viewer and has_egl:
+    #     pyglet.options["headless"] = True
 
     # Disable low-level parallelization if distributed framework is enabled.
     # FIXME: It should be set to `max(int(physical_core_count / num_workers), 1)`, but 'num_workers' may be unknown.
@@ -179,15 +185,14 @@ def pytest_xdist_auto_num_workers(config):
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
     # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
     # does not completely release memory between each test.
-    if sys.platform in ("darwin", "win32"):
-        ram_memory_per_worker = 3.0
-        vram_memory_per_worker = 1.0  # Does not really makes sense on Apple Silicon
+    if sys.platform in "darwin":
+        ram_memory_per_worker = vram_memory_per_worker = 3.0
     elif config.option.forked:
         ram_memory_per_worker = 5.5
-        vram_memory_per_worker = 1.2
+        vram_memory_per_worker = 1.8
     else:
         ram_memory_per_worker = 7.5
-        vram_memory_per_worker = 1.6
+        vram_memory_per_worker = 2.5
     num_workers = min(
         physical_core_count,
         max(int(ram_memory / ram_memory_per_worker), 1),
@@ -392,7 +397,7 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
         if os.environ.get("GS_USE_NDARRAY") == "1":
             for mark in request.node.iter_markers("field_only"):
                 if not mark.args or mark.args[0]:
-                    pytest.skip(f"This test does not support GsTaichi ndarray mode. Skipping...")
+                    pytest.skip("This test does not support GsTaichi ndarray mode. Skipping...")
             if sys.platform == "darwin" and backend != gs.cpu:
                 pytest.skip(
                     "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only "

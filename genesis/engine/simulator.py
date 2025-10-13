@@ -198,7 +198,7 @@ class Simulator(RBC):
         self._para_level = self.scene._para_level
 
         # solvers
-        self._rigid_only = self.rigid_solver.is_active()
+        self._rigid_only = self.rigid_solver.is_active() and not isinstance(self._coupler, SAPCoupler)
         for solver in self._solvers:
             solver.build()
             if solver.is_active():
@@ -210,12 +210,12 @@ class Simulator(RBC):
         if self.n_envs > 0 and self.sf_solver.is_active():
             gs.raise_exception("Batching is not supported for SF solver as of now.")
 
-        self._sensor_manager.build()
-
         # hybrid
         for entity in self._entities:
             if isinstance(entity, HybridEntity):
                 entity.build()
+
+        self._sensor_manager.build()
 
     def reset(self, state: SimState, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):

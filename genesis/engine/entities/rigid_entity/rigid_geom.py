@@ -15,12 +15,12 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array, DeprecationError
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
     from genesis.engine.mesh import Mesh
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
     from .rigid_entity import RigidEntity
     from .rigid_link import RigidLink
@@ -382,17 +382,18 @@ class RigidGeom(RBC):
         """
         Get the vertices of the geom in world frame.
         """
-        self._solver.update_verts_for_geom(self._idx)
-        if self.is_free:
+        self._solver.update_verts_for_geoms(self._idx)
+
+        if self.is_fixed:
+            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
+            _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
+        else:
             tensor = torch.empty(
                 self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
             )
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
-        else:
-            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-            _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         return tensor
 
     @gs.assert_built
@@ -401,11 +402,7 @@ class RigidGeom(RBC):
         Get the axis-aligned bounding box (AABB) of the geom in world frame.
         """
         verts = self.get_verts()
-        AABB = torch.concatenate(
-            [verts.min(axis=-2, keepdim=True)[0], verts.max(axis=-2, keepdim=True)[0]],
-            axis=-2,
-        )
-        return AABB
+        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
 
     def set_sol_params(self, sol_params):
         """
@@ -806,10 +803,14 @@ class RigidGeom(RBC):
 
     @property
     def is_free(self):
+        raise DeprecationError("This property has been removed.")
+
+    @property
+    def is_fixed(self) -> bool:
         """
-        Whether the rigid entity the vgeom belongs to is free.
+        Whether this geom is fixed in the world.
         """
-        return self.entity.is_free
+        return self.link.is_fixed
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------
@@ -1043,10 +1044,14 @@ class RigidVisGeom(RBC):
 
     @property
     def is_free(self):
+        raise DeprecationError("This property has been removed.")
+
+    @property
+    def is_fixed(self) -> bool:
         """
-        Whether the rigid entity the vgeom belongs to is free.
+        Whether this vgeom is fixed in the world.
         """
-        return self.entity.is_free
+        return self.link.is_fixed
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------
@@ -1086,12 +1091,12 @@ def _kernel_get_vgeoms_quat(tensor: ti.types.ndarray(), vgeom_idx: ti.i32, vgeom
 
 @ti.kernel
 def _kernel_get_free_verts(
-    tensor: ti.types.ndarray(), verts_state_start: ti.i32, n_verts: ti.i32, free_verts_state: array_class.FreeVertsState
+    tensor: ti.types.ndarray(), verts_state_start: ti.i32, n_verts: ti.i32, free_verts_state: array_class.VertsState
 ):
     _B = free_verts_state.pos.shape[1]
-    for i_v, j, i_b in ti.ndrange(n_verts, 3, _B):
-        idx_vert = i_v + verts_state_start
-        tensor[i_b, i_v, j] = free_verts_state.pos[idx_vert, i_b][j]
+    for i_v_, i, i_b in ti.ndrange(n_verts, 3, _B):
+        i_v = i_v_ + verts_state_start
+        tensor[i_b, i_v_, i] = free_verts_state.pos[i_v, i_b][i]
 
 
 @ti.kernel
@@ -1099,8 +1104,8 @@ def _kernel_get_fixed_verts(
     tensor: ti.types.ndarray(),
     verts_state_start: ti.i32,
     n_verts: ti.i32,
-    fixed_verts_state: array_class.FixedVertsState,
+    fixed_verts_state: array_class.VertsState,
 ):
-    for i_v, j in ti.ndrange(n_verts, 3):
-        idx_vert = i_v + verts_state_start
-        tensor[i_v, j] = fixed_verts_state.pos[idx_vert][j]
+    for i_v_, i in ti.ndrange(n_verts, 3):
+        i_v = i_v_ + verts_state_start
+        tensor[i_v_, i] = fixed_verts_state.pos[i_v][i]
