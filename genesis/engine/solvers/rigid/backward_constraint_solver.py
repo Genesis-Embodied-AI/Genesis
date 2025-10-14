@@ -5,7 +5,7 @@ import genesis.utils.array_class as array_class
 
 
 @ti.func
-def func_backward_compute_Ap(
+def func_matvec_Ap(
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -13,10 +13,9 @@ def func_backward_compute_Ap(
     i_b,
 ):
     """
-    Compute Ap = (M + J^T * diag(D) * J) * p, where
+    Compute Ap = (M + J^T * diag(D) * J) * p on the current active set, which is used for solving the adjoint u.
 
-    M = mass matrix, J = Jacobian, D = diagonal matrix of efc_D
-    p = search direction
+    Specifically, M = mass matrix, J = Jacobian, diag(D) = diagonal matrix of efc_D, and p = search direction.
     """
     n_dofs = constraint_state.bw_p.shape[0]
     for i_d in range(n_dofs):
@@ -54,17 +53,21 @@ def func_backward_compute_Ap(
 
 
 @ti.kernel
-def constraint_solver_backward_kernel_solve_Au_g(
+def kernel_solve_adjoint_u(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
     r"""
-    Solve A * u = g, where
-    A = M + J^T * diag(D) * J,  (M = mass matrix, J = Jacobian, D = diagonal matrix of efc_D)
-    g = dL_dqacc
-    Note that A is Semi-Positive Definite (SPD), so we can solve A * u = g. Here we use CG solver.
+    Solve for the adjoint vector [u] from Au = g, where A = ∂F/∂qacc (primal Hessian on the active set) and g = ∂L/∂qacc.
+    Intuitively, [u] is a sensitivity vector that translates the upstream gradient ∂L/∂qacc into the primal space.
+    This adjoint vector [u] can be used an intermediate variable to compute the downstream gradients. Since A is a
+    Semi-Positive Definite (SPD) matrix, we can solve A * u = g using either Cholesky decomposition or CG solver.
+    When Newton solver was used, we reuse the Cholesky decomposition of A (= L * L^T) to solve A * u = g. Otherwise,
+    we use CG solver.
+
+    Specifically, A = M + J^T * diag(D) * J, where M = mass matrix, J = Jacobian, diag(D) = diagonal matrix of efc_D.
     """
     n_dofs = constraint_state.bw_u.shape[0]
     _B = constraint_state.bw_u.shape[1]
@@ -107,7 +110,7 @@ def constraint_solver_backward_kernel_solve_Au_g(
         for i_b in range(_B):
             # Compute Ap for the current search direction
             for it in range(static_rigid_sim_config.iterations):
-                func_backward_compute_Ap(
+                func_matvec_Ap(
                     entities_info=entities_info,
                     rigid_global_info=rigid_global_info,
                     constraint_state=constraint_state,
@@ -147,19 +150,21 @@ def constraint_solver_backward_kernel_solve_Au_g(
 
 
 @ti.kernel
-def constraint_solver_backward_kernel_compute_gradients(
+def kernel_compute_gradients(
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
     r"""
-    Compute gradients of the input variables:
+    Compute gradients of the loss with respect to the input variables to this solver. Note that we use the intermediate
+    adjoint vector [u] computed in [kernel_solve_adjoint_u] to compute these gradients.
 
-    dL_dM = -u * qacc^T
-    dL_djac = -[u * y^T + qacc * (D \odot (Ju))^T] (y = D \odot w, w = (Jqacc - aref))
-    dL_daref = Ju \odot D
-    dL_defc_D = -Ju \odot (Jqacc - aref)
-    dL_dforce = u
+    Specifically, the gradients are computed as follows:
+    - dL_dM = -u * qacc^T
+    - dL_djac = -[u * y^T + qacc * (D \odot (Ju))^T] (y = D \odot w, w = (Jqacc - aref))
+    - dL_daref = Ju \odot D
+    - dL_defc_D = -Ju \odot (Jqacc - aref)
+    - dL_dforce = u
     """
     _B = constraint_state.bw_u.shape[1]
     n_dofs = constraint_state.bw_u.shape[0]

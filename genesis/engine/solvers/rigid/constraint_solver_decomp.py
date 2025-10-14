@@ -457,7 +457,7 @@ class ConstraintSolver:
         self.constraint_state.dL_dqacc.from_numpy(dL_dqacc)
 
         # 1. We first need to find a solution to A^T * u = g system.
-        backward_constraint_solver.constraint_solver_backward_kernel_solve_Au_g(
+        backward_constraint_solver.kernel_solve_adjoint_u(
             entities_info=self._solver.entities_info,
             rigid_global_info=self._solver._rigid_global_info,
             constraint_state=self.constraint_state,
@@ -465,7 +465,7 @@ class ConstraintSolver:
         )
 
         # 2. Using the solution u, we can compute the gradients of the input variables.
-        backward_constraint_solver.constraint_solver_backward_kernel_compute_gradients(
+        backward_constraint_solver.kernel_compute_gradients(
             entities_info=self._solver.entities_info,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,

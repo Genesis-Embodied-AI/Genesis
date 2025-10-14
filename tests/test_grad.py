@@ -138,6 +138,9 @@ def test_diff_contact(backend):
     assert_allclose(dL_dpos_error_rel, 0.0, atol=RTOL)
 
 
+# We need to use 64-bit precision for this test because we need to use sufficiently small perturbation to get reliable
+# gradient estimates through finite difference method. This small perturbation is not supported by 32-bit precision in
+# stable way.
 @pytest.mark.required
 @pytest.mark.field_only
 @pytest.mark.precision("64")
