@@ -123,14 +123,22 @@ jobs:
           echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
           echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
 
+      - name: Get os family
+        id: os_family
+        shell: bash
+        run: |
+          OS_FAMILY=$(python -c "import platform; print(platform.system())")
+          echo "OS_FAMILY=${OS_FAMILY}"
+          echo "OS_FAMILY=${OS_FAMILY}" >> $GITHUB_OUTPUT
+
       - name: Restore Taichi Kernel Cache
         if: always()
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
+          key: ${{ steps.os_family.outputs.OS_FAMILY }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
           restore-keys: |
-            ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
+            ${{ steps.os_family.outputs.OS_FAMILY }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
 
       - name: Run unit tests
         run: |
@@ -144,7 +152,7 @@ jobs:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.os_family.outputs.OS_FAMILY }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
