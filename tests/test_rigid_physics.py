@@ -1685,7 +1685,6 @@ def test_mass_mat(show_viewer, tol):
 @pytest.mark.parametrize("model_name", ["hinge_slide"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
-@pytest.mark.parametrize("precision", ["64"])  # FIXME: Return nan when using 32bits precision
 def test_set_dofs_frictionloss_physics(gs_sim, tol):
     (robot,) = gs_sim.entities
 
@@ -1723,7 +1722,6 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])  # FIXME: Return nan when using 32bits precision
 def test_frictionloss_advanced(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,

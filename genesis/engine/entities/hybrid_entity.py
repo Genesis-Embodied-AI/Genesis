@@ -704,7 +704,7 @@ def default_func_instantiate_rigid_soft_association_from_soft(
 
         is_clipped_low = positions_proj_on_line_t < 0.0
         is_clipped_high = positions_proj_on_line_t > 1.0
-        is_valid = ~is_clipped_low & ~is_clipped_high
+        is_valid = not (is_clipped_low or is_clipped_high)
         dist_to_link = dist_to_p0 * is_clipped_low + dist_to_p1 * is_clipped_high + dist_to_line * is_valid
 
         trans, quat = gu.transform_pos_quat_by_trans_quat(
