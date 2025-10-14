@@ -78,15 +78,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Restore Taichi Kernel Cache
-        if: always()
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache
-          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}
-          restore-keys: |
-            ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -124,6 +115,23 @@ jobs:
         run: |
           pip install -e '.[dev]'
 
+      - name: Get gstaichi version
+        id: gstaichi_version
+        shell: bash
+        run: |
+          GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
+          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
+          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Restore Taichi Kernel Cache
+        if: always()
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
+          restore-keys: |
+            ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
+
       - name: Run unit tests
         run: |
           pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} --forked -m required ./tests
@@ -135,7 +143,7 @@ jobs:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
