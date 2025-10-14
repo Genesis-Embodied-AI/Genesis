@@ -1162,7 +1162,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
             "contact_normals": contact_normal,
             "contact_halfspaces": contact_halfspace,
             "contact_clipped_polygons": contact_clipped_polygons,
-            "multi_contact_flag": V(dtype=gs.ti_int, shape=(_B,)),
+            "multi_contact_flag": V(dtype=gs.ti_bool, shape=(_B,)),
         }
     )
 

@@ -342,8 +342,8 @@ def func_gjk_contact(
             break
 
     gjk_state.n_contacts[i_b] = n_contacts
-    gjk_state.is_col[i_b] = True if n_contacts > 0 else False
-    gjk_state.multi_contact_flag[i_b] = 1
+    gjk_state.is_col[i_b] = n_contacts > 0
+    gjk_state.multi_contact_flag[i_b] = True
 
 
 @ti.func
