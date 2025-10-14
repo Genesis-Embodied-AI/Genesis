@@ -8,6 +8,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import setproctitle
 import psutil
 import pyglet
 import pytest
@@ -61,6 +62,12 @@ def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, type):
         return ".".join((val.__module__, val.__name__))
     return f"{val}"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # Include test name in process title
+    setproctitle.setproctitle(f"pytest: {item.nodeid}")
 
 
 @pytest.hookimpl(tryfirst=True)
