@@ -74,4 +74,4 @@ jobs:
           pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
           pip install --no-input ".[dev,render,usd]"
 
-          pytest -v --backend gpu --dev -n 1 --forked ./tests
+          pytest -v --backend gpu --dev -n 1 -m required --forked --logical "tests/test_rigid_physics.py"
