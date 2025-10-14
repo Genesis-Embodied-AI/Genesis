@@ -1,7 +1,12 @@
-import genesis as gs
 import gstaichi as ti
+
+import genesis as gs
 from genesis.repr_base import RBC
-import numpy as np
+
+# A constant stack size should be sufficient for BVH traversal.
+# https://madmann91.github.io/2021/01/06/bvhs-part-2.html
+# https://forums.developer.nvidia.com/t/thinking-parallel-part-ii-tree-traversal-on-the-gpu/148342
+STACK_SIZE = 64
 
 
 @ti.data_oriented
@@ -65,46 +70,58 @@ class LBVH(RBC):
     Linear BVH is a simple BVH that is used to accelerate collision detection. It supports parallel building and
     querying of the BVH tree. Only supports axis-aligned bounding boxes (AABBs).
 
+    Parameters
+    -----
+    aabbs : ti.field
+        The input AABBs to be organized in the BVH, shape (n_batches, n_aabbs).
+    max_n_query_result_per_aabb : int
+        Maximum number of query results per AABB per batch (n_batches * n_aabbs * max_n_query_result_per_aabb).
+        Defaults to 0, which means the max number of query results is 1 regardless of n_batches or n_aabbs.
+    n_radix_sort_groups : int
+        Number of groups to use for radix sort. More groups may improve performance but will use more memory.
+    max_stack_depth : int
+        Maximum stack depth for BVH traversal. Defaults to STACK_SIZE.
+
     Attributes
     -----
-        aabbs : ti.field
+    aabbs : ti.field
         The input AABBs to be organized in the BVH, shape (n_batches, n_aabbs).
-        n_aabbs : int
-            Number of AABBs per batch.
-        n_batches : int
-            Number of batches.
-        max_query_results : int
-            Maximum number of query results allowed.
-        max_stack_depth : int
-            Maximum stack depth for BVH traversal.
-        aabb_centers : ti.field
-            Centers of the AABBs, shape (n_batches, n_aabbs).
-        aabb_min : ti.field
-            Minimum coordinates of AABB centers per batch, shape (n_batches).
-        aabb_max : ti.field
-            Maximum coordinates of AABB centers per batch, shape (n_batches).
-        scale : ti.field
-            Scaling factors for normalizing AABB centers, shape (n_batches).
-        morton_codes : ti.field
-            Morton codes for each AABB, shape (n_batches, n_aabbs).
-        hist : ti.field
-            Histogram for radix sort, shape (n_batches, 256).
-        prefix_sum : ti.field
-            Prefix sum for histogram, shape (n_batches, 256).
-        offset : ti.field
-            Offset for radix sort, shape (n_batches, n_aabbs).
-        tmp_morton_codes : ti.field
-            Temporary storage for radix sort, shape (n_batches, n_aabbs).
-        Node : ti.dataclass
-            Node structure for the BVH tree, containing left, right, parent indices and bounding box.
-        nodes : ti.field
-            BVH nodes, shape (n_batches, n_aabbs * 2 - 1).
-        internal_node_visited : ti.field
-            Flags indicating if an internal node has been visited during traversal, shape (n_batches, n_aabbs - 1).
-        query_result : ti.field
-            Query results as a vector of (batch id, self id, query id), shape (max_query_results).
-        query_result_count : ti.field
-            Counter for the number of query results.
+    n_aabbs : int
+        Number of AABBs per batch.
+    n_batches : int
+        Number of batches.
+    max_query_results : int
+        Maximum number of query results allowed.
+    max_stack_depth : int
+        Maximum stack depth for BVH traversal.
+    aabb_centers : ti.field
+        Centers of the AABBs, shape (n_batches, n_aabbs).
+    aabb_min : ti.field
+        Minimum coordinates of AABB centers per batch, shape (n_batches).
+    aabb_max : ti.field
+        Maximum coordinates of AABB centers per batch, shape (n_batches).
+    scale : ti.field
+        Scaling factors for normalizing AABB centers, shape (n_batches).
+    morton_codes : ti.field
+        Morton codes for each AABB, shape (n_batches, n_aabbs).
+    hist : ti.field
+        Histogram for radix sort, shape (n_batches, 256).
+    prefix_sum : ti.field
+        Prefix sum for histogram, shape (n_batches, 256).
+    offset : ti.field
+        Offset for radix sort, shape (n_batches, n_aabbs).
+    tmp_morton_codes : ti.field
+        Temporary storage for radix sort, shape (n_batches, n_aabbs).
+    Node : ti.dataclass
+        Node structure for the BVH tree, containing left, right, parent indices and bounding box.
+    nodes : ti.field
+        BVH nodes, shape (n_batches, n_aabbs * 2 - 1).
+    internal_node_visited : ti.field
+        Flags indicating if an internal node has been visited during traversal, shape (n_batches, n_aabbs - 1).
+    query_result : ti.field
+        Query results as a vector of (batch id, self id, query id), shape (max_query_results).
+    query_result_count : ti.field
+        Counter for the number of query results.
 
     Notes
     ------
@@ -112,7 +129,13 @@ class LBVH(RBC):
         https://research.nvidia.com/sites/default/files/pubs/2012-06_Maximizing-Parallelism-in/karras2012hpg_paper.pdf
     """
 
-    def __init__(self, aabb: AABB, max_n_query_result_per_aabb: int = 8, n_radix_sort_groups: int = 256):
+    def __init__(
+        self,
+        aabb: AABB,
+        max_n_query_result_per_aabb: int = 8,
+        n_radix_sort_groups: int = 256,
+        max_stack_depth: int = STACK_SIZE,
+    ):
         if aabb.n_aabbs < 2:
             gs.raise_exception("The number of AABBs must be larger than 2.")
         n_radix_sort_groups = min(aabb.n_aabbs, n_radix_sort_groups)
@@ -121,10 +144,9 @@ class LBVH(RBC):
         self.n_aabbs = aabb.n_aabbs
         self.n_batches = aabb.n_batches
 
-        # Maximum number of query results
-        self.max_query_results = min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF)
-        # Maximum stack depth for traversal
-        self.max_stack_depth = 64
+        self.max_query_results = max(1, min(self.n_aabbs * max_n_query_result_per_aabb * self.n_batches, 0x7FFFFFFF))
+        self.max_stack_depth = max_stack_depth
+
         self.aabb_centers = ti.field(gs.ti_vec3, shape=(self.n_batches, self.n_aabbs))
         self.aabb_min = ti.field(gs.ti_vec3, shape=(self.n_batches,))
         self.aabb_max = ti.field(gs.ti_vec3, shape=(self.n_batches,))
@@ -458,7 +480,7 @@ class LBVH(RBC):
 
         n_querys = aabbs.shape[1]
         for i_b, i_q in ti.ndrange(self.n_batches, n_querys):
-            query_stack = ti.Vector.zero(ti.i32, 64)
+            query_stack = ti.Vector.zero(ti.i32, self.max_stack_depth)
             stack_depth = 1
 
             while stack_depth > 0:
