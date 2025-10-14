@@ -55,6 +55,7 @@ jobs:
 
       - name: Get gstaichi version
         id: gstaichi_version
+        shell: bash
         run: |
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
           echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
