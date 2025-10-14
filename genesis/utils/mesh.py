@@ -172,39 +172,6 @@ def load_mesh(file):
     return file
 
 
-def normalize_mesh(mesh):
-    """
-    Normalize mesh to [-0.5, 0.5].
-    """
-    scale = (mesh.vertices.max(0) - mesh.vertices.min(0)).max()
-    center = (mesh.vertices.max(0) + mesh.vertices.min(0)) / 2.0
-
-    normalized_mesh = mesh.copy()
-    normalized_mesh.vertices -= center
-    normalized_mesh.vertices /= scale
-    return normalized_mesh
-
-
-def scale_mesh(mesh, scale):
-    scale = np.array(scale)
-    return trimesh.Trimesh(
-        vertices=mesh.vertices * scale,
-        faces=mesh.faces,
-    )
-
-
-def cleanup_mesh(mesh):
-    """
-    Retain only mesh's vertices, faces, and normals.
-    """
-    return trimesh.Trimesh(
-        vertices=mesh.vertices,
-        faces=mesh.faces,
-        vertex_normals=mesh.vertex_normals,
-        face_normals=mesh.face_normals,
-    )
-
-
 def compute_sdf_data(mesh, res):
     """
     Convert mesh to sdf voxels and a transformation matrix from mesh frame to voxel frame.
@@ -228,10 +195,6 @@ def compute_sdf_data(mesh, res):
         "T_mesh_to_sdf": T_mesh_to_sdf,
     }
     return sdf_data
-
-
-def voxelize_mesh(mesh, res):
-    return mesh.voxelized(pitch=1.0 / res).fill()
 
 
 def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
@@ -263,30 +226,15 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     return visual
 
 
-def get_mesh_scale(verts):
-    # compute mesh scale using bbox diagonal
-    v = np.asarray(verts, dtype=np.float64, order="C")
-    bmin = v.min(axis=0)
-    bmax = v.max(axis=0)
-    ext = bmax - bmin
-    scale = float(np.linalg.norm(ext))
-
-    return scale
-
-
 def convex_decompose(mesh, coacd_options):
-    # compute mesh scale
-    mesh_scale = get_mesh_scale(mesh.vertices)
-
-    # rescale mesh vertices to remove scale factor, and quantize to int
-    if not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0):
-        _vertices = mesh.vertices / mesh_scale
-        _vertices = np.round(_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64, order="C")
-    else:
-        _vertices = mesh.vertices
+    # rescale mesh vertices to remove scale factor, and quantize to int to prevent cache miss due to rounding errors
+    mesh_scale = float(np.linalg.norm(mesh.extents))
+    assert not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0)
+    normalized_vertices = mesh.vertices / mesh_scale
+    discretized_vertices = np.round(normalized_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64)
 
     # compute file name via hashing for caching
-    cvx_path = get_cvx_path(_vertices, mesh.faces, coacd_options)
+    cvx_path = get_cvx_path(discretized_vertices, mesh.faces, coacd_options)
 
     # loading pre-computed cache if available
     is_cached_loaded = False

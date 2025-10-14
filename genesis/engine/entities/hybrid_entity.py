@@ -14,11 +14,7 @@ from genesis.utils.hybrid import (
     skeletonization,
     trimesh_to_gelmesh,
 )
-from genesis.utils.mesh import (
-    cleanup_mesh,
-    load_mesh,
-    normalize_mesh,
-)
+from genesis.utils.mesh import load_mesh
 
 from .base_entity import Entity
 from .mpm_entity import MPMEntity
