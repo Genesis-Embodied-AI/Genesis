@@ -1,4 +1,4 @@
-name: Production
+name: gpu_on_github
 
 on:
   # Trigger the workflow on push on the master branch, or for any pull request
