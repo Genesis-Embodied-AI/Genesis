@@ -13,12 +13,10 @@ if TYPE_CHECKING:
 # Check if libuipc is available
 try:
     import uipc
+    UIPC_AVAILABLE = True
 except ImportError:
-    raise ImportError(
-        "libuipc is required for IPC coupling but not found.\n"
-        "Please build and install libuipc from source:\n"
-        "https://github.com/spiriMirror/libuipc"
-    )
+    UIPC_AVAILABLE = False
+    uipc = None
 
 
 @ti.data_oriented
@@ -41,6 +39,14 @@ class IPCCoupler(RBC):
         options : IPCCouplerOptions
             IPC configuration options
         """
+        # Check if uipc is available
+        if not UIPC_AVAILABLE:
+            raise ImportError(
+                "libuipc is required for IPC coupling but not found.\n"
+                "Please build and install libuipc from source:\n"
+                "https://github.com/spiriMirror/libuipc"
+            )
+
         self.sim = simulator
         self.options = options
 
