@@ -1,0 +1,131 @@
+import argparse
+import os
+
+import numpy as np
+from tqdm import tqdm
+
+import genesis as gs
+from genesis.recorders.plotters import IS_MATPLOTLIB_AVAILABLE
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-dt", "--timestep", type=float, default=1e-2, help="Simulation time step")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI", default=True)
+    parser.add_argument("-nv", "--no-vis", action="store_false", dest="vis", help="Disable visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Use CPU instead of GPU")
+    parser.add_argument("-t", "--seconds", type=float, default=3, help="Number of seconds to simulate")
+    args = parser.parse_args()
+
+    ########################## init ##########################
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+
+    ########################## create a scene ##########################
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=args.timestep,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.5, 0.0, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=40,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        # renderer=gs.renderers.BatchRenderer(),
+        show_viewer=args.vis,
+    )
+
+    ########################## entities ##########################
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    end_effector = franka.get_link("hand")
+    motors_dof = (0, 1, 2, 3, 4, 5, 6)
+
+    ########################## record sensor data ##########################
+    head_camera = scene.add_sensor(
+        gs.sensors.RGBCamera(
+            res=(360, 240),
+            pos=(2.0, 2.0, 1.0),
+            euler=(80.0, 0.0, 140.0),
+            # visualize
+            draw_debug=True,
+            debug_color=(0.0, 1.0, 1.0, 0.8),
+        )
+    )
+    hand_camera = scene.add_sensor(
+        gs.sensors.RGBCamera(
+            res=(128, 128),
+            entity_idx=franka.idx,
+            link_idx_local=end_effector.idx_local,
+            pos_offset=(0.0, 0.0, 0.15),
+            euler_offset=(180.0, 0.0, 0.0),
+            # visualize
+            draw_debug=True,
+        )
+    )
+    if args.vis:
+        if IS_MATPLOTLIB_AVAILABLE:
+            head_camera.start_recording(
+                gs.recorders.MPLImagePlot(
+                    title="Head Camera",
+                    # save_to_filename="camera_franka_head.mp4",
+                ),
+            )
+            hand_camera.start_recording(
+                gs.recorders.MPLImagePlot(
+                    title="Hand Camera",
+                    # save_to_filename="camera_franka_hand.mp4",
+                ),
+            )
+        else:
+            print("matplotlib not available, skipping real-time plotting.")
+
+    ########################## build ##########################
+    scene.build()
+
+    franka.set_dofs_kp(
+        np.array([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0]),
+    )
+    franka.set_dofs_kv(
+        np.array([450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0]),
+    )
+    franka.set_dofs_force_range(
+        np.array([-87.0, -87.0, -87.0, -87.0, -12.0, -12.0, -12.0, -100.0, -100.0]),
+        np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0, 100.0, 100.0]),
+    )
+
+    circle_center = np.array([0.4, 0.0, 0.5])
+    circle_radius = 0.15
+    rate = np.deg2rad(2.0)
+
+    try:
+        steps = int(args.seconds / args.timestep) if "PYTEST_VERSION" not in os.environ else 5
+        for i in tqdm(range(steps)):
+            scene.step()
+
+            # control franka to move in a circle and draw the target positions
+            pos = circle_center + np.array([np.cos(i * rate), np.sin(i * rate), 0]) * circle_radius
+            qpos = franka.inverse_kinematics(
+                link=end_effector,
+                pos=pos,
+                quat=np.array([0.0, 1.0, 0.0, 0.0]),
+            )
+            franka.control_dofs_position(qpos[:-2], motors_dof)
+
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
+
+        scene.stop_recording()
+
+
+if __name__ == "__main__":
+    main()

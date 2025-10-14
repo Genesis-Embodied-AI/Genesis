@@ -30,7 +30,7 @@ class SensorManager:
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate(self._sim.scene)
         sensor_cls, metadata_cls, data_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
-        self._sensors_by_type.setdefault(sensor_cls, [])
+        self._sensors_by_type.setdefault(sensor_cls, gs.List())
         if sensor_cls not in self._sensors_metadata:
             self._sensors_metadata[sensor_cls] = metadata_cls()
         sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), data_cls, self)
@@ -123,6 +123,9 @@ class SensorManager:
             else:
                 self._cloned_cache[key] = self._cache[dtype].clone()
         return self._cloned_cache[key][:, sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
+
+    def get_sensors_of_type(self, sensor_cls: Type["Sensor"]) -> tuple["Sensor", ...]:
+        return tuple(self._sensors_by_type[sensor_cls])
 
     @property
     def sensors(self):

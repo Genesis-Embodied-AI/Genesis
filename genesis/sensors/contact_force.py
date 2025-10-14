@@ -7,7 +7,7 @@ import torch
 
 import genesis as gs
 from genesis.engine.solvers import RigidSolver
-from genesis.utils.geom import ti_inv_transform_by_quat, trans_to_T, transform_by_quat
+from genesis.utils.geom import ti_inv_transform_by_quat, transform_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
@@ -21,7 +21,6 @@ from .base_sensor import (
     Sensor,
     SensorOptions,
     SharedSensorMetadata,
-    _to_tuple,
 )
 from .sensor_manager import register_sensor
 

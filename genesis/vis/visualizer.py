@@ -116,7 +116,23 @@ class Visualizer(RBC):
         self._renderer = None
 
     def add_camera(
-        self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, near, far, env_idx, debug
+        self,
+        res,
+        pos,
+        lookat,
+        up,
+        model,
+        fov,
+        aperture,
+        focus_dist,
+        GUI,
+        spp,
+        denoise,
+        near,
+        far,
+        env_idx,
+        debug,
+        transform=None,
     ):
         cam_idx = len([camera for camera in self._cameras if camera.debug == debug])
         camera = Camera(
@@ -135,6 +151,7 @@ class Visualizer(RBC):
             denoise,
             near,
             far,
+            transform=transform,
             env_idx=env_idx,
             debug=debug,
         )

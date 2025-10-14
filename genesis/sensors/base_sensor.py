@@ -357,6 +357,9 @@ class RigidSensorOptionsMixin:
 
     def validate(self, scene: "Scene"):
         super().validate(scene)
+        self.validate_rigid_link(scene)
+
+    def validate_rigid_link(self, scene: "Scene"):
         if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
         entity = scene.entities[self.entity_idx]
