@@ -6,7 +6,10 @@ import torch
 
 import genesis as gs
 from genesis.utils.geom import R_to_quat
-from genesis.utils.misc import ti_to_torch
+from genesis.utils.misc import ti_to_torch, ti_to_numpy, tensor_to_array
+from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
+from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
+from genesis.utils import set_random_seed
 
 from .utils import assert_allclose
 
@@ -133,6 +136,197 @@ def test_diff_contact(backend):
     assert_allclose(dL_dpos_error_rel, 0.0, atol=RTOL)
     dL_dquat_error_rel = compute_dL_error(dL_dquat, "quat")
     assert_allclose(dL_dpos_error_rel, 0.0, atol=RTOL)
+
+
+@pytest.mark.required
+@pytest.mark.field_only
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_diff_solver(backend, monkeypatch):
+    RTOL = 1e-4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # We use Newton's method because it converges faster than CG, and therefore gives better gradient estimation
+            # when using finite difference method
+            constraint_solver=gs.constraint_solver.Newton,
+        ),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(gs.morphs.Plane(pos=(0, 0, 0)))
+    box = scene.add_entity(gs.morphs.Box(size=(1, 1, 1), pos=(10, 10, 0.49)))
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+
+    scene.build()
+    rigid_solver = scene._sim.rigid_solver
+    constraint_solver = rigid_solver.constraint_solver
+
+    franka.set_qpos([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+
+    # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
+    def constraint_solver_resolve():
+        func_init_solver(
+            dofs_state=rigid_solver.dofs_state,
+            entities_info=rigid_solver.entities_info,
+            constraint_state=constraint_solver.constraint_state,
+            rigid_global_info=rigid_solver._rigid_global_info,
+            static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=rigid_solver._static_rigid_sim_cache_key,
+        )
+        func_solve(
+            entities_info=rigid_solver.entities_info,
+            dofs_state=rigid_solver.dofs_state,
+            constraint_state=constraint_solver.constraint_state,
+            rigid_global_info=rigid_solver._rigid_global_info,
+            static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            static_rigid_sim_cache_key=rigid_solver._static_rigid_sim_cache_key,
+        )
+
+    monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
+
+    # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
+    # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
+    kernel_step_1(
+        links_state=rigid_solver.links_state,
+        links_info=rigid_solver.links_info,
+        joints_state=rigid_solver.joints_state,
+        joints_info=rigid_solver.joints_info,
+        dofs_state=rigid_solver.dofs_state,
+        dofs_info=rigid_solver.dofs_info,
+        geoms_state=rigid_solver.geoms_state,
+        geoms_info=rigid_solver.geoms_info,
+        entities_state=rigid_solver.entities_state,
+        entities_info=rigid_solver.entities_info,
+        rigid_global_info=rigid_solver._rigid_global_info,
+        static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+        contact_island_state=constraint_solver.contact_island.contact_island_state,
+        static_rigid_sim_cache_key=rigid_solver._static_rigid_sim_cache_key,
+    )
+    rigid_solver._func_constraint_clear()
+    constraint_solver.add_equality_constraints()
+    rigid_solver.collider.detection()
+    constraint_solver.add_frictionloss_constraints()
+    constraint_solver.add_collision_constraints()
+    constraint_solver.add_joint_limit_constraints()
+    constraint_solver.resolve()
+
+    # Loss function to compute gradients using finite difference method
+    def compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force):
+        rigid_solver._rigid_global_info.mass_mat.from_numpy(tensor_to_array(input_mass))
+        constraint_solver.constraint_state.jac.from_numpy(tensor_to_array(input_jac))
+        constraint_solver.constraint_state.aref.from_numpy(tensor_to_array(input_aref))
+        constraint_solver.constraint_state.efc_D.from_numpy(tensor_to_array(input_efc_D))
+        rigid_solver.dofs_state.force.from_numpy(tensor_to_array(input_force))
+
+        # Recompute acc_smooth from the updated input variables
+        updated_acc_smooth = torch.linalg.solve(input_mass.squeeze(-1), input_force.squeeze(-1))
+        input_acc_smooth = tensor_to_array(updated_acc_smooth.unsqueeze(-1))
+
+        rigid_solver.dofs_state.acc_smooth.from_numpy(input_acc_smooth)
+
+        constraint_solver.resolve()
+        output_qacc = ti_to_numpy(constraint_solver.qacc)
+        th_output_qacc = torch.from_numpy(output_qacc).to(device=gs.device)
+        loss = ((th_output_qacc - target_qacc) ** 2).mean()
+        return loss
+
+    init_input_mass = ti_to_torch(rigid_solver._rigid_global_info.mass_mat)
+    init_input_jac = ti_to_torch(constraint_solver.constraint_state.jac)
+    init_input_aref = ti_to_torch(constraint_solver.constraint_state.aref)
+    init_input_efc_D = ti_to_torch(constraint_solver.constraint_state.efc_D)
+    init_input_force = ti_to_torch(rigid_solver.dofs_state.force)
+
+    # Initial output of the constraint solver
+    set_random_seed(0)
+    init_output_qacc = ti_to_torch(constraint_solver.qacc)
+    target_qacc = np.random.randn(*init_output_qacc.shape)
+    target_qacc = torch.from_numpy(target_qacc).to(device=gs.device) * init_output_qacc.abs().mean()
+
+    # Solve the constraint solver and get the output
+    output_qacc = ti_to_numpy(constraint_solver.qacc)
+    th_output_qacc = torch.from_numpy(output_qacc).to(device=gs.device).requires_grad_(True)
+
+    # Compute loss and gradient of the output
+    loss = ((th_output_qacc - target_qacc) ** 2).mean()
+    dL_dqacc = tensor_to_array(torch.autograd.grad(loss, th_output_qacc)[0])
+
+    # Compute gradients of the input variables: [mass], [jac], [aref], [efc_D], [force]
+    constraint_solver.backward(dL_dqacc)
+
+    # Fetch gradients of the input variables
+    dL_dM = ti_to_torch(constraint_solver.constraint_state.dL_dM)
+    dL_djac = ti_to_torch(constraint_solver.constraint_state.dL_djac)
+    dL_daref = ti_to_torch(constraint_solver.constraint_state.dL_daref)
+    dL_defc_D = ti_to_torch(constraint_solver.constraint_state.dL_defc_D)
+    dL_dforce = ti_to_torch(constraint_solver.constraint_state.dL_dforce)
+
+    ### Compute directional derivatives along random directions
+    FD_EPS = 1e-4
+    TRIALS = 100
+
+    for dL_dx, x_type in (
+        (dL_dforce, "force"),
+        (dL_daref, "aref"),
+        (dL_defc_D, "efc_D"),
+        (dL_djac, "jac"),
+        (dL_dM, "mass"),
+    ):
+        dL_error = 0.0
+        for _ in range(TRIALS):
+            rand_dx = np.random.randn(*dL_dx.shape)
+            rand_dx = torch.from_numpy(rand_dx).to(device=gs.device)
+            rand_dx = rand_dx / max(
+                torch.linalg.norm(rand_dx, dim=0 if x_type in ("force", "aref", "efc_D") else (0, 1)), gs.EPS
+            )
+            if x_type == "mass":
+                # Make rand_dx symmetric
+                rand_dx = (rand_dx + rand_dx.transpose(0, 1)) * 0.5
+
+            dL = (rand_dx * dL_dx).sum()
+
+            input_force = init_input_force
+            input_aref = init_input_aref
+            input_efc_D = init_input_efc_D
+            input_jac = init_input_jac
+            input_mass = init_input_mass
+
+            # 1 * eps
+            if x_type == "force":
+                input_force = init_input_force + rand_dx * FD_EPS
+            elif x_type == "aref":
+                input_aref = init_input_aref + rand_dx * FD_EPS
+            elif x_type == "efc_D":
+                input_efc_D = init_input_efc_D + rand_dx * FD_EPS
+            elif x_type == "jac":
+                input_jac = init_input_jac + rand_dx * FD_EPS
+            elif x_type == "mass":
+                input_mass = init_input_mass + rand_dx * FD_EPS
+            lossP1 = compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force)
+
+            # -1 * eps
+            if x_type == "force":
+                input_force = init_input_force - rand_dx * FD_EPS
+            elif x_type == "aref":
+                input_aref = init_input_aref - rand_dx * FD_EPS
+            elif x_type == "efc_D":
+                input_efc_D = init_input_efc_D - rand_dx * FD_EPS
+            elif x_type == "jac":
+                input_jac = init_input_jac - rand_dx * FD_EPS
+            elif x_type == "mass":
+                input_mass = init_input_mass - rand_dx * FD_EPS
+            lossP2 = compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force)
+            dL_fd = (lossP1 - lossP2) / (2 * FD_EPS)
+
+            dL_error += (dL - dL_fd).abs() / max(dL.abs(), dL_fd.abs(), gs.EPS)
+
+        dL_error /= TRIALS
+        assert_allclose(dL_error, 0.0, atol=RTOL)
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])

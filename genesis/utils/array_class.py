@@ -301,24 +301,9 @@ def get_constraint_state(constraint_solver, solver):
         "bw_r": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
         "bw_p": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
         "bw_Ap": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
-        "bw_Ju": V(
-            dtype=gs.ti_float,
-            shape=f_batch(
-                len_constraints_,
-            ),
-        ),
-        "bw_y": V(
-            dtype=gs.ti_float,
-            shape=f_batch(
-                len_constraints_,
-            ),
-        ),
-        "bw_w": V(
-            dtype=gs.ti_float,
-            shape=f_batch(
-                len_constraints_,
-            ),
-        ),
+        "bw_Ju": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "bw_y": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
+        "bw_w": V(dtype=gs.ti_float, shape=f_batch(len_constraints_)),
     }
 
     # Add solver-specific fields
