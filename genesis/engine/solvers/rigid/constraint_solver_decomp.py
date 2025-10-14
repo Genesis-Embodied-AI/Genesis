@@ -1923,7 +1923,7 @@ def func_update_constraint(
             rf = r * f
             linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
             linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-            constraint_state.active[i_c, i_b] = (~linear_neg) & (~linear_pos)
+            constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
             floss_force = linear_neg * f + linear_pos * -f
             floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
             floss_cost_local += linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
