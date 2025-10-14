@@ -83,9 +83,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}
+          key: ${{ matrix.OS }}
           restore-keys: |
-            ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-
+            ${{ matrix.OS }}-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -129,13 +129,14 @@ jobs:
           pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} --forked -m required ./tests
 
       - name: Save Updated Taichi Kernel Cache
-        if: always()
+        # lets match this version to the black format check
+        if: matrix.PYTHON_VERSION == '3.12'
         uses: actions/cache/save@v4
         with:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ matrix.OS }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
