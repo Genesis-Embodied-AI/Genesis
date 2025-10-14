@@ -10,8 +10,8 @@ import genesis as gs
 
 # as a temporary solution, we get is_ndarray from os's environment variable
 use_ndarray = os.environ.get("GS_USE_NDARRAY", "0") == "1"
-V = ti.ndarray if use_ndarray else ti.field
 V_ANNOTATION = ti.types.ndarray() if use_ndarray else ti.template()
+V = ti.ndarray if use_ndarray else ti.field
 V_VEC = ti.Vector.ndarray if use_ndarray else ti.Vector.field
 V_MAT = ti.Matrix.ndarray if use_ndarray else ti.Matrix.field
 
@@ -252,7 +252,7 @@ def get_constraint_state(constraint_solver, solver):
         "efc_b": V(dtype=gs.ti_float, shape=efc_b_shape),
         "efc_AR": V(dtype=gs.ti_float, shape=efc_AR_shape),
         "active": V(dtype=gs.ti_bool, shape=f_batch(len_constraints_)),
-        "prev_active": V(dtype=gs.ti_int, shape=f_batch(len_constraints_)),
+        "prev_active": V(dtype=gs.ti_bool, shape=f_batch(len_constraints_)),
         "qfrc_constraint": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
         "qacc": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),
         "qacc_ws": V(dtype=gs.ti_float, shape=f_batch(solver.n_dofs_)),

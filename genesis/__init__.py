@@ -409,10 +409,10 @@ from .datatypes import List
 from .grad.creation_ops import *
 
 with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
-    from .engine import states, materials, force_fields
     from .engine.scene import Scene
-    from .engine.mesh import Mesh
-    from .engine.entities.emitter import Emitter
+
+from .engine import states, materials, force_fields
+from .engine.mesh import Mesh
 
 for name, member in gs_backend.__members__.items():
     globals()[name] = member

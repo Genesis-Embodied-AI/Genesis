@@ -5,7 +5,6 @@ from threading import Lock as threading_Lock
 import numpy as np
 
 import genesis as gs
-from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 
 from .aabb import AABB, OBB
 from .mouse_spring import MouseSpring
@@ -14,8 +13,7 @@ from .vec3 import Pose, Quat, Vec3, Color
 from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
-    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.entities.rigid_entity import RigidGeom, RigidLink, RigidEntity
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
 
@@ -26,10 +24,10 @@ class ViewerInteraction(ViewerInteractionBase):
     - mouse dragging
     """
 
-    def __init__(self, 
-        camera: 'Node', 
-        scene: 'Scene', 
-        viewport_size: tuple[int, int], 
+    def __init__(self,
+        camera: 'Node',
+        scene: 'Scene',
+        viewport_size: tuple[int, int],
         camera_yfov: float,
         log_events: bool = False,
         camera_fov: float = 60.0,
@@ -199,7 +197,7 @@ class ViewerInteraction(ViewerInteractionBase):
         ground_plane = Plane(Vec3.from_xyz(0, 0, 1), Vec3.zero())
         return ground_plane.raycast(ray)
 
-    def raycast_against_entity_obb(self, entity: RigidEntity, ray: Ray) -> RayHit:
+    def raycast_against_entity_obb(self, entity: "RigidEntity", ray: Ray) -> RayHit:
         if isinstance(entity.morph, gs.morphs.Box):
             obb: OBB = self._get_box_obb(entity)
             ray_hit = obb.raycast(ray)
@@ -212,7 +210,7 @@ class ViewerInteraction(ViewerInteractionBase):
         else:
             closest_hit = RayHit.no_hit()
             for link in entity.links:
-                if not link.is_fixed: 
+                if not link.is_fixed:
                     for geom in link.geoms:
                         obb: OBB = self._get_geom_placeholder_obb(geom)
                         ray_hit = obb.raycast(ray)
@@ -224,13 +222,13 @@ class ViewerInteraction(ViewerInteractionBase):
     def raycast_against_entities(self, ray: Ray) -> RayHit:
         closest_hit = RayHit.no_hit()
         for entity in self.scene.sim.rigid_solver.entities:
-            rigid_entity: RigidEntity = cast(RigidEntity, entity)
+            rigid_entity: "RigidEntity" = cast("RigidEntity", entity)
             ray_hit = self.raycast_against_entity_obb(rigid_entity, ray)
             if ray_hit.distance < closest_hit.distance:
                 closest_hit = ray_hit
         return closest_hit
 
-    def _get_box_obb(self, box_entity: RigidEntity) -> OBB:
+    def _get_box_obb(self, box_entity: "RigidEntity") -> OBB:
         box: gs.morphs.Box = box_entity.morph
         pose = Pose.from_link(box_entity.links[0])
         half_extents = 0.5 * Vec3.from_xyz(*box.size)
@@ -252,7 +250,7 @@ class ViewerInteraction(ViewerInteractionBase):
             obb = self._get_box_obb(geom.entity)
         else:
             obb = self._get_geom_placeholder_obb(geom)
-        
+
         if obb:
             aabb: AABB = AABB.from_center_and_half_extents(obb.pose.pos, obb.half_extents)
             aabb.expand(padding=0.01)

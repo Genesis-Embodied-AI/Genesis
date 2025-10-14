@@ -12,12 +12,9 @@ from numpy.typing import ArrayLike
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
-from genesis.engine.entities.base_entity import Entity
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
-from genesis.engine.entities import Emitter
 from genesis.engine.states.solvers import SimState
-from genesis.engine.simulator import Simulator
 from genesis.options import (
     AvatarOptions,
     BaseCouplerOptions,
@@ -45,6 +42,7 @@ from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.base_entity import Entity
     from genesis.recorders import Recorder, RecorderOptions
     from genesis.sensors import SensorOptions
 
@@ -108,6 +106,8 @@ class Scene(RBC):
         show_viewer: bool | None = None,
         show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
+        from genesis.engine.simulator import Simulator
+
         # Handling of default arguments
         sim_options = sim_options or SimOptions()
         coupler_options = coupler_options or LegacyCouplerOptions()
@@ -438,8 +438,8 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def link_entities(
         self,
-        parent_entity: Entity,
-        child_entity: Entity,
+        parent_entity: "Entity",
+        child_entity: "Entity",
         parent_link_name="",
         child_link_name="",
     ):
@@ -716,8 +716,9 @@ class Scene(RBC):
         -------
         emitter : genesis.Emitter
             The created emitter object.
-
         """
+        from genesis.engine.entities import Emitter
+
         if self.requires_grad:
             gs.raise_exception("Emitter is not supported in differentiable mode.")
 
@@ -1470,7 +1471,7 @@ class Scene(RBC):
         return self._sim.active_solvers
 
     @property
-    def entities(self) -> list[Entity]:
+    def entities(self) -> list["Entity"]:
         """All the entities in the scene."""
         return self._sim.entities
 

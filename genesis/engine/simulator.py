@@ -3,7 +3,6 @@ import numpy as np
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.entities.base_entity import Entity
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
@@ -23,7 +22,6 @@ from genesis.repr_base import RBC
 from genesis.sensors import SensorManager
 
 from .entities import HybridEntity
-from .solvers.base_solver import Solver
 from .solvers import (
     AvatarSolver,
     FEMSolver,
@@ -40,6 +38,9 @@ from .states.solvers import SimState
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
+    from genesis.engine.entities.base_entity import Entity
+
+    from .solvers.base_solver import Solver
 
 
 @ti.data_oriented
@@ -121,7 +122,7 @@ class Simulator(RBC):
         self.fem_solver = FEMSolver(self.scene, self, self.fem_options)
         self.sf_solver = SFSolver(self.scene, self, self.sf_options)
 
-        self._solvers: list[Solver] = gs.List(
+        self._solvers: list["Solver"] = gs.List(
             [
                 self.tool_solver,
                 self.rigid_solver,
@@ -134,7 +135,7 @@ class Simulator(RBC):
             ]
         )
 
-        self._active_solvers: list[Solver] = gs.List()
+        self._active_solvers: list["Solver"] = gs.List()
 
         # coupler
         if isinstance(self.coupler_options, SAPCouplerOptions):
@@ -150,7 +151,7 @@ class Simulator(RBC):
         self._queried_states = QueriedStates()
 
         # entities
-        self._entities: list[Entity] = gs.List()
+        self._entities: list["Entity"] = gs.List()
 
         # sensors
         self._sensor_manager = SensorManager(self)
