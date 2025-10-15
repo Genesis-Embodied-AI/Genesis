@@ -131,7 +131,7 @@ jobs:
           path: .cache
           key: ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}
           restore-keys: |
-            ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}-
+            ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
       - name: Run unit tests
         run: |
@@ -145,7 +145,7 @@ jobs:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
