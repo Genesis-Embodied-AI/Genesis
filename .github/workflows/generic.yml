@@ -21,11 +21,15 @@ jobs:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15"]
+        OS: ["ubuntu-24.04", "macos-15"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
         GS_BACKEND: ["cpu"]
         GS_USE_NDARRAY: ["0"]
         include:
+          - OS: "ubuntu-22.04"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_USE_NDARRAY: "0"
           - OS: "windows-2025"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
@@ -106,7 +110,7 @@ jobs:
           pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Black Format Check
-        if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
+        if: matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12'
         run: |
           pip install black
           black --line-length 120 --check .
@@ -115,22 +119,23 @@ jobs:
         run: |
           pip install -e '.[dev]'
 
-      - name: Get gstaichi version
-        id: gstaichi_version
+      - name: Get artifact prefix name
+        id: artifact_prefix
         shell: bash
         run: |
+          OS_FAMILY=$(python -c "import platform; print(platform.system())")
+          MACHINE_ARCH=$(python -c "import platform; print(platform.machine())")
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
-          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
-          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_USE_NDARRAY }}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
         if: always()
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
+          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
           restore-keys: |
-            ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
+            ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
       - name: Run unit tests
         run: |
@@ -138,13 +143,13 @@ jobs:
 
       - name: Save Updated Taichi Kernel Cache
         # lets match this version to the black format check
-        if: matrix.PYTHON_VERSION == '3.12'
+        if: ${{ always() && (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') && matrix.PYTHON_VERSION == '3.12' }}
         uses: actions/cache/save@v4
         with:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
