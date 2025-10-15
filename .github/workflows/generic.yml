@@ -129,7 +129,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}
+          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
           restore-keys: |
             ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
@@ -139,7 +139,7 @@ jobs:
 
       - name: Save Updated Taichi Kernel Cache
         # lets match this version to the black format check
-        if: matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12'
+        if: (matrix.OS == 'ubuntu-24.04' || matrix.OS == "macos-15" || matrix.OS == "windows-2025") && matrix.PYTHON_VERSION == '3.12'
         uses: actions/cache/save@v4
         with:
           path: .cache
