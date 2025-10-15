@@ -1,14 +1,10 @@
-import numpy as np
 import gstaichi as ti
+import numpy as np
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.mesh import (
-    cleanup_mesh,
-    compute_sdf_data,
-    load_mesh,
-    normalize_mesh,
-)
+from genesis.utils.mesh import compute_sdf_data, load_mesh
 
 
 @ti.data_oriented
@@ -41,10 +37,18 @@ class Mesh:
         self.n_faces = len(self.faces_np)
 
     def process_mesh(self):
-        # clean up mesh
+        # Normalize mesh
         gs.logger.debug(f"Processing mesh: {self.raw_file}.")
-        raw_mesh = load_mesh(self.raw_file)
-        self.mesh = cleanup_mesh(normalize_mesh(raw_mesh))
+        mesh_orig = load_mesh(self.raw_file)
+        scale = np.linalg.norm(mesh_orig.extents, ord=float("inf"))
+        center = np.mean(mesh_orig.bounds, axis=0)
+        normalized_vertices = (mesh_orig.vertices - center) / scale
+        self.mesh = trimesh.Trimesh(
+            vertices=normalized_vertices,
+            faces=mesh_orig.faces,
+            vertex_normals=mesh_orig.vertex_normals,
+            face_normals=mesh_orig.face_normals,
+        )
 
         # generate sdf
         if self.collision:

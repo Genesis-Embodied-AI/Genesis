@@ -34,14 +34,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Restore cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache
-          key: ubuntu-24.04-3.12-examples
-          restore-keys: |
-            ubuntu-24.04-3.12-examples-
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -61,6 +53,22 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e '.[dev]' pynput
 
+      - name: Get gstaichi version
+        id: gstaichi_version
+        shell: bash
+        run: |
+          GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
+          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
+          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: ubuntu-24.04-3.12-examples-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
+          restore-keys: |
+            ubuntu-24.04-3.12-examples-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
+
       - name: Run examples suite
         run: |
           pytest -v -m examples tests/test_examples.py
@@ -70,4 +78,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .cache
-          key: ubuntu-24.04-3.12-examples-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ubuntu-24.04-3.12-examples-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
