@@ -67,12 +67,19 @@ class ClothEntity(Entity):
             if self._morph.quat is not None:
                 # Convert quaternion to rotation matrix, then apply
                 from scipy.spatial.transform import Rotation as R
-                quat_xyzw = [self._morph.quat[1], self._morph.quat[2], self._morph.quat[3], self._morph.quat[0]]  # w,x,y,z -> x,y,z,w
+
+                quat_xyzw = [
+                    self._morph.quat[1],
+                    self._morph.quat[2],
+                    self._morph.quat[3],
+                    self._morph.quat[0],
+                ]  # w,x,y,z -> x,y,z,w
                 rot = R.from_quat(quat_xyzw)
-                euler_xyz = rot.as_euler('xyz', degrees=False)  # Get euler angles in radians
+                euler_xyz = rot.as_euler("xyz", degrees=False)  # Get euler angles in radians
 
                 # Apply rotation using AngleAxis (axis-angle representation)
                 from uipc import AngleAxis, Vector3
+
                 # Convert euler XYZ to sequential rotations
                 if abs(euler_xyz[0]) > 1e-6:  # X rotation
                     transform.rotate(AngleAxis(euler_xyz[0], Vector3.UnitX()))
@@ -93,9 +100,7 @@ class ClothEntity(Entity):
             faces = self._uipc_base_mesh.triangles().topo().view()
 
         else:
-            gs.raise_exception(
-                f"ClothEntity currently only supports Mesh morph. Got: {type(self.morph).__name__}"
-            )
+            gs.raise_exception(f"ClothEntity currently only supports Mesh morph. Got: {type(self.morph).__name__}")
 
         # Store mesh data
         self.init_vertices = verts.astype(gs.np_float)
@@ -103,9 +108,7 @@ class ClothEntity(Entity):
         self.n_vertices = len(self.init_vertices)
         self.n_faces = len(self.faces)
 
-        gs.logger.info(
-            f"ClothEntity mesh loaded: {self.n_vertices} vertices, {self.n_faces} faces"
-        )
+        gs.logger.info(f"ClothEntity mesh loaded: {self.n_vertices} vertices, {self.n_faces} faces")
 
         # Rendering fields will be initialized later in build phase
         self._rendering_initialized = False
@@ -131,14 +134,8 @@ class ClothEntity(Entity):
         )
 
         # Create rendering fields
-        self.surface_render_v = surface_state_render_v.field(
-            shape=(self.n_vertices, n_envs),
-            layout=ti.Layout.SOA
-        )
-        self.surface_render_f = surface_state_render_f.field(
-            shape=(self.n_faces * 3,),
-            layout=ti.Layout.SOA
-        )
+        self.surface_render_v = surface_state_render_v.field(shape=(self.n_vertices, n_envs), layout=ti.Layout.SOA)
+        self.surface_render_f = surface_state_render_f.field(shape=(self.n_faces * 3,), layout=ti.Layout.SOA)
 
         self._rendering_initialized = True
 
@@ -181,11 +178,11 @@ class ClothEntity(Entity):
         """
         if self._positions is None:
             # Use initial positions if not yet simulated
-            pos_tensor = torch.from_numpy(self.init_vertices).to(gs.device)
+            pos_tensor = torch.from_numpy(self.init_vertices).to(device=gs.device, dtype=gs.tc_float)
             pos_tensor = pos_tensor.unsqueeze(0)  # Add batch dimension
         else:
             # Convert numpy positions to tensor
-            pos_tensor = torch.from_numpy(self._positions).to(gs.device)
+            pos_tensor = torch.from_numpy(self._positions).to(device=gs.device, dtype=gs.tc_float)
 
         # Update rendering vertices using kernel
         self._update_render_vertices_kernel(pos_tensor)

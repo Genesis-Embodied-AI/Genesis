@@ -5,12 +5,19 @@ This example demonstrates cloth simulation using IPC (Incremental Potential Cont
 with Genesis. The cloth is simulated using NeoHookeanShell constitution.
 """
 
+import argparse
+
 import genesis as gs
 import logging
 
 
 def main():
     gs.init(backend=gs.gpu, logging_level=logging.INFO)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("--vis_ipc", action="store_true", default=False)
+    args = parser.parse_args()
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=2e-3, gravity=(0.0, 0.0, -9.8)),
@@ -21,13 +28,11 @@ def main():
             contact_friction_mu=0.3,  # Friction coefficient
             IPC_self_contact=False,  # Enable cloth self-collision
             two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies
-            enable_ipc_gui=True,  # Set to True to visualize IPC collision geometry (for debugging)
+            enable_ipc_gui=args.vis_ipc,
         ),
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=True,
-        ),
-        show_viewer=True,
+        show_viewer=args.vis,
     )
+    args.vis = args.vis or args.vis_ipc
 
     # Ground plane
     scene.add_entity(gs.morphs.Plane())
@@ -39,7 +44,7 @@ def main():
     # The built-in cloth.obj is too dense for IPC's contact detection
     cloth = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=r"meshes\grid20x20.obj",
+            file="meshes/grid20x20.obj",
             scale=2.0,  # Scale to 2.0 like in libuipc sample
             pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, 0.3)))),
             euler=(90, 0, 0),
@@ -84,14 +89,9 @@ def main():
     #     surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.3, 0.8)),
     # )
 
-    print("Building scene...")
+    gs.logger.info("Building scene...")
     scene.build(n_envs=1)
-    print("Scene built successfully!")
-
-    # print("\nCloth parameters:")
-    # print(f"  - Young's modulus: {cloth.material.E} Pa")
-    # print(f"  - Thickness: {cloth.material.thickness} m")
-    # print(f"  - Bending stiffness: {cloth.material.bending_stiffness}")
+    gs.logger.info("Scene built successfully!")
 
     # Simulation loop
     print("\nRunning simulation...")

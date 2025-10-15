@@ -54,21 +54,25 @@ class KeyboardDevice:
         return self.pressed_keys
 
 
-def build_scene(use_ipc=False):
+def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     ########################## init ##########################
     gs.init(seed=0, precision="32", logging_level="info", backend=gs.cpu)
     np.set_printoptions(precision=7, suppress=True)
 
     ########################## create a scene ##########################
-    coupler_options = gs.options.IPCCouplerOptions(
-        dt=1e-3,
-        gravity=(0.0, 0.0, -9.8),
-        ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
-        contact_friction_mu=0.8,
-        IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-        two_way_coupling=False,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
-    ) if use_ipc else None
-
+    coupler_options = (
+        gs.options.IPCCouplerOptions(
+            dt=1e-3,
+            gravity=(0.0, 0.0, -9.8),
+            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
+            contact_friction_mu=0.8,
+            IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
+            two_way_coupling=False,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
+            enable_ipc_gui=enable_ipc_gui,
+        )
+        if use_ipc
+        else None
+    )
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=1e-3),
@@ -86,8 +90,7 @@ def build_scene(use_ipc=False):
             camera_fov=50,
             max_FPS=60,
         ),
-        show_viewer=True,
-        show_FPS=False,
+        show_viewer=show_viewer,
     )
 
     ########################## entities ##########################
@@ -106,21 +109,17 @@ def build_scene(use_ipc=False):
     SCENE_POS = (0.0, 0.0, 0.0)
     entities["robot"].set_ipc_link_filter(link_names=["left_finger", "right_finger"])
 
-    material = gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean") if use_ipc else gs.materials.Rigid()
+    material = (
+        gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")
+        if use_ipc
+        else gs.materials.Rigid()
+    )
 
-    # entities["cube"] = scene.add_entity(
-    #     material=material,
-    #     morph=gs.morphs.Box(
-    #         pos=(0.5, 0.0, 0.07),
-    #         size=(0.04, 0.04, 0.04),
-    #     ),
-    #     surface=gs.surfaces.Default(color=(0.5, 1, 0.5)),
-    # )
     if use_ipc:
         cloth = scene.add_entity(
             morph=gs.morphs.Mesh(
-                file=r"meshes\grid20x20.obj",
-                scale=0.5, 
+                file="meshes/grid20x20.obj",
+                scale=0.5,
                 pos=tuple(map(sum, zip(SCENE_POS, (1.0, 0.0, 0.3)))),
                 euler=(90, 0, 0),
             ),
@@ -182,7 +181,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
 
     # Trajectory recording
     trajectory = []
-    recording = (mode == "record")
+    recording = mode == "record"
 
     def reset_scene():
         nonlocal target_pos, target_R
@@ -199,7 +198,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
     # Load trajectory if in playback mode
     if mode == "playback":
         if trajectory_file and os.path.exists(trajectory_file):
-            with open(trajectory_file, 'rb') as f:
+            with open(trajectory_file, "rb") as f:
                 trajectory = pickle.load(f)
             print(f"\nLoaded trajectory from {trajectory_file}")
             print(f"Trajectory length: {len(trajectory)} steps")
@@ -239,9 +238,9 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
             # Playback mode: replay recorded trajectory
             if step_count < len(trajectory):
                 step_data = trajectory[step_count]
-                target_pos = step_data['target_pos']
-                target_R = R.from_quat(step_data['target_quat'])
-                is_close_gripper = step_data['gripper_closed']
+                target_pos = step_data["target_pos"]
+                target_R = R.from_quat(step_data["target_quat"])
+                is_close_gripper = step_data["gripper_closed"]
                 step_count += 1
                 print(f"\rPlayback step: {step_count}/{len(trajectory)}", end="")
                 # Check if user wants to stop playback
@@ -298,10 +297,10 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
             # Record current state if recording
             if recording:
                 step_data = {
-                    'target_pos': target_pos.copy(),
-                    'target_quat': target_R.as_quat(),  # x,y,z,w format
-                    'gripper_closed': is_close_gripper,
-                    'step': step_count
+                    "target_pos": target_pos.copy(),
+                    "target_quat": target_R.as_quat(),  # x,y,z,w format
+                    "gripper_closed": is_close_gripper,
+                    "step": step_count,
                 }
                 trajectory.append(step_data)
 
@@ -326,7 +325,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
         os.makedirs(traj_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.join(traj_dir, f"trajectory_{timestamp}.pkl")
-        with open(filename, 'wb') as f:
+        with open(filename, "wb") as f:
             pickle.dump(trajectory, f)
         print(f"\nTrajectory saved to {filename}")
         print(f"Total steps: {len(trajectory)}")
@@ -341,7 +340,7 @@ def list_trajectories():
         print("No trajectories folder found.")
         return []
 
-    files = [f for f in os.listdir(traj_dir) if f.endswith('.pkl')]
+    files = [f for f in os.listdir(traj_dir) if f.endswith(".pkl")]
     if not files:
         print("No trajectory files found.")
         return []
@@ -355,12 +354,24 @@ def list_trajectories():
 def main():
     parser = argparse.ArgumentParser(description="Interactive IPC Arm Control with Trajectory Recording/Playback")
     parser.add_argument("--ipc", action="store_true", default=True, help="Enable IPC coupling")
-    parser.add_argument("--mode", type=str, default="playback", choices=["interactive", "record", "playback"],
-                        help="Mode: interactive, record (save trajectory), or playback (replay trajectory, default)")
-    parser.add_argument("--trajectory", type=str, default="grap_cloth1.pkl",
-                        help="Trajectory file to load (for playback mode, default: grap_cloth1.pkl)")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="playback",
+        choices=["interactive", "record", "playback"],
+        help="Mode: interactive, record (save trajectory), or playback (replay trajectory, default)",
+    )
+    parser.add_argument(
+        "--trajectory",
+        type=str,
+        default="grap_cloth1.pkl",
+        help="Trajectory file to load (for playback mode, default: grap_cloth1.pkl)",
+    )
     parser.add_argument("--list", action="store_true", help="List available trajectories and exit")
+    parser.add_argument("--show_viewer", action="store_true", default=False, help="Show viewer")
+    parser.add_argument("--vis_ipc", action="store_true", default=False, help="Show IPC GUI")
     args = parser.parse_args()
+    args.vis = args.vis or args.vis_ipc
 
     if args.list:
         list_trajectories()
@@ -389,7 +400,7 @@ def main():
     clients["keyboard"] = KeyboardDevice()
     clients["keyboard"].start()
 
-    scene, entities = build_scene(use_ipc=args.ipc)
+    scene, entities = build_scene(use_ipc=args.ipc, show_viewer=args.show_viewer, enable_ipc_gui=False)
     run_sim(scene, entities, clients, mode=args.mode, trajectory_file=trajectory_file)
 
 

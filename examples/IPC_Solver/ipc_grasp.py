@@ -3,31 +3,36 @@ import logging
 import argparse
 
 import numpy as np
+
+
 def main():
     gs.init(backend=gs.gpu, logging_level=logging.DEBUG)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--ipc", action="store_true", default=False)
+    parser.add_argument("--vis_ipc", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    coupler_options = gs.options.IPCCouplerOptions(
-        dt=1e-3,
-        gravity=(0.0, 0.0, -9.8),
-        ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
-        contact_friction_mu=0.8,
-        IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-        two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
-        enable_ipc_gui=True,
-    ) if args.ipc else None
+    coupler_options = (
+        gs.options.IPCCouplerOptions(
+            dt=1e-3,
+            gravity=(0.0, 0.0, -9.8),
+            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
+            contact_friction_mu=0.8,
+            IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
+            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
+            enable_ipc_gui=args.vis_ipc,
+        )
+        if args.ipc
+        else None
+    )
+    args.vis = args.vis or args.vis_ipc
 
-    
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=1e-3, gravity=(0.0, 0.0, -9.8)),
         coupler_options=coupler_options,
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
-        show_viewer=True,
+        show_viewer=args.vis,
     )
 
     # Both FEM and Rigid bodies will be added to IPC for unified contact simulation
@@ -36,13 +41,16 @@ def main():
     scene.add_entity(gs.morphs.Plane())
     SCENE_POS = (0.0, 0.0, 0.0)
 
-
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
     franka.set_ipc_link_filter(link_names=["left_finger", "right_finger"])
 
-    material = gs.materials.FEM.Elastic(E=5.0e3, nu=0.45, rho=1000.0, model="stable_neohookean") if args.ipc else gs.materials.Rigid()
+    material = (
+        gs.materials.FEM.Elastic(E=5.0e3, nu=0.45, rho=1000.0, model="stable_neohookean")
+        if args.ipc
+        else gs.materials.Rigid()
+    )
 
     cube = scene.add_entity(
         morph=gs.morphs.Box(pos=(0.65, 0.0, 0.03), size=(0.05, 0.05, 0.05)),
@@ -69,7 +77,6 @@ def main():
     franka.control_dofs_position(qpos[:-2], motors_dof)
     # hold
     for i in range(100):
-        print("hold", i)
         franka.set_qpos(qpos)
         scene.step()
 
@@ -80,9 +87,8 @@ def main():
 
     print(f"New kp: {franka.get_dofs_kp()}")
     # grasp
-    finder_pos = 0.0  
+    finder_pos = 0.0
     for i in range(100):
-        print("grasp", i)
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(np.array([finder_pos, finder_pos]), fingers_dof)
         scene.step()
@@ -92,12 +98,12 @@ def main():
         pos=np.array([0.65, 0.0, 0.3]),
         quat=np.array([0, 1, 0, 0]),
     )
-    
+
     for i in range(200):
-        print("lift", i)
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(np.array([finder_pos, finder_pos]), fingers_dof)
         scene.step()
+
 
 if __name__ == "__main__":
     main()

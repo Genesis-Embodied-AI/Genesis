@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 # Check if libuipc is available
 try:
     import uipc
+
     UIPC_AVAILABLE = True
 except ImportError:
     UIPC_AVAILABLE = False
@@ -80,28 +81,30 @@ class IPCCoupler(RBC):
         # Disable IPC logging if requested
         if self.options.disable_ipc_logging:
             from uipc import Logger, Timer
+
             Logger.set_level(Logger.Level.Error)
             Timer.disable_all()
 
         # Create IPC engine and world
         import os
         import tempfile
+
         # Create workspace directory for IPC output
-        workspace = os.path.join(tempfile.gettempdir(), 'genesis_ipc_workspace')
+        workspace = os.path.join(tempfile.gettempdir(), "genesis_ipc_workspace")
         os.makedirs(workspace, exist_ok=True)
-        self._ipc_engine = Engine('cuda', workspace)
+        self._ipc_engine = Engine("cuda", workspace)
         self._ipc_world = World(self._ipc_engine)
 
         # Create IPC scene with configuration
         config = Scene.default_config()
-        config['dt'] = self.options.dt
-        config['gravity'] = [[self.options.gravity[0]], [self.options.gravity[1]], [self.options.gravity[2]]]
-        config['contact']['d_hat'] = self.options.contact_d_hat
-        config['contact']['friction']['enable'] = self.options.contact_friction_enable
-        config['newton']['velocity_tol'] = self.options.newton_velocity_tol
-        config['line_search']['max_iter'] = self.options.line_search_max_iter
-        config['linear_system']['tol_rate'] = self.options.linear_system_tol_rate
-        config['sanity_check']['enable'] = self.options.sanity_check_enable
+        config["dt"] = self.options.dt
+        config["gravity"] = [[self.options.gravity[0]], [self.options.gravity[1]], [self.options.gravity[2]]]
+        config["contact"]["d_hat"] = self.options.contact_d_hat
+        config["contact"]["friction"]["enable"] = self.options.contact_friction_enable
+        config["newton"]["velocity_tol"] = self.options.newton_velocity_tol
+        config["line_search"]["max_iter"] = self.options.line_search_max_iter
+        config["linear_system"]["tol_rate"] = self.options.linear_system_tol_rate
+        config["sanity_check"]["enable"] = self.options.sanity_check_enable
 
         self._ipc_scene = Scene(config)
 
@@ -117,7 +120,9 @@ class IPCCoupler(RBC):
         # Note: Shell constitutions are added on-demand when cloth entities exist
 
         # Set up contact model (physical parameters)
-        self._ipc_scene.contact_tabular().default_model(self.options.contact_friction_mu, self.options.contact_resistance)
+        self._ipc_scene.contact_tabular().default_model(
+            self.options.contact_friction_mu, self.options.contact_resistance
+        )
 
         # Create separate contact elements for ABD, FEM, and Cloth to control their interactions
         self._ipc_abd_contact = self._ipc_scene.contact_tabular().create("abd_contact")
@@ -126,32 +131,60 @@ class IPCCoupler(RBC):
 
         # Configure contact interactions based on IPC coupler options
         # FEM-FEM: always enabled
-        self._ipc_scene.contact_tabular().insert(self._ipc_fem_contact, self._ipc_fem_contact,
-                                                 self.options.contact_friction_mu, self.options.contact_resistance, True)
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_fem_contact,
+            self._ipc_fem_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )
         # FEM-ABD: always enabled
-        self._ipc_scene.contact_tabular().insert(self._ipc_fem_contact, self._ipc_abd_contact,
-                                                 self.options.contact_friction_mu, self.options.contact_resistance, True)
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_fem_contact,
+            self._ipc_abd_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )
         # ABD-ABD: controlled by IPC_self_contact option
-        self._ipc_scene.contact_tabular().insert(self._ipc_abd_contact, self._ipc_abd_contact,
-                                                 self.options.contact_friction_mu, self.options.contact_resistance,
-                                                 self.options.IPC_self_contact)
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_abd_contact,
+            self._ipc_abd_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            self.options.IPC_self_contact,
+        )
         # Cloth-Cloth: always enabled for cloth self-collision (necessary to prevent self-penetration)
-        self._ipc_scene.contact_tabular().insert(self._ipc_cloth_contact, self._ipc_cloth_contact,
-                                                 self.options.contact_friction_mu, self.options.contact_resistance,
-                                                 True)  # Always enable cloth self-collision
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_cloth_contact,
+            self._ipc_cloth_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )  # Always enable cloth self-collision
         # Cloth-FEM: always enabled
-        self._ipc_scene.contact_tabular().insert(self._ipc_cloth_contact, self._ipc_fem_contact,
-                                                 self.options.contact_friction_mu, self.options.contact_resistance, True)
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_cloth_contact,
+            self._ipc_fem_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )
         # Cloth-ABD: always enabled
-        self._ipc_scene.contact_tabular().insert(self._ipc_cloth_contact, self._ipc_abd_contact,
-                                                 self.options.contact_friction_mu, self.options.contact_resistance, True)
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_cloth_contact,
+            self._ipc_abd_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )
 
         # Set up subscenes for multi-environment (scene grouping)
         # Only use subscenes when B > 1 to avoid issues with ground collision
         # (ground's subscene support is incomplete in libuipc)
         B = self.sim._B
         self._ipc_scene_subscenes = {}
-        self._use_subscenes = (B > 1)
+        self._use_subscenes = B > 1
 
         if self._use_subscenes:
             for i in range(B):
@@ -161,7 +194,9 @@ class IPCCoupler(RBC):
             for i in range(B):
                 for j in range(B):
                     if i != j:
-                        self._ipc_scene.subscene_tabular().insert(self._ipc_scene_subscenes[i], self._ipc_scene_subscenes[j], False)
+                        self._ipc_scene.subscene_tabular().insert(
+                            self._ipc_scene_subscenes[i], self._ipc_scene_subscenes[j], False
+                        )
 
     def _add_objects_to_ipc(self):
         """Add objects from solvers to IPC system"""
@@ -209,7 +244,7 @@ class IPCCoupler(RBC):
 
                 # Apply material properties
                 moduli_box = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
-                stk.apply_to(fem_solver.list_env_mesh[i_b][i_e], moduli_box,mass_density=entity.material.rho)
+                stk.apply_to(fem_solver.list_env_mesh[i_b][i_e], moduli_box, mass_density=entity.material.rho)
 
                 # Add metadata to identify this as FEM geometry
                 meta_attrs = fem_solver.list_env_mesh[i_b][i_e].meta()
@@ -255,17 +290,17 @@ class IPCCoupler(RBC):
                 entity = rigid_solver._entities[entity_idx]
 
                 # Check if this link should be included in IPC based on entity's filter
-                if hasattr(entity, '_ipc_link_filter') and entity._ipc_link_filter is not None:
+                if hasattr(entity, "_ipc_link_filter") and entity._ipc_link_filter is not None:
                     if link_idx not in entity._ipc_link_filter:
                         continue  # Skip this geom/link
 
                 # Initialize link group if not exists
                 if link_idx not in link_geoms:
                     link_geoms[link_idx] = {
-                        'meshes': [],
-                        'link_world_pos': None,
-                        'link_world_quat': None,
-                        'entity_idx': entity_idx
+                        "meshes": [],
+                        "link_world_pos": None,
+                        "link_world_quat": None,
+                        "entity_idx": entity_idx,
                     }
                     link_planes[link_idx] = []
 
@@ -303,6 +338,7 @@ class IPCCoupler(RBC):
 
                         # Transform vertices by geom relative transform
                         import genesis.utils.geom as gu
+
                         geom_rot_mat = gu.quat_to_R(geom_rel_quat)
                         transformed_verts = geom_verts @ geom_rot_mat.T + geom_rel_pos
 
@@ -313,16 +349,16 @@ class IPCCoupler(RBC):
                             rigid_mesh = tetmesh(verts.astype(np.float64), elems.astype(np.int32))
 
                             # Store mesh and geom info
-                            link_geoms[link_idx]['meshes'].append((i_g, rigid_mesh))
+                            link_geoms[link_idx]["meshes"].append((i_g, rigid_mesh))
 
                         except Exception as e:
                             gs.logger.warning(f"Failed to convert trimesh to tetmesh for geom {i_g}: {e}")
                             continue
 
                     # Store link transform info (same for all geoms in link)
-                    if link_geoms[link_idx]['link_world_pos'] is None:
-                        link_geoms[link_idx]['link_world_pos'] = rigid_solver.links_state.pos[link_idx, i_b]
-                        link_geoms[link_idx]['link_world_quat'] = rigid_solver.links_state.quat[link_idx, i_b]
+                    if link_geoms[link_idx]["link_world_pos"] is None:
+                        link_geoms[link_idx]["link_world_pos"] = rigid_solver.links_state.pos[link_idx, i_b]
+                        link_geoms[link_idx]["link_world_quat"] = rigid_solver.links_state.quat[link_idx, i_b]
 
                 except Exception as e:
                     gs.logger.warning(f"Failed to process geom {i_g}: {e}")
@@ -333,23 +369,24 @@ class IPCCoupler(RBC):
             for link_idx, link_data in link_geoms.items():
                 try:
                     # Handle regular meshes (merge if multiple)
-                    if link_data['meshes']:
-                        if len(link_data['meshes']) == 1:
+                    if link_data["meshes"]:
+                        if len(link_data["meshes"]) == 1:
                             # Single mesh in link
-                            geom_idx, merged_mesh = link_data['meshes'][0]
+                            geom_idx, merged_mesh = link_data["meshes"][0]
                         else:
                             # Multiple meshes in link - merge them
-                            meshes_to_merge = [mesh for geom_idx, mesh in link_data['meshes']]
+                            meshes_to_merge = [mesh for geom_idx, mesh in link_data["meshes"]]
                             merged_mesh = merge(meshes_to_merge)
-                            geom_idx = link_data['meshes'][0][0]  # Use first geom's index for metadata
+                            geom_idx = link_data["meshes"][0][0]  # Use first geom's index for metadata
 
                         # Apply link world transform
                         from uipc import view, Transform, Vector3, Quaternion
+
                         trans_view = view(merged_mesh.transforms())
                         t = Transform.Identity()
 
-                        link_world_pos = link_data['link_world_pos']
-                        link_world_quat = link_data['link_world_quat']
+                        link_world_pos = link_data["link_world_pos"]
+                        link_world_quat = link_data["link_world_quat"]
 
                         # Ensure numpy format
                         link_world_pos = link_world_pos.to_numpy()
@@ -375,19 +412,27 @@ class IPCCoupler(RBC):
                             scene_subscenes[i_b].apply_to(merged_mesh)
                         self._ipc_abd_contact.apply_to(merged_mesh)
                         from uipc.unit import MPa
-                        abd.apply_to(merged_mesh, kappa=10.0 * MPa, mass_density=rigid_solver._entities[link_data['entity_idx']].material.rho)
+
+                        abd.apply_to(
+                            merged_mesh,
+                            kappa=10.0 * MPa,
+                            mass_density=rigid_solver._entities[link_data["entity_idx"]].material.rho,
+                        )
 
                         # Apply soft transform constraints
                         from uipc.constitution import SoftTransformConstraint
-                        if not hasattr(self, '_ipc_stc'):
+
+                        if not hasattr(self, "_ipc_stc"):
                             self._ipc_stc = SoftTransformConstraint()
                             scene.constitution_tabular().insert(self._ipc_stc)
 
                         strength_tuple = self.options.ipc_constraint_strength
-                        constraint_strength = np.array([
-                            strength_tuple[0],  # translation strength
-                            strength_tuple[1],  # rotation strength
-                        ])
+                        constraint_strength = np.array(
+                            [
+                                strength_tuple[0],  # translation strength
+                                strength_tuple[1],  # rotation strength
+                            ]
+                        )
                         self._ipc_stc.apply_to(merged_mesh, constraint_strength)
 
                         # Add metadata
@@ -399,7 +444,7 @@ class IPCCoupler(RBC):
                         rigid_obj.geometries().create(merged_mesh)
 
                         # Set up animator for this link
-                        if not hasattr(self, '_ipc_animator'):
+                        if not hasattr(self, "_ipc_animator"):
                             self._ipc_animator = scene.animator()
 
                         def create_animate_function(env_idx, link_idx, rigid_solver_ref):
@@ -414,7 +459,7 @@ class IPCCoupler(RBC):
                                 try:
                                     # Read stored Genesis transform (q_genesis^n)
                                     # This was stored in _store_genesis_rigid_states() before advance()
-                                    if hasattr(rigid_solver_ref, '_genesis_stored_states'):
+                                    if hasattr(rigid_solver_ref, "_genesis_stored_states"):
                                         stored_states = rigid_solver_ref._genesis_stored_states
                                         if link_idx in stored_states and env_idx in stored_states[link_idx]:
                                             transform_matrix = stored_states[link_idx][env_idx]
@@ -500,18 +545,19 @@ class IPCCoupler(RBC):
                 if entity.morph.quat is not None:
                     # Convert quaternion to euler angles and apply using AngleAxis
                     from scipy.spatial.transform import Rotation as R
+
                     quat_xyzw = [entity.morph.quat[1], entity.morph.quat[2], entity.morph.quat[3], entity.morph.quat[0]]
                     rot = R.from_quat(quat_xyzw)
-                    euler_xyz = rot.as_euler('xyz', degrees=False)
+                    euler_xyz = rot.as_euler("xyz", degrees=False)
 
                     from uipc import AngleAxis, Vector3
+
                     if abs(euler_xyz[0]) > 1e-6:
                         transform.rotate(AngleAxis(euler_xyz[0], Vector3.UnitX()))
                     if abs(euler_xyz[1]) > 1e-6:
                         transform.rotate(AngleAxis(euler_xyz[1], Vector3.UnitY()))
                     if abs(euler_xyz[2]) > 1e-6:
                         transform.rotate(AngleAxis(euler_xyz[2], Vector3.UnitZ()))
-
 
                 io = SimplicialComplexIO(transform)
                 cloth_mesh = io.read(entity.morph.file)
@@ -526,10 +572,9 @@ class IPCCoupler(RBC):
 
                 # Apply NeoHookeanShell material
                 moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
-                nks.apply_to(cloth_mesh,
-                            moduli=moduli,
-                            mass_density=entity.material.rho,
-                            thickness=entity.material.thickness)
+                nks.apply_to(
+                    cloth_mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
+                )
 
                 # Apply bending stiffness if specified
                 if entity.material.bending_stiffness is not None:
@@ -573,16 +618,16 @@ class IPCCoupler(RBC):
         rigid_solver = self.rigid_solver
 
         # Initialize storage if not exists
-        if not hasattr(rigid_solver, '_genesis_stored_states'):
+        if not hasattr(rigid_solver, "_genesis_stored_states"):
             rigid_solver._genesis_stored_states = {}
 
         # Store transforms for all rigid links
         # Iterate through mesh handles to get all links
-        if hasattr(rigid_solver, '_mesh_handles'):
+        if hasattr(rigid_solver, "_mesh_handles"):
             for handle_key in rigid_solver._mesh_handles.keys():
-                if handle_key.startswith('rigid_link_'):
+                if handle_key.startswith("rigid_link_"):
                     # Parse: "rigid_link_{env_idx}_{link_idx}"
-                    parts = handle_key.split('_')
+                    parts = handle_key.split("_")
                     if len(parts) >= 4:
                         env_idx = int(parts[2])
                         link_idx = int(parts[3])
@@ -615,8 +660,6 @@ class IPCCoupler(RBC):
         self._retrieve_fem_states(f)
         self._retrieve_rigid_states(f)
         self._retrieve_cloth_states(f)
-
-
 
     def _retrieve_fem_states(self, f):
         # IPC world advance/retrieve is handled at Scene level
@@ -694,7 +737,7 @@ class IPCCoupler(RBC):
                         env_pos_list.append(np.zeros((0, 3)))
 
                 if env_pos_list:
-                    all_env_pos = np.stack(env_pos_list, axis=0)
+                    all_env_pos = np.stack(env_pos_list, axis=0, dtype=gs.np_float)
                     entity.set_pos(0, all_env_pos)
 
     def _retrieve_rigid_states(self, f):
@@ -705,7 +748,7 @@ class IPCCoupler(RBC):
         # IPC world advance/retrieve is handled at Scene level
         # Retrieve ABD transform matrices after IPC simulation
 
-        if not hasattr(self, '_ipc_scene') or not hasattr(self.rigid_solver, 'list_env_mesh'):
+        if not hasattr(self, "_ipc_scene") or not hasattr(self.rigid_solver, "list_env_mesh"):
             return
 
         from uipc import builtin, view
@@ -765,14 +808,16 @@ class IPCCoupler(RBC):
                                     # Get aim transform that was used by IPC during solve
                                     # This is q_genesis^n (stored before advance)
                                     aim_transform = None
-                                    if (hasattr(rigid_solver, '_genesis_stored_states') and
-                                        link_idx in rigid_solver._genesis_stored_states and
-                                        env_idx in rigid_solver._genesis_stored_states[link_idx]):
+                                    if (
+                                        hasattr(rigid_solver, "_genesis_stored_states")
+                                        and link_idx in rigid_solver._genesis_stored_states
+                                        and env_idx in rigid_solver._genesis_stored_states[link_idx]
+                                    ):
                                         aim_transform = rigid_solver._genesis_stored_states[link_idx][env_idx]
 
                                     abd_data_by_link[link_idx][env_idx] = {
-                                        'transform': transform_matrix,  # q_ipc^{n+1}
-                                        'aim_transform': aim_transform,  # q_genesis^n
+                                        "transform": transform_matrix,  # q_ipc^{n+1}
+                                        "aim_transform": aim_transform,  # q_genesis^n
                                     }
 
                     except Exception as e:
@@ -789,7 +834,7 @@ class IPCCoupler(RBC):
 
     def _retrieve_cloth_states(self, f):
         """Retrieve cloth vertex positions from IPC and update ClothEntity states"""
-        if not hasattr(self, '_cloth_entities') or not self._cloth_entities:
+        if not hasattr(self, "_cloth_entities") or not self._cloth_entities:
             return  # No cloth entities
 
         from uipc.backend import SceneVisitor
@@ -853,7 +898,7 @@ class IPCCoupler(RBC):
                         env_pos_list.append(np.zeros((0, 3)))
 
                 if env_pos_list:
-                    all_env_pos = np.stack(env_pos_list, axis=0)
+                    all_env_pos = np.stack(env_pos_list, axis=0, dtype=gs.np_float)
                     entity.set_pos(0, all_env_pos)
 
     def _get_genesis_link_transform(self, link_idx, env_idx):
@@ -927,13 +972,13 @@ class IPCCoupler(RBC):
         translation_strength = strength_tuple[0]
         rotation_strength = strength_tuple[1]
 
-        dt = self.sim._dt 
-        dt2 = dt * dt 
+        dt = self.sim._dt
+        dt2 = dt * dt
 
         for link_idx, env_data in abd_data_by_link.items():
             for env_idx, data in env_data.items():
-                ipc_transform = data.get('transform')  # Current transform after IPC solve
-                aim_transform = data.get('aim_transform')  # Target from Genesis
+                ipc_transform = data.get("transform")  # Current transform after IPC solve
+                aim_transform = data.get("aim_transform")  # Target from Genesis
 
                 if ipc_transform is None or aim_transform is None:
                     continue
@@ -965,17 +1010,18 @@ class IPCCoupler(RBC):
                     # Linear force component: F = translation_strength * mass * delta_pos
                     linear_force = translation_strength * link_mass * delta_pos / dt2
 
-                    R_rel = R_current @ R_aim.T  
+                    R_rel = R_current @ R_aim.T
 
                     from scipy.spatial.transform import Rotation as R
-                    rotvec = R.from_matrix(R_rel).as_rotvec()   # shape (3,), 小旋转时 ~ (axis * angle)
+
+                    rotvec = R.from_matrix(R_rel).as_rotvec()  # shape (3,), 小旋转时 ~ (axis * angle)
 
                     # 获取局部坐标系下的惯性张量
                     inertia_tensor_local = rigid_solver.links_info.inertial_i[link_idx].to_numpy()
-                    
+
                     # 转换到世界坐标系: I_world = R_current * I_local * R_current^T
                     inertia_tensor_world = R_current @ inertia_tensor_local @ R_current.T
-                    
+
                     # 在世界坐标系下计算角加速度和扭矩
                     angular_torque = rotation_strength * inertia_tensor_world @ rotvec / dt2
 
@@ -989,29 +1035,19 @@ class IPCCoupler(RBC):
                         # Parallelized scene: shape (1, 1, 3) for (n_envs, n_links, 3)
                         force_input = linear_force.reshape(1, 1, 3)
                         torque_input = angular_torque.reshape(1, 1, 3)
-                        apply_kwargs = {
-                            'links_idx': link_idx,
-                            'envs_idx': env_idx
-                        }
+                        apply_kwargs = {"links_idx": link_idx, "envs_idx": env_idx}
                     else:
                         # Non-parallelized scene: shape (1, 3) for (n_links, 3)
                         force_input = linear_force.reshape(1, 3)
                         torque_input = angular_torque.reshape(1, 3)
                         apply_kwargs = {
-                            'links_idx': link_idx,
+                            "links_idx": link_idx,
                         }
 
                     # Apply forces to Genesis rigid body
-                    rigid_solver.apply_links_external_force(
-                        force=force_input,
-                        **apply_kwargs
-                    )
+                    rigid_solver.apply_links_external_force(force=force_input, **apply_kwargs)
 
-                    rigid_solver.apply_links_external_torque(
-                        torque=torque_input,
-                        local=True,
-                        **apply_kwargs
-                    )
+                    rigid_solver.apply_links_external_torque(torque=torque_input, local=True, **apply_kwargs)
 
                 except Exception as e:
                     gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
