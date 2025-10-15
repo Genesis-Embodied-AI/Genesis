@@ -21,11 +21,15 @@ jobs:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15"]
+        OS: ["ubuntu-24.04", "macos-15"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
         GS_BACKEND: ["cpu"]
         GS_USE_NDARRAY: ["0"]
         include:
+          - OS: "ubuntu-22.04"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_USE_NDARRAY: "0"
           - OS: "windows-2025"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
@@ -122,7 +126,7 @@ jobs:
           OS_FAMILY=$(python -c "import platform; print(platform.system())")
           MACHINE_ARCH=$(python -c "import platform; print(platform.machine())")
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
-          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_USE_NDARRAY }}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
         if: always()
