@@ -6,10 +6,6 @@ import genesis as gs
 
 from .utils import assert_allclose
 
-pytestmark = [
-    pytest.mark.field_only,
-]
-
 
 # Note that "session" scope must NOT be used because the material while be altered without copy when building the scene
 @pytest.fixture(scope="function")
@@ -47,6 +43,7 @@ def test_maxvolume(pbd_material, show_viewer, box_obj_path):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("material_type", [gs.materials.PBD.Cloth])
 @pytest.mark.parametrize("backend", [gs.gpu])
@@ -148,6 +145,7 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 def test_cloth_attach_rigid_link(show_viewer):
     """Attach 8 cloth particles to a cube with initial velocity, batched (n_envs=2), verify attachment constraints."""
 

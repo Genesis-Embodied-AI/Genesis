@@ -226,12 +226,12 @@ class SAPCoupler(RBC):
     def build(self) -> None:
         self._B = self.sim._B
         self.contact_handlers = []
-        self._enable_rigid_fem_contact &= self.rigid_solver.is_active() and self.fem_solver.is_active()
-        self._enable_fem_self_tet_contact &= self.fem_solver.is_active()
+        self._enable_rigid_fem_contact &= self.rigid_solver.is_active and self.fem_solver.is_active
+        self._enable_fem_self_tet_contact &= self.fem_solver.is_active
 
         init_tet_tables = False
 
-        if self.fem_solver.is_active():
+        if self.fem_solver.is_active:
             if self.fem_solver._use_implicit_solver is False:
                 gs.raise_exception(
                     "SAPCoupler requires FEM to use implicit solver. "
@@ -255,7 +255,7 @@ class SAPCoupler(RBC):
 
             self._init_fem_fields()
 
-        if self.rigid_solver.is_active():
+        if self.rigid_solver.is_active:
             if (
                 self._rigid_floor_contact_type == RigidFloorContactType.TET
                 or self._rigid_rigid_contact_type == RigidRigidContactType.TET
@@ -289,6 +289,12 @@ class SAPCoupler(RBC):
         self._init_sap_fields()
         self._init_pcg_fields()
         self._init_linesearch_fields()
+
+        if gs.use_ndarray:
+            gs.raise_exception(
+                "SAPCoupler does not support Gstaichi dynamic array type for now. Please enable performance mode at "
+                "init, gs.init(..., performance_mode=True)."
+            )
 
     def reset(self, envs_idx=None):
         pass
@@ -421,7 +427,7 @@ class SAPCoupler(RBC):
             )
             self.rigid_tri_bvh = LBVH(self.rigid_tri_aabb, max_n_query_result_per_aabb)
 
-        if self.rigid_solver.is_active() and self._rigid_rigid_contact_type == RigidRigidContactType.TET:
+        if self.rigid_solver.is_active and self._rigid_rigid_contact_type == RigidRigidContactType.TET:
             self.rigid_tet_aabb = AABB(self.sim._B, self.n_rigid_volume_elems)
             self.rigid_tet_bvh = RigidTetLBVH(
                 self, self.rigid_tet_aabb, max_n_query_result_per_aabb=MAX_N_QUERY_RESULT_PER_AABB
@@ -576,11 +582,11 @@ class SAPCoupler(RBC):
 
     @ti.kernel
     def precompute(self, i_step: ti.i32):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             if ti.static(self._fem_floor_contact_type == FEMFloorContactType.TET or self._enable_fem_self_tet_contact):
                 self.fem_compute_pressure_gradient(i_step)
 
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             func_update_all_verts(
                 self.rigid_solver.geoms_state,
                 self.rigid_solver.verts_info,
@@ -611,9 +617,9 @@ class SAPCoupler(RBC):
 
     @ti.kernel
     def update_vel(self, i_step: ti.i32):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.update_fem_vel(i_step)
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.update_rigid_vel()
 
     @ti.func
@@ -662,7 +668,7 @@ class SAPCoupler(RBC):
         if self._enable_rigid_fem_contact:
             self.update_rigid_tri_bvh()
 
-        if self.rigid_solver.is_active() and self._rigid_rigid_contact_type == RigidRigidContactType.TET:
+        if self.rigid_solver.is_active and self._rigid_rigid_contact_type == RigidRigidContactType.TET:
             self.update_rigid_tet_bvh()
 
     def update_fem_surface_tet_bvh(self, i_step: ti.i32):
@@ -745,9 +751,9 @@ class SAPCoupler(RBC):
     @ti.kernel
     def check_sap_convergence(self):
         self.clear_sap_norms()
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.add_fem_norms()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.add_rigid_norms()
         self.update_batch_active()
 
@@ -803,7 +809,7 @@ class SAPCoupler(RBC):
     def compute_regularization(self):
         for contact in ti.static(self.contact_handlers):
             contact.compute_regularization()
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_regularization()
 
     @ti.kernel
@@ -813,9 +819,9 @@ class SAPCoupler(RBC):
 
     @ti.func
     def _init_v(self, i_step: ti.i32):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self._init_v_fem(i_step)
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self._init_v_rigid(i_step)
 
     @ti.func
@@ -835,9 +841,9 @@ class SAPCoupler(RBC):
             self.compute_unconstrained_gradient()
 
     def init_unconstrained_gradient_diag(self, i_step: ti.i32):
-        if self.fem_solver.is_active():
+        if self.fem_solver.is_active:
             self.init_fem_unconstrained_gradient_diag(i_step)
-        if self.rigid_solver.is_active():
+        if self.rigid_solver.is_active:
             self.init_rigid_unconstrained_gradient()
 
     @ti.kernel
@@ -860,9 +866,9 @@ class SAPCoupler(RBC):
             )
 
     def compute_unconstrained_gradient(self):
-        if self.fem_solver.is_active():
+        if self.fem_solver.is_active:
             self.compute_fem_unconstrained_gradient()
-        if self.rigid_solver.is_active():
+        if self.rigid_solver.is_active:
             self.compute_rigid_unconstrained_gradient()
 
     @ti.kernel
@@ -882,7 +888,7 @@ class SAPCoupler(RBC):
     @ti.kernel
     def compute_constraint_contact_gradient_hessian_diag_prec(self):
         self.clear_impulses()
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_gradient_hessian_diag()
         for contact in ti.static(self.contact_handlers):
             contact.compute_gradient_hessian_diag()
@@ -890,9 +896,9 @@ class SAPCoupler(RBC):
 
     @ti.func
     def clear_impulses(self):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.clear_fem_impulses()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.clear_rigid_impulses()
 
     @ti.func
@@ -911,7 +917,7 @@ class SAPCoupler(RBC):
 
     @ti.func
     def compute_preconditioner(self):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_preconditioner()
 
     @ti.func
@@ -987,9 +993,9 @@ class SAPCoupler(RBC):
     @ti.kernel
     def init_pcg_solve(self):
         self.init_pcg_state()
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.init_fem_pcg_solve()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.init_rigid_pcg_solve()
         self.init_pcg_active()
 
@@ -1130,12 +1136,12 @@ class SAPCoupler(RBC):
         """
         Compute the matrix-vector product Ap used in the Preconditioned Conjugate Gradient method.
         """
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_pcg_matrix_vector_product()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_pcg_matrix_vector_product()
         # Constraint
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_Ap()
         # Contact
         for contact in ti.static(self.contact_handlers):
@@ -1159,9 +1165,9 @@ class SAPCoupler(RBC):
         -----
         Reference: https://en.wikipedia.org/wiki/Conjugate_gradient_method#The_preconditioned_conjugate_gradient_method
         """
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_pcg_pTAp()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_pcg_pTAp()
 
     @ti.func
@@ -1187,9 +1193,9 @@ class SAPCoupler(RBC):
 
     @ti.func
     def compute_pcg_state(self):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_pcg_state()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_pcg_state()
 
     @ti.func
@@ -1244,9 +1250,9 @@ class SAPCoupler(RBC):
 
     @ti.func
     def compute_p(self):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_p()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_p()
 
     @ti.func
@@ -1275,12 +1281,12 @@ class SAPCoupler(RBC):
     @ti.func
     def compute_total_energy(self, i_step: ti.i32, energy: ti.template()):
         energy.fill(0.0)
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_energy(i_step, energy)
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_energy(energy)
         # Constraint
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_energy(energy)
         # Contact
         for contact in ti.static(self.contact_handlers):
@@ -1384,15 +1390,15 @@ class SAPCoupler(RBC):
     @ti.func
     def compute_line_energy_gradient_hessian(self, i_step: ti.i32):
         self.init_linesearch_energy_gradient_hessian()
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_energy_alpha(i_step, self.linesearch_state.energy)
             self.compute_fem_gradient_alpha(i_step)
 
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_energy_alpha(self.linesearch_state.energy)
             self.compute_rigid_gradient_alpha()
         # Constraint
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.compute_energy_gamma_G()
             self.equality_constraint_handler.update_gradient_hessian_alpha()
         # Contact
@@ -1464,12 +1470,12 @@ class SAPCoupler(RBC):
 
     @ti.func
     def prepare_search_direction_data(self):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.prepare_fem_search_direction_data()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.prepare_rigid_search_direction_data()
         # Constraint
-        if ti.static(self.rigid_solver.is_active() and self.rigid_solver.n_equalities > 0):
+        if ti.static(self.rigid_solver.is_active and self.rigid_solver.n_equalities > 0):
             self.equality_constraint_handler.prepare_search_direction_data()
         # Contact
         for contact in ti.static(self.contact_handlers):
@@ -1480,9 +1486,9 @@ class SAPCoupler(RBC):
     def compute_d2ellA_dalpha2(self):
         for i_b in ti.ndrange(self._B):
             self.linesearch_state[i_b].d2ellA_dalpha2 = 0.0
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.compute_fem_d2ellA_dalpha2()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.compute_rigid_d2ellA_dalpha2()
 
     @ti.func
@@ -1524,9 +1530,9 @@ class SAPCoupler(RBC):
             self.linesearch_state[i_b].step_size = step_size
             self.linesearch_state[i_b].m = 0.0
 
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self._func_init_fem_linesearch()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self._func_init_rigid_linesearch()
 
     @ti.func
@@ -1554,9 +1560,9 @@ class SAPCoupler(RBC):
                 continue
             self.batch_linesearch_active[i_b] = self.linesearch_state[i_b].dell_dalpha > 0.0
 
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.update_initial_fem_state()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.update_initial_rigid_state()
 
         # When tolerance is small but gradient norm is small, take step 1.0 and end, this is a rare case, directly
@@ -1605,9 +1611,9 @@ class SAPCoupler(RBC):
 
     @ti.func
     def update_velocity_linesearch(self):
-        if ti.static(self.fem_solver.is_active()):
+        if ti.static(self.fem_solver.is_active):
             self.update_fem_velocity_linesearch()
-        if ti.static(self.rigid_solver.is_active()):
+        if ti.static(self.rigid_solver.is_active):
             self.update_rigid_velocity_linesearch()
 
     @ti.func

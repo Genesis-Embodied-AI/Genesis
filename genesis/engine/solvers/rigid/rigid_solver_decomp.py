@@ -265,7 +265,7 @@ class RigidSolver(Solver):
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_external_force = func_apply_external_force
 
-        if self.is_active():
+        if self.is_active:
             self.data_manager = array_class.DataManager(self)
 
             self._rigid_global_info = self.data_manager.rigid_global_info
@@ -1268,7 +1268,7 @@ class RigidSolver(Solver):
         )
 
     def substep_pre_coupling(self, f):
-        if self.is_active():
+        if self.is_active:
             self.substep()
 
     def substep_pre_coupling_grad(self, f):
@@ -1277,7 +1277,7 @@ class RigidSolver(Solver):
     def substep_post_coupling(self, f):
         from genesis.engine.couplers import SAPCoupler
 
-        if self.is_active() and isinstance(self.sim.coupler, SAPCoupler):
+        if self.is_active and isinstance(self.sim.coupler, SAPCoupler):
             update_qacc_from_qvel_delta(
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
@@ -1338,7 +1338,7 @@ class RigidSolver(Solver):
         )
 
     def get_state(self, f):
-        if self.is_active():
+        if self.is_active:
             state = RigidSolverState(self._scene)
 
             # qpos: ti.types.ndarray(),
@@ -1374,7 +1374,7 @@ class RigidSolver(Solver):
         return state
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
+        if self.is_active:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             kernel_set_state(
                 qpos=state.qpos,
@@ -1425,6 +1425,7 @@ class RigidSolver(Solver):
     def load_ckpt(self, ckpt_name):
         pass
 
+    @property
     def is_active(self):
         return self.n_links > 0
 
@@ -6218,7 +6219,8 @@ def kernel_update_vgeoms_render_T(
             vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
-@ti.kernel(pure=gs.use_pure)
+# FIXME: This kernel cannot use 'pure' because  'gs.Tensor' is currently not support by GsTaichi
+@ti.kernel(pure=False)
 def kernel_get_state(
     qpos: ti.types.ndarray(),
     vel: ti.types.ndarray(),
@@ -6263,7 +6265,8 @@ def kernel_get_state(
         friction_ratio[i_b, i_l] = geoms_state.friction_ratio[i_l, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+# FIXME: This kernel cannot use 'pure' because  'gs.Tensor' is currently not support by GsTaichi
+@ti.kernel(pure=False)
 def kernel_set_state(
     qpos: ti.types.ndarray(),
     dofs_vel: ti.types.ndarray(),

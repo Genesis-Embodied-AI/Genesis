@@ -5,6 +5,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.ext.urdfpy.urdf import URDF
+
 from genesis.utils.hybrid import (
     check_graph,
     compute_graph_attribute,

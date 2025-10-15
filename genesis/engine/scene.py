@@ -2,6 +2,7 @@ import os
 import pickle
 import sys
 import time
+import weakref
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -34,6 +35,8 @@ from genesis.options import (
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.options.sensors import SensorOptions
+from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
@@ -43,8 +46,7 @@ from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
-    from genesis.recorders import Recorder, RecorderOptions
-    from genesis.sensors import SensorOptions
+    from genesis.recorders import Recorder
 
 
 @gs.assert_initialized
@@ -106,6 +108,7 @@ class Scene(RBC):
         show_viewer: bool | None = None,
         show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
+        # Delay simulator import to allow specifying gstaichi array type at init
         from genesis.engine.simulator import Simulator
 
         # Handling of default arguments
@@ -298,6 +301,13 @@ class Scene(RBC):
         if getattr(self, "_visualizer", None) is not None:
             self._visualizer.destroy()
             self._visualizer = None
+
+        # Stop tracking this scene
+        try:
+            gs._scene_registry.remove(weakref.ref(self))
+        except ValueError:
+            # This scene may have been destroyed previously
+            pass
 
     @gs.assert_unbuilt
     def add_entity(
@@ -508,14 +518,9 @@ class Scene(RBC):
             The cutoff angle of the light in degrees. Range: [0.0, 180.0].
         """
         if not isinstance(self.renderer_options, gs.renderers.RayTracer):
-            if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-                gs.raise_exception(
-                    "This method is only supported by RayTracer. Please use 'add_light' when using BatchRenderer."
-                )
-            else:
-                gs.raise_exception(
-                    "This method is only supported by RayTracer. Impossible to add light when using Rasterizer."
-                )
+            gs.raise_exception(
+                "This method is only supported by RayTracer. Please use 'add_light' when using BatchRenderer."
+            )
 
         if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
             gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
@@ -558,14 +563,9 @@ class Scene(RBC):
             Light intensity will attenuate by distance with (1 / (1 + attenuation * distance ^ 2))
         """
         if not isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-            if isinstance(self.renderer_options, gs.renderers.BatchRenderer):
-                gs.raise_exception(
-                    "This method is only supported by BatchRenderer. Please use 'add_mesh_light' when using RayTracer."
-                )
-            else:
-                gs.raise_exception(
-                    "This method is only supported by BatchRenderer. Impossible to add light when using Rasterizer."
-                )
+            gs.raise_exception(
+                "This method is only supported by BatchRenderer. Please use 'add_mesh_light' when using RayTracer."
+            )
 
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
@@ -825,7 +825,15 @@ class Scene(RBC):
         # recorders
         self._recorder_manager.build()
 
-        gs.global_scene_list.add(self)
+        # Update global scene registry
+        def _destroy_callback(scene_ref: weakref.ReferenceType["Scene"]):
+            scene = scene_ref()
+            for i, scene_ref_i in enumerate(gs._scene_registry):
+                if scene is scene_ref_i():
+                    del gs._scene_registry[i]
+                    break
+
+        gs._scene_registry.append(weakref.ref(self, _destroy_callback))
 
     def _parallelize(
         self,

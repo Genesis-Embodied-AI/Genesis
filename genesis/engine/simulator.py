@@ -19,7 +19,6 @@ from genesis.options.solvers import (
     ToolOptions,
 )
 from genesis.repr_base import RBC
-from genesis.sensors import SensorManager
 
 from .entities import HybridEntity
 from .solvers import (
@@ -35,6 +34,7 @@ from .solvers import (
 from .couplers import LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+from .sensors import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -199,16 +199,16 @@ class Simulator(RBC):
         self._para_level = self.scene._para_level
 
         # solvers
-        self._rigid_only = self.rigid_solver.is_active() and not isinstance(self._coupler, SAPCoupler)
+        self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, SAPCoupler)
         for solver in self._solvers:
             solver.build()
-            if solver.is_active():
+            if solver.is_active:
                 self._active_solvers.append(solver)
                 if not isinstance(solver, RigidSolver):
                     self._rigid_only = False
         self._coupler.build()
 
-        if self.n_envs > 0 and self.sf_solver.is_active():
+        if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
 
         # hybrid
@@ -223,7 +223,7 @@ class Simulator(RBC):
             if solver.n_entities > 0:
                 solver.set_state(0, solver_state, envs_idx)
 
-        self.coupler.reset(envs_idx=envs_idx)
+        self._coupler.reset(envs_idx=envs_idx)
 
         # TODO: keeping as is for now
         self.reset_grad()
@@ -281,7 +281,7 @@ class Simulator(RBC):
                 if self.cur_substep_local == 0 and not in_backward:
                     self.save_ckpt()
 
-        if self.rigid_solver.is_active():
+        if self.rigid_solver.is_active:
             self.rigid_solver.clear_external_force()
 
         self._sensor_manager.step()
@@ -414,7 +414,7 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity, envs_idx=None):
         for solver in self._solvers:
-            if solver.is_active():
+            if solver.is_active:
                 solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------

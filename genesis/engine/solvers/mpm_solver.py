@@ -191,7 +191,7 @@ class MPMSolver(Solver):
 
         self._coupler = self.sim._coupler
 
-        if self.is_active():
+        if self.is_active:
             if self._enable_CPIC:
                 gs.logger.warning(
                     "Kernel compilation takes longer when running MPM solver in CPIC mode. Please be patient."
@@ -217,9 +217,19 @@ class MPMSolver(Solver):
                     "calculated based on `grid_density`). Simulation might be unstable."
                 )
 
+        # Overwrite gravity because only field is supported for now
+        if self._gravity is not None:
+            gravity = self._gravity.to_numpy()
+            self._gravity = ti.field(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity.from_numpy(gravity)
+
     # ------------------------------------------------------------------------------------
     # -------------------------------------- misc ----------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def is_active(self):
+        return self.n_particles > 0
 
     def add_entity(self, idx, material, morph, surface):
         self.add_material(material)
@@ -253,9 +263,6 @@ class MPMSolver(Solver):
             self._materials_update_F_S_Jp.append(material.update_F_S_Jp)
             self._materials_update_stress.append(material.update_stress)
         self._materials.append(material)
-
-    def is_active(self):
-        return self.n_particles > 0
 
     @ti.func
     def stencil_range(self):
@@ -353,7 +360,7 @@ class MPMSolver(Solver):
                         weight *= w[offset[d]][d]
 
                     sep_geom_idx = -1
-                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active()):
+                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
                         # check if particle and cell center are at different side of any thin object
                         cell_pos = (base + offset) * self._dx
 
@@ -401,7 +408,7 @@ class MPMSolver(Solver):
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
-                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active()):
+                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
                         sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
                         if sep_geom_idx != -1:
                             grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
@@ -525,7 +532,7 @@ class MPMSolver(Solver):
             entity.collect_output_grads()
 
     def add_grad_from_state(self, state):
-        if self.is_active():
+        if self.is_active:
             if state.pos.grad is not None:
                 state.pos.assert_contiguous()
                 self.add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
@@ -634,7 +641,7 @@ class MPMSolver(Solver):
                 entity.load_ckpt(ckpt_name=ckpt_name)
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
+        if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
 
     @ti.kernel
@@ -662,7 +669,7 @@ class MPMSolver(Solver):
             self.particles_ng[f, i_p, i_b].active = active[i_b, i_p]
 
     def get_state(self, f):
-        if not self.is_active():
+        if not self.is_active:
             return None
 
         state = MPMSolverState(self._scene)

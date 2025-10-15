@@ -207,6 +207,7 @@ class PBDSolver(Solver):
 
     def build(self):
         super().build()
+
         self._B = self._sim._B
         self._n_particles = self.n_particles
         self._n_fluid_particles = self.n_fluid_particles
@@ -216,7 +217,7 @@ class PBDSolver(Solver):
         self._n_vverts = self.n_vverts
         self._n_vfaces = self.n_vfaces
 
-        if self.is_active():
+        if self.is_active:
             self.sh.build(self._B)
 
             self.init_particle_fields()
@@ -229,9 +230,19 @@ class PBDSolver(Solver):
             for entity in self._entities:
                 entity._add_to_solver()
 
+        # Overwrite gravity because only field is supported for now
+        if self._gravity is not None:
+            gravity = self._gravity.to_numpy()
+            self._gravity = ti.field(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity.from_numpy(gravity)
+
     # ------------------------------------------------------------------------------------
     # -------------------------------------- misc ----------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def is_active(self):
+        return self.n_particles > 0
 
     def add_entity(self, idx, material, morph, surface):
         if isinstance(material, gs.materials.PBD.Cloth):
@@ -296,9 +307,6 @@ class PBDSolver(Solver):
         self._entities.append(entity)
 
         return entity
-
-    def is_active(self):
-        return self._n_particles > 0
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------- utils ----------------------------------------
@@ -746,7 +754,7 @@ class PBDSolver(Solver):
         pass
 
     def substep_pre_coupling(self, f):
-        if self.is_active():
+        if self.is_active:
             self._kernel_store_initial_pos(f)
             self._kernel_apply_external_force(f, self._sim.cur_t)
 
@@ -777,7 +785,7 @@ class PBDSolver(Solver):
         pass
 
     def substep_post_coupling(self, f):
-        if self.is_active():
+        if self.is_active:
             self._kernel_copy_from_reordered(f)
 
             # boundary collision
@@ -807,7 +815,7 @@ class PBDSolver(Solver):
         pass
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
+        if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.free)
 
     @ti.kernel
@@ -825,7 +833,7 @@ class PBDSolver(Solver):
             self.particles[i_p, i_b].free = free[i_b, i_p]
 
     def get_state(self, f):
-        if self.is_active():
+        if self.is_active:
             state = PBDSolverState(self.scene)
             self._kernel_get_state(f, state.pos, state.vel, state.free)
         else:
@@ -995,52 +1003,43 @@ class PBDSolver(Solver):
     def n_particles(self):
         if self.is_built:
             return self._n_particles
-        else:
-            return sum([entity.n_particles for entity in self._entities])
+        return sum([entity.n_particles for entity in self._entities])
 
     @property
     def n_fluid_particles(self):
         if self.is_built:
             return self._n_fluid_particles
-        else:
-            return sum(
-                [entity.n_fluid_particles if hasattr(entity, "n_fluid_particles") else 0 for entity in self._entities]
-            )
+        return sum([getattr(entity, "n_fluid_particles", 0) for entity in self._entities])
 
     @property
     def n_edges(self):
         if self.is_built:
             return self._n_edges
-        else:
-            return sum([entity.n_edges if hasattr(entity, "n_edges") else 0 for entity in self._entities])
+        return sum([getattr(entity, "n_edges", 0) for entity in self._entities])
 
     @property
     def n_inner_edges(self):
         if self.is_built:
             return self._n_inner_edges
-        else:
-            return sum([entity.n_inner_edges if hasattr(entity, "n_inner_edges") else 0 for entity in self._entities])
+        return sum([getattr(entity, "n_inner_edges", 0) for entity in self._entities])
 
     @property
     def n_elems(self):
         if self.is_built:
             return self._n_elems
-        else:
-            return sum([entity.n_elems if hasattr(entity, "n_elems") else 0 for entity in self._entities])
+        return sum([getattr(entity, "n_elems", 0) for entity in self._entities])
 
     @property
     def n_vverts(self):
         if self.is_built:
             return self._n_vverts
-        else:
-            return sum([entity.n_vverts if hasattr(entity, "n_vverts") else 0 for entity in self._entities])
+        return sum([getattr(entity, "n_vverts", 0) for entity in self._entities])
 
     @property
     def n_vfaces(self):
         if self.is_built:
             return self._n_vfaces
-        else:
-            return sum([entity.n_vfaces if hasattr(entity, "n_vfaces") else 0 for entity in self._entities])
+        return sum([getattr(entity, "n_vfaces", 0) for entity in self._entities])
 
     @property
     def particle_size(self):

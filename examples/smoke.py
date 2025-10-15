@@ -85,7 +85,7 @@ def main():
     args.cpu = True if "PYTEST_VERSION" in os.environ else args.cpu
 
     ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="debug")
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="info")
 
     video_path = Path(__file__).parent / "video"
     video_path.mkdir(exist_ok=True, parents=True)

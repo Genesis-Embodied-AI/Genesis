@@ -16,8 +16,8 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.terrain as tu
 from genesis.utils.misc import get_assets_dir, tensor_to_array, ti_to_torch
-from genesis.engine.entities.rigid_entity import RigidEntity
 
 from .utils import (
     assert_allclose,
@@ -621,7 +621,7 @@ def test_urdf_rope(
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path, tol):
     # FIXME: Fix GsTaichi bug for ndarrays
-    if os.environ.get("GS_USE_NDARRAY") == "1" and gs_solver == gs.constraint_solver.CG:
+    if gs.use_ndarray and gs_solver == gs.constraint_solver.CG:
         pytest.xfail("This test is broken for ndarrays, probably due to a bug in gstaichi...")
 
     # Make sure it is possible to set the configuration vector without failure
@@ -2077,7 +2077,7 @@ def test_terrain_generation(request, show_viewer):
         vertical_scale=0.05,
         subterrain_types=TERRAIN_PATTERN,
         randomize=False,
-        name=f"{request.node.nodeid}-{uuid.uuid4()}",
+        name="my_terrain",
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
     # np.random.seed(4)
@@ -2130,11 +2130,7 @@ def test_mesh_to_heightfield(tmp_path, show_viewer):
     horizontal_scale = 2.0
     path_terrain = os.path.join(get_assets_dir(), "meshes", "terrain_45.obj")
 
-    hf_terrain, xs, ys = gs.utils.terrain.mesh_to_heightfield(
-        path_terrain,
-        spacing=horizontal_scale,
-        oversample=1,
-    )
+    hf_terrain, xs, ys = tu.mesh_to_heightfield(path_terrain, spacing=horizontal_scale, oversample=1)
 
     # default heightfield starts at 0, 0, 0
     # translate to the center of the mesh
@@ -2212,7 +2208,8 @@ def test_subterrain_parameters(show_viewer):
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 def test_jacobian(gs_sim, tol):
-    pendulum = cast(RigidEntity, gs_sim.entities[0])
+    (pendulum,) = gs_sim.entities
+
     angle = 0.7
     pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
     gs_sim.scene.step()
@@ -2425,9 +2422,9 @@ def test_gravity(show_viewer, tol):
     scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
     scene.sim.set_gravity(torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
     scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=2)
-    with np.testing.assert_raises(AssertionError):
+    with np.testing.assert_raises(RuntimeError):
         scene.sim.set_gravity(torch.tensor([0.0, -10.0]))
-    with np.testing.assert_raises(AssertionError):
+    with np.testing.assert_raises(RuntimeError):
         scene.sim.set_gravity(torch.tensor([[0.0, 0.0, -10.0], [0.0, 0.0, -10.0]]), envs_idx=1)
 
     scene.step()

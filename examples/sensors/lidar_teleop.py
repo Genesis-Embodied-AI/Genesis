@@ -5,7 +5,6 @@ import threading
 import numpy as np
 
 import genesis as gs
-from genesis.sensors.raycaster.patterns import DepthCameraPattern, GridPattern, SphericalPattern
 from genesis.utils.geom import euler_to_quat
 
 IS_PYNPUT_AVAILABLE = False
@@ -153,18 +152,18 @@ def main():
     )
 
     if args.pattern == "depth":
-        sensor = scene.add_sensor(gs.sensors.DepthCamera(pattern=DepthCameraPattern(), **sensor_kwargs))
+        sensor = scene.add_sensor(gs.sensors.DepthCamera(pattern=gs.sensors.DepthCameraPattern(), **sensor_kwargs))
         scene.start_recording(
             data_func=(lambda: sensor.read_image()[0]) if args.n_envs > 0 else sensor.read_image,
             rec_options=gs.recorders.MPLImagePlot(),
         )
     else:
         if args.pattern == "grid":
-            pattern_cfg = GridPattern()
+            pattern_cfg = gs.sensors.GridPattern()
         else:
             if args.pattern != "spherical":
                 gs.logger.warning(f"Unrecognized raycaster pattern: {args.pattern}. Using 'spherical' instead.")
-            pattern_cfg = SphericalPattern()
+            pattern_cfg = gs.sensors.SphericalPattern()
 
         sensor = scene.add_sensor(gs.sensors.Lidar(pattern=pattern_cfg, **sensor_kwargs))
 

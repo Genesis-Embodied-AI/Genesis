@@ -12,7 +12,7 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="debug")
+    gs.init(precision="32", logging_level="info", performance_mode=True)
 
     ########################## create a scene ##########################
     scene = gs.Scene(
@@ -25,7 +25,6 @@ def main():
             upper_bound=(0.57, 1.0, 2.4),
             grid_density=64,
         ),
-        show_viewer=args.vis,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(4.5, 0.0, 1.42),
             camera_lookat=(1.0, 0.0, 1.0),
@@ -36,6 +35,7 @@ def main():
             visualize_mpm_boundary=True,
             rendered_envs_idx=[0],
         ),
+        show_viewer=args.vis,
     )
 
     plane = scene.add_entity(

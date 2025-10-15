@@ -1,31 +1,30 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Sequence, Type
+from typing import TYPE_CHECKING, Type
 
 import gstaichi as ti
 import numpy as np
 import torch
 
 import genesis as gs
-from genesis.engine.solvers import RigidSolver
-from genesis.utils.geom import ti_inv_transform_by_quat, trans_to_T, transform_by_quat
+from genesis.options.sensors import (
+    Contact as ContactSensorOptions,
+    ContactForce as ContactForceSensorOptions,
+)
+from genesis.utils.geom import ti_inv_transform_by_quat, transform_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
-    MaybeTuple3FType,
     NoisySensorMetadataMixin,
     NoisySensorMixin,
-    NoisySensorOptionsMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
-    RigidSensorOptionsMixin,
     Sensor,
-    SensorOptions,
     SharedSensorMetadata,
-    _to_tuple,
 )
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers import RigidSolver
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -70,29 +69,13 @@ def _kernel_get_contacts_forces(
                     output[i_b, j_s + j] += force_b[j]
 
 
-class ContactSensorOptions(RigidSensorOptionsMixin, SensorOptions):
-    """
-    Sensor that returns bool based on whether associated RigidLink is in contact.
-
-    Parameters
-    ----------
-    debug_sphere_radius : float, optional
-        The radius of the debug sphere. Defaults to 0.05.
-    debug_color : float, optional
-        The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
-    """
-
-    debug_sphere_radius: float = 0.05
-    debug_color: tuple[float, float, float, float] = (1.0, 0.0, 1.0, 0.5)
-
-
 @dataclass
 class ContactSensorMetadata(SharedSensorMetadata):
     """
     Metadata for all rigid contact sensors.
     """
 
-    solver: RigidSolver | None = None
+    solver: "RigidSolver | None" = None
     expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
@@ -112,8 +95,8 @@ class ContactSensor(Sensor):
     ):
         super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
 
-        self._link: "RigidLink" | None = None
-        self.debug_object: "Mesh" | None = None
+        self._link: "RigidLink | None" = None
+        self.debug_object: "Mesh | None" = None
 
     def build(self):
         super().build()
@@ -181,47 +164,6 @@ class ContactSensor(Sensor):
 
 
 # ==========================================================================================================
-
-
-class ContactForceSensorOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
-    """
-    Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
-
-    Parameters
-    ----------
-    min_force : float | tuple[float, float, float], optional
-        The minimum detectable absolute force per each axis. Values below this will be treated as 0. Default is 0.
-    max_force : float | tuple[float, float, float], optional
-        The maximum output absolute force per each axis. Values above this will be clipped. Default is infinity.
-    debug_color : float, optional
-        The rgba color of the debug arrow. Defaults to (1.0, 0.0, 1.0, 0.5).
-    debug_scale : float, optional
-        The scale factor for the debug force arrow. Defaults to 0.01.
-    """
-
-    min_force: MaybeTuple3FType = 0.0
-    max_force: MaybeTuple3FType = np.inf
-
-    debug_color: tuple[float, float, float, float] = (1.0, 0.0, 1.0, 0.5)
-    debug_scale: float = 0.01
-
-    def model_post_init(self, _):
-        if not (
-            isinstance(self.min_force, float) or (isinstance(self.min_force, Sequence) and len(self.min_force) == 3)
-        ):
-            gs.raise_exception(f"min_force must be a float or tuple of 3 floats, got: {self.min_force}")
-        if not (
-            isinstance(self.max_force, float) or (isinstance(self.max_force, Sequence) and len(self.max_force) == 3)
-        ):
-            gs.raise_exception(f"max_force must be a float or tuple of 3 floats, got: {self.max_force}")
-        if np.any(np.array(self.min_force) < 0):
-            gs.raise_exception(f"min_force must be non-negative, got: {self.min_force}")
-        if np.any(np.array(self.max_force) <= np.array(self.min_force)):
-            gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
-        if self.resolution is not None and not (
-            isinstance(self.resolution, float) or (isinstance(self.resolution, Sequence) and len(self.resolution) == 3)
-        ):
-            gs.raise_exception(f"resolution must be a float or tuple of 3 floats, got: {self.resolution}")
 
 
 @dataclass

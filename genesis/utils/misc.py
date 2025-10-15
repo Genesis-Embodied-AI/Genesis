@@ -125,7 +125,7 @@ def assert_initialized(cls):
     @functools.wraps(original_init)
     def new_init(self, *args, **kwargs):
         if not gs._initialized:
-            raise RuntimeError("Genesis hasn't been initialized. Did you call `gs.init()`?")
+            gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
         original_init(self, *args, **kwargs)
 
     cls.__init__ = new_init

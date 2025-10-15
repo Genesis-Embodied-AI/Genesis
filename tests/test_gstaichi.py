@@ -5,7 +5,6 @@ import pathlib
 import subprocess
 import sys
 
-import gstaichi as ti
 import pytest
 import numpy as np
 
@@ -35,7 +34,7 @@ def _initialize_genesis(backend: gs.constants.backend | str):
         sys.exit(RET_SKIP)
 
     # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
-    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_USE_NDARRAY") == "1":
+    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_ENABLE_NDARRAY") == "1":
         print(
             "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
             "31 kernel parameters, which is not enough for most solvers.",
@@ -91,6 +90,8 @@ def test_to_torch(ti_type_spec, batch_shape, arg_shape):
 
 
 def gs_static_child(args: list[str]):
+    import gstaichi as ti
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--enable-multi-contact", action="store_true")
@@ -123,7 +124,7 @@ def gs_static_child(args: list[str]):
     scene.build()
 
     scene.rigid_solver.collider.detection()
-    gs.ti.sync()
+    ti.sync()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
@@ -177,9 +178,9 @@ def test_static(
         if enable_multicontact:
             cmd_line += ["--enable-multi-contact"]
         env_changes = {}
-        env_changes["GS_BETA_PURE"] = "1" if enable_pure else "0"
+        env_changes["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
         env_changes["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
-        env_changes["GS_USE_NDARRAY"] = "1" if use_ndarray else "0"
+        env_changes["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
         env = dict(os.environ)
         env.update(env_changes)
 
@@ -198,6 +199,8 @@ def test_static(
 
 
 def gs_num_envs_child(args: list[str]):
+    import gstaichi as ti
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--n_envs", type=int, required=True)
@@ -223,7 +226,7 @@ def gs_num_envs_child(args: list[str]):
     scene.build(n_envs=args.n_envs, env_spacing=(0.5, 0.5))
 
     scene.rigid_solver.collider.detection()
-    gs.ti.sync()
+    ti.sync()
 
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
@@ -253,8 +256,8 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
             str(n_envs),
         ]
         env = dict(os.environ)
-        env["GS_BETA_PURE"] = "1" if enable_pure else "0"
-        env["GS_USE_NDARRAY"] = "1" if use_ndarray else "0"
+        env["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
+        env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         # notes:
         # - if we use pure, we won't get as far as fe-ll-cache
@@ -286,8 +289,6 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
 
 
 def change_scene(args: list[str]):
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--n_objs", type=int, required=True)
@@ -333,6 +334,8 @@ def change_scene(args: list[str]):
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
     assert_allclose(z, 0.2, atol=1e-2, err_msg=f"zs {z} is not close to 0.2.")
 
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
+
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
@@ -370,8 +373,8 @@ def test_ndarray_no_compile(
             test_backend,
         ]
         env = dict(os.environ)
-        env["GS_BETA_PURE"] = "1" if enable_pure else "0"
-        env["GS_USE_NDARRAY"] = "1"
+        env["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
+        env["GS_ENABLE_NDARRAY"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
 

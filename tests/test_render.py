@@ -508,7 +508,6 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             assert f.read() == png_snapshot
 
 
-@pytest.mark.field_only
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
@@ -1126,8 +1125,8 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
             assert f.read() == png_snapshot
 
 
-@pytest.mark.field_only
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):

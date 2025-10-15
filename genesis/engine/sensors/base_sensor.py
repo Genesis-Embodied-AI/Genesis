@@ -7,26 +7,22 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.engine.entities import RigidEntity
-from genesis.engine.solvers import RigidSolver
-from genesis.options import Options
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers import RigidSolver
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
-    from genesis.engine.scene import Scene
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
 
     from .sensor_manager import SensorManager
 
+
 NumericType = int | float | bool
 NumericSequenceType = NumericType | Sequence[NumericType]
-Tuple3FType = tuple[float, float, float]
-MaybeTuple3FType = float | Tuple3FType
 
 
 def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
@@ -41,41 +37,6 @@ def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) ->
             value = value.reshape((-1,))
         full_tuple += tuple(value)
     return full_tuple
-
-
-class SensorOptions(Options):
-    """
-    Base class for all sensor options.
-
-    Each sensor should have their own options class that inherits from this class.
-    The options class should be registered with the SensorManager using the @register_sensor decorator.
-
-    Parameters
-    ----------
-    delay : float
-        The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
-    update_ground_truth_only : bool
-        If True, the sensor will only update the ground truth data, and not the measured data. Defaults to False.
-    draw_debug : bool
-        If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
-    """
-
-    delay: float = 0.0
-    update_ground_truth_only: bool = False
-    draw_debug: bool = False
-
-    def validate(self, scene: "Scene"):
-        """
-        Validate the sensor options values before the sensor is added to the scene.
-
-        Use pydantic's model_post_init() for validation that does not require scene context.
-        """
-        delay_hz = self.delay / scene._sim.dt
-        if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
-            gs.logger.warning(
-                f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got {self.delay}"
-                f" and {scene._sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
-            )
 
 
 # Note: dataclass is used as opposed to pydantic.BaseModel since torch.Tensors are not supported by default
@@ -334,45 +295,13 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
 
 
-class RigidSensorOptionsMixin:
-    """
-    Base options class for sensors that are attached to a RigidEntity.
-
-    Parameters
-    ----------
-    entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached.
-    link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
-    pos_offset : tuple[float, float, float]
-        The positional offset of the sensor from the RigidLink.
-    euler_offset : tuple[float, float, float]
-        The rotational offset of the sensor from the RigidLink in degrees.
-    """
-
-    entity_idx: int
-    link_idx_local: int = 0
-    pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
-    euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
-
-    def validate(self, scene: "Scene"):
-        super().validate(scene)
-        if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
-            gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
-        entity = scene.entities[self.entity_idx]
-        if not isinstance(entity, RigidEntity):
-            gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
-        if self.link_idx_local < 0 or self.link_idx_local >= entity.n_links:
-            gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
-
-
 @dataclass
 class RigidSensorMetadataMixin:
     """
     Base shared metadata class for sensors that are attached to a RigidEntity.
     """
 
-    solver: RigidSolver | None = None
+    solver: "RigidSolver | None" = None
     links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
     offsets_quat: torch.Tensor = make_tensor_field((0, 0, 4))
@@ -415,43 +344,6 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
             expand=(batch_size, 1, 4),
             dim=1,
         )
-
-
-class NoisySensorOptionsMixin:
-    """
-    Base options class for analog sensors that are attached to a RigidEntity.
-
-    Parameters
-    ----------
-    resolution : float | tuple[float, ...], optional
-        The measurement resolution of the sensor (smallest increment of change in the sensor reading).
-        Default is 0.0, which means no quantization is applied.
-    bias : float | tuple[float, ...], optional
-        The constant additive bias of the sensor.
-    noise : float | tuple[float, ...], optional
-        The standard deviation of the additive white noise.
-    random_walk : float | tuple[float, ...], optional
-        The standard deviation of the random walk, which acts as accumulated bias drift.
-    jitter : float, optional
-        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
-        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
-    interpolate : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
-    """
-
-    resolution: float | tuple[float, ...] = 0.0
-    bias: float | tuple[float, ...] = 0.0
-    noise: float | tuple[float, ...] = 0.0
-    random_walk: float | tuple[float, ...] = 0.0
-    jitter: float = 0.0
-    interpolate: bool = False
-
-    def model_post_init(self, _):
-        if self.jitter > 0 and not self.interpolate:
-            gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
-        if self.jitter > self.delay:
-            gs.raise_exception(f"{type(self).__name__}: Jitter must be less than or equal to read delay.")
 
 
 @dataclass

@@ -1385,6 +1385,11 @@ class RigidEntity(Entity):
         links_quat : array_like, shape (n_links, 4) or (n_envs, n_links, 4) or (len(envs_idx), n_links, 4)
             The orientations of the links.
         """
+        if gs.use_ndarray:
+            gs.raise_exception(
+                "This method does not support Gstaichi dynamic array type for now. Please enable performance mode at "
+                "init, gs.init(..., performance_mode=True)."
+            )
 
         if self._solver.n_envs == 0:
             qpos = qpos.unsqueeze(0)

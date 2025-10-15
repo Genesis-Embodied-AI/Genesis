@@ -92,6 +92,11 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if show_viewer:
         config.option.numprocesses = 0
 
+    # Force disabling reruns if debugger is enabled
+    is_pdb_enabled = config.getoption("--pdb")
+    if is_pdb_enabled:
+        config.option.reruns = 0
+
     # Force headless rendering if available and the interactive viewer is disabled.
     # FIXME: It breaks rendering on some platform...
     # if not show_viewer and has_egl:
@@ -371,8 +376,21 @@ def taichi_offline_cache(request):
     return taichi_offline_cache
 
 
+@pytest.fixture
+def performance_mode(request):
+    performance_mode = None
+    for mark in request.node.iter_markers("performance_mode"):
+        if mark.args:
+            if performance_mode is not None:
+                pytest.fail("'performance_mode' can only be specified once.")
+            (performance_mode,) = mark.args
+    if performance_mode is None:
+        performance_mode = False
+    return performance_mode
+
+
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_cache):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, taichi_offline_cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -385,6 +403,10 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
 
     if not taichi_offline_cache:
         monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+        monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
+
+    # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
+    monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
 
     try:
         # Skip if requested backend is not available
@@ -393,18 +415,24 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
 
-        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
-        if os.environ.get("GS_USE_NDARRAY") == "1":
-            for mark in request.node.iter_markers("field_only"):
-                if not mark.args or mark.args[0]:
-                    pytest.skip("This test does not support GsTaichi ndarray mode. Skipping...")
-            if sys.platform == "darwin" and backend != gs.cpu:
+        # Skip test if not supported by this machine
+        if sys.platform == "darwin" and backend != gs.cpu:
+            if os.environ.get("TI_ENABLE_METAL", "1") != "0" and precision == "64":
+                pytest.skip("Apple Metal GPU does not support 64bits precision.")
+            if os.environ.get("GS_ENABLE_NDARRAY") == "1":
                 pytest.skip(
-                    "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only "
+                    "Using GsTaichi dynamic array type is not supported on Apple Metal GPU because this backend only "
                     "supports up to 31 kernel parameters, which is not enough for most solvers."
                 )
 
-        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gs.init(
+            backend=backend,
+            precision=precision,
+            debug=debug,
+            seed=0,
+            logging_level=logging_level,
+            performance_mode=performance_mode,
+        )
         gc.collect()
 
         if gs.backend != gs.cpu:
@@ -412,14 +440,14 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
             if device_index is not None and device_index not in _get_gpu_indices():
                 raise RuntimeError("Wrong CUDA GPU device.")
 
-        import gstaichi as ti
-
-        ti_config = ti.lang.impl.current_cfg()
-        if ti_config.arch == ti.metal and precision == "64":
-            pytest.skip("Apple Metal GPU does not support 64bits precision.")
-
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip("No GPU available on this machine")
+
+        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+        if gs.use_ndarray:
+            for mark in request.node.iter_markers("field_only"):
+                if not mark.args or mark.args[0]:
+                    pytest.skip("This test does not support GsTaichi dynamic array mode. Skipping...")
 
         yield
     finally:
