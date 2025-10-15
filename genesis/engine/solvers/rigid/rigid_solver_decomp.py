@@ -1621,7 +1621,7 @@ class RigidSolver(Solver):
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
 
         # Raise exception for fixed links with at least one geom, except if setting same location for all envs at once
-        set_all_envs = (torch.sort(envs_idx).values == self._scene._envs_idx).all()
+        set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
         has_fixed_geoms = any(
             link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
         )
@@ -1671,7 +1671,7 @@ class RigidSolver(Solver):
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
 
-        set_all_envs = (torch.sort(envs_idx).values == self._scene._envs_idx).all()
+        set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
         has_fixed_geoms = any(
             link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
         )
