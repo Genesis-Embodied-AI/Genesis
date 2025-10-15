@@ -106,7 +106,7 @@ jobs:
           pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Black Format Check
-        if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
+        if: matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12'
         run: |
           pip install black
           black --line-length 120 --check .
@@ -115,30 +115,22 @@ jobs:
         run: |
           pip install -e '.[dev]'
 
-      - name: Get gstaichi version
-        id: gstaichi_version
+      - name: Get artifact prefix name
+        id: artifact_prefix
         shell: bash
         run: |
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
-          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
-          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
-
-      - name: Get os family
-        id: os_family
-        shell: bash
-        run: |
           OS_FAMILY=$(python -c "import platform; print(platform.system())")
-          echo "OS_FAMILY=${OS_FAMILY}"
-          echo "OS_FAMILY=${OS_FAMILY}" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
         if: always()
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ steps.os_family.outputs.OS_FAMILY }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
+          key: ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}
           restore-keys: |
-            ${{ steps.os_family.outputs.OS_FAMILY }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
+            ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}-
 
       - name: Run unit tests
         run: |
@@ -146,13 +138,13 @@ jobs:
 
       - name: Save Updated Taichi Kernel Cache
         # lets match this version to the black format check
-        if: matrix.PYTHON_VERSION == '3.12'
+        if: matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12'
         uses: actions/cache/save@v4
         with:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ steps.os_family.outputs.OS_FAMILY }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.os_family.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
