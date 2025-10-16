@@ -1,4 +1,5 @@
 from .avatar_entity import AvatarEntity
+from .cloth_entity import ClothEntity
 from .drone_entity import DroneEntity
 from .emitter import Emitter
 from .hybrid_entity import HybridEntity
