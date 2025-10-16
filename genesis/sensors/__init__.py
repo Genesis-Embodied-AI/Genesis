@@ -5,4 +5,5 @@ from .imu import IMUOptions as IMU
 from .raycaster import DepthCameraOptions as DepthCamera
 from .raycaster import RaycasterOptions as Lidar
 from .raycaster import RaycasterOptions as Raycaster
+from .rgb_camera import RGBCameraOptions as RGBCamera
 from .sensor_manager import SensorManager

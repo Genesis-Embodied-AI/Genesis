@@ -633,6 +633,9 @@ class Scene(RBC):
 
         Warning
         -------
+        This method is deprecated and may change or be removed in a future version. This returns a gs.Camera instead of
+        a gs.sensors.Camera. Please use the sensors API with `Scene.add_sensor(gs.sensors.Camera(...))` instead.
+
         When 'pinhole' is used, the `aperture` and `focal_len` parameters are ignored.
 
         Parameters
@@ -685,6 +688,11 @@ class Scene(RBC):
         camera : genesis.Camera
             The created camera object.
         """
+        gs.logger.warning(
+            "`Scene.add_camera` is deprecated and will be removed in a future version."
+            " Please use `Scene.add_sensor(gs.sensors.Camera(...))` instead."
+        )
+
         if denoise is None:
             denoise = sys.platform != "darwin"
         return self._visualizer.add_camera(
@@ -805,18 +813,19 @@ class Scene(RBC):
             with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
                 self._sim.build()
 
-            # reset state
-            self._reset()
-
             self._is_built = True
-
-        with gs.logger.timer("Compiling simulation kernels..."):
-            self._sim.step()
-            self._reset()
+            self._init_state = self._get_state()
 
         # visualizer
         with gs.logger.timer("Building visualizer..."):
             self._visualizer.build()
+
+        # reset state
+        self._reset()
+
+        with gs.logger.timer("Compiling simulation kernels..."):
+            self._sim.step()
+            self._reset()
 
         if self.profiling_options.show_FPS:
             self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.profiling_options.FPS_tracker_alpha)
@@ -891,15 +900,12 @@ class Scene(RBC):
         self._recorder_manager.reset(envs_idx)
 
     def _reset(self, state: SimState | None = None, *, envs_idx=None):
-        if self._is_built:
-            if state is None:
-                state = self._init_state
-            else:
-                assert isinstance(state, SimState), "state must be a SimState object"
-                self._init_state = state
-            self._sim.reset(state, envs_idx)
+        if state is None:
+            state = self._init_state
         else:
-            self._init_state = self._get_state()
+            assert isinstance(state, SimState), "state must be a SimState object"
+            self._init_state = state
+        self._sim.reset(state, envs_idx)
 
         self._t = 0
         self._forward_ready = True

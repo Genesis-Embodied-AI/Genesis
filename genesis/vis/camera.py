@@ -1,5 +1,4 @@
 import inspect
-import math
 import os
 import time
 from functools import cached_property
@@ -190,12 +189,10 @@ class Camera(RBC):
 
         # Must consider the building process done before setting initial pose, otherwise it will fail
         self._is_built = True
-        self.set_pose(
-            transform=self._initial_transform,
-            pos=self._initial_pos,
-            lookat=self._initial_lookat,
-            up=self._initial_up,
-        )
+        if self._initial_transform is not None:
+            self.set_pose(transform=self._initial_transform)
+        else:
+            self.set_pose(pos=self._initial_pos, lookat=self._initial_lookat, up=self._initial_up)
 
         # FIXME: For some reason, it is necessary to update the camera twice...
         if self._raytracer is not None:
@@ -658,7 +655,7 @@ class Camera(RBC):
         if self._is_batched:
             for data in (transform, pos, lookat, up):
                 if data is not None and len(data) != n_envs:
-                    gs.raise_exception(f"Input data inconsistent with 'envs_idx'.")
+                    gs.raise_exception("Input data inconsistent with 'envs_idx'.")
 
         # Compute redundant quantities
         if transform is None:
@@ -686,12 +683,27 @@ class Camera(RBC):
             self._rasterizer.update_camera(self)
 
     @gs.assert_built
-    def start_recording(self):
+    def start_recording(self, rec_options: "RecorderOptions | None" = None) -> "Recorder":
         """
-        Start recording on the camera. After recording is started, all the rgb images rendered by `camera.render()`
-        will be stored, and saved to a video file when `camera.stop_recording()` is called.
+        Automatically read and process sensor data. See specific RecorderOptions for more details.
+
+        Data from `sensor.read()` is used. If the sensor data needs to be preprocessed before passing to the recorder,
+        consider using `scene.start_recording()` instead with a custom data function.
+        Note that start_recording() on a camera without providing rec_options is deprecated.
+
+        Parameters
+        ----------
+        rec_options : RecorderOptions
+            The options for the recording.
         """
-        self._in_recording = True
+        if rec_options is None:
+            gs.logger.warning(
+                "Camera.start_recording() without rec_options is deprecated and may be removed in future release."
+                "Please provide RecorderOptions and to use the new sensor recording API instead."
+            )
+            self._in_recording = True
+
+        super().start_recording(rec_options)
 
     @gs.assert_built
     def pause_recording(self):
@@ -699,6 +711,8 @@ class Camera(RBC):
         Pause recording on the camera. After recording is paused, the rgb images rendered by `camera.render()` will
         not be stored. Recording can be resumed by calling `camera.start_recording()` again.
         """
+        gs.logger.warning("Camera.pause_recording() is deprecated and may be removed in future release.")
+
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
         self._in_recording = False
@@ -721,6 +735,7 @@ class Camera(RBC):
         fps : int, optional
             The frames per second of the video file.
         """
+        gs.logger.warning("Camera.stop_recording() is deprecated and may be removed in future release.")
 
         if not self._in_recording:
             gs.raise_exception("Recording not started.")
@@ -829,6 +844,7 @@ class Camera(RBC):
         """The focal length for thinlens camera. Returns -1 for pinhole camera."""
         tan_half_fov = np.tan(np.deg2rad(self._fov / 2))
         if self.model == "thinlens":
+            # TODO: How where these magic numbers derived?
             if self._res[0] > self._res[1]:
                 projected_pixel_size = min(0.036 / self._res[0], 0.024 / self._res[1])
             else:
