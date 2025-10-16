@@ -192,13 +192,13 @@ def init(
     # Configure and initialize taichi
     taichi_kwargs = {}
     if gs.logger.level == _logging.CRITICAL:
-        taichi_kwargs.update(log_level=ti.CRITICAL)
+        taichi_kwargs.update(log_level=ti.ERROR)
     elif gs.logger.level == _logging.ERROR:
         taichi_kwargs.update(log_level=ti.ERROR)
     elif gs.logger.level == _logging.WARNING:
         taichi_kwargs.update(log_level=ti.WARN)
     elif gs.logger.level == _logging.INFO:
-        taichi_kwargs.update(log_level=ti.INFO)
+        taichi_kwargs.update(log_level=ti.WARN)
     elif gs.logger.level == _logging.DEBUG:
         taichi_kwargs.update(log_level=ti.INFO)
     if debug:
@@ -254,6 +254,17 @@ def init(
         logger.debug(ti_output)
     _ti_outputs.truncate(0)
     _ti_outputs.seek(0)
+
+    # Redirect Taichi logging messages to unify logging management
+    for ti_name, gs_name in (
+        ("debug", "debug"),
+        ("trace", "debug"),
+        ("info", "debug"),
+        ("warn", "info"),
+        ("error", "warning"),
+        ("critical", "error"),
+    ):
+        setattr(ti._logging, ti_name, getattr(logger, gs_name))
 
     # Dealing with default backend
     if use_pure:
@@ -315,6 +326,17 @@ def destroy():
 
     # Reset gstaichi
     ti.reset()
+
+    # Restore original taichi logging facilities
+    for ti_name, ti_level in (
+        ("debug", ti._logging.DEBUG),
+        ("trace", ti._logging.TRACE),
+        ("info", ti._logging.INFO),
+        ("warn", ti._logging.WARN),
+        ("error", ti._logging.ERROR),
+        ("critical", ti._logging.CRITICAL),
+    ):
+        setattr(ti._logging, ti_name, ti._logging._get_logging(ti_level))
 
     # Delete logger
     logger.removeHandler(logger.handler)
