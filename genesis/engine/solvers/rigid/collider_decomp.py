@@ -1,6 +1,5 @@
 import sys
 from typing import TYPE_CHECKING
-from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt

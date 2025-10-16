@@ -1201,21 +1201,21 @@ def test_set_root_pose(relative, show_viewer, tol):
     )
     scene.build(n_envs=2)
 
-    # Make sure that it is not possible to end up in an inconsistent state for fixed geometries
-    if robot.geoms[0].is_fixed:
-        pos_delta = torch.as_tensor(np.random.rand(2, 3), dtype=gs.tc_float, device=gs.device)
-        with pytest.raises(gs.GenesisException):
-            robot.set_pos(pos_delta)
-        with pytest.raises(gs.GenesisException):
-            robot.set_pos(pos_delta[[0]], envs_idx=[0])
-        quat_delta = torch.as_tensor(np.random.rand(2, 4), dtype=gs.tc_float, device=gs.device)
-        with pytest.raises(gs.GenesisException):
-            robot.set_quat(pos_delta)
-        with pytest.raises(gs.GenesisException):
-            robot.set_quat(pos_delta[[0]], envs_idx=[0])
-
     robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
+
+    # Make sure that it is not possible to end up in an inconsistent state for fixed geometries
+    pos_delta = torch.as_tensor(np.random.rand(2, 3), dtype=gs.tc_float, device=gs.device)
+    with pytest.raises(gs.GenesisException):
+        robot.set_pos(pos_delta)
+    with pytest.raises(gs.GenesisException):
+        robot.set_pos(pos_delta[[0]], envs_idx=[0])
+    quat_delta = torch.as_tensor(np.random.rand(2, 4), dtype=gs.tc_float, device=gs.device)
+    with pytest.raises(gs.GenesisException):
+        robot.set_quat(pos_delta)
+    with pytest.raises(gs.GenesisException):
+        robot.set_quat(pos_delta[[0]], envs_idx=[0])
+    cube.set_pos(pos_delta[[0]], envs_idx=[0])
 
     for _ in range(2):
         scene.reset()

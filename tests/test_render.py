@@ -803,6 +803,9 @@ def test_draw_debug(renderer, show_viewer):
         pytest.skip("Offscreen rendering of markers is forcibly disabled. Skipping...")
 
     scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[0, 2],
+        ),
         renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
@@ -812,12 +815,14 @@ def test_draw_debug(renderer, show_viewer):
         lookat=(0.0, 0.0, 0.5),
         up=(0.0, 0.0, 1.0),
         res=(640, 640),
+        env_idx=2,
         GUI=show_viewer,
     )
-    scene.build(n_envs=2)
+    scene.build(n_envs=3)
 
     rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+
     scene.draw_debug_arrow(
         pos=(0, 0.4, 0.1),
         vec=(0, 0.3, 0.8),
@@ -848,17 +853,21 @@ def test_draw_debug(renderer, show_viewer):
         axis_radius=0.02,
     )
     scene.visualizer.update()
-    rgb_array_orig, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-    assert np.max(np.std(rgb_array_orig.reshape((-1, 3)), axis=0)) > 10.0
 
-    for _ in range(2):
-        poses = gu.trans_quat_to_T(2.0 * (np.random.rand(3, 3) - 0.5), np.random.rand(3, 4))
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
+    assert (np.std(rgb_array_flat, axis=0) > 10.0).any()
+    rgb_array_prev = rgb_array_flat
+
+    poses = gu.trans_to_T(np.zeros((2, 2, 3)))
+    for i in range(2):
+        poses[:, i] = gu.trans_quat_to_T(2.0 * (np.random.rand(2, 3) - 0.5), np.random.rand(2, 4))
         scene.visualizer.context.update_debug_objects([frame_obj, sphere_obj], poses)
         scene.visualizer.update()
         rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
-        rgb_delta = np.minimum(np.abs(rgb_array.astype(np.int32) - rgb_array_orig.astype(np.int32)), 255)
-        assert np.max(np.std(rgb_delta.reshape((-1, 3)), axis=0)) > 10.0
-        rgb_array_orig = rgb_array
+        rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
+        assert (np.std(rgb_array_flat - rgb_array_prev, axis=0) > 10.0).any()
+        rgb_array_prev = rgb_array_flat
 
     scene.clear_debug_objects()
     scene.visualizer.update()

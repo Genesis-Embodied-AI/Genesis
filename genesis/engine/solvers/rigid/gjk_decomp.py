@@ -4,7 +4,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
-from dataclasses import dataclass
 
 
 class RETURN_CODE(IntEnum):

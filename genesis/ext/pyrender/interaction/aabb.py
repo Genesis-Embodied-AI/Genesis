@@ -77,7 +77,7 @@ class AABB:
 
 
 @dataclass
-class OBB():
+class OBB:
     pose: Pose
     half_extents: Vec3
 
