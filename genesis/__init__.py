@@ -120,7 +120,8 @@ def init(
     global use_ndarray, use_pure
     is_ndarray_disabled = (os.environ.get("GS_ENABLE_NDARRAY") or ("0" if sys.platform == "darwin" else "1")) == "0"
     if use_ndarray is None:
-        _use_ndarray = not (is_ndarray_disabled or performance_mode)
+        # _use_ndarray = not (is_ndarray_disabled or performance_mode)
+        _use_ndarray = os.environ.get("GS_ENABLE_NDARRAY", "0") == "1"
     else:
         _use_ndarray = use_ndarray
         if _use_ndarray and is_ndarray_disabled:
