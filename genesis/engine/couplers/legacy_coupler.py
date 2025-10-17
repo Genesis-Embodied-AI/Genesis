@@ -45,14 +45,20 @@ class LegacyCoupler(RBC):
         self.sf_solver = self.sim.sf_solver
 
     def build(self) -> None:
-        self._rigid_mpm = self.rigid_solver.is_active() and self.mpm_solver.is_active() and self.options.rigid_mpm
-        self._rigid_sph = self.rigid_solver.is_active() and self.sph_solver.is_active() and self.options.rigid_sph
-        self._rigid_pbd = self.rigid_solver.is_active() and self.pbd_solver.is_active() and self.options.rigid_pbd
-        self._rigid_fem = self.rigid_solver.is_active() and self.fem_solver.is_active() and self.options.rigid_fem
-        self._mpm_sph = self.mpm_solver.is_active() and self.sph_solver.is_active() and self.options.mpm_sph
-        self._mpm_pbd = self.mpm_solver.is_active() and self.pbd_solver.is_active() and self.options.mpm_pbd
-        self._fem_mpm = self.fem_solver.is_active() and self.mpm_solver.is_active() and self.options.fem_mpm
-        self._fem_sph = self.fem_solver.is_active() and self.sph_solver.is_active() and self.options.fem_sph
+        self._rigid_mpm = self.rigid_solver.is_active and self.mpm_solver.is_active and self.options.rigid_mpm
+        self._rigid_sph = self.rigid_solver.is_active and self.sph_solver.is_active and self.options.rigid_sph
+        self._rigid_pbd = self.rigid_solver.is_active and self.pbd_solver.is_active and self.options.rigid_pbd
+        self._rigid_fem = self.rigid_solver.is_active and self.fem_solver.is_active and self.options.rigid_fem
+        self._mpm_sph = self.mpm_solver.is_active and self.sph_solver.is_active and self.options.mpm_sph
+        self._mpm_pbd = self.mpm_solver.is_active and self.pbd_solver.is_active and self.options.mpm_pbd
+        self._fem_mpm = self.fem_solver.is_active and self.mpm_solver.is_active and self.options.fem_mpm
+        self._fem_sph = self.fem_solver.is_active and self.sph_solver.is_active and self.options.fem_sph
+
+        if gs.use_ndarray and (self._rigid_mpm or self._rigid_sph or self._rigid_pbd or self._rigid_fem):
+            gs.raise_exception(
+                "LegacyCoupler does not support Gstaichi dynamic array type in case of coupling Rigid vs MPM, SPH, PBD "
+                "or FEM. Please enable performance mode at init, gs.init(..., performance_mode=True)."
+            )
 
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             # this field stores the geom index of the thin shell rigid object (if any) that separates particle and its surrounding grid cell
@@ -287,11 +293,11 @@ class LegacyCoupler(RBC):
                     vel_mpm += self.mpm_solver._ffs[i_ff].get_acc(pos, vel_mpm, t, -1) * self.mpm_solver.substep_dt
 
                 #################### MPM <-> Tool ####################
-                if ti.static(self.tool_solver.is_active()):
+                if ti.static(self.tool_solver.is_active):
                     vel_mpm = self._func_mpm_tool(f, pos, vel_mpm, i_b)
 
                 #################### MPM <-> Rigid ####################
-                if ti.static(self._rigid_mpm and self.rigid_solver.is_active()):
+                if ti.static(self._rigid_mpm):
                     vel_mpm = self._func_collide_with_rigid(f, pos, vel_mpm, mass_mpm, i_b)
 
                 #################### MPM <-> SPH ####################
@@ -412,7 +418,7 @@ class LegacyCoupler(RBC):
                             self.mpm_rigid_normal[i_p, i_g, i_b] = sdf_normal
 
     def fem_rigid_link_constraints(self):
-        if self.fem_solver._constraints_initialized and self.rigid_solver.is_active():
+        if self.fem_solver._constraints_initialized and self.rigid_solver.is_active:
             links_pos = self.rigid_solver.links_state.pos
             links_quat = self.rigid_solver.links_state.quat
             self.fem_solver._kernel_update_linked_vertex_constraints(links_pos, links_quat)
@@ -726,7 +732,6 @@ class LegacyCoupler(RBC):
         new_pos = pos_world
         new_vel = vel
         if signed_dist < self.pbd_solver.particle_size / 2:  # skip non-penetration particles
-
             stiffness = 1.0  # value in [0, 1]
 
             # we don't consider friction for now
@@ -759,20 +764,20 @@ class LegacyCoupler(RBC):
 
     def preprocess(self, f):
         # preprocess for MPM CPIC
-        if self.mpm_solver.is_active() and self.rigid_solver.is_active() and self.mpm_solver.enable_CPIC:
+        if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             self.mpm_surface_to_particle(f)
 
     def couple(self, f):
         # MPM <-> all others
-        if self.mpm_solver.is_active():
+        if self.mpm_solver.is_active:
             self.mpm_grid_op(f, self.sim.cur_t)
 
         # SPH <-> Rigid
-        if self._rigid_sph and self.rigid_solver.is_active():
+        if self._rigid_sph:
             self.sph_rigid(f)
 
         # PBD <-> Rigid
-        if self._rigid_pbd and self.rigid_solver.is_active():
+        if self._rigid_pbd:
             self.kernel_pbd_rigid_collide()
 
             # 1-way: animate particles by links
@@ -780,15 +785,15 @@ class LegacyCoupler(RBC):
             clamped_inv_dt = min(full_step_inv_dt, CLAMPED_INV_DT)
             self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.links_state)
 
-        if self.fem_solver.is_active():
+        if self.fem_solver.is_active:
             self.fem_surface_force(f)
             self.fem_rigid_link_constraints()
 
     def couple_grad(self, f):
-        if self.mpm_solver.is_active():
+        if self.mpm_solver.is_active:
             self.mpm_grid_op.grad(f, self.sim.cur_t)
 
-        if self.fem_solver.is_active():
+        if self.fem_solver.is_active:
             self.fem_surface_force.grad(f)
 
     @property

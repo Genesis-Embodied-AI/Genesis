@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.gpu, performance_mode=True)
 
     ########################## create a scene ##########################
 
@@ -20,21 +20,21 @@ def main():
             dt=5e-3,
             substeps=15,
         ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(0.55, -0.1, -0.05),
+            upper_bound=(0.75, 0.1, 0.3),
+            grid_density=128,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
             camera_lookat=(0.0, 0.0, 0.0),
             camera_fov=30,
             max_FPS=60,
         ),
-        show_viewer=args.vis,
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
         ),
-        mpm_options=gs.options.MPMOptions(
-            lower_bound=(0.55, -0.1, -0.05),
-            upper_bound=(0.75, 0.1, 0.3),
-            grid_density=128,
-        ),
+        show_viewer=args.vis,
     )
 
     ########################## entities ##########################

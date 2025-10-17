@@ -238,7 +238,7 @@ class Raytracer:
                 self.add_surface(str(entity.uid), entity.surface)
 
         # tool entities
-        if self.sim.tool_solver.is_active():
+        if self.sim.tool_solver.is_active:
             for tool_entity in self.sim.tool_solver.entities:
                 self.add_rigid(
                     name=str(tool_entity.uid),
@@ -249,7 +249,7 @@ class Raytracer:
                 )
 
         # rigid entities
-        if self.sim.rigid_solver.is_active():
+        if self.sim.rigid_solver.is_active:
             for rigid_entity in self.sim.rigid_solver.entities:
                 if rigid_entity.surface.vis_mode == "visual":
                     geoms = rigid_entity.vgeoms
@@ -270,7 +270,7 @@ class Raytracer:
                     )
 
         # avatar entities
-        if self.sim.avatar_solver.is_active():
+        if self.sim.avatar_solver.is_active:
             for avatar_entity in self.sim.avatar_solver.entities:
                 if avatar_entity.surface.vis_mode == "visual":
                     geoms = avatar_entity.vgeoms
@@ -291,7 +291,7 @@ class Raytracer:
                     )
 
         # MPM particles
-        if self.sim.mpm_solver.is_active():
+        if self.sim.mpm_solver.is_active:
             for mpm_entity in self.sim.mpm_solver.entities:
                 if mpm_entity.surface.vis_mode == "visual":
                     self.add_deformable(str(mpm_entity.uid))
@@ -301,12 +301,12 @@ class Raytracer:
                     )
 
         # SPH particles
-        if self.sim.sph_solver.is_active():
+        if self.sim.sph_solver.is_active:
             for sph_entity in self.sim.sph_solver.entities:
                 self.add_particles(str(sph_entity.uid), self.sim.sph_solver.particle_radius, sph_entity.material.rho)
 
         # PBD entities
-        if self.sim.pbd_solver.is_active():
+        if self.sim.pbd_solver.is_active:
             for pbd_entity in self.sim.pbd_solver.entities:
                 if pbd_entity.surface.vis_mode == "visual":
                     self.add_deformable(str(pbd_entity.uid))
@@ -319,12 +319,10 @@ class Raytracer:
                         self.add_deformable(str(pbd_entity.uid))
 
         # FEM entities
-        if self.sim.fem_solver.is_active():
+        if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
                     self.add_deformable(str(fem_entity.id))
-
-        gs.exit_callbacks.append(self.destroy)
 
     def get_transform(self, matrix):
         if matrix is None:
@@ -654,7 +652,7 @@ class Raytracer:
         self.visualizer.update_visual_states(force_render)
 
         # tool entities
-        if self.sim.tool_solver.is_active():
+        if self.sim.tool_solver.is_active:
             for tool_entity in self.sim.tool_solver.entities:
                 pos = tool_entity.pos[self.sim.cur_substep_local].to_numpy()
                 quat = tool_entity.quat[self.sim.cur_substep_local].to_numpy()
@@ -662,7 +660,7 @@ class Raytracer:
                 self.update_rigid(str(tool_entity.uid), T)
 
         # rigid entities
-        if self.sim.rigid_solver.is_active():
+        if self.sim.rigid_solver.is_active:
             for rigid_entity in self.sim.rigid_solver.entities:
                 if rigid_entity.surface.vis_mode == "visual":
                     geoms = rigid_entity.vgeoms
@@ -676,7 +674,7 @@ class Raytracer:
                     self.update_rigid_batch(str(geom.uid), geom_T)
 
         # avatar entities
-        if self.sim.avatar_solver.is_active():
+        if self.sim.avatar_solver.is_active:
             for avatar_entity in self.sim.avatar_solver.entities:
                 if avatar_entity.surface.vis_mode == "visual":
                     geoms = avatar_entity.vgeoms
@@ -690,7 +688,7 @@ class Raytracer:
                     self.update_rigid_batch(str(geom.uid), geom_T)
 
         # MPM particles
-        if self.sim.mpm_solver.is_active():
+        if self.sim.mpm_solver.is_active:
             particles_all = self.sim.mpm_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
             particles_vel_all = self.sim.mpm_solver.particles_render.vel.to_numpy()[:, self.rendered_envs_idx[0]]
             active_all = self.sim.mpm_solver.particles_render.active.to_numpy().astype(bool)[
@@ -721,7 +719,7 @@ class Raytracer:
                     )
 
         # SPH particles
-        if self.sim.sph_solver.is_active():
+        if self.sim.sph_solver.is_active:
             particles_all = self.sim.sph_solver.particles_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
             particles_vel_all = self.sim.sph_solver.particles_render.vel.to_numpy()[:, self.rendered_envs_idx[0]]
             active_all = self.sim.sph_solver.particles_render.active.to_numpy().astype(bool)[
@@ -740,7 +738,7 @@ class Raytracer:
                 )
 
         # PBD entities
-        if self.sim.pbd_solver.is_active():
+        if self.sim.pbd_solver.is_active:
             idx = self.rendered_envs_idx[0]
             particles_all = self.sim.pbd_solver.particles_render.pos.to_numpy()[:, idx]
             particles_vel_all = self.sim.pbd_solver.particles_render.vel.to_numpy()[:, idx]
@@ -781,7 +779,7 @@ class Raytracer:
                         )
 
         # FEM entities
-        if self.sim.fem_solver.is_active():
+        if self.sim.fem_solver.is_active:
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
             triangles_all = triangles_all.to_numpy()

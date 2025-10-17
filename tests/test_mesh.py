@@ -488,7 +488,6 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.field_only
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,

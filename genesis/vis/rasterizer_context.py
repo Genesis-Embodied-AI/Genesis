@@ -289,7 +289,7 @@ class RasterizerContext:
 
     def on_link_frame(self):
         if not self.link_frame_shown:
-            if self.sim.rigid_solver.is_active():
+            if self.sim.rigid_solver.is_active:
                 links = self.sim.rigid_solver.links
                 links_pos = ti_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
                 links_quat = ti_to_numpy(self.sim.rigid_solver.links_state.quat)
@@ -313,7 +313,7 @@ class RasterizerContext:
 
     def update_link_frame(self, buffer_updates):
         if self.link_frame_shown:
-            if self.sim.rigid_solver.is_active():
+            if self.sim.rigid_solver.is_active:
                 links = self.sim.rigid_solver.links
 
                 links_pos = ti_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
@@ -325,7 +325,7 @@ class RasterizerContext:
                     buffer_updates[node] = link_T.transpose((0, 2, 1))
 
     def on_tool(self):
-        if self.sim.tool_solver.is_active():
+        if self.sim.tool_solver.is_active:
             for tool_entity in self.sim.tool_solver.entities:
                 if tool_entity.mesh is not None:
                     for idx in self.rendered_envs_idx:
@@ -344,7 +344,7 @@ class RasterizerContext:
                         )
 
     def update_tool(self, buffer_updates):
-        if self.sim.tool_solver.is_active():
+        if self.sim.tool_solver.is_active:
             for tool_entity in self.sim.tool_solver.entities:
                 poss = ti_to_numpy(tool_entity.pos)[self.sim.cur_substep_local] + self.scene.envs_offset
                 quats = ti_to_numpy(tool_entity.quat)[self.sim.cur_substep_local]
@@ -365,7 +365,7 @@ class RasterizerContext:
         )
 
     def on_rigid(self):
-        if self.sim.rigid_solver.is_active():
+        if self.sim.rigid_solver.is_active:
             # TODO: support dynamic switching in GUI later
             for rigid_entity in self.sim.rigid_solver.entities:
                 if rigid_entity.surface.vis_mode == "visual":
@@ -398,7 +398,7 @@ class RasterizerContext:
                         self.set_reflection_mat(geom_T)
 
     def update_rigid(self, buffer_updates):
-        if self.sim.rigid_solver.is_active():
+        if self.sim.rigid_solver.is_active:
             for rigid_entity in self.sim.rigid_solver.entities:
                 if rigid_entity.surface.vis_mode == "visual":
                     geoms = rigid_entity.vgeoms
@@ -417,7 +417,7 @@ class RasterizerContext:
                         self.set_reflection_mat(geom_T)
 
     def update_contact(self, buffer_updates):
-        if self.sim.rigid_solver.is_active() and any(link.visualize_contact for link in self.sim.rigid_solver.links):
+        if self.sim.rigid_solver.is_active and any(link.visualize_contact for link in self.sim.rigid_solver.links):
             # Extract all contact information at once
             contacts_info = self.sim.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
@@ -460,7 +460,7 @@ class RasterizerContext:
                         )
 
     def on_avatar(self):
-        if self.sim.avatar_solver.is_active():
+        if self.sim.avatar_solver.is_active:
             # TODO: support dynamic switching in GUI later
             for avatar_entity in self.sim.avatar_solver.entities:
                 if avatar_entity.surface.vis_mode == "visual":
@@ -491,7 +491,7 @@ class RasterizerContext:
                     )
 
     def update_avatar(self, buffer_updates):
-        if self.sim.avatar_solver.is_active():
+        if self.sim.avatar_solver.is_active:
             for avatar_entity in self.sim.avatar_solver.entities:
                 if avatar_entity.surface.vis_mode == "visual":
                     geoms = avatar_entity.vgeoms
@@ -508,7 +508,7 @@ class RasterizerContext:
                     buffer_updates[node] = geom_T.transpose((0, 2, 1))
 
     def on_mpm(self):
-        if self.sim.mpm_solver.is_active():
+        if self.sim.mpm_solver.is_active:
             for mpm_entity in self.sim.mpm_solver.entities:
                 if mpm_entity.surface.vis_mode == "recon":
                     self.add_dynamic_node(mpm_entity, None)
@@ -551,7 +551,7 @@ class RasterizerContext:
                     )
 
     def update_mpm(self, buffer_updates):
-        if self.sim.mpm_solver.is_active():
+        if self.sim.mpm_solver.is_active:
             particles_all = ti_to_numpy(self.sim.mpm_solver.particles_render.pos) + self.scene.envs_offset
             active_all = ti_to_numpy(self.sim.mpm_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
             vverts_all = ti_to_numpy(self.sim.mpm_solver.vverts_render.pos) + self.scene.envs_offset
@@ -583,7 +583,7 @@ class RasterizerContext:
                         )
 
     def on_sph(self):
-        if self.sim.sph_solver.is_active():
+        if self.sim.sph_solver.is_active:
             for sph_entity in self.sim.sph_solver.entities:
                 if sph_entity.surface.vis_mode == "recon":
                     self.add_dynamic_node(sph_entity, None)
@@ -619,7 +619,7 @@ class RasterizerContext:
                     )
 
     def update_sph(self, buffer_updates):
-        if self.sim.sph_solver.is_active():
+        if self.sim.sph_solver.is_active:
             particles_all = ti_to_numpy(self.sim.sph_solver.particles_render.pos) + self.scene.envs_offset
             active_all = ti_to_numpy(self.sim.sph_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
 
@@ -644,7 +644,7 @@ class RasterizerContext:
                         buffer_updates[node] = tfs.transpose((0, 2, 1))
 
     def on_pbd(self):
-        if self.sim.pbd_solver.is_active():
+        if self.sim.pbd_solver.is_active:
             for pbd_entity in self.sim.pbd_solver.entities:
                 for idx in self.rendered_envs_idx:
                     if pbd_entity.surface.vis_mode == "recon":
@@ -702,7 +702,7 @@ class RasterizerContext:
                 )
 
     def update_pbd(self, buffer_updates):
-        if self.sim.pbd_solver.is_active():
+        if self.sim.pbd_solver.is_active:
             particles_all = ti_to_numpy(self.sim.pbd_solver.particles_render.pos) + self.scene.envs_offset
             particles_vel_all = ti_to_numpy(self.sim.pbd_solver.particles_render.vel)
             active_all = ti_to_numpy(self.sim.pbd_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
@@ -757,7 +757,7 @@ class RasterizerContext:
                             buffer_updates[self._scene.get_buffer_id(node, "normal")] = normal_data
 
     def on_fem(self):
-        if self.sim.fem_solver.is_active():
+        if self.sim.fem_solver.is_active:
             vertices_ti, triangles_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = ti_to_numpy(vertices_ti)
             triangles_all = ti_to_numpy(triangles_ti).reshape((-1, 3))
@@ -786,7 +786,7 @@ class RasterizerContext:
                         )
 
     def update_fem(self, buffer_updates):
-        if self.sim.fem_solver.is_active():
+        if self.sim.fem_solver.is_active:
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy(dtype=gs.np_float)
             triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))

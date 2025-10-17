@@ -20,6 +20,9 @@ pytestmark = [
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact(backend):
+    if gs.use_ndarray:
+        pytest.skip(reason="GsTaichi dynamic array type does not support AutoDiff.")
+
     RTOL = 1e-4
 
     scene = gs.Scene(
@@ -140,6 +143,8 @@ def test_differentiable_push(precision, show_viewer):
         pytest.skip(reason="GsTaichi does not support AutoDiff on non-CPU backend on Mac OS for now.")
     if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
         pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
+    if gs.use_ndarray:
+        pytest.skip(reason="GsTaichi dynamic array type does not support AutoDiff.")
 
     HORIZON = 10
 

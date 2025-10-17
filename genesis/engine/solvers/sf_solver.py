@@ -35,9 +35,11 @@ class SFSolver(Solver):
         self.t = 0.0
         self.inlet_s = options.inlet_s
 
-        self.jets = []
+        self.jets = ()
 
     def setup_fields(self):
+        assert self.jets
+
         cell_state = ti.types.struct(
             v=gs.ti_vec3,
             v_tmp=gs.ti_vec3,
@@ -65,20 +67,29 @@ class SFSolver(Solver):
 
     def build(self):
         super().build()
-        if self.is_active():
+
+        if self.is_active:
             self.t = 0.0
             self.setup_fields()
             self.init_fields()
+
+        # Overwrite gravity because only field is supported for now
+        if self._gravity is not None:
+            gravity = self._gravity.to_numpy()
+            self._gravity = ti.field(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity.from_numpy(gravity)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- misc ----------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_jets(self, jets):
-        self.jets = jets
-
+    @property
     def is_active(self):
-        return len(self.jets) > 0
+        return bool(self.jets)
+
+    def set_jets(self, jets):
+        assert isinstance(jets, (list, tuple))
+        self.jets = tuple(jets)
 
     def reset_swap(self):
         self.p_swap.cur.fill(0)

@@ -31,10 +31,8 @@ IGNORE_SCRIPT_NAMES = {
 TIMEOUT = 400.0
 
 
-# Only enable this suite when explicitly requested (e.g., in the dedicated CI workflow)
 pytestmark = [
     pytest.mark.examples,
-    pytest.mark.taichi_offline_cache(False),
 ]
 
 

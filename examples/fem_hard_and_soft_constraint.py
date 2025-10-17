@@ -30,7 +30,7 @@ def main():
         dt = args.dt if args.dt is not None else 1e-3
         substeps = args.substeps if args.substeps is not None else 1
 
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.gpu, performance_mode=True)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

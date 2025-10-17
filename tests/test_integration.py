@@ -209,6 +209,9 @@ def test_hanging_rigid_cable(show_viewer, tol):
 @pytest.mark.parametrize("primitive_type", ["box", "sphere"])
 @pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
+    if gs.use_ndarray:
+        pytest.skip("SAPCoupler does not support ndarray yet.")
+
     GRAPPER_POS_START = (0.65, 0.0, 0.13)
     GRAPPER_POS_END = (0.65, 0.0, 0.18)
 

@@ -5,38 +5,22 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from pydantic import Field
 
 import genesis as gs
+from genesis.options.recorders import (
+    VideoFile as VideoFileWriterOptions,
+    CSVFile as CSVFileWriterOptions,
+    NPZFile as NPZFileWriterOptions,
+)
 from genesis.utils import tensor_to_array
 
-from .base_recorder import Recorder, RecorderOptions
+from .base_recorder import Recorder
 from .recorder_manager import register_recording
 
-IS_PYAV_AVAILABLE = False
 try:
     import av
-
-    IS_PYAV_AVAILABLE = True
 except ImportError:
     pass
-
-
-class BaseFileWriterOptions(RecorderOptions):
-    """
-    Base class for file writer options.
-
-    Parameters
-    ----------
-    filename: str
-        The path of the output file.
-    save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
-    """
-
-    filename: str
-    save_on_reset: bool = False
 
 
 class BaseFileWriter(Recorder):
@@ -72,50 +56,6 @@ class BaseFileWriter(Recorder):
         pass
 
 
-class VideoFileWriterOptions(BaseFileWriterOptions):
-    """
-    Stream video frames to file using PyAV.
-
-    The PyAV writer streams data directly to the file instead of buffering it in memory. Incoming data should either be
-    grayscale [H, W] or color [H, W, RGB] where values are uint8 (0, 255).
-
-    Parameters
-    ----------
-    filename : str
-        The path of the output video file ending in ".mp4".
-    name : str
-        The name of the video. Note that it may be different from filename. If empty, then filename will be used as a
-        fallback. Default to "".
-    fps : int, optional
-        Frames per second for the video. Defaults to the data collection Hz ("real-time").
-    codec : str, optional
-        The codec to use for the video file. Defaults to "libx264".
-    bitrate: float
-        The bitrate of the video. This higher the better the quality of the video.
-        Defaults to 1.0.
-    codec_options: dict[str, str]
-        Additional low-level codec options that will be pass to ffmpeg. Empty by default.
-    save_on_reset: bool, optional
-        Whether to save the data on reset. If True, a counter will be added to the filename and incremented on each
-        reset. Defaults to False.
-    """
-
-    fps: int | None = None
-    name: str = ""
-    codec: str = "libx264"
-    bitrate: float = 1.0
-    codec_options: dict[str, str] = Field(default_factory=dict)
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-
-        if self.codec not in av.codecs_available:
-            gs.raise_exception(f"[{type(self).__name__}] Codec '{self._options.codec}' not supported.")
-
-        if not self.filename.endswith(".mp4"):
-            gs.raise_exception(f"[{type(self).__name__}] Video filename must have '.mp4' extension.")
-
-
 @register_recording(VideoFileWriterOptions)
 class VideoFileWriter(BaseFileWriter):
     video_container: "av.container.OutputContainer | None"
@@ -124,9 +64,6 @@ class VideoFileWriter(BaseFileWriter):
     video_buffer: "np.ndarray | None"
 
     def build(self):
-        if not IS_PYAV_AVAILABLE:
-            gs.raise_exception("PyAV is not installed. Please install it with `pip install av`.")
-
         self.video_container = None
         self.video_stream = None
         self.video_frame = None
@@ -213,38 +150,6 @@ class VideoFileWriter(BaseFileWriter):
         return False
 
 
-class CSVFileWriterOptions(BaseFileWriterOptions):
-    """
-    Writes to a .csv file using `csv.writer`.
-
-    Can handle any array-like or dict[str, array-like] output, e.g. from sensors.
-    Values must be N-dimensional tensors, arrays or scalars (np.generic, int, float, str)
-    If the data or header is a dict, it cannot be further nested. Values are processed in order.
-
-    Parameters
-    ----------
-    filename : str
-        The name of the CSV file to save the data.
-    header : tuple[str] | None, optional
-        Column headers for the CSV file. It should match the format of the incoming data, where each scalar value has
-        an associated header. If the data is a dict, the header should match the total length of the number of values
-        after flattening the values.
-    save_every_write: bool, optional
-        Whether to flush the data to disk as soon as new data is recieved. Defaults to False.
-    save_on_reset: bool, optional
-        Whether to save the data on scene reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
-    """
-
-    header: tuple[str, ...] | None = None
-    save_every_write: bool = False
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-        if not self.filename.lower().endswith(".csv"):
-            gs.raise_exception(f"[{type(self).__name__}] CSV output must be a .csv file")
-
-
 @register_recording(CSVFileWriterOptions)
 class CSVFileWriter(BaseFileWriter):
     def _initialize_writer(self):
@@ -304,27 +209,6 @@ class CSVFileWriter(BaseFileWriter):
     @property
     def run_in_thread(self) -> bool:
         return True
-
-
-class NPZFileWriterOptions(BaseFileWriterOptions):
-    """
-    Buffers all data and writes to a .npz file at cleanup.
-
-    Can handle any numeric or array-like or dict[str, array-like] data, e.g. from sensors.
-
-    Parameters
-    ----------
-    filename : str
-        The name of the .npz file to save the data.
-    save_on_reset: bool, optional
-        Whether to save the data on reset. Defaults to False.
-        If True, a counter will be added to the filename and incremented on each reset.
-    """
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-        if not self.filename.lower().endswith(".npz"):
-            gs.raise_exception(f"[{type(self).__name__}] NPZ output must be an .npz file")
 
 
 @register_recording(NPZFileWriterOptions)

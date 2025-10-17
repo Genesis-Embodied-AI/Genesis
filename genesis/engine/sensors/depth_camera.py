@@ -1,22 +1,9 @@
 import torch
 
-from genesis.sensors.sensor_manager import register_sensor
+from genesis.options.sensors import DepthCamera as DepthCameraOptions
 
-from .patterns import DepthCameraPattern
-from .raycaster import RaycasterData, RaycasterOptions, RaycasterSensor, RaycasterSharedMetadata
-
-
-class DepthCameraOptions(RaycasterOptions):
-    """
-    Depth camera that uses ray casting to obtain depth images.
-
-    Parameters
-    ----------
-    pattern: DepthCameraPattern
-        The raycasting pattern configuration for the sensor.
-    """
-
-    pattern: DepthCameraPattern
+from .raycaster import RaycasterData, RaycasterSensor, RaycasterSharedMetadata
+from .sensor_manager import register_sensor
 
 
 @register_sensor(DepthCameraOptions, RaycasterSharedMetadata, RaycasterData)
