@@ -186,28 +186,27 @@ def test_deformable_parallel(show_viewer):
     )
     scene.build(n_envs=2)
 
-    mpm_cube_pos = mpm_cube.get_particles_pos()
-    cloth_pos = cloth.get_particles_pos()
-    water_pos = water.get_particles_pos()
-
-    mpm_cube_active = mpm_cube.get_particles_active()
-    cloth_active = cloth.get_particles_active()
-    water_active = water.get_particles_active()
-
-    mpm_cube_vel = mpm_cube.get_particles_vel()
-    cloth_vel = cloth.get_particles_vel()
-    water_vel = water.get_particles_vel()
-
-    assert mpm_cube_pos.shape == mpm_cube_vel.shape
-    assert mpm_cube_pos.shape == (mpm_cube_active.shape[0], mpm_cube.n_particles, 3)
-    assert cloth_pos.shape == cloth_vel.shape
-    assert cloth_pos.shape == (cloth_active.shape[0], cloth.n_particles, 3)
-    assert water_pos.shape == water_vel.shape
-    assert water_pos.shape == (water_active.shape[0], water.n_particles, 3)
+    init_mpm_cube_pos = mpm_cube.get_particles_pos()
+    init_cloth_pos = cloth.get_particles_pos()
+    init_water_pos = water.get_particles_pos()
 
     scene.get_state()
     for i in range(1500):
         scene.step()
+
+    final_mpm_cube_pos = mpm_cube.get_particles_pos()
+    final_cloth_pos = cloth.get_particles_pos()
+    final_water_pos = water.get_particles_pos()
+
+    # check if the positions are changed
+    assert (init_mpm_cube_pos - final_mpm_cube_pos).abs().sum() > 0.1
+    assert (init_cloth_pos - final_cloth_pos).abs().sum() > 0.1
+    assert (init_water_pos - final_water_pos).abs().sum() > 0.1
+
+    # check if the particles are above the ground
+    assert final_mpm_cube_pos[..., 2].min() > -1e-5
+    assert final_cloth_pos[..., 2].min() > -1e-5
+    assert final_water_pos[..., 2].min() > -1e-5
 
     assert_allclose(cloth.get_particles_vel(), 0.0, atol=1e-5)
     assert_allclose(mpm_cube.get_particles_vel(), 0.0, atol=1e-4)
