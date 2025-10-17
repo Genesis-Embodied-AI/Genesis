@@ -55,6 +55,12 @@ class LegacyCoupler(RBC):
         self._fem_mpm = self.fem_solver.is_active and self.mpm_solver.is_active and self.options.fem_mpm
         self._fem_sph = self.fem_solver.is_active and self.sph_solver.is_active and self.options.fem_sph
 
+        if self.mpm_solver.is_active:
+            self.vel_mpm_buffer = ti.Vector.field(
+                3, dtype=gs.ti_float, shape=(*self.mpm_solver.grid_res, self.mpm_solver._B)
+            )
+            self.vel_mpm_buffer.fill(gs.ti_vec3(0.0, 0.0, 0.0))
+
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             # this field stores the geom index of the thin shell rigid object (if any) that separates particle and its surrounding grid cell
             self.cpic_flag = ti.field(gs.ti_int, shape=(self.mpm_solver.n_particles, 3, 3, 3, self.mpm_solver._B))
@@ -230,7 +236,7 @@ class LegacyCoupler(RBC):
         Similar to _func_collide_with_rigid_geom, but additionally handles potential side flip due to penetration.
         """
         signed_dist = sdf_decomp.sdf_func_world(
-            geoms_state=self.rigid_solver.geoms_state,
+            geoms_state=geoms_state,
             geoms_info=geoms_info,
             sdf_info=sdf_info,
             pos_world=pos_world,
@@ -248,7 +254,7 @@ class LegacyCoupler(RBC):
         )
 
         # bigger coup_softness implies that the coupling influence extends further away from the object.
-        influence = ti.min(ti.exp(-signed_dist / max(1e-10, self.rigid_solver.geoms_info.coup_softness[geom_idx])), 1)
+        influence = ti.min(ti.exp(-signed_dist / max(1e-10, geoms_info.coup_softness[geom_idx])), 1)
 
         # if normal_rigid.dot(normal_prev) < 0: # side flip due to penetration
         #     influence = 1.0
@@ -347,21 +353,11 @@ class LegacyCoupler(RBC):
         return vel
 
     @ti.kernel
-    def mpm_grid_op(
+    def mpm_grid_op_gravity_field_tool(
         self,
         f: ti.i32,
         t: ti.f32,
-        geoms_state: array_class.GeomsState,
-        geoms_info: array_class.GeomsInfo,
-        links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
-        collider_static_config: ti.template(),
-        sdf_info: array_class.SDFInfo,
     ):
-        """
-        This combines mpm's grid_op with coupling operations.
-        If we decouple grid_op with coupling with different solvers, we need to run grid-level operations for each coupling pair, which is inefficient.
-        """
         for ii, jj, kk, i_b in ti.ndrange(*self.mpm_solver.grid_res, self.mpm_solver._B):
             I = (ii, jj, kk)
             if self.mpm_solver.grid[f, I, i_b].mass > gs.EPS:
@@ -373,7 +369,6 @@ class LegacyCoupler(RBC):
                 vel_mpm += self.mpm_solver.substep_dt * self.mpm_solver._gravity[i_b]
 
                 pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
-                mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._particle_volume_scale
 
                 # external force fields
                 for i_ff in ti.static(range(len(self.mpm_solver._ffs))):
@@ -383,21 +378,65 @@ class LegacyCoupler(RBC):
                 if ti.static(self.tool_solver.is_active):
                     vel_mpm = self._func_mpm_tool(f, pos, vel_mpm, i_b)
 
+                self.vel_mpm_buffer[I, i_b] = vel_mpm
+
+    @ti.kernel
+    def mpm_grid_op_rigid(
+        self,
+        f: ti.i32,
+        t: ti.f32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: ti.template(),
+    ):
+        for ii, jj, kk, i_b in ti.ndrange(*self.mpm_solver.grid_res, self.mpm_solver._B):
+            I = (ii, jj, kk)
+            if self.mpm_solver.grid[f, I, i_b].mass > gs.EPS:
+                #################### MPM grid op ####################
+                # Momentum to velocity
+                vel_mpm = self.vel_mpm_buffer[I, i_b]
+
+                pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
+                mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._particle_volume_scale
+
                 #################### MPM <-> Rigid ####################
-                if ti.static(self._rigid_mpm):
-                    vel_mpm = self._func_collide_with_rigid(
-                        f,
-                        pos,
-                        vel_mpm,
-                        mass_mpm,
-                        i_b,
-                        geoms_state,
-                        geoms_info,
-                        links_state,
-                        rigid_global_info,
-                        sdf_info,
-                        collider_static_config,
-                    )
+                vel_mpm = self._func_collide_with_rigid(
+                    f,
+                    pos,
+                    vel_mpm,
+                    mass_mpm,
+                    i_b,
+                    geoms_state,
+                    geoms_info,
+                    links_state,
+                    rigid_global_info,
+                    sdf_info,
+                    collider_static_config,
+                )
+                self.vel_mpm_buffer[I, i_b] = vel_mpm
+
+    @ti.kernel
+    def mpm_grid_op_deformable(
+        self,
+        f: ti.i32,
+        t: ti.f32,
+    ):
+        """
+        This combines mpm's grid_op with coupling operations.
+        If we decouple grid_op with coupling with different solvers, we need to run grid-level operations for each coupling pair, which is inefficient.
+        """
+        for ii, jj, kk, i_b in ti.ndrange(*self.mpm_solver.grid_res, self.mpm_solver._B):
+            I = (ii, jj, kk)
+            if self.mpm_solver.grid[f, I, i_b].mass > gs.EPS:
+                #################### MPM grid op ####################
+                # Momentum to velocity
+                vel_mpm = self.vel_mpm_buffer[I, i_b]
+
+                pos = (I + self.mpm_solver.grid_offset) * self.mpm_solver.dx
+                mass_mpm = self.mpm_solver.grid[f, I, i_b].mass / self.mpm_solver._particle_volume_scale
 
                 #################### MPM <-> SPH ####################
                 if ti.static(self._mpm_sph):
@@ -525,12 +564,19 @@ class LegacyCoupler(RBC):
 
     def fem_rigid_link_constraints(self):
         if self.fem_solver._constraints_initialized and self.rigid_solver.is_active:
-            links_pos = self.rigid_solver.links_state.pos
-            links_quat = self.rigid_solver.links_state.quat
-            self.fem_solver._kernel_update_linked_vertex_constraints(links_pos, links_quat)
+            self.fem_solver._kernel_update_linked_vertex_constraints(self.rigid_solver.links_state)
 
     @ti.kernel
-    def fem_surface_force(self, f: ti.i32):
+    def fem_surface_force(
+        self,
+        f: ti.i32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: ti.template(),
+    ):
         # TODO: all collisions are on vertices instead of surface and edge
         for i_s, i_b in ti.ndrange(self.fem_solver.n_surfaces, self.fem_solver._B):
             if self.fem_solver.surface[i_s].active:
@@ -557,6 +603,12 @@ class LegacyCoupler(RBC):
                             self.fem_solver.elements_v[f + 1, iv, i_b].vel,
                             mass / 3.0,  # assume element mass uniformly distributed to vertices
                             i_b,
+                            geoms_state,
+                            geoms_info,
+                            links_state,
+                            rigid_global_info,
+                            sdf_info,
+                            collider_static_config,
                         )
                         self.fem_solver.elements_v[f + 1, iv, i_b].vel = vel_fem_sv
 
@@ -923,16 +975,25 @@ class LegacyCoupler(RBC):
     def couple(self, f):
         # MPM <-> all others
         if self.mpm_solver.is_active:
-            self.mpm_grid_op(
+
+            self.mpm_grid_op_gravity_field_tool(
                 f,
                 self.sim.cur_t,
-                self.rigid_solver.geoms_state,
-                self.rigid_solver.geoms_info,
-                self.rigid_solver.links_state,
-                self.rigid_solver._rigid_global_info,
-                self.rigid_solver.collider._collider_static_config,
-                self.rigid_solver.sdf._sdf_info,
             )
+
+            if self._rigid_mpm:
+                self.mpm_grid_op_rigid(
+                    f,
+                    self.sim.cur_t,
+                    self.rigid_solver.geoms_state,
+                    self.rigid_solver.geoms_info,
+                    self.rigid_solver.links_state,
+                    self.rigid_solver._rigid_global_info,
+                    self.rigid_solver.collider._collider_static_config,
+                    self.rigid_solver.sdf._sdf_info,
+                )
+
+            self.mpm_grid_op_deformable(f, self.sim.cur_t)
 
         # SPH <-> Rigid
         if self._rigid_sph:
@@ -962,7 +1023,15 @@ class LegacyCoupler(RBC):
             self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.links_state)
 
         if self.fem_solver.is_active:
-            self.fem_surface_force(f)
+            self.fem_surface_force(
+                f,
+                self.rigid_solver.geoms_state,
+                self.rigid_solver.geoms_info,
+                self.rigid_solver.links_state,
+                self.rigid_solver._rigid_global_info,
+                self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver.collider._collider_static_config,
+            )
             self.fem_rigid_link_constraints()
 
     def couple_grad(self, f):
