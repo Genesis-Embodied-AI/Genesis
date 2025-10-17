@@ -294,6 +294,12 @@ class SAPCoupler(RBC):
         self._init_pcg_fields()
         self._init_linesearch_fields()
 
+        if gs.use_ndarray:
+            gs.raise_exception(
+                "SAPCoupler does not support Gstaichi dynamic array type for now. Please enable performance mode at "
+                "init, gs.init(..., performance_mode=True)."
+            )
+
     def reset(self, envs_idx=None):
         pass
 
