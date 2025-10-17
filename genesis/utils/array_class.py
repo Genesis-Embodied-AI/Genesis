@@ -1,10 +1,7 @@
-import dataclasses
-import os
-from functools import partial
+from dataclasses import dataclass
 
 import gstaichi as ti
 import numpy as np
-from gstaichi.lang._fast_caching import FIELD_METADATA_CACHE_VALUE
 
 import genesis as gs
 
@@ -22,7 +19,7 @@ V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 # =========================================== RigidGlobalInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructRigidGlobalInfo:
     n_awake_dofs: V_ANNOTATION
     awake_dofs: V_ANNOTATION
@@ -158,7 +155,7 @@ def _init_mass_mat_data(obj, solver):
 # =========================================== Constraint ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructConstraintState:
     n_constraints: V_ANNOTATION
     ti_n_equalities: V_ANNOTATION
@@ -314,7 +311,7 @@ def get_constraint_state(constraint_solver, solver):
 # =========================================== Collider ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructContactData:
     # WARNING: cannot add/remove fields here without also updating collider_decomp.py::kernel_collider_clear
     geom_a: V_ANNOTATION
@@ -331,7 +328,7 @@ class StructContactData:
 
 def get_contact_data(solver, max_contact_pairs, requires_grad):
     f_batch = solver._batch_shape
-    max_contact_pairs_ = max(1, max_contact_pairs)
+    max_contact_pairs_ = max(max_contact_pairs, 1)
     kwargs = {
         "geom_a": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
         "geom_b": V(dtype=gs.ti_int, shape=f_batch(max_contact_pairs_)),
@@ -358,7 +355,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
         return ClassContactData()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructDiffContactInput:
     ### Non-differentiable input data
     # Geom id of the two geometries
@@ -414,7 +411,7 @@ def get_diff_contact_input(solver, max_contacts_per_pair):
         return ClassDiffContactInput()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructSortBuffer:
     value: V_ANNOTATION
     i_g: V_ANNOTATION
@@ -441,7 +438,7 @@ def get_sort_buffer(solver):
         return ClassSortBuffer()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructContactCache:
     normal: V_ANNOTATION
 
@@ -465,7 +462,7 @@ def get_contact_cache(solver):
         return ClassContactCache()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructAggList:
     curr: V_ANNOTATION
     n: V_ANNOTATION
@@ -494,7 +491,7 @@ def get_agg_list(solver):
         return ClassAggList()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructContactIslandState:
     ci_edges: V_ANNOTATION
     edge_id: V_ANNOTATION
@@ -549,7 +546,7 @@ def get_contact_island_state(solver, collider):
         return ClassContactIslandState()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructColliderState:
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
@@ -595,7 +592,7 @@ def get_collider_state(solver, static_rigid_sim_config, n_possible_pairs, collid
         "contact_data": contact_data,
         "active_buffer": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "n_broad_pairs": V(dtype=gs.ti_int, shape=_B),
-        "broad_collision_pairs": V_VEC(2, dtype=gs.ti_int, shape=f_batch(max(1, max_collision_pairs_broad))),
+        "broad_collision_pairs": V_VEC(2, dtype=gs.ti_int, shape=f_batch(max(max_collision_pairs_broad, 1))),
         "active_buffer_awake": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "active_buffer_hib": V(dtype=gs.ti_int, shape=f_batch(n_geoms)),
         "box_depth": V(dtype=gs.ti_float, shape=f_batch(collider_static_config.box_MAXCONPAIR)),
@@ -628,7 +625,7 @@ def get_collider_state(solver, static_rigid_sim_config, n_possible_pairs, collid
         return ClassColliderState()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructColliderInfo:
     vert_neighbors: V_ANNOTATION
     vert_neighbor_start: V_ANNOTATION
@@ -660,7 +657,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
         terrain_hf_shape = entity.terrain_hf.shape
 
     kwargs = {
-        "vert_neighbors": V(dtype=gs.ti_int, shape=max(1, n_vert_neighbors)),
+        "vert_neighbors": V(dtype=gs.ti_int, shape=max(n_vert_neighbors, 1)),
         "vert_neighbor_start": V(dtype=gs.ti_int, shape=n_verts),
         "vert_n_neighbors": V(dtype=gs.ti_int, shape=n_verts),
         "collision_pair_validity": V(dtype=gs.ti_int, shape=(n_geoms, n_geoms)),
@@ -690,7 +687,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
 # =========================================== MPR ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructMPRSimplexSupport:
     v1: V_ANNOTATION
     v2: V_ANNOTATION
@@ -717,7 +714,7 @@ def get_mpr_simplex_support(f_batch):
         return ClassMPRSimplexSupport()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructMPRState:
     simplex_support: StructMPRSimplexSupport
     simplex_size: V_ANNOTATION
@@ -746,7 +743,7 @@ def get_mpr_state(f_batch):
 # =========================================== GJK ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructMDVertex:
     # Vertex of the Minkowski difference
     obj1: V_ANNOTATION
@@ -809,7 +806,7 @@ def get_epa_polytope_vertex(solver, gjk_static_config):
         return ClassEPAPolytopeVertex()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructGJKSimplex:
     nverts: V_ANNOTATION
     dist: V_ANNOTATION
@@ -835,7 +832,7 @@ def get_gjk_simplex(solver):
         return ClassGJKSimplex()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructGJKSimplexBuffer:
     normal: V_ANNOTATION
     sdist: V_ANNOTATION
@@ -861,7 +858,7 @@ def get_gjk_simplex_buffer(solver):
         return ClassGJKSimplexBuffer()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructEPAPolytope:
     nverts: V_ANNOTATION
     nfaces: V_ANNOTATION
@@ -893,7 +890,7 @@ def get_epa_polytope(solver):
         return ClassEPAPolytope()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructEPAPolytopeFace:
     verts_idx: V_ANNOTATION
     adj_idx: V_ANNOTATION
@@ -928,7 +925,7 @@ def get_epa_polytope_face(solver, polytope_max_faces):
         return ClassEPAPolytopeFace()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructEPAPolytopeHorizonData:
     face_idx: V_ANNOTATION
     edge_idx: V_ANNOTATION
@@ -954,7 +951,7 @@ def get_epa_polytope_horizon_data(solver, polytope_max_horizons):
         return ClassEPAPolytopeHorizonData()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructContactFace:
     vert1: V_ANNOTATION
     vert2: V_ANNOTATION
@@ -990,7 +987,7 @@ def get_contact_face(solver, max_contact_polygon_verts):
         return ClassContactFace()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructContactNormal:
     endverts: V_ANNOTATION
     normal: V_ANNOTATION
@@ -1017,7 +1014,7 @@ def get_contact_normal(solver, max_contact_polygon_verts):
         return ClassContactNormal()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructContactHalfspace:
     normal: V_ANNOTATION
     dist: V_ANNOTATION
@@ -1042,7 +1039,7 @@ def get_contact_halfspace(solver, max_contact_polygon_verts):
         return ClassContactHalfspace()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructWitness:
     point_obj1: V_ANNOTATION
     point_obj2: V_ANNOTATION
@@ -1068,7 +1065,7 @@ def get_witness(solver, max_contacts_per_pair):
         return ClassWitness()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructGJKState:
     support_mesh_prev_vertex_id: V_ANNOTATION
     simplex_vertex: StructMDVertex
@@ -1183,7 +1180,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
             "is_col": V(dtype=gs.ti_bool, shape=(_B,)),
             "penetration": V(dtype=gs.ti_float, shape=(_B,)),
             "distance": V(dtype=gs.ti_float, shape=(_B,)),
-            "diff_contact_input": get_diff_contact_input(solver, max(1, max_contacts_per_pair if requires_grad else 1)),
+            "diff_contact_input": get_diff_contact_input(solver, max(max_contacts_per_pair if requires_grad else 1, 1)),
             "n_diff_contact_input": V(dtype=gs.ti_int, shape=(_B,)),
             "diff_penetration": V(dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
         }
@@ -1205,7 +1202,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
 # =========================================== SupportField ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructSupportFieldInfo:
     support_cell_start: V_ANNOTATION
     support_v: V_ANNOTATION
@@ -1214,9 +1211,9 @@ class StructSupportFieldInfo:
 
 def get_support_field_info(n_geoms, n_support_cells):
     kwargs = {
-        "support_cell_start": V(dtype=gs.ti_int, shape=max(1, n_geoms)),
-        "support_v": V_VEC(3, dtype=gs.ti_float, shape=max(1, n_support_cells)),
-        "support_vid": V(dtype=gs.ti_int, shape=max(1, n_support_cells)),
+        "support_cell_start": V(dtype=gs.ti_int, shape=max(n_geoms, 1)),
+        "support_v": V_VEC(3, dtype=gs.ti_float, shape=max(n_support_cells, 1)),
+        "support_vid": V(dtype=gs.ti_int, shape=max(n_support_cells, 1)),
     }
 
     if gs.use_ndarray:
@@ -1235,7 +1232,7 @@ def get_support_field_info(n_geoms, n_support_cells):
 # =========================================== SDF ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructSDFGeomInfo:
     T_mesh_to_sdf: V_ANNOTATION
     sdf_res: V_ANNOTATION
@@ -1246,11 +1243,11 @@ class StructSDFGeomInfo:
 
 def get_sdf_geom_info(n_geoms):
     kwargs = {
-        "T_mesh_to_sdf": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=(max(1, n_geoms),)),
-        "sdf_res": V_VEC(3, dtype=gs.ti_int, shape=(max(1, n_geoms),)),
-        "sdf_max": V(dtype=gs.ti_float, shape=(max(1, n_geoms),)),
-        "sdf_cell_size": V(dtype=gs.ti_float, shape=(max(1, n_geoms),)),
-        "sdf_cell_start": V(dtype=gs.ti_int, shape=(max(1, n_geoms),)),
+        "T_mesh_to_sdf": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=(max(n_geoms, 1),)),
+        "sdf_res": V_VEC(3, dtype=gs.ti_int, shape=(max(n_geoms, 1),)),
+        "sdf_max": V(dtype=gs.ti_float, shape=(max(n_geoms, 1),)),
+        "sdf_cell_size": V(dtype=gs.ti_float, shape=(max(n_geoms, 1),)),
+        "sdf_cell_start": V(dtype=gs.ti_int, shape=(max(n_geoms, 1),)),
     }
 
     if gs.use_ndarray:
@@ -1266,7 +1263,7 @@ def get_sdf_geom_info(n_geoms):
         return ClassSDFGeomInfo()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructSDFInfo:
     geoms_info: StructSDFGeomInfo
     geoms_sdf_start: V_ANNOTATION
@@ -1277,11 +1274,11 @@ class StructSDFInfo:
 
 def get_sdf_info(n_geoms, n_cells):
     kwargs = {
-        "geoms_info": get_sdf_geom_info(max(1, n_geoms)),
-        "geoms_sdf_start": V(dtype=gs.ti_int, shape=(max(1, n_geoms),)),
-        "geoms_sdf_val": V(dtype=gs.ti_float, shape=(max(1, n_cells),)),
-        "geoms_sdf_grad": V_VEC(3, dtype=gs.ti_float, shape=(max(1, n_cells),)),
-        "geoms_sdf_closest_vert": V(dtype=gs.ti_int, shape=(max(1, n_cells),)),
+        "geoms_info": get_sdf_geom_info(max(n_geoms, 1)),
+        "geoms_sdf_start": V(dtype=gs.ti_int, shape=(max(n_geoms, 1),)),
+        "geoms_sdf_val": V(dtype=gs.ti_float, shape=(max(n_cells, 1),)),
+        "geoms_sdf_grad": V_VEC(3, dtype=gs.ti_float, shape=(max(n_cells, 1),)),
+        "geoms_sdf_closest_vert": V(dtype=gs.ti_int, shape=(max(n_cells, 1),)),
     }
 
     if gs.use_ndarray:
@@ -1300,7 +1297,7 @@ def get_sdf_info(n_geoms, n_cells):
 # =========================================== DofsInfo and DofsState ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructDofsInfo:
     stiffness: V_ANNOTATION
     invweight: V_ANNOTATION
@@ -1346,7 +1343,7 @@ def get_dofs_info(solver):
         return ClassDofsInfo()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructDofsState:
     force: V_ANNOTATION
     qf_bias: V_ANNOTATION
@@ -1423,7 +1420,7 @@ def get_dofs_state(solver):
 # =========================================== LinksState and LinksInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructLinksState:
     cinr_inertial: V_ANNOTATION
     cinr_pos: V_ANNOTATION
@@ -1509,7 +1506,7 @@ def get_links_state(solver):
         return ClassLinksState()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructLinksInfo:
     parent_idx: V_ANNOTATION
     root_idx: V_ANNOTATION
@@ -1570,7 +1567,7 @@ def get_links_info(solver):
 # =========================================== JointsInfo and JointsState ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructJointsInfo:
     type: V_ANNOTATION
     sol_params: V_ANNOTATION
@@ -1608,7 +1605,7 @@ def get_joints_info(solver):
         return ClassJointsInfo()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructJointsState:
     xanchor: V_ANNOTATION
     xaxis: V_ANNOTATION
@@ -1637,7 +1634,7 @@ def get_joints_state(solver):
 # =========================================== GeomsInfo and GeomsState ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructGeomsInfo:
     pos: V_ANNOTATION
     center: V_ANNOTATION
@@ -1715,7 +1712,7 @@ def get_geoms_info(solver):
         return ClassGeomsInfo()
 
 
-@dataclasses.dataclass
+@dataclass
 class StructGeomsState:
     pos: V_ANNOTATION
     quat: V_ANNOTATION
@@ -1759,7 +1756,7 @@ def get_geoms_state(solver):
 # =========================================== VertsInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructVertsInfo:
     init_pos: V_ANNOTATION
     init_normal: V_ANNOTATION
@@ -1796,7 +1793,7 @@ def get_verts_info(solver):
 # =========================================== FacesInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructFacesInfo:
     verts_idx: V_ANNOTATION
     geom_idx: V_ANNOTATION
@@ -1825,7 +1822,7 @@ def get_faces_info(solver):
 # =========================================== EdgesInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructEdgesInfo:
     v0: V_ANNOTATION
     v1: V_ANNOTATION
@@ -1856,7 +1853,7 @@ def get_edges_info(solver):
 # =========================================== VertsState ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructVertsState:
     pos: V_ANNOTATION
 
@@ -1895,7 +1892,7 @@ def get_fixed_verts_state(solver):
 # =========================================== VvertsInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructVvertsInfo:
     init_pos: V_ANNOTATION
     init_vnormal: V_ANNOTATION
@@ -1926,7 +1923,7 @@ def get_vverts_info(solver):
 # =========================================== VfacesInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructVfacesInfo:
     vverts_idx: V_ANNOTATION
     vgeom_idx: V_ANNOTATION
@@ -1955,7 +1952,7 @@ def get_vfaces_info(solver):
 # =========================================== VgeomsInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructVgeomsInfo:
     pos: V_ANNOTATION
     quat: V_ANNOTATION
@@ -2000,7 +1997,7 @@ def get_vgeoms_info(solver):
 # =========================================== VGeomsState ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructVgeomsState:
     pos: V_ANNOTATION
     quat: V_ANNOTATION
@@ -2029,7 +2026,7 @@ def get_vgeoms_state(solver):
 # =========================================== EqualitiesInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructEqualitiesInfo:
     eq_obj1id: V_ANNOTATION
     eq_obj2id: V_ANNOTATION
@@ -2064,7 +2061,7 @@ def get_equalities_info(solver):
 # =========================================== EntitiesInfo ===========================================
 
 
-@dataclasses.dataclass
+@dataclass
 class StructEntitiesInfo:
     dof_start: V_ANNOTATION
     dof_end: V_ANNOTATION
@@ -2109,7 +2106,9 @@ def get_entities_info(solver):
 
 
 # =========================================== EntitiesState ===========================================
-@dataclasses.dataclass
+
+
+@dataclass
 class StructEntitiesState:
     hibernated: V_ANNOTATION
 
@@ -2135,28 +2134,26 @@ def get_entities_state(solver):
 
 # =========================================== StaticRigidSimConfig ===========================================
 
-cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: True})
 
-
-@dataclasses.dataclass
+@dataclass
 class StaticRigidSimCacheKey:
-    para_level: int = cache_value()
-    use_gjk_collision: bool = cache_value()
-    use_hibernation: bool = cache_value()
-    batch_links_info: bool = cache_value()
-    batch_dofs_info: bool = cache_value()
-    batch_joints_info: bool = cache_value()
-    enable_mujoco_compatibility: bool = cache_value()
-    enable_multi_contact: bool = cache_value()
-    enable_adjacent_collision: bool = cache_value()
-    enable_collision: bool = cache_value()
-    box_box_detection: bool = cache_value()
-    integrator: int = cache_value()
-    sparse_solve: bool = cache_value()
-    solver_type: int = cache_value()
+    para_level: int
+    use_gjk_collision: bool
+    use_hibernation: bool
+    batch_links_info: bool
+    batch_dofs_info: bool
+    batch_joints_info: bool
+    enable_mujoco_compatibility: bool
+    enable_multi_contact: bool
+    enable_adjacent_collision: bool
+    enable_collision: bool
+    box_box_detection: bool
+    integrator: int
+    sparse_solve: bool
+    solver_type: int
     # other config
-    has_nonconvex_nonterrain: bool = cache_value()
-    has_terrain: bool = cache_value()
+    has_nonconvex_nonterrain: bool
+    has_terrain: bool
 
 
 def get_static_rigid_sim_cache_key(solver):
@@ -2192,13 +2189,12 @@ def get_static_rigid_sim_cache_key(solver):
     return StaticRigidSimCacheKey(**kwargs)
 
 
-# =========================================== DataManager ===========================================
+# ======================================= RigidDataManager =======================================
 
 
 @ti.data_oriented
-class DataManager:
+class RigidDataManager:
     def __init__(self, solver):
-        # self.doughs = {}
         self.rigid_global_info = get_rigid_global_info(solver)
         self.dofs_info = get_dofs_info(solver)
         self.dofs_state = get_dofs_state(solver)
@@ -2260,3 +2256,59 @@ SDFInfo = ti.template() if not gs.use_ndarray else StructSDFInfo
 ContactIslandState = ti.template() if not gs.use_ndarray else StructContactIslandState
 DiffContactInput = ti.template() if not gs.use_ndarray else StructDiffContactInput
 AABBState = ti.template()
+
+
+# ===================================== SAP Coupler Hydroelastic =====================================
+
+
+@dataclass
+class StructHydroelasticRigidData:
+    volume_verts_rest: ti.template()
+    volume_verts: ti.template()
+    volume_elems: ti.template()
+    volume_verts_geom_idx: ti.template()
+    volume_elems_geom_idx: ti.template()
+    pressure_field: ti.template()
+    pressure_gradient_rest: ti.template()
+    pressure_gradient: ti.template()
+
+
+def get_hydroelastic_rigid_data(coupler):
+    _B = coupler._B
+    n_rigid_volume_verts = max(coupler.n_rigid_volume_verts, 1)
+    n_rigid_volume_elems = max(coupler.n_rigid_volume_elems, 1)
+
+    kwargs = {
+        "volume_verts_rest": ti.field(gs.ti_vec3, shape=(n_rigid_volume_verts,)),
+        "volume_verts": ti.field(gs.ti_vec3, shape=(_B, n_rigid_volume_verts)),
+        "volume_elems": ti.field(gs.ti_ivec4, shape=(n_rigid_volume_elems,)),
+        "volume_verts_geom_idx": ti.field(gs.ti_int, shape=(n_rigid_volume_verts,)),
+        "volume_elems_geom_idx": ti.field(gs.ti_int, shape=(n_rigid_volume_elems,)),
+        "pressure_field": ti.field(gs.ti_float, shape=(n_rigid_volume_verts,)),
+        "pressure_gradient_rest": ti.field(gs.ti_vec3, shape=(n_rigid_volume_elems,)),
+        "pressure_gradient": ti.field(gs.ti_vec3, shape=(_B, n_rigid_volume_elems)),
+    }
+
+    if gs.use_ndarray:
+        return StructHydroelasticRigidData(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassHydroelasticRigidData:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassHydroelasticRigidData()
+
+
+# ======================================= SapCouplerDataManager =======================================
+
+
+@ti.data_oriented
+class SapCouplerDataManager:
+    def __init__(self, coupler):
+        self.hydroelastic_rigid_data = get_hydroelastic_rigid_data(coupler)
+
+
+HydroelasticRigidData = ti.template() if not gs.use_ndarray else StructHydroelasticRigidData
