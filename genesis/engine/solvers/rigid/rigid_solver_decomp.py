@@ -470,14 +470,8 @@ class RigidSolver(Solver):
         self.mass_mat_D_inv = self._rigid_global_info.mass_mat_D_inv
         self._mass_mat_mask = self._rigid_global_info._mass_mat_mask
         self.meaninertia = self._rigid_global_info.meaninertia
-        # self.mass_mat = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
-        # self.mass_mat_L = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_, self.n_dofs_)))
-        # self.mass_mat_D_inv = ti.field(dtype=gs.ti_float, shape=self._batch_shape((self.n_dofs_,)))
 
-        # self._mass_mat_mask = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_entities_))
         self._rigid_global_info._mass_mat_mask.fill(1)
-
-        # self.meaninertia = ti.field(dtype=gs.ti_float, shape=self._batch_shape())
 
         # tree structure information
         mass_parent_mask = np.zeros((self.n_dofs_, self.n_dofs_), dtype=gs.np_float)
@@ -492,8 +486,6 @@ class RigidSolver(Solver):
                     mass_parent_mask[i_d, j_d] = 1.0
                 j_l = self.links[j_l].parent_idx
 
-        # self.mass_parent_mask = ti.field(dtype=gs.ti_float, shape=(self.n_dofs_, self.n_dofs_))
-
         self._rigid_global_info.mass_parent_mask.from_numpy(mass_parent_mask)
 
         # just in case
@@ -501,72 +493,10 @@ class RigidSolver(Solver):
         self._rigid_global_info.mass_mat_D_inv.fill(0)
         self._rigid_global_info.meaninertia.fill(0)
 
-        # self._rigid_global_info.mass_mat = self.mass_mat
-        # self._rigid_global_info.mass_mat_L = self.mass_mat_L
-        # self._rigid_global_info.mass_mat_D_inv = self.mass_mat_D_inv
-        # self._rigid_global_info._mass_mat_mask = self._mass_mat_mask
-        # self._rigid_global_info.meaninertia = self.meaninertia
-        # self._rigid_global_info.mass_parent_mask = self.mass_parent_mask
-        # self._rigid_global_info.gravity = self._gravity
-
         gravity = np.tile(self.sim.gravity, (self._B, 1))
         self._rigid_global_info.gravity.from_numpy(gravity)
 
     def _init_dof_fields(self):
-        # if self._use_hibernation:
-        #     # we are going to move n_awake_dofs and awake_dofs to _rigid_global_info completely after migration.
-        #     # But right now, other kernels are still using self.n_awake_dofs and self.awake_dofs
-        #     # so we need to keep them in self for now.
-        #     self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
-        #     self.awake_dofs = self._rigid_global_info.awake_dofs
-
-        # struct_dof_info = ti.types.struct(
-        #     stiffness=gs.ti_float,
-        #     invweight=gs.ti_float,
-        #     armature=gs.ti_float,
-        #     damping=gs.ti_float,
-        #     motion_ang=gs.ti_vec3,
-        #     motion_vel=gs.ti_vec3,
-        #     limit=gs.ti_vec2,
-        #     dof_start=gs.ti_int,  # dof_start of its entity
-        #     kp=gs.ti_float,
-        #     kv=gs.ti_float,
-        #     force_range=gs.ti_vec2,
-        # )
-
-        # struct_dof_state = ti.types.struct(
-        #     force=gs.ti_float,
-        #     qf_bias=gs.ti_float,
-        #     qf_passive=gs.ti_float,
-        #     qf_actuator=gs.ti_float,
-        #     qf_applied=gs.ti_float,
-        #     act_length=gs.ti_float,
-        #     pos=gs.ti_float,
-        #     vel=gs.ti_float,
-        #     acc=gs.ti_float,
-        #     acc_smooth=gs.ti_float,
-        #     qf_smooth=gs.ti_float,
-        #     qf_constraint=gs.ti_float,
-        #     cdof_ang=gs.ti_vec3,
-        #     cdof_vel=gs.ti_vec3,
-        #     cdofvel_ang=gs.ti_vec3,
-        #     cdofvel_vel=gs.ti_vec3,
-        #     cdofd_ang=gs.ti_vec3,
-        #     cdofd_vel=gs.ti_vec3,
-        #     f_vel=gs.ti_vec3,
-        #     f_ang=gs.ti_vec3,
-        #     ctrl_force=gs.ti_float,
-        #     ctrl_pos=gs.ti_float,
-        #     ctrl_vel=gs.ti_float,
-        #     ctrl_mode=gs.ti_int,
-        #     hibernated=gs.ti_int,  # Flag for dofs that converge into a static state (hibernation)
-        # )
-        # dofs_info_shape = self._batch_shape(self.n_dofs_) if self._options.batch_dofs_info else self.n_dofs_
-        # self.dofs_info = struct_dof_info.field(shape=dofs_info_shape, needs_grad=False, layout=ti.Layout.SOA)
-        # self.dofs_state = struct_dof_state.field(
-        #     shape=self._batch_shape(self.n_dofs_), needs_grad=False, layout=ti.Layout.SOA
-        # )
-
         self.dofs_info = self.data_manager.dofs_info
         self.dofs_state = self.data_manager.dofs_state
 
@@ -670,7 +600,6 @@ class RigidSolver(Solver):
 
         # This is for IK use only
         # TODO: support IK with parallel envs
-        # self._rigid_global_info.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=self.n_links)
         self.links_T = self._rigid_global_info.links_T
 
     def _init_vert_fields(self):
@@ -805,32 +734,6 @@ class RigidSolver(Solver):
             )
 
     def _init_entity_fields(self):
-        # if self._use_hibernation:
-        #     self.n_awake_entities = ti.field(dtype=gs.ti_int, shape=self._B)
-        #     self.awake_entities = ti.field(dtype=gs.ti_int, shape=self._batch_shape(self.n_entities_))
-
-        # struct_entity_info = ti.types.struct(
-        #     dof_start=gs.ti_int,
-        #     dof_end=gs.ti_int,
-        #     n_dofs=gs.ti_int,
-        #     link_start=gs.ti_int,
-        #     link_end=gs.ti_int,
-        #     n_links=gs.ti_int,
-        #     geom_start=gs.ti_int,
-        #     geom_end=gs.ti_int,
-        #     n_geoms=gs.ti_int,
-        #     gravity_compensation=gs.ti_float,
-        # )
-
-        # struct_entity_state = ti.types.struct(
-        #     hibernated=gs.ti_int,
-        # )
-
-        # self.entities_info = struct_entity_info.field(shape=self.n_entities, needs_grad=False, layout=ti.Layout.SOA)
-        # self.entities_state = struct_entity_state.field(
-        #     shape=self._batch_shape(self.n_entities), needs_grad=False, layout=ti.Layout.SOA
-        # )
-
         self.entities_info = self.data_manager.entities_info
         self.entities_state = self.data_manager.entities_state
 
@@ -1340,19 +1243,6 @@ class RigidSolver(Solver):
     def get_state(self, f):
         if self.is_active:
             state = RigidSolverState(self._scene)
-
-            # qpos: ti.types.ndarray(),
-            # vel: ti.types.ndarray(),
-            # links_pos: ti.types.ndarray(),
-            # links_quat: ti.types.ndarray(),
-            # i_pos_shift: ti.types.ndarray(),
-            # mass_shift: ti.types.ndarray(),
-            # friction_ratio: ti.types.ndarray(),
-            # links_state: array_class.LinksState,
-            # dofs_state: array_class.DofsState,
-            # geoms_state: array_class.GeomsState,
-            # rigid_global_info: array_class.RigidGlobalInfo,
-            # static_rigid_sim_config: ti.template(),
 
             kernel_get_state(
                 qpos=state.qpos,
@@ -4035,7 +3925,6 @@ def func_forward_dynamics(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
     )
-    # self._func_actuation()
     func_bias_force(
         dofs_state=dofs_state,
         links_state=links_state,
