@@ -186,6 +186,25 @@ def test_deformable_parallel(show_viewer):
     )
     scene.build(n_envs=2)
 
+    mpm_cube_pos = mpm_cube.get_particles_pos()
+    cloth_pos = cloth.get_particles_pos()
+    water_pos = water.get_particles_pos()
+
+    mpm_cube_active = mpm_cube.get_particles_active()
+    cloth_active = cloth.get_particles_active()
+    water_active = water.get_particles_active()
+
+    mpm_cube_vel = mpm_cube.get_particles_vel()
+    cloth_vel = cloth.get_particles_vel()
+    water_vel = water.get_particles_vel()
+
+    assert mpm_cube_pos.shape == mpm_cube_vel.shape
+    assert mpm_cube_pos.shape == (mpm_cube_active.shape[0], mpm_cube.n_particles, 3)
+    assert cloth_pos.shape == cloth_vel.shape
+    assert cloth_pos.shape == (cloth_active.shape[0], cloth.n_particles, 3)
+    assert water_pos.shape == water_vel.shape
+    assert water_pos.shape == (water_active.shape[0], water.n_particles, 3)
+
     scene.get_state()
     for i in range(1500):
         scene.step()
