@@ -1,5 +1,6 @@
-from typing import TYPE_CHECKING
+import itertools
 import math
+from typing import TYPE_CHECKING
 
 import igl
 import numpy as np
@@ -217,6 +218,8 @@ class SAPCoupler(RBC):
                 "Must be one of 'tet' or 'none'."
             )
 
+        self.n_rigid_volume_verts = 0
+        self.n_rigid_volume_elems = 0
         self._rigid_compliant = False
 
     # ------------------------------------------------------------------------------------
@@ -261,7 +264,22 @@ class SAPCoupler(RBC):
                 or self._rigid_rigid_contact_type == RigidRigidContactType.TET
             ):
                 init_tet_tables = True
-                self._init_hydroelastic_rigid_fields_and_info()
+
+                rigid_geoms, rigid_volume_verts, rigid_volume_elems = [], [], []
+                for geom in self.rigid_solver.geoms:
+                    if geom.contype or geom.conaffinity:
+                        if geom.type == gs.GEOM_TYPE.PLANE:
+                            gs.raise_exception("Primitive plane not supported as user-specified collision geometries.")
+                        tmesh = geom.get_trimesh()
+                        tet_cfg = {"nobisect": False, "maxvolume": tmesh.volume / 100}
+                        verts, elems = eu.split_all_surface_tets(*eu.mesh_to_elements(file=tmesh, tet_cfg=tet_cfg))
+                        rigid_geoms.append(geom)
+                        rigid_volume_verts.append(verts)
+                        rigid_volume_elems.append(elems)
+                if not rigid_geoms:
+                    gs.raise_exception("No rigid collision geometries found.")
+                self.n_rigid_volume_verts = sum(map(len, rigid_volume_verts))
+                self.n_rigid_volume_elems = sum(map(len, rigid_volume_elems))
 
             self._init_rigid_fields()
             if self._rigid_floor_contact_type == RigidFloorContactType.VERT:
@@ -283,6 +301,10 @@ class SAPCoupler(RBC):
             self.rigid_fem_contact = RigidFemTriTetContactHandler(self.sim)
             self.contact_handlers.append(self.rigid_fem_contact)
 
+        self.data_manager = array_class.SapCouplerDataManager(self)
+        self._rigid_data = self.data_manager.hydroelastic_rigid_data
+
+        self._init_hydroelastic_rigid_fields_and_info(rigid_geoms, rigid_volume_verts, rigid_volume_elems)
         self._init_bvh()
         if init_tet_tables:
             self._init_tet_tables()
@@ -313,27 +335,18 @@ class SAPCoupler(RBC):
         self.fem_pressure.from_numpy(fem_pressure_np)
         self.fem_pressure_gradient = ti.field(gs.ti_vec3, shape=(self.fem_solver._B, self.fem_solver.n_elements))
 
-    def _init_hydroelastic_rigid_fields_and_info(self):
-        rigid_volume_verts = []
-        rigid_volume_elems = []
-        rigid_volume_verts_geom_idx = []
-        rigid_volume_elems_geom_idx = []
-        rigid_pressure_field = []
-        offset = 0
-        for geom in self.rigid_solver.geoms:
-            if geom.contype or geom.conaffinity:
-                if geom.type == gs.GEOM_TYPE.PLANE:
-                    gs.raise_exception("Primitive plane not supported as user-specified collision geometries.")
-                volume = geom.get_trimesh().volume
-                tet_cfg = {"nobisect": False, "maxvolume": volume / 100}
-                verts, elems = eu.split_all_surface_tets(*eu.mesh_to_elements(file=geom.get_trimesh(), tet_cfg=tet_cfg))
-                rigid_volume_verts.append(verts)
-                rigid_volume_elems.append(elems + offset)
+    def _init_hydroelastic_rigid_fields_and_info(self, rigid_geoms, rigid_volume_verts, rigid_volume_elems):
+        if self.n_rigid_volume_verts > 0:
+            rigid_volume_verts_geom_idx = []
+            rigid_volume_elems_geom_idx = []
+            rigid_pressure_field = []
+            rigid_volume_offsets = (0, *itertools.accumulate(map(len, rigid_volume_verts)))
+            for geom, verts, elems in zip(rigid_geoms, rigid_volume_verts, rigid_volume_elems):
                 rigid_volume_verts_geom_idx.append(np.full(len(verts), geom.idx, dtype=np.int32))
                 rigid_volume_elems_geom_idx.append(np.full(len(elems), geom.idx, dtype=np.int32))
+
                 signed_distance, *_ = igl.signed_distance(verts, geom.init_verts, geom.init_faces)
                 signed_distance = signed_distance.astype(gs.np_float, copy=False)
-
                 distance_unsigned = np.abs(signed_distance)
                 distance_max = np.max(distance_unsigned)
                 if distance_max < gs.EPS:
@@ -343,63 +356,56 @@ class SAPCoupler(RBC):
                     )
                 pressure_field_np = distance_unsigned / distance_max * self._hydroelastic_stiffness
                 rigid_pressure_field.append(pressure_field_np)
-                offset += len(verts)
-        if not rigid_volume_verts:
-            gs.raise_exception("No rigid collision geometries found.")
-        rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=np.float32)
-        rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0, dtype=np.float32)
-        rigid_volume_verts_geom_idx_np = np.concatenate(rigid_volume_verts_geom_idx, axis=0, dtype=np.float32)
-        rigid_volume_elems_geom_idx_np = np.concatenate(rigid_volume_elems_geom_idx, axis=0, dtype=np.float32)
-        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
 
-        self.n_rigid_volume_verts = len(rigid_volume_verts_np)
-        self.n_rigid_volume_elems = len(rigid_volume_elems_np)
-        self.rigid_volume_verts_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_verts,))
-        self.rigid_volume_verts_rest.from_numpy(rigid_volume_verts_np)
-        self.rigid_volume_verts = ti.field(gs.ti_vec3, shape=(self._B, self.n_rigid_volume_verts))
-        self.rigid_volume_elems = ti.field(gs.ti_ivec4, shape=(self.n_rigid_volume_elems,))
-        self.rigid_volume_elems.from_numpy(rigid_volume_elems_np)
-        self.rigid_volume_verts_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_verts,))
-        self.rigid_volume_verts_geom_idx.from_numpy(rigid_volume_verts_geom_idx_np)
-        self.rigid_volume_elems_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_elems,))
-        self.rigid_volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
-        self.rigid_pressure_field = ti.field(gs.ti_float, shape=(self.n_rigid_volume_verts,))
-        self.rigid_pressure_field.from_numpy(rigid_pressure_field_np)
-        self.rigid_pressure_gradient_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_elems,))
-        self.rigid_pressure_gradient = ti.field(gs.ti_vec3, shape=(self._B, self.n_rigid_volume_elems))
-        self.rigid_compute_pressure_gradient_rest()
-        self._rigid_compliant = True
+            rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=np.float32)
+            rigid_volume_elems_np = np.concatenate(
+                [elems + offset for elems, offset in zip(rigid_volume_elems, rigid_volume_offsets)],
+                axis=0,
+                dtype=np.int32,
+            )
+            rigid_volume_verts_geom_idx_np = np.concatenate(rigid_volume_verts_geom_idx, axis=0, dtype=np.int32)
+            rigid_volume_elems_geom_idx_np = np.concatenate(rigid_volume_elems_geom_idx, axis=0, dtype=np.int32)
+            rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
+
+            self._rigid_data.volume_verts_rest.from_numpy(rigid_volume_verts_np)
+            self._rigid_data.volume_elems.from_numpy(rigid_volume_elems_np)
+            self._rigid_data.volume_verts_geom_idx.from_numpy(rigid_volume_verts_geom_idx_np)
+            self._rigid_data.volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
+            self._rigid_data.pressure_field.from_numpy(rigid_pressure_field_np)
+
+            self.rigid_compute_pressure_gradient_rest()
+            self._rigid_compliant = True
 
     @ti.func
     def rigid_update_volume_verts_pressure_gradient(self):
         for i_b, i_v in ti.ndrange(self._B, self.n_rigid_volume_verts):
-            i_g = self.rigid_volume_verts_geom_idx[i_v]
+            i_g = self._rigid_data.volume_verts_geom_idx[i_v]
             pos = self.rigid_solver.geoms_state.pos[i_g, i_b]
             quat = self.rigid_solver.geoms_state.quat[i_g, i_b]
             R = gu.ti_quat_to_R(quat)
-            self.rigid_volume_verts[i_b, i_v] = R @ self.rigid_volume_verts_rest[i_v] + pos
+            self._rigid_data.volume_verts[i_b, i_v] = R @ self._rigid_data.volume_verts_rest[i_v] + pos
 
         for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
-            i_g = self.rigid_volume_elems_geom_idx[i_e]
+            i_g = self._rigid_data.volume_elems_geom_idx[i_e]
             pos = self.rigid_solver.geoms_state.pos[i_g, i_b]
             quat = self.rigid_solver.geoms_state.quat[i_g, i_b]
             R = gu.ti_quat_to_R(quat)
-            self.rigid_pressure_gradient[i_b, i_e] = R @ self.rigid_pressure_gradient_rest[i_e]
+            self._rigid_data.pressure_gradient[i_b, i_e] = R @ self._rigid_data.pressure_gradient_rest[i_e]
 
     @ti.kernel
     def rigid_compute_pressure_gradient_rest(self):
-        grad = ti.static(self.rigid_pressure_gradient_rest)
+        grad = ti.static(self._rigid_data.pressure_gradient_rest)
         for i_e in range(self.n_rigid_volume_elems):
             grad[i_e].fill(0.0)
             for i in ti.static(range(4)):
-                i_v0 = self.rigid_volume_elems[i_e][i]
-                i_v1 = self.rigid_volume_elems[i_e][(i + 1) % 4]
-                i_v2 = self.rigid_volume_elems[i_e][(i + 2) % 4]
-                i_v3 = self.rigid_volume_elems[i_e][(i + 3) % 4]
-                pos_v0 = self.rigid_volume_verts_rest[i_v0]
-                pos_v1 = self.rigid_volume_verts_rest[i_v1]
-                pos_v2 = self.rigid_volume_verts_rest[i_v2]
-                pos_v3 = self.rigid_volume_verts_rest[i_v3]
+                i_v0 = self._rigid_data.volume_elems[i_e][i]
+                i_v1 = self._rigid_data.volume_elems[i_e][(i + 1) % 4]
+                i_v2 = self._rigid_data.volume_elems[i_e][(i + 2) % 4]
+                i_v3 = self._rigid_data.volume_elems[i_e][(i + 3) % 4]
+                pos_v0 = self._rigid_data.volume_verts_rest[i_v0]
+                pos_v1 = self._rigid_data.volume_verts_rest[i_v1]
+                pos_v2 = self._rigid_data.volume_verts_rest[i_v2]
+                pos_v3 = self._rigid_data.volume_verts_rest[i_v3]
 
                 e10 = pos_v0 - pos_v1
                 e12 = pos_v2 - pos_v1
@@ -409,7 +415,7 @@ class SAPCoupler(RBC):
                 signed_volume = area_vector.dot(e10)
                 if ti.abs(signed_volume) > gs.EPS:
                     grad_i = area_vector / signed_volume
-                    grad[i_e] += grad_i * self.rigid_pressure_field[i_v0]
+                    grad[i_e] += grad_i * self._rigid_data.pressure_field[i_v0]
 
     def _init_bvh(self):
         if self._enable_fem_self_tet_contact:
@@ -570,7 +576,7 @@ class SAPCoupler(RBC):
         self.update_bvh(i_step)
         self.has_contact, overflow = self.update_contact(i_step)
         if overflow:
-            message = "Overflowed In Contact Query: \n"
+            message = "Overflow in contact query: \n"
             for contact in self.contact_handlers:
                 if contact.n_contact_pairs[None] > contact.max_contact_pairs:
                     message += (
@@ -718,14 +724,14 @@ class SAPCoupler(RBC):
     def compute_rigid_tet_aabb(self):
         aabbs = ti.static(self.rigid_tet_aabb.aabbs)
         for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
-            i_v0 = self.rigid_volume_elems[i_e][0]
-            i_v1 = self.rigid_volume_elems[i_e][1]
-            i_v2 = self.rigid_volume_elems[i_e][2]
-            i_v3 = self.rigid_volume_elems[i_e][3]
-            pos_v0 = self.rigid_volume_verts[i_b, i_v0]
-            pos_v1 = self.rigid_volume_verts[i_b, i_v1]
-            pos_v2 = self.rigid_volume_verts[i_b, i_v2]
-            pos_v3 = self.rigid_volume_verts[i_b, i_v3]
+            i_v0 = self._rigid_data.volume_elems[i_e][0]
+            i_v1 = self._rigid_data.volume_elems[i_e][1]
+            i_v2 = self._rigid_data.volume_elems[i_e][2]
+            i_v3 = self._rigid_data.volume_elems[i_e][3]
+            pos_v0 = self._rigid_data.volume_verts[i_b, i_v0]
+            pos_v1 = self._rigid_data.volume_verts[i_b, i_v1]
+            pos_v2 = self._rigid_data.volume_verts[i_b, i_v2]
+            pos_v3 = self._rigid_data.volume_verts[i_b, i_v3]
             aabbs[i_b, i_e].min = ti.min(pos_v0, pos_v1, pos_v2, pos_v3)
             aabbs[i_b, i_e].max = ti.max(pos_v0, pos_v1, pos_v2, pos_v3)
 
@@ -3109,7 +3115,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
             distance=gs.ti_vec4,  # distance vector for the element
         )
         self.n_contact_candidates = ti.field(gs.ti_int, shape=())
-        self.max_contact_candidates = self.coupler.rigid_volume_elems.shape[0] * self.sim._B * 8
+        self.max_contact_candidates = self.coupler.n_rigid_volume_elems * self.sim._B * 8
         self.contact_candidates = self.contact_candidate_type.field(shape=(self.max_contact_candidates,))
 
         self.contact_pair_type = ti.types.struct(
@@ -3118,7 +3124,7 @@ class RigidFloorTetContactHandler(RigidContactHandler):
             contact_pos=gs.ti_vec3,  # contact position
             sap_info=self.sap_contact_info_type,  # contact info
         )
-        self.max_contact_pairs = self.coupler.rigid_volume_elems.shape[0] * self.sim._B
+        self.max_contact_pairs = self.coupler.n_rigid_volume_elems * self.sim._B
         self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
         self.Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.M_inv_Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
@@ -3132,15 +3138,15 @@ class RigidFloorTetContactHandler(RigidContactHandler):
         self.n_contact_candidates[None] = 0
         # TODO Check surface element only instead of all elements
         for i_b, i_e in ti.ndrange(self.sim._B, self.coupler.n_rigid_volume_elems):
-            i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
+            i_g = self.coupler._rigid_data.volume_elems_geom_idx[i_e]
             i_l = self.rigid_solver.geoms_info.link_idx[i_g]
             if self.rigid_solver.links_info.is_fixed[i_l]:
                 continue
             intersection_code = ti.int32(0)
             distance = ti.Vector.zero(gs.ti_float, 4)
             for i in ti.static(range(4)):
-                i_v = self.coupler.rigid_volume_elems[i_e][i]
-                pos_v = self.coupler.rigid_volume_verts[i_b, i_v]
+                i_v = self.coupler._rigid_data.volume_elems[i_e][i]
+                pos_v = self.coupler._rigid_data.volume_verts[i_b, i_v]
                 distance[i] = pos_v.z - self.floor_height
                 if distance[i] > 0.0:
                     intersection_code |= 1 << i
@@ -3172,9 +3178,9 @@ class RigidFloorTetContactHandler(RigidContactHandler):
             tet_pressures = ti.Vector.zero(gs.ti_float, 4)  # pressures at the vertices
 
             for i in ti.static(range(4)):
-                i_v = self.coupler.rigid_volume_elems[i_e][i]
-                tet_vertices[:, i] = self.coupler.rigid_volume_verts[i_b, i_v]
-                tet_pressures[i] = self.coupler.rigid_pressure_field[i_v]
+                i_v = self.coupler._rigid_data.volume_elems[i_e][i]
+                tet_vertices[:, i] = self.coupler._rigid_data.volume_verts[i_b, i_v]
+                tet_pressures[i] = self.coupler._rigid_data.pressure_field[i_v]
 
             polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 3 or 4 vertices
             total_area = gs.EPS  # avoid division by zero
@@ -3210,14 +3216,14 @@ class RigidFloorTetContactHandler(RigidContactHandler):
                 + barycentric[3] * tet_pressures[3]
             )
 
-            rigid_g = self.coupler.rigid_pressure_gradient[i_b, i_e].z
+            rigid_g = self.coupler._rigid_data.pressure_gradient[i_b, i_e].z
             g = rigid_g  # harmonic average
             rigid_k = total_area * g
             rigid_phi0 = -pressure / g
             if rigid_k < self.eps or rigid_phi0 > self.eps:
                 continue
             i_p = ti.atomic_add(self.n_contact_pairs[None], 1)
-            i_g = self.coupler.rigid_volume_elems_geom_idx[i_e]
+            i_g = self.coupler._rigid_data.volume_elems_geom_idx[i_e]
             i_l = self.rigid_solver.geoms_info.link_idx[i_g]
             if i_p < self.max_contact_pairs:
                 pairs[i_p].batch_idx = i_b
@@ -3571,7 +3577,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
             distance0=gs.ti_vec4,  # distance vector for element0
         )
         self.n_contact_candidates = ti.field(gs.ti_int, shape=())
-        self.max_contact_candidates = self.coupler.rigid_volume_elems.shape[0] * self.sim._B * 8
+        self.max_contact_candidates = self.coupler.n_rigid_volume_elems * self.sim._B * 8
         self.contact_candidates = self.contact_candidate_type.field(shape=(self.max_contact_candidates,))
 
         self.contact_pair_type = ti.types.struct(
@@ -3584,7 +3590,7 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
             contact_pos=gs.ti_vec3,  # contact position
             sap_info=self.sap_contact_info_type,  # contact info
         )
-        self.max_contact_pairs = self.coupler.rigid_volume_elems.shape[0] * self.sim._B
+        self.max_contact_pairs = self.coupler.n_rigid_volume_elems * self.sim._B
         self.contact_pairs = self.contact_pair_type.field(shape=(self.max_contact_pairs,))
         self.Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
         self.M_inv_Jt = ti.field(gs.ti_vec3, shape=(self.max_contact_pairs, self.rigid_solver.n_dofs))
@@ -3601,14 +3607,14 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
         )
         for i_r in range(result_count):
             i_b, i_a, i_q = self.coupler.rigid_tet_bvh.query_result[i_r]
-            i_v0 = self.coupler.rigid_volume_elems[i_a][0]
-            i_v1 = self.coupler.rigid_volume_elems[i_q][1]
-            x0 = self.coupler.rigid_volume_verts[i_b, i_v0]
-            x1 = self.coupler.rigid_volume_verts[i_b, i_v1]
-            p0 = self.coupler.rigid_pressure_field[i_v0]
-            p1 = self.coupler.rigid_pressure_field[i_v1]
-            g0 = self.coupler.rigid_pressure_gradient[i_b, i_a]
-            g1 = self.coupler.rigid_pressure_gradient[i_b, i_q]
+            i_v0 = self.coupler._rigid_data.volume_elems[i_a][0]
+            i_v1 = self.coupler._rigid_data.volume_elems[i_q][1]
+            x0 = self.coupler._rigid_data.volume_verts[i_b, i_v0]
+            x1 = self.coupler._rigid_data.volume_verts[i_b, i_v1]
+            p0 = self.coupler._rigid_data.pressure_field[i_v0]
+            p1 = self.coupler._rigid_data.pressure_field[i_v1]
+            g0 = self.coupler._rigid_data.pressure_gradient[i_b, i_a]
+            g1 = self.coupler._rigid_data.pressure_gradient[i_b, i_q]
             g0_norm = g0.norm()
             g1_norm = g1.norm()
             if g0_norm < gs.EPS or g1_norm < gs.EPS:
@@ -3631,14 +3637,14 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
             intersection_code1 = ti.int32(0)
             distance1 = ti.Vector([0.0, 0.0, 0.0, 0.0])
             for i in ti.static(range(4)):
-                i_v = self.coupler.rigid_volume_elems[i_a][i]
-                pos_v = self.coupler.rigid_volume_verts[i_b, i_v]
+                i_v = self.coupler._rigid_data.volume_elems[i_a][i]
+                pos_v = self.coupler._rigid_data.volume_verts[i_b, i_v]
                 distance0[i] = (pos_v - x).dot(normal)  # signed distance
                 if distance0[i] > 0:
                     intersection_code0 |= 1 << i
             for i in ti.static(range(4)):
-                i_v = self.coupler.rigid_volume_elems[i_q][i]
-                pos_v = self.coupler.rigid_volume_verts[i_b, i_v]
+                i_v = self.coupler._rigid_data.volume_elems[i_q][i]
+                pos_v = self.coupler._rigid_data.volume_verts[i_b, i_v]
                 distance1[i] = (pos_v - x).dot(normal)
                 if distance1[i] > 0:
                     intersection_code1 |= 1 << i
@@ -3684,13 +3690,13 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
             tet_vertices1 = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 1
 
             for i in ti.static(range(4)):
-                i_v = self.coupler.rigid_volume_elems[i_e0][i]
-                tet_vertices0[:, i] = self.coupler.rigid_volume_verts[i_b, i_v]
-                tet_pressures0[i] = self.coupler.rigid_pressure_field[i_v]
+                i_v = self.coupler._rigid_data.volume_elems[i_e0][i]
+                tet_vertices0[:, i] = self.coupler._rigid_data.volume_verts[i_b, i_v]
+                tet_pressures0[i] = self.coupler._rigid_data.pressure_field[i_v]
 
             for i in ti.static(range(4)):
-                i_v = self.coupler.rigid_volume_elems[i_e1][i]
-                tet_vertices1[:, i] = self.coupler.rigid_volume_verts[i_b, i_v]
+                i_v = self.coupler._rigid_data.volume_elems[i_e1][i]
+                tet_vertices1[:, i] = self.coupler._rigid_data.volume_verts[i_b, i_v]
 
             polygon_vertices = ti.Matrix.zero(gs.ti_float, 3, 8)  # maximum 8 vertices
             polygon_n_vertices = gs.ti_int(0)
@@ -3767,8 +3773,8 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
             tangent0 = polygon_vertices[:, 0] - centroid
             tangent0 /= tangent0.norm()
             tangent1 = candidates[i_c].normal.cross(tangent0)
-            g0 = self.coupler.rigid_pressure_gradient[i_b, i_e0].dot(candidates[i_c].normal)
-            g1 = -self.coupler.rigid_pressure_gradient[i_b, i_e1].dot(candidates[i_c].normal)
+            g0 = self.coupler._rigid_data.pressure_gradient[i_b, i_e0].dot(candidates[i_c].normal)
+            g1 = -self.coupler._rigid_data.pressure_gradient[i_b, i_e1].dot(candidates[i_c].normal)
             g = 1.0 / (1.0 / g0 + 1.0 / g1)  # harmonic average, can handle infinity
             rigid_k = total_area * g
             barycentric0 = tet_barycentric(centroid, tet_vertices0)
@@ -3788,8 +3794,8 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
                 pairs[i_p].tangent0 = tangent0
                 pairs[i_p].tangent1 = tangent1
                 pairs[i_p].contact_pos = centroid
-                i_g0 = self.coupler.rigid_volume_elems_geom_idx[i_e0]
-                i_g1 = self.coupler.rigid_volume_elems_geom_idx[i_e1]
+                i_g0 = self.coupler._rigid_data.volume_elems_geom_idx[i_e0]
+                i_g1 = self.coupler._rigid_data.volume_elems_geom_idx[i_e1]
                 i_l0 = self.rigid_solver.geoms_info.link_idx[i_g0]
                 i_l1 = self.rigid_solver.geoms_info.link_idx[i_g1]
                 pairs[i_p].link_idx0 = i_l0
