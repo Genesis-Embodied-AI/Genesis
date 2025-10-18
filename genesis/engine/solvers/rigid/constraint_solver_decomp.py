@@ -8,6 +8,7 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.engine.solvers.rigid.backward_constraint_solver as backward_constraint_solver
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
@@ -449,6 +450,25 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
             self._solver._static_rigid_sim_cache_key,
+        )
+
+    def backward(self, dL_dqacc):
+        # Copy upstream gradients
+        self.constraint_state.dL_dqacc.from_numpy(dL_dqacc)
+
+        # 1. We first need to find a solution to A^T * u = g system.
+        backward_constraint_solver.kernel_solve_adjoint_u(
+            entities_info=self._solver.entities_info,
+            rigid_global_info=self._solver._rigid_global_info,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
+        )
+
+        # 2. Using the solution u, we can compute the gradients of the input variables.
+        backward_constraint_solver.kernel_compute_gradients(
+            entities_info=self._solver.entities_info,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
 
@@ -2051,7 +2071,7 @@ def func_init_solver(
 ):
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
-    # check if warm start
+
     initialize_Jaref(
         qacc=constraint_state.qacc_ws,
         constraint_state=constraint_state,
@@ -2113,7 +2133,6 @@ def func_init_solver(
         constraint_state=constraint_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
-    # end warm start
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
