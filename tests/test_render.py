@@ -1126,7 +1126,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 
 
 @pytest.mark.required
-@pytest.mark.field_only
+# @pytest.mark.field_only
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):

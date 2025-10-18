@@ -7,9 +7,9 @@ import genesis as gs
 from .utils import assert_allclose, get_hf_dataset
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
+# pytestmark = [
+#     pytest.mark.field_only,
+# ]
 
 
 @pytest.mark.required

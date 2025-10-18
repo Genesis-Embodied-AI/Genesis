@@ -9,7 +9,7 @@ from .utils import assert_allclose
 
 
 @pytest.mark.required
-@pytest.mark.field_only
+# @pytest.mark.field_only
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
 def test_muscle(n_envs, muscle_material, show_viewer):
@@ -102,7 +102,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.field_only
+# @pytest.mark.field_only
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
     scene = gs.Scene(
