@@ -114,10 +114,15 @@ class RigidSolver(Solver):
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
 
-        if not options.use_gjk_collision and self._substep_dt < 0.002:
+        if (
+            not self._disable_constraint
+            and self._enable_collision
+            and not options.use_gjk_collision
+            and self._substep_dt < 0.002
+        ):
             gs.logger.warning(
-                "Using a simulation timestep smaller than 2ms is not recommended for 'use_gjk_collision=False' as it "
-                "could lead to numerically unstable collision detection."
+                "Using a simulation timestep smaller than 2ms is not recommended for 'use_gjk_collision=False' as "
+                "it could lead to numerically unstable collision detection."
             )
 
         self._options = options
@@ -265,7 +270,10 @@ class RigidSolver(Solver):
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_external_force = func_apply_external_force
 
-        if self.is_active:
+        # For rigid solver, we initialize them even if the solver is not active because the coupler needs arguments like
+        # rigid_solver.links_state, etc. regardless of the solver is active or not.
+        # FIXME: AvatarSolver should not inherite from RigidSolver.
+        if type(self) is RigidSolver or self.is_active:
             self.data_manager = array_class.DataManager(self)
 
             self._rigid_global_info = self.data_manager.rigid_global_info
@@ -599,39 +607,40 @@ class RigidSolver(Solver):
         self.links_info = self.data_manager.links_info
         self.links_state = self.data_manager.links_state
 
-        links = self.links
-        kernel_init_link_fields(
-            links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),
-            links_root_idx=np.array([link.root_idx for link in links], dtype=gs.np_int),
-            links_q_start=np.array([link.q_start for link in links], dtype=gs.np_int),
-            links_dof_start=np.array([link.dof_start for link in links], dtype=gs.np_int),
-            links_joint_start=np.array([link.joint_start for link in links], dtype=gs.np_int),
-            links_q_end=np.array([link.q_end for link in links], dtype=gs.np_int),
-            links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
-            links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
-            links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
-            links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
-            links_pos=np.array([link.pos for link in links], dtype=gs.np_float),
-            links_quat=np.array([link.quat for link in links], dtype=gs.np_float),
-            links_inertial_pos=np.array([link.inertial_pos for link in links], dtype=gs.np_float),
-            links_inertial_quat=np.array([link.inertial_quat for link in links], dtype=gs.np_float),
-            links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
-            links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
-            links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
-            # taichi variables
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
-        )
+        if self.links:
+            links = self.links
+            kernel_init_link_fields(
+                links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),
+                links_root_idx=np.array([link.root_idx for link in links], dtype=gs.np_int),
+                links_q_start=np.array([link.q_start for link in links], dtype=gs.np_int),
+                links_dof_start=np.array([link.dof_start for link in links], dtype=gs.np_int),
+                links_joint_start=np.array([link.joint_start for link in links], dtype=gs.np_int),
+                links_q_end=np.array([link.q_end for link in links], dtype=gs.np_int),
+                links_dof_end=np.array([link.dof_end for link in links], dtype=gs.np_int),
+                links_joint_end=np.array([link.joint_end for link in links], dtype=gs.np_int),
+                links_invweight=np.array([link.invweight for link in links], dtype=gs.np_float),
+                links_is_fixed=np.array([link.is_fixed for link in links], dtype=gs.np_bool),
+                links_pos=np.array([link.pos for link in links], dtype=gs.np_float),
+                links_quat=np.array([link.quat for link in links], dtype=gs.np_float),
+                links_inertial_pos=np.array([link.inertial_pos for link in links], dtype=gs.np_float),
+                links_inertial_quat=np.array([link.inertial_quat for link in links], dtype=gs.np_float),
+                links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
+                links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
+                links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
+                # taichi variables
+                links_info=self.links_info,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+            )
 
         self.joints_info = self.data_manager.joints_info
         self.joints_state = self.data_manager.joints_state
 
-        joints = self.joints
-        if joints:
+        if self.joints:
             # Make sure that the constraints parameters are valid
+            joints = self.joints
             joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
             _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
@@ -834,28 +843,29 @@ class RigidSolver(Solver):
         self.entities_info = self.data_manager.entities_info
         self.entities_state = self.data_manager.entities_state
 
-        entities = self._entities
-        kernel_init_entity_fields(
-            entities_dof_start=np.array([entity.dof_start for entity in entities], dtype=gs.np_int),
-            entities_dof_end=np.array([entity.dof_end for entity in entities], dtype=gs.np_int),
-            entities_link_start=np.array([entity.link_start for entity in entities], dtype=gs.np_int),
-            entities_link_end=np.array([entity.link_end for entity in entities], dtype=gs.np_int),
-            entities_geom_start=np.array([entity.geom_start for entity in entities], dtype=gs.np_int),
-            entities_geom_end=np.array([entity.geom_end for entity in entities], dtype=gs.np_int),
-            entities_gravity_compensation=np.array(
-                [entity.gravity_compensation for entity in entities], dtype=gs.np_float
-            ),
-            entities_is_local_collision_mask=np.array(
-                [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
-            ),
-            # taichi variables
-            entities_info=self.entities_info,
-            entities_state=self.entities_state,
-            dofs_info=self.dofs_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
-        )
+        if self._entities:
+            entities = self._entities
+            kernel_init_entity_fields(
+                entities_dof_start=np.array([entity.dof_start for entity in entities], dtype=gs.np_int),
+                entities_dof_end=np.array([entity.dof_end for entity in entities], dtype=gs.np_int),
+                entities_link_start=np.array([entity.link_start for entity in entities], dtype=gs.np_int),
+                entities_link_end=np.array([entity.link_end for entity in entities], dtype=gs.np_int),
+                entities_geom_start=np.array([entity.geom_start for entity in entities], dtype=gs.np_int),
+                entities_geom_end=np.array([entity.geom_end for entity in entities], dtype=gs.np_int),
+                entities_gravity_compensation=np.array(
+                    [entity.gravity_compensation for entity in entities], dtype=gs.np_float
+                ),
+                entities_is_local_collision_mask=np.array(
+                    [entity.is_local_collision_mask for entity in entities], dtype=gs.np_bool
+                ),
+                # taichi variables
+                entities_info=self.entities_info,
+                entities_state=self.entities_state,
+                dofs_info=self.dofs_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+            )
 
     def _init_equality_fields(self):
         self.equalities_info = self.data_manager.equalities_info
@@ -863,11 +873,7 @@ class RigidSolver(Solver):
             equalities = self.equalities
 
             equalities_sol_params = np.array([equality.sol_params for equality in equalities], dtype=gs.np_float)
-            _sanitize_sol_params(
-                equalities_sol_params,
-                self._sol_min_timeconst,
-                self._sol_default_timeconst,
-            )
+            _sanitize_sol_params(equalities_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
             kernel_init_equality_fields(
                 equalities_type=np.array([equality.type for equality in equalities], dtype=gs.np_int),
@@ -920,10 +926,11 @@ class RigidSolver(Solver):
             self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def _init_constraint_solver(self):
-        if self._use_contact_island:
-            self.constraint_solver = ConstraintSolverIsland(self)
-        else:
-            self.constraint_solver = ConstraintSolver(self)
+        if self.links:
+            if self._use_contact_island:
+                self.constraint_solver = ConstraintSolverIsland(self)
+            else:
+                self.constraint_solver = ConstraintSolver(self)
 
     def substep(self):
         # from genesis.utils.tools import create_timer
@@ -2576,9 +2583,9 @@ class RigidSolver(Solver):
 
     @property
     def init_qpos(self):
-        if len(self._entities) == 0:
-            return np.array([])
-        return np.concatenate([entity.init_qpos for entity in self._entities], dtype=gs.np_float)
+        if self._entities:
+            return np.concatenate([entity.init_qpos for entity in self._entities], dtype=gs.np_float)
+        return np.array([], dtype=gs.np_float)
 
     @property
     def max_collision_pairs(self):
