@@ -155,12 +155,12 @@ class LegacyCoupler(RBC):
                     mass,
                     i_g,
                     i_b,
-                    geoms_state,
-                    geoms_info,
-                    links_state,
-                    rigid_global_info,
-                    sdf_info,
-                    collider_static_config,
+                    geoms_state=geoms_state,
+                    geoms_info=geoms_info,
+                    links_state=links_state,
+                    rigid_global_info=rigid_global_info,
+                    sdf_info=sdf_info,
+                    collider_static_config=collider_static_config,
                 )
         return vel
 
@@ -409,12 +409,12 @@ class LegacyCoupler(RBC):
                     vel_mpm,
                     mass_mpm,
                     i_b,
-                    geoms_state,
-                    geoms_info,
-                    links_state,
-                    rigid_global_info,
-                    sdf_info,
-                    collider_static_config,
+                    geoms_state=geoms_state,
+                    geoms_info=geoms_info,
+                    links_state=links_state,
+                    rigid_global_info=rigid_global_info,
+                    sdf_info=sdf_info,
+                    collider_static_config=collider_static_config,
                 )
                 self.vel_mpm_buffer[I, i_b] = vel_mpm
 
@@ -985,12 +985,12 @@ class LegacyCoupler(RBC):
                 self.mpm_grid_op_rigid(
                     f,
                     self.sim.cur_t,
-                    self.rigid_solver.geoms_state,
-                    self.rigid_solver.geoms_info,
-                    self.rigid_solver.links_state,
-                    self.rigid_solver._rigid_global_info,
-                    self.rigid_solver.collider._collider_static_config,
-                    self.rigid_solver.sdf._sdf_info,
+                    geoms_state=self.rigid_solver.geoms_state,
+                    geoms_info=self.rigid_solver.geoms_info,
+                    links_state=self.rigid_solver.links_state,
+                    rigid_global_info=self.rigid_solver._rigid_global_info,
+                    sdf_info=self.rigid_solver.sdf._sdf_info,
+                    collider_static_config=self.rigid_solver.collider._collider_static_config,
                 )
 
             self.mpm_grid_op_deformable(f, self.sim.cur_t)
