@@ -10,7 +10,7 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(precision="32", logging_level="info", performance_mode=True)
+    gs.init(precision="32", logging_level="info")
 
     ########################## create a scene ##########################
 

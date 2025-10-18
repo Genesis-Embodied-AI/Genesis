@@ -229,7 +229,8 @@ class Viewer(RBC):
         entity_pos = tensor_to_array(self._followed_entity.get_pos())
         if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
-        camera_transform = np.asarray(self._pyrender_viewer._trackball.pose, copy=True)
+        # numpy < 2.0 doesn't support the copy keyword argument in np.asarray()
+        camera_transform = np.array(self._pyrender_viewer._trackball.pose, copy=True)
         camera_pos = np.array(self._pyrender_viewer._trackball.pose[:3, 3])
 
         if self._follow_smoothing is not None:

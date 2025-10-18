@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info", performance_mode=True)
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

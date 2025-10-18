@@ -3,6 +3,7 @@ import gstaichi as ti
 import trimesh
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.ext.urdfpy.urdf import URDF
 
@@ -365,12 +366,19 @@ class HybridEntity(Entity):
             The current simulation frame index.
         """
         if isinstance(self._part_soft, MPMEntity):
-            self._kernel_update_soft_part_mpm(f=f)
+            self._kernel_update_soft_part_mpm(
+                f=f, geoms_info=self._solver_rigid.geoms_info, links_state=self._solver_rigid.links_state
+            )
         else:
             raise NotImplementedError
 
     @ti.kernel
-    def _kernel_update_soft_part_mpm(self, f: ti.i32):
+    def _kernel_update_soft_part_mpm(
+        self,
+        f: ti.i32,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+    ):
         for i_p_, i_b in ti.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
             if self._solver_soft.particles_ng[f, i_p_, i_b].active:
                 i_global = i_p_ + self._part_soft.particle_start
@@ -386,8 +394,8 @@ class HybridEntity(Entity):
                 trans_local_to_global = self._part_soft_info.trans_local_to_global[group_idx]
                 quat_local_to_global = self._part_soft_info.quat_local_to_global[group_idx]
 
-                g_pos_0 = self._solver_rigid.geoms_info.pos[geom_idx]
-                g_quat_0 = self._solver_rigid.geoms_info.quat[geom_idx]
+                g_pos_0 = geoms_info.pos[geom_idx]
+                g_quat_0 = geoms_info.quat[geom_idx]
 
                 # compute new pos in minimal coordinate using rigid-bodied dynamics
                 x_init_pos = self._part_soft_init_positions[i_p_]
@@ -401,8 +409,8 @@ class HybridEntity(Entity):
                 tx_pos, tx_quat = gu.ti_transform_pos_quat_by_trans_quat(
                     scaled_pos,
                     g_quat_0,
-                    self._solver_rigid.links_state.pos[link_idx, i_b],
-                    self._solver_rigid.links_state.quat[link_idx, i_b],
+                    links_state.pos[link_idx, i_b],
+                    links_state.quat[link_idx, i_b],
                 )
                 new_x_pos = gu.ti_transform_by_trans_quat(
                     x_init_local,
@@ -429,9 +437,9 @@ class HybridEntity(Entity):
                 mass_real = self._solver_soft.particles_info[i_global].mass / self._solver_soft._particle_volume_scale
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
-                frc_ang = (x_pos - self._solver_rigid.links_state.root_COM[link_idx, i_b]).cross(frc_vel)
-                self._solver_rigid.links_state.cfrc_applied_vel[link_idx, i_b] += frc_vel
-                self._solver_rigid.links_state.cfrc_applied_ang[link_idx, i_b] += frc_ang
+                frc_ang = (x_pos - links_state.root_COM[link_idx, i_b]).cross(frc_vel)
+                links_state.cfrc_applied_vel[link_idx, i_b] += frc_vel
+                links_state.cfrc_applied_ang[link_idx, i_b] += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
                 self._solver_soft.particles.vel[f_, i_global, i_b] += vel_d * self.material.soft_dv_coef

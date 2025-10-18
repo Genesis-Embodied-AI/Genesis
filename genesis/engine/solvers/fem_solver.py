@@ -6,6 +6,7 @@ import gstaichi as ti
 import torch
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
@@ -1466,15 +1467,14 @@ class FEMSolver(Solver):
     @ti.kernel
     def _kernel_update_linked_vertex_constraints(
         self,
-        links_pos: ti.template(),  # matrix field
-        links_quat: ti.template(),  # matrix field
+        links_state: array_class.LinksState,
     ):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             vc = self.vertex_constraints[i_v, i_b]
             if vc.is_constrained and vc.link_idx >= 0:
                 i_l = vc.link_idx
-                pos = links_pos[i_l, i_b]
-                quat = links_quat[i_l, i_b]
+                pos = links_state.pos[i_l, i_b]
+                quat = links_state.quat[i_l, i_b]
 
                 offset_pos = vc.link_offset_pos
                 offset_quat = ti_transform_quat_by_quat(vc.link_init_quat, quat)

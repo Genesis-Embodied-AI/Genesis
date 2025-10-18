@@ -7,11 +7,6 @@ import genesis as gs
 from .utils import assert_allclose, get_hf_dataset
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
-
-
 @pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     BALL_POS_INIT = (0.8, 0.6, 0.12)
@@ -149,6 +144,7 @@ def test_fluid_emitter(material_type, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
     BOX_POS = (0.0, 0.0, 0.1)
@@ -219,6 +215,7 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_fem_vs_robot(show_viewer):
     SPHERE_RADIUS = 0.2
