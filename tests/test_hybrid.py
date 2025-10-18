@@ -149,6 +149,7 @@ def test_fluid_emitter(material_type, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
     BOX_POS = (0.0, 0.0, 0.1)
@@ -219,6 +220,7 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.field_only
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_fem_vs_robot(show_viewer):
     SPHERE_RADIUS = 0.2

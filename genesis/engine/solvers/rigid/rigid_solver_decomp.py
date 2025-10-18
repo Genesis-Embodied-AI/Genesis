@@ -265,36 +265,36 @@ class RigidSolver(Solver):
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_external_force = func_apply_external_force
 
-        if self.is_active:
-            self.data_manager = array_class.DataManager(self)
+        # if self.is_active:
+        self.data_manager = array_class.DataManager(self)
 
-            self._rigid_global_info = self.data_manager.rigid_global_info
-            if self._use_hibernation:
-                self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
-                self.awake_dofs = self._rigid_global_info.awake_dofs
-                self.n_awake_links = self._rigid_global_info.n_awake_links
-                self.awake_links = self._rigid_global_info.awake_links
-                self.n_awake_entities = self._rigid_global_info.n_awake_entities
-                self.awake_entities = self._rigid_global_info.awake_entities
+        self._rigid_global_info = self.data_manager.rigid_global_info
+        if self._use_hibernation:
+            self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
+            self.awake_dofs = self._rigid_global_info.awake_dofs
+            self.n_awake_links = self._rigid_global_info.n_awake_links
+            self.awake_links = self._rigid_global_info.awake_links
+            self.n_awake_entities = self._rigid_global_info.n_awake_entities
+            self.awake_entities = self._rigid_global_info.awake_entities
 
-            self._init_mass_mat()
-            self._init_dof_fields()
+        self._init_mass_mat()
+        self._init_dof_fields()
 
-            self._init_vert_fields()
-            self._init_vvert_fields()
-            self._init_geom_fields()
-            self._init_vgeom_fields()
-            self._init_link_fields()
-            self._init_entity_fields()
-            self._init_equality_fields()
+        self._init_vert_fields()
+        self._init_vvert_fields()
+        self._init_geom_fields()
+        self._init_vgeom_fields()
+        self._init_link_fields()
+        self._init_entity_fields()
+        self._init_equality_fields()
 
-            self._init_envs_offset()
-            self._init_sdf()
-            self._init_collider()
-            self._init_constraint_solver()
+        self._init_envs_offset()
+        self._init_sdf()
+        self._init_collider()
+        self._init_constraint_solver()
 
-            self._init_invweight_and_meaninertia(force_update=False)
-            self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
+        self._init_invweight_and_meaninertia(force_update=False)
+        self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
 
     def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True, unsafe=False):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.

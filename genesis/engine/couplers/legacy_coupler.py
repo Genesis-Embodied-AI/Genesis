@@ -567,7 +567,7 @@ class LegacyCoupler(RBC):
             self.fem_solver._kernel_update_linked_vertex_constraints(self.rigid_solver.links_state)
 
     @ti.kernel
-    def fem_surface_force(
+    def fem_surface_force_rigid(
         self,
         f: ti.i32,
         geoms_state: array_class.GeomsState,
@@ -611,6 +611,23 @@ class LegacyCoupler(RBC):
                             collider_static_config,
                         )
                         self.fem_solver.elements_v[f + 1, iv, i_b].vel = vel_fem_sv
+
+    @ti.kernel
+    def fem_surface_force_deformable(self, f: ti.i32):
+        # TODO: all collisions are on vertices instead of surface and edge
+        for i_s, i_b in ti.ndrange(self.fem_solver.n_surfaces, self.fem_solver._B):
+            if self.fem_solver.surface[i_s].active:
+                dt = self.fem_solver.substep_dt
+                iel = self.fem_solver.surface[i_s].tri2el
+                mass = self.fem_solver.elements_i[iel].mass_scaled / self.fem_solver.vol_scale
+
+                p1 = self.fem_solver.elements_v[f, self.fem_solver.surface[i_s].tri2v[0], i_b].pos
+                p2 = self.fem_solver.elements_v[f, self.fem_solver.surface[i_s].tri2v[1], i_b].pos
+                p3 = self.fem_solver.elements_v[f, self.fem_solver.surface[i_s].tri2v[2], i_b].pos
+                u = p2 - p1
+                v = p3 - p1
+                surface_normal = ti.math.cross(u, v)
+                surface_normal = surface_normal / surface_normal.norm(gs.EPS)
 
                 # FEM <-> MPM (interact with MPM grid instead of particles)
                 # NOTE: not doing this in mpm_grid_op otherwise we need to search for fem surface for each particles
@@ -1023,32 +1040,48 @@ class LegacyCoupler(RBC):
             self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.links_state)
 
         if self.fem_solver.is_active:
-            self.fem_surface_force(
-                f,
-                self.rigid_solver.geoms_state,
-                self.rigid_solver.geoms_info,
-                self.rigid_solver.links_state,
-                self.rigid_solver._rigid_global_info,
-                self.rigid_solver.sdf._sdf_info,
-                self.rigid_solver.collider._collider_static_config,
-            )
+            if self._rigid_fem:
+                self.fem_surface_force_rigid(
+                    f,
+                    self.rigid_solver.geoms_state,
+                    self.rigid_solver.geoms_info,
+                    self.rigid_solver.links_state,
+                    self.rigid_solver._rigid_global_info,
+                    self.rigid_solver.sdf._sdf_info,
+                    self.rigid_solver.collider._collider_static_config,
+                )
+            self.fem_surface_force_deformable(f)
             self.fem_rigid_link_constraints()
 
     def couple_grad(self, f):
-        if self.mpm_solver.is_active:
-            self.mpm_grid_op.grad(
+        if self.fem_solver.is_active:
+            self.fem_surface_force_deformable.grad(
                 f,
-                self.sim.cur_t,
                 self.rigid_solver.geoms_state,
                 self.rigid_solver.geoms_info,
                 self.rigid_solver.links_state,
                 self.rigid_solver._rigid_global_info,
-                self.rigid_solver.collider._collider_static_config,
                 self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver.collider._collider_static_config,
             )
-
-        if self.fem_solver.is_active:
-            self.fem_surface_force.grad(f)
+            self.fem_surface_force_rigid.grad(f)
+        if self.mpm_solver.is_active:
+            self.mpm_grid_op_deformable.grad(f, self.sim.cur_t)
+            if self._rigid_mpm:
+                self.mpm_grid_op_rigid.grad(
+                    f,
+                    self.sim.cur_t,
+                    geoms_state=self.rigid_solver.geoms_state,
+                    geoms_info=self.rigid_solver.geoms_info,
+                    links_state=self.rigid_solver.links_state,
+                    rigid_global_info=self.rigid_solver._rigid_global_info,
+                    sdf_info=self.rigid_solver.sdf._sdf_info,
+                    collider_static_config=self.rigid_solver.collider._collider_static_config,
+                )
+            self.mpm_grid_op_gravity_field_tool.grad(
+                f,
+                self.sim.cur_t,
+            )
 
     @property
     def active_solvers(self):
