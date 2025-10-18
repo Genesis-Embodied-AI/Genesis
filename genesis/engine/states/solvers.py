@@ -48,8 +48,9 @@ class RigidSolverState:
     Dynamic state queried from a RigidSolver.
     """
 
-    def __init__(self, scene):
+    def __init__(self, scene, s_global):
         self.scene = scene
+        self._s_global = s_global
         args = {
             "dtype": gs.tc_float,
             "requires_grad": scene.requires_grad,
@@ -57,6 +58,7 @@ class RigidSolverState:
         }
         self.qpos = gs.zeros(scene.sim.rigid_solver._batch_shape(scene.sim.rigid_solver.n_qs, True), **args)
         self.dofs_vel = gs.zeros(scene.sim.rigid_solver._batch_shape(scene.sim.rigid_solver.n_dofs, True), **args)
+        self.dofs_acc = gs.zeros(scene.sim.rigid_solver._batch_shape(scene.sim.rigid_solver.n_dofs, True), **args)
         n_links = scene.sim.rigid_solver.n_links
         n_geoms = scene.sim.rigid_solver.n_geoms
         self.links_pos = gs.zeros(scene.sim.rigid_solver._batch_shape((n_links, 3), True), **args)
@@ -74,6 +76,10 @@ class RigidSolverState:
         self.i_pos_shift = self.i_pos_shift.detach()
         self.mass_shift = self.mass_shift.detach()
         self.friction_ratio = self.friction_ratio.detach()
+
+    @property
+    def s_global(self):
+        return self._s_global
 
 
 class AvatarSolverState:

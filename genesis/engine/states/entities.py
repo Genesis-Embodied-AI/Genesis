@@ -188,3 +188,49 @@ class FEMEntityState:
     @property
     def active(self):
         return self._active
+
+
+class RigidEntityState(RBC):
+    """
+    Dynamic state queried from a genesis RigidEntity.
+    """
+
+    def __init__(self, entity, s_global):
+        self._entity = entity
+        self._s_global = s_global
+
+        num_batch = self._entity._solver._B
+        self._pos = gs.zeros(
+            (num_batch, 3),
+            dtype=float,
+            requires_grad=self._entity.scene.requires_grad,
+            scene=self._entity.scene,
+        )
+        self._quat = gs.zeros(
+            (num_batch, 4),
+            dtype=float,
+            requires_grad=self._entity.scene.requires_grad,
+            scene=self._entity.scene,
+        )
+
+    def serializable(self):
+        self._entity = None
+
+        self._pos = self._pos.detach()
+        self._quat = self._quat.detach()
+
+    @property
+    def entity(self):
+        return self._entity
+
+    @property
+    def s_global(self):
+        return self._s_global
+
+    @property
+    def pos(self):
+        return self._pos
+
+    @property
+    def quat(self):
+        return self._quat
