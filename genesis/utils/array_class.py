@@ -24,6 +24,7 @@ V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 
 @dataclasses.dataclass
 class StructRigidGlobalInfo:
+    # *_bw: Cache for backward pass
     n_awake_dofs: V_ANNOTATION
     awake_dofs: V_ANNOTATION
     n_awake_entities: V_ANNOTATION
@@ -32,11 +33,13 @@ class StructRigidGlobalInfo:
     awake_links: V_ANNOTATION
     qpos0: V_ANNOTATION
     qpos: V_ANNOTATION
+    qpos_next: V_ANNOTATION
     links_T: V_ANNOTATION
     envs_offset: V_ANNOTATION
     geoms_init_AABB: V_ANNOTATION
     mass_mat: V_ANNOTATION
     mass_mat_L: V_ANNOTATION
+    mass_mat_L_bw: V_ANNOTATION
     mass_mat_D_inv: V_ANNOTATION
     _mass_mat_mask: V_ANNOTATION
     meaninertia: V_ANNOTATION
@@ -58,6 +61,7 @@ class StructRigidGlobalInfo:
 
 def get_rigid_global_info(solver):
     f_batch = solver._batch_shape
+    requires_grad = solver._requires_grad
 
     substep_dt = V(dtype=gs.ti_float, shape=f_batch())
     substep_dt.fill(solver._substep_dt)
@@ -92,13 +96,17 @@ def get_rigid_global_info(solver):
         "n_awake_links": V(dtype=gs.ti_int, shape=f_batch()),
         "awake_links": V(dtype=gs.ti_int, shape=f_batch(solver.n_links)),
         "qpos0": V(dtype=gs.ti_float, shape=f_batch(solver.n_qs_)),
-        "qpos": V(dtype=gs.ti_float, shape=f_batch(solver.n_qs_)),
+        "qpos": V(dtype=gs.ti_float, shape=f_batch(solver.n_qs_), needs_grad=requires_grad),
+        "qpos_next": V(dtype=gs.ti_float, shape=f_batch(solver.n_qs_), needs_grad=requires_grad),
         "links_T": V_MAT(n=4, m=4, dtype=gs.ti_float, shape=solver.n_links),
         "envs_offset": V_VEC(3, dtype=gs.ti_float, shape=f_batch()),
         "geoms_init_AABB": V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
-        "mass_mat": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_))),
-        "mass_mat_L": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_))),
-        "mass_mat_D_inv": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_,))),
+        "mass_mat": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_)), needs_grad=requires_grad),
+        "mass_mat_L": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_, solver.n_dofs_)), needs_grad=requires_grad),
+        "mass_mat_L_bw": V(
+            dtype=gs.ti_float, shape=f_batch((2, solver.n_dofs_, solver.n_dofs_)), needs_grad=requires_grad
+        ),
+        "mass_mat_D_inv": V(dtype=gs.ti_float, shape=f_batch((solver.n_dofs_,)), needs_grad=requires_grad),
         "_mass_mat_mask": V(dtype=gs.ti_int, shape=f_batch(solver.n_entities_)),
         "meaninertia": V(dtype=gs.ti_float, shape=f_batch()),
         "mass_parent_mask": V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
@@ -1348,6 +1356,7 @@ def get_dofs_info(solver):
 
 @dataclasses.dataclass
 class StructDofsState:
+    # *_bw: Cache to avoid overwriting for backward pass
     force: V_ANNOTATION
     qf_bias: V_ANNOTATION
     qf_passive: V_ANNOTATION
@@ -1357,8 +1366,11 @@ class StructDofsState:
     pos: V_ANNOTATION
     vel: V_ANNOTATION
     vel_prev: V_ANNOTATION
+    vel_next: V_ANNOTATION
     acc: V_ANNOTATION
+    acc_bw: V_ANNOTATION
     acc_smooth: V_ANNOTATION
+    acc_smooth_bw: V_ANNOTATION
     qf_smooth: V_ANNOTATION
     qf_constraint: V_ANNOTATION
     cdof_ang: V_ANNOTATION
@@ -1378,31 +1390,35 @@ class StructDofsState:
 
 def get_dofs_state(solver):
     shape = solver._batch_shape(solver.n_dofs_)
+    requires_grad = solver._requires_grad
     kwargs = {
-        "force": V(dtype=gs.ti_float, shape=shape),
-        "qf_bias": V(dtype=gs.ti_float, shape=shape),
-        "qf_passive": V(dtype=gs.ti_float, shape=shape),
-        "qf_actuator": V(dtype=gs.ti_float, shape=shape),
-        "qf_applied": V(dtype=gs.ti_float, shape=shape),
-        "act_length": V(dtype=gs.ti_float, shape=shape),
-        "pos": V(dtype=gs.ti_float, shape=shape),
-        "vel": V(dtype=gs.ti_float, shape=shape),
-        "vel_prev": V(dtype=gs.ti_float, shape=shape),
-        "acc": V(dtype=gs.ti_float, shape=shape),
-        "acc_smooth": V(dtype=gs.ti_float, shape=shape),
-        "qf_smooth": V(dtype=gs.ti_float, shape=shape),
-        "qf_constraint": V(dtype=gs.ti_float, shape=shape),
-        "cdof_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cdof_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "cdofvel_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cdofvel_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "cdofd_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cdofd_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "f_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "f_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "ctrl_force": V(dtype=gs.ti_float, shape=shape),
-        "ctrl_pos": V(dtype=gs.ti_float, shape=shape),
-        "ctrl_vel": V(dtype=gs.ti_float, shape=shape),
+        "force": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "qf_bias": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "qf_passive": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "qf_actuator": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "qf_applied": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "act_length": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "pos": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "vel": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "vel_prev": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "vel_next": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "acc": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "acc_bw": V(dtype=gs.ti_float, shape=solver._batch_shape((2, solver.n_dofs_)), needs_grad=requires_grad),
+        "acc_smooth": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "acc_smooth_bw": V(dtype=gs.ti_float, shape=solver._batch_shape((2, solver.n_dofs_)), needs_grad=requires_grad),
+        "qf_smooth": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "qf_constraint": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "cdof_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cdof_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cdofvel_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cdofvel_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cdofd_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cdofd_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "f_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "f_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "ctrl_force": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "ctrl_pos": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "ctrl_vel": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         "ctrl_mode": V(dtype=gs.ti_int, shape=shape),
         "hibernated": V(dtype=gs.ti_int, shape=shape),
     }
@@ -1425,6 +1441,7 @@ def get_dofs_state(solver):
 
 @dataclasses.dataclass
 class StructLinksState:
+    # *_bw: Cache to avoid overwriting for backward pass
     cinr_inertial: V_ANNOTATION
     cinr_pos: V_ANNOTATION
     cinr_quat: V_ANNOTATION
@@ -1437,16 +1454,24 @@ class StructLinksState:
     cdd_ang: V_ANNOTATION
     pos: V_ANNOTATION
     quat: V_ANNOTATION
+    pos_bw: V_ANNOTATION
+    quat_bw: V_ANNOTATION
     i_pos: V_ANNOTATION
+    i_pos_bw: V_ANNOTATION
     i_quat: V_ANNOTATION
     j_pos: V_ANNOTATION
     j_quat: V_ANNOTATION
+    j_pos_bw: V_ANNOTATION
+    j_quat_bw: V_ANNOTATION
     j_vel: V_ANNOTATION
     j_ang: V_ANNOTATION
     cd_ang: V_ANNOTATION
     cd_vel: V_ANNOTATION
+    cd_ang_bw: V_ANNOTATION
+    cd_vel_bw: V_ANNOTATION
     mass_sum: V_ANNOTATION
     root_COM: V_ANNOTATION  # COM of the kinematic tree
+    root_COM_bw: V_ANNOTATION
     mass_shift: V_ANNOTATION
     i_pos_shift: V_ANNOTATION
     cacc_ang: V_ANNOTATION
@@ -1460,39 +1485,51 @@ class StructLinksState:
 
 
 def get_links_state(solver):
+    max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = solver._batch_shape(solver.n_links_)
+    shape_bw = solver._batch_shape((solver.n_links_, max_n_joints_per_link + 1))
+
+    requires_grad = solver._requires_grad
     kwargs = {
-        "cinr_inertial": V(dtype=gs.ti_mat3, shape=shape),
-        "cinr_pos": V(dtype=gs.ti_vec3, shape=shape),
-        "cinr_quat": V(dtype=gs.ti_vec4, shape=shape),
-        "cinr_mass": V(dtype=gs.ti_float, shape=shape),
-        "crb_inertial": V(dtype=gs.ti_mat3, shape=shape),
-        "crb_pos": V(dtype=gs.ti_vec3, shape=shape),
-        "crb_quat": V(dtype=gs.ti_vec4, shape=shape),
-        "crb_mass": V(dtype=gs.ti_float, shape=shape),
-        "cdd_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "cdd_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "pos": V(dtype=gs.ti_vec3, shape=shape),
-        "quat": V(dtype=gs.ti_vec4, shape=shape),
-        "i_pos": V(dtype=gs.ti_vec3, shape=shape),
-        "i_quat": V(dtype=gs.ti_vec4, shape=shape),
-        "j_pos": V(dtype=gs.ti_vec3, shape=shape),
-        "j_quat": V(dtype=gs.ti_vec4, shape=shape),
-        "j_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "j_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cd_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cd_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "mass_sum": V(dtype=gs.ti_float, shape=shape),
-        "root_COM": V(dtype=gs.ti_vec3, shape=shape),
-        "mass_shift": V(dtype=gs.ti_float, shape=shape),
-        "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape),
-        "cacc_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cacc_lin": V(dtype=gs.ti_vec3, shape=shape),
-        "cfrc_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cfrc_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "cfrc_applied_ang": V(dtype=gs.ti_vec3, shape=shape),
-        "cfrc_applied_vel": V(dtype=gs.ti_vec3, shape=shape),
-        "contact_force": V(dtype=gs.ti_vec3, shape=shape),
+        "cinr_inertial": V(dtype=gs.ti_mat3, shape=shape, needs_grad=requires_grad),
+        "cinr_pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cinr_quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
+        "cinr_mass": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "crb_inertial": V(dtype=gs.ti_mat3, shape=shape, needs_grad=requires_grad),
+        "crb_pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "crb_quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
+        "crb_mass": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "cdd_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cdd_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
+        "pos_bw": V(dtype=gs.ti_vec3, shape=shape_bw, needs_grad=requires_grad),
+        "quat_bw": V(dtype=gs.ti_vec4, shape=shape_bw, needs_grad=requires_grad),
+        "i_pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "i_pos_bw": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "i_quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
+        "j_pos": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "j_quat": V(dtype=gs.ti_vec4, shape=shape, needs_grad=requires_grad),
+        "j_pos_bw": V(dtype=gs.ti_vec3, shape=shape_bw, needs_grad=requires_grad),
+        "j_quat_bw": V(dtype=gs.ti_vec4, shape=shape_bw, needs_grad=requires_grad),
+        "j_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "j_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cd_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cd_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cd_ang_bw": V(dtype=gs.ti_vec3, shape=shape_bw, needs_grad=requires_grad),
+        "cd_vel_bw": V(dtype=gs.ti_vec3, shape=shape_bw, needs_grad=requires_grad),
+        "mass_sum": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "root_COM": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "root_COM_bw": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "mass_shift": V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
+        "i_pos_shift": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cacc_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cacc_lin": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cfrc_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cfrc_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cfrc_applied_ang": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "cfrc_applied_vel": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "contact_force": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
         "hibernated": V(dtype=gs.ti_int, shape=shape),
     }
 
@@ -1616,9 +1653,10 @@ class StructJointsState:
 
 def get_joints_state(solver):
     shape = solver._batch_shape(solver.n_joints_)
+    requires_grad = solver._requires_grad
     kwargs = {
-        "xanchor": V(dtype=gs.ti_vec3, shape=shape),
-        "xaxis": V(dtype=gs.ti_vec3, shape=shape),
+        "xanchor": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        "xaxis": V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
     }
 
     if gs.use_ndarray:
@@ -2133,6 +2171,37 @@ def get_entities_state(solver):
         return ClassEntitiesState()
 
 
+# =========================================== RigidAdjointCache ===========================================
+@dataclasses.dataclass
+class StructRigidAdjointCache:
+    qpos: V_ANNOTATION
+    dofs_vel: V_ANNOTATION
+    dofs_acc: V_ANNOTATION
+
+
+def get_rigid_adjoint_cache(solver):
+    f_batch = solver._batch_shape
+    n_frames = solver._sim.substeps_local + 1
+
+    kwargs = {
+        "qpos": V(dtype=gs.ti_float, shape=f_batch((n_frames, solver.n_qs_))),
+        "dofs_vel": V(dtype=gs.ti_float, shape=f_batch((n_frames, solver.n_dofs_))),
+        "dofs_acc": V(dtype=gs.ti_float, shape=f_batch((n_frames, solver.n_dofs_))),
+    }
+
+    if gs.use_ndarray:
+        return StructRigidAdjointCache(**kwargs)
+    else:
+
+        @ti.data_oriented
+        class ClassRigidAdjointCache:
+            def __init__(self):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+
+        return ClassRigidAdjointCache()
+
+
 # =========================================== StaticRigidSimConfig ===========================================
 
 cache_value = partial(dataclasses.field, metadata={FIELD_METADATA_CACHE_VALUE: True})
@@ -2227,6 +2296,15 @@ class DataManager:
         self.entities_info = get_entities_info(solver)
         self.entities_state = get_entities_state(solver)
 
+        if solver._static_rigid_sim_config.requires_grad:
+            # Data structures required for backward pass
+            self.dofs_state_adjoint_cache = get_dofs_state(solver)
+            self.links_state_adjoint_cache = get_links_state(solver)
+            self.joints_state_adjoint_cache = get_joints_state(solver)
+            self.geoms_state_adjoint_cache = get_geoms_state(solver)
+
+        self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
+
 
 # we will use struct for DofsState and DofsInfo after Hugh adds array_struct feature to gstaichi
 DofsState = ti.template() if not gs.use_ndarray else StructDofsState
@@ -2258,5 +2336,6 @@ ConstraintState = ti.template() if not gs.use_ndarray else StructConstraintState
 GJKState = ti.template() if not gs.use_ndarray else StructGJKState
 SDFInfo = ti.template() if not gs.use_ndarray else StructSDFInfo
 ContactIslandState = ti.template() if not gs.use_ndarray else StructContactIslandState
+RigidAdjointCache = ti.template() if not gs.use_ndarray else StructRigidAdjointCache
 DiffContactInput = ti.template() if not gs.use_ndarray else StructDiffContactInput
 AABBState = ti.template()
