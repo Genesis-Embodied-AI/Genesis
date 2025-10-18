@@ -8,11 +8,6 @@ import genesis as gs
 from .utils import assert_allclose
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
@@ -201,7 +196,6 @@ def test_deformable_parallel(show_viewer):
     assert_allclose(water.get_particles_vel(), 0.0, atol=5e-2)
 
 
-@pytest.mark.required
 def test_sf_solver(show_viewer):
     import gstaichi as ti
 
@@ -304,6 +298,6 @@ def test_sf_solver(show_viewer):
         )
         for orbit_init_degree in np.linspace(0, 360, 3, endpoint=False)
     ]
-    scene.sim.solvers[-1].set_jets(jet)
+    scene.sim.sf_solver.set_jets(jet)
     scene.build()
     scene.step()

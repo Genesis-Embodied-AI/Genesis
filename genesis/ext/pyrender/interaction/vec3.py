@@ -2,24 +2,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Union
 
 import numpy as np
+import torch
 from numpy.typing import NDArray, ArrayLike
 
 from genesis.utils.misc import tensor_to_array
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
-    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
-
-# If not needing runtime checks, we can just use annotated types:
-# Vec3 = Annotated[npt.NDArray[np.float32], (3,)]
-# Aabb = Annotated[npt.NDArray[np.float32], (2, 3)]
-
-
-def _ensure_torch_imported() -> None:
-    global gs
-    import genesis as gs
-    global torch
-    import torch
+    from genesis.engine.entities.rigid_entity import RigidGeom, RigidLink
 
 
 class Vec3:
@@ -72,9 +61,8 @@ class Vec3:
     def __repr__(self) -> str:
         return f"Vec3({self.v[0]}, {self.v[1]}, {self.v[2]})"
 
-    def as_tensor(self) -> 'torch.Tensor':
-        _ensure_torch_imported()
-        return torch.tensor(self.v, dtype=gs.tc_float) 
+    def as_tensor(self) -> torch.Tensor:
+        return torch.tensor(self.v, dtype=gs.tc_float)
 
     @property
     def x(self) -> float:
@@ -100,8 +88,7 @@ class Vec3:
         return cls.from_xyz(*v)
 
     @classmethod
-    def from_tensor(cls, v: 'torch.Tensor') -> 'Vec3':
-        _ensure_torch_imported()
+    def from_tensor(cls, v: torch.Tensor) -> 'Vec3':
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
 
@@ -167,9 +154,8 @@ class Quat:
     def __repr__(self) -> str:
         return f"Quat({self.v[0]}, {self.v[1]}, {self.v[2]}, {self.v[3]})"
 
-    def as_tensor(self) -> 'torch.Tensor':
-        _ensure_torch_imported()
-        return torch.tensor(self.v, dtype=gs.tc_float) 
+    def as_tensor(self) -> torch.Tensor:
+        return torch.tensor(self.v, dtype=gs.tc_float)
 
     @property
     def w(self) -> float:
@@ -197,8 +183,7 @@ class Quat:
         return cls.from_wxyz(*v)
 
     @classmethod
-    def from_tensor(cls, v: 'torch.Tensor') -> 'Quat':
-        _ensure_torch_imported()
+    def from_tensor(cls, v: torch.Tensor) -> 'Quat':
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
 
@@ -248,7 +233,7 @@ class Pose:
         elif isinstance(other, Vec3):
             return self.pos + self.rot * other
         else:
-            return NotImplemented        
+            return NotImplemented
 
     def __repr__(self) -> str:
         return f"Pose(pos={self.pos}, rot={self.rot})"

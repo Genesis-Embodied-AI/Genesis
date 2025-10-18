@@ -231,6 +231,7 @@ class Viewer(pyglet.window.Window):
         self._offscreen_result = None
 
         self._video_saver = None
+        self._video_recorder = None
 
         self._default_render_flags = {
             "flip_wireframe": False,
@@ -568,13 +569,13 @@ class Viewer(pyglet.window.Window):
             a file dialog will be opened to ask the user where
             to save the video file.
         """
-        self.video_recorder.close()
+        self._video_recorder.close()
         if filename is None:
             filename = self._get_save_filename(["mp4"])
         if filename is None:
-            os.remove(self.video_recorder.filename)
+            os.remove(self._video_recorder.filename)
         else:
-            shutil.move(self.video_recorder.filename, filename)
+            shutil.move(self._video_recorder.filename, filename)
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
@@ -612,6 +613,11 @@ class Viewer(pyglet.window.Window):
             except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                 pass
         self._renderer = None
+
+        # Delete video recorder
+        if self.viewer_flags["record"]:
+            self._video_recorder.close()
+            os.remove(self._video_recorder.filename)
 
         # Force clean-up of OpenGL context data
         try:
@@ -949,7 +955,7 @@ class Viewer(pyglet.window.Window):
                 # Importing moviepy is very slow and not used very often. Let's delay import.
                 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 
-                self.video_recorder = FFMPEG_VideoWriter(
+                self._video_recorder = FFMPEG_VideoWriter(
                     filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
                     fps=self.viewer_flags["refresh_rate"],
                     size=self.viewport_size,
@@ -1114,7 +1120,7 @@ class Viewer(pyglet.window.Window):
         """Save another frame for the GIF."""
         data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
         if not np.all(data == 0.0):
-            self.video_recorder.write_frame(data)
+            self._video_recorder.write_frame(data)
 
     def _rotate(self):
         """Animate the scene by rotating the camera."""

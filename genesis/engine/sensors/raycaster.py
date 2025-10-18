@@ -5,13 +5,14 @@ from typing import TYPE_CHECKING, NamedTuple, Type
 import gstaichi as ti
 import numpy as np
 import torch
-from pydantic import Field
 
 import genesis as gs
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
 import genesis.utils.array_class as array_class
+from genesis.options.sensors import (
+    Raycaster as RaycasterOptions,
+    RaycastPattern,
+)
 from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
-from genesis.sensors.sensor_manager import register_sensor
 from genesis.utils.geom import (
     ti_normalize,
     ti_transform_by_quat,
@@ -22,15 +23,13 @@ from genesis.utils.geom import (
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
 from genesis.vis.rasterizer_context import RasterizerContext
 
-from ..base_sensor import (
+from .base_sensor import (
     RigidSensorMetadataMixin,
     RigidSensorMixin,
-    RigidSensorOptionsMixin,
     Sensor,
-    SensorOptions,
     SharedSensorMetadata,
 )
-from .patterns import RaycastPattern
+from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
@@ -283,49 +282,6 @@ def kernel_cast_rays(
             output_hits[i_b, i_p_dist] = no_hit_values[i_s]
 
 
-class RaycasterOptions(RigidSensorOptionsMixin, SensorOptions):
-    """
-    Raycaster sensor that performs ray casting to get distance measurements and point clouds.
-
-    Parameters
-    ----------
-    pattern: RaycastPatternOptions
-        The raycasting pattern for the sensor.
-    min_range : float, optional
-        The minimum sensing range in meters. Defaults to 0.0.
-    max_range : float, optional
-        The maximum sensing range in meters. Defaults to 20.0.
-    no_hit_value : float, optional
-        The value to return for no hit. Defaults to max_range if not specified.
-    return_world_frame : bool, optional
-        Whether to return points in the world frame. Defaults to False (local frame).
-    debug_sphere_radius: float, optional
-        The radius of each debug sphere drawn in the scene. Defaults to 0.02.
-    debug_ray_start_color: float, optional
-        The color of each debug ray start sphere drawn in the scene. Defaults to (0.5, 0.5, 1.0, 1.0).
-    debug_ray_hit_color: float, optional
-        The color of each debug ray hit point sphere drawn in the scene. Defaults to (1.0, 0.5, 0.5, 1.0).
-    """
-
-    pattern: RaycastPattern
-    min_range: float = 0.0
-    max_range: float = 20.0
-    no_hit_value: float = Field(default_factory=lambda data: data["max_range"])
-    return_world_frame: bool = False
-
-    debug_sphere_radius: float = 0.02
-    debug_ray_start_color: tuple[float, float, float, float] = (0.5, 0.5, 1.0, 1.0)
-    debug_ray_hit_color: tuple[float, float, float, float] = (1.0, 0.5, 0.5, 1.0)
-
-    def model_post_init(self, _):
-        if self.min_range < 0.0:
-            gs.raise_exception(f"[{type(self).__name__}] min_range should be non-negative. Got: {self.min_range}.")
-        if self.max_range <= self.min_range:
-            gs.raise_exception(
-                f"[{type(self).__name__}] max_range {self.max_range} should be greater than min_range {self.min_range}."
-            )
-
-
 @dataclass
 class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
@@ -375,8 +331,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         """Rebuild BVH from current geometry in the scene."""
+        from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
 
-        rigid_solver_decomp.kernel_update_all_verts(
+        kernel_update_all_verts(
             geoms_state=shared_metadata.solver.geoms_state,
             verts_info=shared_metadata.solver.verts_info,
             free_verts_state=shared_metadata.solver.free_verts_state,

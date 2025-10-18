@@ -7,11 +7,6 @@ from genesis.engine.bvh import LBVH, AABB
 from .utils import assert_allclose
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
-
-
 @pytest.fixture(scope="function")
 def lbvh(n_aabbs, n_batches):
     """Fixture for a LBVH tree"""

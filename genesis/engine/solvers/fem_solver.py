@@ -6,6 +6,7 @@ import gstaichi as ti
 import torch
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
@@ -367,6 +368,7 @@ class FEMSolver(Solver):
 
     def build(self):
         super().build()
+
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
         self.tet_wrong_order = ti.field(dtype=gs.ti_bool, shape=(), needs_grad=False)
@@ -403,6 +405,16 @@ class FEMSolver(Solver):
         if self._enable_vertex_constraints and not self._constraints_initialized:
             self.init_constraints()
 
+        # Overwrite gravity because only field is supported for now
+        if self._gravity is not None:
+            gravity = self._gravity.to_numpy()
+            self._gravity = ti.field(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity.from_numpy(gravity)
+
+    @property
+    def is_active(self):
+        return self.n_elements_max > 0
+
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
         exist = False
@@ -434,9 +446,6 @@ class FEMSolver(Solver):
 
         self._entities.append(entity)
         return entity
-
-    def is_active(self):
-        return self.n_elements_max > 0
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------
@@ -989,7 +998,7 @@ class FEMSolver(Solver):
             entity.process_input_grad()
 
     def substep_pre_coupling(self, f):
-        if self.is_active():
+        if self.is_active:
             if self._use_implicit_solver:
                 self.precompute_material_data(f)
                 self.init_pos_and_inertia(f)
@@ -1003,7 +1012,7 @@ class FEMSolver(Solver):
                     self.apply_soft_constraints(f)
 
     def substep_pre_coupling_grad(self, f):
-        if self.is_active():
+        if self.is_active:
             if self._use_implicit_solver:
                 gs.raise_exception("Gradient computation is not supported for implicit solver.")
             self.apply_uniform_force.grad(f)
@@ -1011,13 +1020,13 @@ class FEMSolver(Solver):
             self.init_pos_and_vel.grad(f)
 
     def substep_post_coupling(self, f):
-        if self.is_active():
+        if self.is_active:
             self.compute_pos(f)
             if self._constraints_initialized and not self._use_implicit_solver:
                 self.apply_hard_constraints(f)
 
     def substep_post_coupling_grad(self, f):
-        if self.is_active():
+        if self.is_active:
             self.compute_pos.grad(f)
 
     @ti.kernel
@@ -1062,7 +1071,7 @@ class FEMSolver(Solver):
             entity.collect_output_grads()
 
     def add_grad_from_state(self, state):
-        if self.is_active():
+        if self.is_active:
             if state.pos.grad is not None:
                 state.pos.assert_contiguous()
                 self._kernel_add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
@@ -1072,7 +1081,7 @@ class FEMSolver(Solver):
                 self._kernel_add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
 
     def save_ckpt(self, ckpt_name):
-        if self.is_active():
+        if self.is_active:
             if not ckpt_name in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
                 self._ckpt[ckpt_name]["pos"] = torch.zeros(
@@ -1116,11 +1125,11 @@ class FEMSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
+        if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 
     def get_state(self, f):
-        if self.is_active():
+        if self.is_active:
             state = FEMSolverState(self._scene)
             self._kernel_get_state(f, state.pos, state.vel, state.active)
         else:
@@ -1141,7 +1150,7 @@ class FEMSolver(Solver):
         Returns:
             torch.Tensor : shape (B, n_vertices, 3) where B is batch size
         """
-        if not self.is_active():
+        if not self.is_active:
             return None
 
         return ti_to_torch(self.elements_v_energy.force)
@@ -1458,15 +1467,14 @@ class FEMSolver(Solver):
     @ti.kernel
     def _kernel_update_linked_vertex_constraints(
         self,
-        links_pos: ti.template(),  # matrix field
-        links_quat: ti.template(),  # matrix field
+        links_state: array_class.LinksState,
     ):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             vc = self.vertex_constraints[i_v, i_b]
             if vc.is_constrained and vc.link_idx >= 0:
                 i_l = vc.link_idx
-                pos = links_pos[i_l, i_b]
-                quat = links_quat[i_l, i_b]
+                pos = links_state.pos[i_l, i_b]
+                quat = links_state.quat[i_l, i_b]
 
                 offset_pos = vc.link_offset_pos
                 offset_quat = ti_transform_quat_by_quat(vc.link_init_quat, quat)

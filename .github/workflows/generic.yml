@@ -15,42 +15,56 @@ concurrency:
 
 jobs:
   generic-cpu:
-    name: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_USE_NDARRAY == '1' && 'ndarray' || 'field' }}
+    name: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
 
     strategy:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: ["ubuntu-22.04", "ubuntu-24.04", "macos-15"]
+        OS: ["ubuntu-24.04", "macos-15"]
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
         GS_BACKEND: ["cpu"]
-        GS_USE_NDARRAY: ["0"]
+        GS_ENABLE_NDARRAY: ["1"]
         include:
+          # CPU backend - dynamic array (other OSes)
+          - OS: "ubuntu-22.04"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_ENABLE_NDARRAY: "1"
           - OS: "windows-2025"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
-            GS_USE_NDARRAY: "0"
-          - OS: "macos-15"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "gpu"
-            GS_USE_NDARRAY: "0"
+            GS_ENABLE_NDARRAY: "1"
+          # CPU backend - field array
           - OS: "ubuntu-24.04"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
-            GS_USE_NDARRAY: "1"
+            GS_ENABLE_NDARRAY: "0"
+          - OS: "windows-2025"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_ENABLE_NDARRAY: "0"
+          - OS: "macos-15"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_ENABLE_NDARRAY: "0"
+          # GPU backend - field array
+          - OS: "macos-15"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "gpu"
+            GS_ENABLE_NDARRAY: "0"
 
     env:
-      HF_HUB_DOWNLOAD_TIMEOUT: 60
-      FORCE_COLOR: 1
-      PY_COLORS: 1
+      HF_HUB_DOWNLOAD_TIMEOUT: "60"
+      FORCE_COLOR: "1"
+      PY_COLORS: "1"
       GS_CACHE_FILE_PATH: ".cache/genesis"
-      GS_USE_NDARRAY: ${{ matrix.GS_USE_NDARRAY }}
-      GS_BETA_PURE: ${{ matrix.GS_USE_NDARRAY }} # we turn on beta pure for ndarray
-      GS_TORCH_FORCE_CPU_DEVICE: "1"
+      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
+      GS_TORCH_FORCE_CPU_DEVICE: ${{ startsWith(matrix.OS, 'macos-') && '1' || '0' }}
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
       TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
-      TI_ENABLE_CUDA: "0"
+      TI_ENABLE_CUDA: "1"
       TI_ENABLE_METAL: "1"
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
@@ -106,7 +120,7 @@ jobs:
           pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Black Format Check
-        if: matrix.OS == 'ubuntu-22.04' && matrix.PYTHON_VERSION == '3.12'
+        if: matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12'
         run: |
           pip install black
           black --line-length 120 --check .
@@ -115,36 +129,37 @@ jobs:
         run: |
           pip install -e '.[dev]'
 
-      - name: Get gstaichi version
-        id: gstaichi_version
+      - name: Get artifact prefix name
+        id: artifact_prefix
         shell: bash
         run: |
+          OS_FAMILY=$(python -c "import platform; print(platform.system())")
+          MACHINE_ARCH=$(python -c "import platform; print(platform.machine())")
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
-          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}"
-          echo "GSTAICHI_VERSION=${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_USE_NDARRAY }}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
         if: always()
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}
+          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
           restore-keys: |
-            ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-
+            ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} --forked -m required ./tests
+          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m required --forked ./tests
 
       - name: Save Updated Taichi Kernel Cache
         # lets match this version to the black format check
-        if: matrix.PYTHON_VERSION == '3.12'
+        if: ${{ always() && (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') && matrix.PYTHON_VERSION == '3.12' }}
         uses: actions/cache/save@v4
         with:
           path: .cache
           # Note that it is necessary to create a new archive systematically for now:
           # See: https://github.com/actions/cache/issues/1594
-          key: ${{ matrix.OS }}-${{ steps.gstaichi_version.outputs.GSTAICHI_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI

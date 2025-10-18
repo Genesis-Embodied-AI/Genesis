@@ -1,5 +1,4 @@
 import math
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import gstaichi as ti

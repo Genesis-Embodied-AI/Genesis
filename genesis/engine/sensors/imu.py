@@ -6,19 +6,19 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.options.sensors import (
+    MaybeMatrix3x3Type,
+    IMU as IMUOptions,
+)
 from genesis.utils.geom import inv_transform_by_trans_quat, transform_by_quat, transform_quat_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
-    MaybeTuple3FType,
     NoisySensorMetadataMixin,
     NoisySensorMixin,
-    NoisySensorOptionsMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
-    RigidSensorOptionsMixin,
     Sensor,
-    SensorOptions,
     SharedSensorMetadata,
     _to_tuple,
 )
@@ -28,9 +28,6 @@ if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
-
-Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
 
 
 def _view_metadata_as_acc_gyro(metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -73,77 +70,6 @@ def _get_skew_to_alignment_matrix(input: MaybeMatrix3x3Type, out: torch.Tensor |
         elif np_input.shape == (3, 3):
             out.copy_(torch.tensor(np_input, dtype=gs.tc_float, device=gs.device))
     return out
-
-
-class IMUOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
-    """
-    IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
-    of the associated entity link.
-
-    Parameters
-    ----------
-    acc_resolution : float, optional
-        The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
-        Default is 0.0, which means no quantization is applied.
-    acc_axes_skew : float | tuple[float, float, float] | Sequence[float]
-        Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
-        for each axis, and off-diagonal elements account for cross-axis misalignment effects.
-        - If a scalar is provided (float), all off-diagonal elements are set to the scalar value.
-        - If a 3-element vector is provided (tuple[float, float, float]), off-diagonal elements are set.
-        - If a full 3x3 matrix is provided, it is used directly.
-    acc_bias : tuple[float, float, float]
-        The constant additive bias for each axis of the accelerometer.
-    acc_noise : tuple[float, float, float]
-        The standard deviation of the white noise for each axis of the accelerometer.
-    acc_random_walk : tuple[float, float, float]
-        The standard deviation of the random walk, which acts as accumulated bias drift.
-    gyro_resolution : float, optional
-        The measurement resolution of the gyroscope (smallest increment of change in the sensor reading).
-        Default is 0.0, which means no quantization is applied.
-    gyro_axes_skew : float | tuple[float, float, float] | Sequence[float]
-        Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
-    gyro_bias : tuple[float, float, float]
-        The constant additive bias for each axis of the gyroscope.
-    gyro_noise : tuple[float, float, float]
-        The standard deviation of the white noise for each axis of the gyroscope.
-    gyro_random_walk : tuple[float, float, float]
-        The standard deviation of the bias drift for each axis of the gyroscope.
-    debug_acc_color : float, optional
-        The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
-    debug_acc_scale: float, optional
-        The scale factor for the debug acceleration arrow. Defaults to 0.01.
-    debug_gyro_color : float, optional
-        The rgba color of the debug gyroscope arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
-    debug_gyro_scale: float, optional
-        The scale factor for the debug gyroscope arrow. Defaults to 0.01.
-    """
-
-    acc_resolution: MaybeTuple3FType = 0.0
-    gyro_resolution: MaybeTuple3FType = 0.0
-    acc_axes_skew: MaybeMatrix3x3Type = 0.0
-    gyro_axes_skew: MaybeMatrix3x3Type = 0.0
-    acc_noise: MaybeTuple3FType = 0.0
-    gyro_noise: MaybeTuple3FType = 0.0
-    acc_bias: MaybeTuple3FType = 0.0
-    gyro_bias: MaybeTuple3FType = 0.0
-    acc_random_walk: MaybeTuple3FType = 0.0
-    gyro_random_walk: MaybeTuple3FType = 0.0
-
-    debug_acc_color: tuple[float, float, float, float] = (0.0, 1.0, 1.0, 0.5)
-    debug_acc_scale: float = 0.01
-    debug_gyro_color: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.5)
-    debug_gyro_scale: float = 0.01
-
-    def model_post_init(self, _):
-        self._validate_axes_skew(self.acc_axes_skew)
-        self._validate_axes_skew(self.gyro_axes_skew)
-
-    def _validate_axes_skew(self, axes_skew):
-        axes_skew_np = np.array(axes_skew)
-        if axes_skew_np.shape not in ((), (3,), (3, 3)):
-            gs.raise_exception(f"axes_skew shape should be (), (3,), or (3, 3), got: {axes_skew_np.shape}")
-        if np.any(axes_skew_np < 0.0) or np.any(axes_skew_np > 1.0):
-            gs.raise_exception(f"axes_skew values should be between 0.0 and 1.0, got: {axes_skew}")
 
 
 @dataclass

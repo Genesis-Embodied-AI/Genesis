@@ -35,6 +35,10 @@ class ToolSolver(Solver):
         for entity in self._entities:
             entity.build()
 
+    @property
+    def is_active(self):
+        return self.n_entities > 0
+
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self.floor_height)
 
@@ -55,7 +59,7 @@ class ToolSolver(Solver):
             entity.reset_grad()
 
     def get_state(self, f):
-        if self.is_active():
+        if self.is_active:
             state = ToolSolverState(self._scene)
             for entity in self._entities:
                 state.entities.append(entity.get_state(f))
@@ -101,7 +105,7 @@ class ToolSolver(Solver):
         """
         Collect gradients from downstream queried states.
         """
-        if self.is_active():
+        if self.is_active:
             for entity in self._entities:
                 entity.collect_output_grads()
 
@@ -112,9 +116,6 @@ class ToolSolver(Solver):
     def load_ckpt(self, ckpt_name):
         for entity in self._entities:
             entity.load_ckpt(ckpt_name=ckpt_name)
-
-    def is_active(self):
-        return self.n_entities > 0
 
     @ti.func
     def pbd_collide(self, f, pos_world, thickness, dt):

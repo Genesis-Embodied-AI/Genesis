@@ -17,7 +17,15 @@ concurrency:
 
 jobs:
   linux-gpu:
+    name: Coreweave-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+
     runs-on: [self-hosted, coreweave, genesis-world]
+
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        GS_ENABLE_NDARRAY: ["0", "1"]
 
     env:
       # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
@@ -25,7 +33,7 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_HUB_DOWNLOAD_TIMEOUT: 60
       GENESIS_IMAGE_VER: "1_5"
-      TIMEOUT_MINUTES: 180
+      TIMEOUT_MINUTES: 60
       FORCE_COLOR: 1
       PY_COLORS: 1
       MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
@@ -58,7 +66,7 @@ jobs:
           "${HOME}/.cache":/root/.cache,\
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
-            --export=NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN,BASH_ENV=/root/.bashrc \
+            --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${{ matrix.GS_ENABLE_NDARRAY }} \
             --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -e -s << 'EOF'
@@ -73,14 +81,16 @@ jobs:
               pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
               pip install --no-input ".[dev,render,usd]"
 
-              pytest -v --backend gpu --dev --forked ./tests
+              pytest -v --backend gpu --dev ./tests
           EOF
+
       - name: Run benchmarks
+        if: matrix.GS_ENABLE_NDARRAY == '0'
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN,BASH_ENV=/root/.bashrc"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
@@ -116,12 +126,12 @@ jobs:
           if [ -n "${SLURM_JOB_NAME}" ] ; then
             scancel --user=${USER} --name="${SLURM_JOB_NAME}"
           fi
-
       - name: Display benchmark stats
+        if: matrix.GS_ENABLE_NDARRAY == '0'
         run: |
           cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-
       - name: Upload benchmark stats as artifact
+        if: matrix.GS_ENABLE_NDARRAY == '0'
         uses: actions/upload-artifact@v4
         with:
           name: speed-test-results

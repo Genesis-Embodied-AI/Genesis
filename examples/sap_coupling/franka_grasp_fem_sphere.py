@@ -12,7 +12,7 @@ def main():
 
     ########################## init ##########################
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64", performance_mode=True)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

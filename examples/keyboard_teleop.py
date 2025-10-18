@@ -54,7 +54,7 @@ class KeyboardDevice:
 
 def build_scene():
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="info", backend=gs.cpu)
+    gs.init(precision="32", logging_level="info", backend=gs.cpu)
     np.set_printoptions(precision=7, suppress=True)
 
     ########################## create a scene ##########################

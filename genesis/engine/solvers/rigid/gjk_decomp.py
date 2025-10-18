@@ -4,7 +4,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
-from dataclasses import dataclass
 
 
 class RETURN_CODE(IntEnum):
@@ -181,7 +180,7 @@ def clear_cache(gjk_state: array_class.GJKState, i_b):
     """
     gjk_state.support_mesh_prev_vertex_id[i_b, 0] = -1
     gjk_state.support_mesh_prev_vertex_id[i_b, 1] = -1
-    gjk_state.multi_contact_flag[i_b] = 0
+    gjk_state.multi_contact_flag[i_b] = False
     gjk_state.last_searched_simplex_vertex_id[i_b] = 0
 
 
@@ -370,7 +369,7 @@ def func_gjk_contact(
                                 i_b,
                                 i_f,
                             )
-                            gjk_state.multi_contact_flag[i_b] = 1
+                            gjk_state.multi_contact_flag[i_b] = True
     else:
         gjk_flag = func_safe_gjk(
             geoms_state,

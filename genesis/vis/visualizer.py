@@ -50,7 +50,7 @@ class Visualizer(RBC):
             self._has_display = False
 
         if show_viewer:
-            if gs.global_scene_list:
+            if gs._scene_registry:
                 raise gs.raise_exception(
                     "Interactive viewer not supported when managing multiple scenes. Please set `show_viewer=False` "
                     "or call `del scene`."
@@ -215,7 +215,7 @@ class Visualizer(RBC):
                 elif camera._followed_entity is not None:
                     camera.update_following()
 
-        if self._scene.rigid_solver.is_active():
+        if self._scene.rigid_solver.is_active:
             self._scene.rigid_solver.update_geoms_render_T()
             self._scene.rigid_solver.update_vgeoms()
 
@@ -226,7 +226,7 @@ class Visualizer(RBC):
 
             self._scene.rigid_solver.update_vgeoms_render_T()
 
-        if self._scene.avatar_solver.is_active():
+        if self._scene.avatar_solver.is_active:
             self._scene.avatar_solver.update_geoms_render_T()
             self._scene.avatar_solver._kernel_update_vgeoms(
                 vgeoms_info=self._scene.avatar_solver.vgeoms_info,
@@ -236,13 +236,13 @@ class Visualizer(RBC):
             )
             self._scene.avatar_solver.update_vgeoms_render_T()
 
-        if self._scene.mpm_solver.is_active():
+        if self._scene.mpm_solver.is_active:
             self._scene.mpm_solver.update_render_fields()
 
-        if self._scene.sph_solver.is_active():
+        if self._scene.sph_solver.is_active:
             self._scene.sph_solver.update_render_fields()
 
-        if self._scene.pbd_solver.is_active():
+        if self._scene.pbd_solver.is_active:
             self._scene.pbd_solver.update_render_fields()
 
         self._t = self._scene._t

@@ -23,6 +23,9 @@ pytestmark = [
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact(backend):
+    if gs.use_ndarray:
+        pytest.skip(reason="GsTaichi dynamic array type does not support AutoDiff.")
+
     RTOL = 1e-4
 
     scene = gs.Scene(
@@ -40,12 +43,10 @@ def test_diff_contact(backend):
     box_pos_offset = (0.0, 0.0, 0.0) + 0.5 * box_size * vec_one
 
     box0 = scene.add_entity(
-        gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset, fixed=True),
+        gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset),
     )
     box1 = scene.add_entity(
-        gs.morphs.Box(
-            size=box_size * vec_one, pos=box_pos_offset + 0.8 * box_spacing * np.array([0, 0, 1]), fixed=True
-        ),
+        gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset + 0.8 * box_spacing * np.array([0, 0, 1])),
     )
 
     scene.build()
@@ -339,6 +340,8 @@ def test_differentiable_push(precision, show_viewer):
         pytest.skip(reason="GsTaichi does not support AutoDiff on non-CPU backend on Mac OS for now.")
     if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
         pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
+    if gs.use_ndarray:
+        pytest.skip(reason="GsTaichi dynamic array type does not support AutoDiff.")
 
     HORIZON = 10
 
