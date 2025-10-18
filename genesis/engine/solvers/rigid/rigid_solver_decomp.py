@@ -265,6 +265,9 @@ class RigidSolver(Solver):
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_external_force = func_apply_external_force
 
+        # for rigid solver, we initialize them even if the solver is not active
+        # because the coupler needs arguments like rigid_solver.links_state, etc.
+        # regardless of the solver is active or not
         if type(self) is RigidSolver or self.is_active:
             self.data_manager = array_class.DataManager(self)
 
@@ -921,7 +924,7 @@ class RigidSolver(Solver):
             self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def _init_constraint_solver(self):
-        if len(self.geoms) > 0:
+        if len(self.links) > 0:
             if self._use_contact_island:
                 self.constraint_solver = ConstraintSolverIsland(self)
             else:

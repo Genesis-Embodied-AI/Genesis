@@ -7,11 +7,6 @@ import genesis as gs
 from .utils import assert_allclose, get_hf_dataset
 
 
-# pytestmark = [
-#     pytest.mark.field_only,
-# ]
-
-
 @pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     BALL_POS_INIT = (0.8, 0.6, 0.12)
