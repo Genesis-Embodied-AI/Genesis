@@ -7,8 +7,6 @@ import torch
 import genesis as gs
 from genesis.utils.geom import R_to_quat
 from genesis.utils.misc import ti_to_torch, ti_to_numpy, tensor_to_array
-from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
-from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 from genesis.utils import set_random_seed
 
 from .utils import assert_allclose
@@ -148,6 +146,9 @@ def test_diff_contact(backend):
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_diff_solver(backend, monkeypatch):
     RTOL = 1e-4
+
+    from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
+    from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
