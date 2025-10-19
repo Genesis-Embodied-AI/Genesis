@@ -1565,6 +1565,7 @@ class RigidSolver(Solver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
+                is_backward=False,
             )
             kernel_copy_next_to_curr(
                 dofs_state=self.dofs_state,
