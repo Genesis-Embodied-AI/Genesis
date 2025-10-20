@@ -351,9 +351,7 @@ class FEMSolver(Solver):
         )
 
         self.vertex_constraints = vertex_constraint_info.field(
-            shape=self._batch_shape((self.n_vertices)),
-            needs_grad=False,
-            layout=ti.Layout.AOS,
+            shape=self._batch_shape((self.n_vertices,)), needs_grad=False, layout=ti.Layout.AOS
         )
 
         self.vertex_constraints.is_constrained.fill(False)
@@ -402,7 +400,7 @@ class FEMSolver(Solver):
                     "Please check the input mesh or the FEM solver implementation."
                 )
 
-        if self._enable_vertex_constraints and not self._constraints_initialized:
+        if self.n_vertices_max > 0 and self._enable_vertex_constraints and not self._constraints_initialized:
             self.init_constraints()
 
         # Overwrite gravity because only field is supported for now
