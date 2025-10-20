@@ -122,7 +122,6 @@ class Font(object):
         self._font_pt = int(value)
 
     def _add_to_context(self):
-
         self._vao = glGenVertexArrays(1)
         glBindVertexArray(self._vao)
         self._vbo = glGenBuffers(1)

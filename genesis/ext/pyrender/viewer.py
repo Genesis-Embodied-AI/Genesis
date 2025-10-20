@@ -707,7 +707,8 @@ class Viewer(pyglet.window.Window):
             self._offscreen_results = []
             self.render_flags["offscreen"] = True
             self.clear()
-            retval = self._render(camera, target, normal)
+            if self.gs_context.scene._visualizer.viewer_lock:
+                retval = self._render(camera, target, normal)
             self._offscreen_result = retval if retval else (None, None)
             self.render_flags["offscreen"] = False
 
@@ -732,7 +733,8 @@ class Viewer(pyglet.window.Window):
 
         # Render the scene
         self.clear()
-        self._render()
+        if self.gs_context.scene._visualizer.viewer_lock:
+            self._render()
 
         self.viewer_interaction.on_draw()
 
