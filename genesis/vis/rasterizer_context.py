@@ -105,7 +105,7 @@ class RasterizerContext:
         self.frustum_nodes = dict()  # nodes camera frustums
         self.rigid_nodes = dict()
         self.static_nodes = dict()  # used across all frames
-        self.dynamic_nodes = list()  # nodes that live within single frame
+        self.dynamic_nodes = dict()  # nodes that live within single frame
         self.external_nodes = dict()  # nodes added by external user
         self.seg_node_map = dict()
         self.seg_color_map = SegmentationColorMap()
@@ -172,7 +172,7 @@ class RasterizerContext:
         self.seg_color_map.generate_seg_colors()
 
     def destroy(self):
-        self.clear_dynamic_nodes()
+        self.clear_dynamic_nodes(only_outdated=False)
 
         for node_registry in (
             self.link_frame_nodes,
@@ -189,7 +189,8 @@ class RasterizerContext:
         self._t = -1
 
     def add_node(self, obj, **kwargs):
-        return self._scene.add(obj, **kwargs)
+        with self.scene._visualizer.viewer_lock:
+            return self._scene.add(obj, **kwargs)
 
     def remove_node(self, node):
         self._scene.remove_node(node)
@@ -217,7 +218,7 @@ class RasterizerContext:
     def add_dynamic_node(self, entity, obj, **kwargs):
         if obj:
             dynamic_node = self.add_node(obj, **kwargs)
-            self.dynamic_nodes.append(dynamic_node)
+            self.dynamic_nodes.setdefault(self.scene._t, []).append(dynamic_node)
         else:
             dynamic_node = None
         if entity:
@@ -234,11 +235,12 @@ class RasterizerContext:
 
         self.external_nodes[obj.name] = self.add_node(obj, **kwargs)
 
-    def clear_dynamic_nodes(self):
-        for dynamic_node in self.dynamic_nodes:
-            self.remove_node_seg(dynamic_node)
-            self.remove_node(dynamic_node)
-        self.dynamic_nodes.clear()
+    def clear_dynamic_nodes(self, only_outdated: bool = True):
+        for t in tuple(self.dynamic_nodes.keys()):
+            if not only_outdated or t < self.scene._t:
+                for dynamic_node in self.dynamic_nodes.pop(t):
+                    self.remove_node_seg(dynamic_node)
+                    self.remove_node(dynamic_node)
 
     def clear_external_node(self, node):
         if node.name in self.external_nodes:
@@ -952,15 +954,16 @@ class RasterizerContext:
         if not force_render and self._t >= self.scene._t:
             return
 
+        # Update current time right away
         self._t = self.scene._t
 
-        # clear up all dynamic nodes
-        self.clear_dynamic_nodes()
+        # Remove up old dynamic nodes
+        self.clear_dynamic_nodes(only_outdated=True)
 
-        # update variables not used in simulation
+        # Force updating rendering-only quantities that are not updated automatically during simulation
         self.visualizer.update_visual_states(force_render)
 
-        # Reset scene bounds to trigger recomputation. They are involved in shadow map
+        # Reset scene bounds to trigger recomputation. They are involved in shadow map.
         self._scene._bounds = None
 
         self.buffer.clear()

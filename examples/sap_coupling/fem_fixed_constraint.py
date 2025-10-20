@@ -62,9 +62,8 @@ def main():
         cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=target_poss)
         scene.step(update_visualizer=False)
         if args.vis:
-            # FIXME: Non-persistent markers are apparently broken...
             scene.visualizer.context.draw_debug_sphere(
-                pos=target_poss.squeeze(), radius=0.01, color=(1, 0, 1, 0.8), persistent=True
+                pos=target_poss.squeeze(), radius=0.01, color=(1, 0, 1, 0.8), persistent=False
             )
             scene.visualizer.update(force=False, auto=True)
 

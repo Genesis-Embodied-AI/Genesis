@@ -916,7 +916,8 @@ class Scene(RBC):
 
         # Clear the entire cache of the visualizer.
         # TODO: Could be optimized to only clear cache associated the the environments being reset.
-        self._visualizer.reset()
+        if self._visualizer.is_built:
+            self._visualizer.reset()
 
         # TODO: sets _next_particle = 0; not sure this is env isolation safe
         for emitter in self._emitters:
