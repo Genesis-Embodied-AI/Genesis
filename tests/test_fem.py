@@ -161,9 +161,9 @@ def test_maxvolume(box_obj_path, show_viewer):
 @pytest.mark.parametrize(
     "coupler_type, material_model",
     [
-        pytest.param(gs.options.SAPCouplerOptions, "linear"),
-        pytest.param(gs.options.SAPCouplerOptions, "linear_corotated"),
-        pytest.param(gs.options.LegacyCouplerOptions, "linear"),
+        (gs.options.SAPCouplerOptions, "linear"),
+        (gs.options.SAPCouplerOptions, "linear_corotated"),
+        (gs.options.LegacyCouplerOptions, "linear"),
     ],
 )
 def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):

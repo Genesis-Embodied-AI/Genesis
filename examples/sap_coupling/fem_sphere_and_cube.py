@@ -2,6 +2,7 @@ import argparse
 import sys
 import numpy as np
 import genesis as gs
+import os
 from huggingface_hub import snapshot_download
 
 
@@ -10,6 +11,8 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=(sys.platform == "darwin"))
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
+
+    n_steps = 200 if "PYTEST_VERSION" not in os.environ else 2
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")
 
@@ -59,7 +62,7 @@ def main():
     )
     scene.build()
 
-    for _ in range(200):
+    for _ in range(n_steps):
         scene.step()
 
 

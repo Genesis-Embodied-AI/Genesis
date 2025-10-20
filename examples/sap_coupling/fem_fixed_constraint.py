@@ -1,6 +1,8 @@
 import argparse
 import math
+import os
 import sys
+
 import torch
 import genesis as gs
 from huggingface_hub import snapshot_download
@@ -11,6 +13,8 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=(sys.platform == "darwin"))
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
+
+    n_steps = 150 if "PYTEST_VERSION" not in os.environ else 2
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")
 
@@ -55,7 +59,7 @@ def main():
     verts_idx = [0]
 
     # Run simulation
-    for i in range(150):
+    for i in range(n_steps):
         target_poss = cube.init_positions[verts_idx] + torch.tensor(
             (0.15 * (math.cos(0.04 * i) - 1.0), 0.15 * math.sin(0.04 * i), 0.0)
         )
