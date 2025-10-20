@@ -93,6 +93,9 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
 
+        # IPC link filter: if None, all links participate in IPC; if specified, only these links participate
+        self._ipc_link_filter: set = None
+
         self._load_model()
 
     def _load_model(self):
@@ -3016,6 +3019,92 @@ class RigidEntity(Entity):
     def is_local_collision_mask(self):
         """Whether the contype and conaffinity bitmasks of this entity only applies to self-collision."""
         return self._is_local_collision_mask
+
+    def sample(self, tet_cfg=None):
+        """
+        Sample mesh and elements based on the entity's morph type (similar to FEM entity).
+        This method generates tetrahedral mesh for IPC integration.
+
+        Parameters
+        ----------
+        tet_cfg : dict, optional
+            TetGen configuration parameters. Defaults to empty dict.
+
+        Returns
+        -------
+        tuple
+            (vertices, elements) of the tetrahedral mesh
+
+        Raises
+        ------
+        Exception
+            If the morph type is unsupported.
+        """
+        from genesis.utils import element as eu
+
+        if tet_cfg is None:
+            tet_cfg = dict()
+
+        if isinstance(self.morph, gs.options.morphs.Sphere):
+            verts, elems = eu.sphere_to_elements(
+                pos=(0, 0, 0),  # Generate at origin for proper ABD matrix
+                radius=self._morph.radius,
+                tet_cfg=tet_cfg,
+            )
+        elif isinstance(self.morph, gs.options.morphs.Box):
+            verts, elems = eu.box_to_elements(
+                pos=(0, 0, 0),  # Generate at origin for proper ABD matrix
+                size=self._morph.size,
+                tet_cfg=tet_cfg,
+            )
+        elif isinstance(self.morph, gs.options.morphs.Cylinder):
+            verts, elems = eu.cylinder_to_elements()
+        elif isinstance(self.morph, gs.options.morphs.Mesh):
+            verts, elems = eu.mesh_to_elements(
+                file=self._morph.file,
+                pos=(0, 0, 0),  # Generate at origin for proper ABD matrix
+                scale=self._morph.scale,
+                tet_cfg=tet_cfg,
+            )
+        elif isinstance(self.morph, gs.options.morphs.Plane):
+            gs.raise_exception(f"Plane morph not supported for tetrahedral mesh generation.")
+        else:
+            gs.raise_exception(f"Unsupported morph: {self.morph}.")
+
+        return verts, elems
+
+    def set_ipc_link_filter(self, link_names=None, link_indices=None):
+        """
+        Set which links of this entity should participate in IPC simulation.
+
+        Parameters
+        ----------
+        link_names : list of str, optional
+            Names of links to include in IPC. If None and link_indices is None, all links participate.
+        link_indices : list of int, optional
+            Indices of links to include in IPC. If None and link_names is None, all links participate.
+        """
+        if link_names is None and link_indices is None:
+            self._ipc_link_filter = None
+            return
+
+        self._ipc_link_filter = set()
+
+        if link_names is not None:
+            # Convert link names to indices
+            for name in link_names:
+                link = self.get_link(name=name)
+                if link is not None:
+                    # Use solver-level index
+                    self._ipc_link_filter.add(link.idx)
+                else:
+                    gs.logger.warning(f"Link name '{name}' not found in entity")
+
+        if link_indices is not None:
+            # Convert local link indices to solver-level indices
+            for local_idx in link_indices:
+                solver_link_idx = local_idx + self._link_start
+                self._ipc_link_filter.add(solver_link_idx)
 
 
 @ti.kernel

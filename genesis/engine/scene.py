@@ -432,6 +432,15 @@ class Scene(RBC):
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'visual']."
                 )
 
+        elif isinstance(material, gs.materials.Cloth):
+            if surface.vis_mode is None:
+                surface.vis_mode = "visual"
+
+            if surface.vis_mode not in ["visual"]:
+                gs.raise_exception(
+                    f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual']."
+                )
+
         else:
             gs.raise_exception()
 
@@ -819,6 +828,12 @@ class Scene(RBC):
         with gs.logger.timer("Building visualizer..."):
             self._visualizer.build()
 
+        # IPC GUI (optional)
+        if hasattr(self._sim, '_coupler') and self._sim._coupler is not None:
+            if hasattr(self._sim._coupler, 'options') and hasattr(self._sim._coupler.options, 'enable_ipc_gui'):
+                if self._sim._coupler.options.enable_ipc_gui and hasattr(self._sim._coupler, '_ipc_scene'):
+                    self._init_ipc_gui()
+
         if self.profiling_options.show_FPS:
             self.FPS_tracker = FPSTracker(self.n_envs, alpha=self.profiling_options.FPS_tracker_alpha)
 
@@ -834,6 +849,80 @@ class Scene(RBC):
                     break
 
         gs._scene_registry.append(weakref.ref(self, _destroy_callback))
+
+    def _init_ipc_gui(self):
+        """Initialize IPC GUI for debugging"""
+        try:
+            import polyscope as ps
+            from uipc.gui import SceneGUI
+
+            # Get IPC scene from coupler
+            ipc_scene = self._sim._coupler._ipc_scene
+
+            # Initialize SceneGUI for IPC scene
+            self._ipc_scene_gui = SceneGUI(ipc_scene)
+
+            # Initialize polyscope if not already done
+            if not ps.is_initialized():
+                ps.init()
+
+            # Register IPC GUI with polyscope
+            self._ipc_scene_gui.register()
+            self._ipc_scene_gui.set_edge_width(1)
+
+            # Set up ground plane display in polyscope to match Genesis z=0
+            ps.set_up_dir("z_up")
+            ps.set_ground_plane_height(0.0)  # Set at z=0 to match Genesis
+
+            # Show polyscope window for first frame to initialize properly
+            ps.show(forFrames=1)
+            self._ipc_gui_shown = True
+
+            # Flag to control GUI updates
+            self._ipc_gui_enabled = True
+
+            gs.logger.info("IPC GUI initialized successfully")
+
+        except Exception as e:
+            gs.logger.warning(f"Failed to initialize IPC GUI: {e}")
+            self._ipc_gui_enabled = False
+
+    def _init_ipc_gui(self):
+        """Initialize IPC GUI for debugging"""
+        try:
+            import polyscope as ps
+            from uipc.gui import SceneGUI
+
+            # Get IPC scene from coupler
+            ipc_scene = self._sim._coupler._ipc_scene
+
+            # Initialize SceneGUI for IPC scene
+            self._ipc_scene_gui = SceneGUI(ipc_scene)
+
+            # Initialize polyscope if not already done
+            if not ps.is_initialized():
+                ps.init()
+
+            # Register IPC GUI with polyscope
+            self._ipc_scene_gui.register()
+            self._ipc_scene_gui.set_edge_width(1)
+
+            # Set up ground plane display in polyscope to match Genesis z=0
+            ps.set_up_dir("z_up")
+            ps.set_ground_plane_height(0.0)  # Set at z=0 to match Genesis
+
+            # Show polyscope window for first frame to initialize properly
+            ps.show(forFrames=1)
+            self._ipc_gui_shown = True
+
+            # Flag to control GUI updates
+            self._ipc_gui_enabled = True
+
+            gs.logger.info("IPC GUI initialized successfully")
+
+        except Exception as e:
+            gs.logger.warning(f"Failed to initialize IPC GUI: {e}")
+            self._ipc_gui_enabled = False
 
     def _parallelize(
         self,
@@ -955,6 +1044,14 @@ class Scene(RBC):
 
         if update_visualizer:
             self._visualizer.update(force=False, auto=refresh_visualizer)
+            # Update IPC GUI if enabled
+            if hasattr(self, '_ipc_gui_enabled') and self._ipc_gui_enabled:
+                try:
+                    import polyscope as ps
+                    ps.frame_tick()  # Non-blocking frame update
+                    self._ipc_scene_gui.update()
+                except Exception as e:
+                    gs.logger.debug(f"IPC GUI update failed: {e}")
 
         if self.profiling_options.show_FPS:
             self.FPS_tracker.step()
