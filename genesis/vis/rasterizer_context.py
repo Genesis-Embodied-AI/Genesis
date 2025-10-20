@@ -189,7 +189,8 @@ class RasterizerContext:
         self._t = -1
 
     def add_node(self, obj, **kwargs):
-        return self._scene.add(obj, **kwargs)
+        with self.scene._visualizer.viewer_lock:
+            return self._scene.add(obj, **kwargs)
 
     def remove_node(self, node):
         self._scene.remove_node(node)

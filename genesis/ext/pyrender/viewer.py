@@ -707,8 +707,7 @@ class Viewer(pyglet.window.Window):
             self._offscreen_results = []
             self.render_flags["offscreen"] = True
             self.clear()
-            if self.gs_context.scene._visualizer.viewer_lock:
-                retval = self._render(camera, target, normal)
+            retval = self._render(camera, target, normal)
             self._offscreen_result = retval if retval else (None, None)
             self.render_flags["offscreen"] = False
 
@@ -733,13 +732,9 @@ class Viewer(pyglet.window.Window):
 
         # Render the scene
         self.clear()
-        if self.gs_context.scene._visualizer.viewer_lock:
-            self._render()
+        self._render()
 
         self.viewer_interaction.on_draw()
-
-        if not self._initialized_event.is_set():
-            self._initialized_event.set()
 
         if self._display_instr:
             self._renderer.render_texts(
@@ -1320,11 +1315,11 @@ class Viewer(pyglet.window.Window):
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
-        # Run the entire rendering pipeline once, to make sure that everything is fine.
+        # Run the entire rendering pipeline once, to make sure that everything is fine
         try:
             self.refresh()
         except (OpenGL.error.Error, RuntimeError) as e:
-            # Invalid OpenGL context and crossing threading boundaries. Closing before anything else.
+            # Invalid OpenGL context and crossing threading boundaries. Closing before anything else
             self.on_close()
 
             if self._run_in_thread:
@@ -1339,6 +1334,10 @@ class Viewer(pyglet.window.Window):
         if not pyglet.options["headless"]:
             self.set_visible(True)
         self.activate()
+
+        # The viewer can be considered as fully initialized at this point
+        if not self._initialized_event.is_set():
+            self._initialized_event.set()
 
         if auto_refresh:
             while self._is_active:
