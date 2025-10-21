@@ -306,9 +306,7 @@ class RigidLink(RBC):
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         else:
-            tensor = torch.empty(
-                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
-            )
+            tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
@@ -319,7 +317,7 @@ class RigidLink(RBC):
         """
         Get the vertices of the link's visualization body (concatenation of all `link.vgeoms`) in the world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape((self.n_vverts, 3), True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, self.n_vverts, 3), dtype=gs.tc_float, device=gs.device)
         self._kernel_get_vverts(tensor)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)

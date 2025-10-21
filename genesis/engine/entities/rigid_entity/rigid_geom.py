@@ -360,7 +360,7 @@ class RigidGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape(3, True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
         _kernel_get_geoms_pos(tensor, self._idx, self._solver.geoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
@@ -371,7 +371,7 @@ class RigidGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape(4, True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, 4), dtype=gs.tc_float, device=gs.device)
         _kernel_get_geoms_quat(tensor, self._idx, self._solver.geoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
@@ -388,9 +388,7 @@ class RigidGeom(RBC):
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         else:
-            tensor = torch.empty(
-                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
-            )
+            tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
@@ -877,7 +875,7 @@ class RigidVisGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape(3, True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
         _kernel_get_vgeoms_pos(tensor, self._idx, self._solver.vgeoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
@@ -888,7 +886,7 @@ class RigidVisGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape(4, True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, 4), dtype=gs.tc_float, device=gs.device)
         _kernel_get_vgeoms_quat(tensor, self._idx, self._solver.vgeoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)

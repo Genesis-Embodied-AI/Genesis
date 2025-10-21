@@ -85,9 +85,10 @@ class LegacyCoupler(RBC):
                 link_idx=gs.ti_int,
                 local_pos=gs.ti_vec3,
             )
-            pbd_batch_shape = self.pbd_solver._batch_shape(self.pbd_solver._n_particles)
 
-            self.particle_attach_info = struct_particle_attach_info.field(shape=pbd_batch_shape, layout=ti.Layout.SOA)
+            self.particle_attach_info = struct_particle_attach_info.field(
+                shape=(self.pbd_solver._n_particles, self.pbd_solver._B), layout=ti.Layout.SOA
+            )
             self.particle_attach_info.link_idx.fill(-1)
             self.particle_attach_info.local_pos.fill(gs.ti_vec3(0.0, 0.0, 0.0))
 

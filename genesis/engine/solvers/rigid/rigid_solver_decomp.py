@@ -461,17 +461,6 @@ class RigidSolver(Solver):
             static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
-    def _batch_shape(self, shape=None, first_dim=False, B=None):
-        if B is None:
-            B = self._B
-
-        if shape is None:
-            return (B,)
-        elif type(shape) in [list, tuple]:
-            return (B,) + shape if first_dim else shape + (B,)
-        else:
-            return (B, shape) if first_dim else (shape, B)
-
     def _init_mass_mat(self):
         self.mass_mat = self._rigid_global_info.mass_mat
         self.mass_mat_L = self._rigid_global_info.mass_mat_L
@@ -663,7 +652,7 @@ class RigidSolver(Solver):
         self.qpos0 = self._rigid_global_info.qpos0
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
-            init_qpos = self._batch_array(self.init_qpos)
+            init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))
             self.qpos0.from_numpy(init_qpos)
             for joint in joints:
                 if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
@@ -1141,12 +1130,6 @@ class RigidSolver(Solver):
     #         else:
     #             collider_state.n_contacts.fill(0)
 
-    def _batch_array(self, arr, first_dim=False):
-        if first_dim:
-            return np.tile(np.expand_dims(arr, 0), self._batch_shape(arr.ndim * (1,), True))
-        else:
-            return np.tile(np.expand_dims(arr, -1), self._batch_shape(arr.ndim * (1,)))
-
     def _process_dim(self, tensor, envs_idx=None):
         if self.n_envs == 0:
             if tensor.ndim == 1:
@@ -1472,7 +1455,7 @@ class RigidSolver(Solver):
         is_preallocated = tensor is not None
         if not is_preallocated and not skip_allocation:
             if batched and self.n_envs > 0:
-                shape = self._batch_shape(len(inputs_idx), True, B=len(envs_idx))
+                shape = (len(envs_idx), len(inputs_idx))
             else:
                 shape = (len(inputs_idx),)
             tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
@@ -1555,7 +1538,7 @@ class RigidSolver(Solver):
         is_preallocated = tensor is not None
         if not is_preallocated and not skip_allocation:
             if batched and self.n_envs > 0:
-                shape = self._batch_shape((len(inputs_idx), vec_size), True, B=len(envs_idx))
+                shape = (len(envs_idx), len(inputs_idx), vec_size)
             else:
                 shape = (len(inputs_idx), vec_size)
             tensor = torch.empty(shape, dtype=gs.tc_float, device=gs.device)
