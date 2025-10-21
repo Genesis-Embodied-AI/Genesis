@@ -223,6 +223,10 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Whether to disable ground contact in Genesis rigid solver when using IPC.
         When True, ground collision is only handled by IPC system, not by Genesis rigid solver.
         This can be useful to avoid double-counting ground contacts. Defaults to False.
+    disable_ipc_ground_contact : bool, optional
+        Whether to disable ground contact in IPC system.
+        When True, all objects in IPC (FEM, cloth, rigid ABD) will not collide with ground plane.
+        Defaults to False.
     disable_ipc_logging : bool, optional
         Whether to disable IPC library logging output. Defaults to True.
     enable_ipc_gui : bool, optional
@@ -243,6 +247,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     two_way_coupling: bool = True
     IPC_self_contact: bool = False
     disable_genesis_ground_contact: bool = False
+    disable_ipc_ground_contact: bool = False
     disable_ipc_logging: bool = True
     enable_ipc_gui: bool = False
 

@@ -124,10 +124,11 @@ class IPCCoupler(RBC):
             self.options.contact_friction_mu, self.options.contact_resistance
         )
 
-        # Create separate contact elements for ABD, FEM, and Cloth to control their interactions
+        # Create separate contact elements for ABD, FEM, Cloth, and Ground to control their interactions
         self._ipc_abd_contact = self._ipc_scene.contact_tabular().create("abd_contact")
         self._ipc_fem_contact = self._ipc_scene.contact_tabular().create("fem_contact")
         self._ipc_cloth_contact = self._ipc_scene.contact_tabular().create("cloth_contact")
+        self._ipc_ground_contact = self._ipc_scene.contact_tabular().create("ground_contact")
 
         # Configure contact interactions based on IPC coupler options
         # FEM-FEM: always enabled
@@ -174,6 +175,32 @@ class IPCCoupler(RBC):
         self._ipc_scene.contact_tabular().insert(
             self._ipc_cloth_contact,
             self._ipc_abd_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )
+
+        # Ground contact interactions
+        # Ground-ABD (rigid bodies): controlled by disable_ipc_ground_contact option
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_ground_contact,
+            self._ipc_abd_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            not self.options.disable_ipc_ground_contact,
+        )
+        # Ground-FEM: always enabled
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_ground_contact,
+            self._ipc_fem_contact,
+            self.options.contact_friction_mu,
+            self.options.contact_resistance,
+            True,
+        )
+        # Ground-Cloth: always enabled
+        self._ipc_scene.contact_tabular().insert(
+            self._ipc_ground_contact,
+            self._ipc_cloth_contact,
             self.options.contact_friction_mu,
             self.options.contact_resistance,
             True,
@@ -307,8 +334,7 @@ class IPCCoupler(RBC):
                 try:
                     if geom_type == gs.GEOM_TYPE.PLANE:
                         # Handle planes separately (they can't be merged with SimplicialComplex)
-                        # Ground/plane should not be assigned to any subscene or contact element
-                        # to allow it to interact with all objects globally
+                        # Ground/plane will be assigned to ground_contact element for selective collision control
                         pos = rigid_solver.geoms_info.pos[i_g].to_numpy()
                         normal = np.array([0.0, 0.0, 1.0])  # Z-up
                         height = np.dot(pos, normal)
@@ -487,6 +513,9 @@ class IPCCoupler(RBC):
                         plane_obj = scene.objects().create(f"rigid_plane_{i_b}_{geom_idx}")
                         rigid_solver.list_env_obj[i_b].append(plane_obj)
                         rigid_solver.list_env_mesh[i_b].append(None)  # Planes are ImplicitGeometry
+
+                        # Apply ground contact element to plane
+                        self._ipc_ground_contact.apply_to(plane_geom)
 
                         plane_obj.geometries().create(plane_geom)
                         rigid_solver._mesh_handles[f"rigid_plane_{i_b}_{geom_idx}"] = plane_geom
