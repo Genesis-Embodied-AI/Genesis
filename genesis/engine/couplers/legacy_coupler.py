@@ -90,7 +90,7 @@ class LegacyCoupler(RBC):
                 shape=(self.pbd_solver._n_particles, self.pbd_solver._B), layout=ti.Layout.SOA
             )
             self.particle_attach_info.link_idx.fill(-1)
-            self.particle_attach_info.local_pos.fill(gs.ti_vec3(0.0, 0.0, 0.0))
+            self.particle_attach_info.local_pos.fill(0.0)
 
         if self._mpm_sph:
             self.mpm_sph_stencil_size = int(np.floor(self.mpm_solver.dx / self.sph_solver.hash_grid_cell_size) + 2)

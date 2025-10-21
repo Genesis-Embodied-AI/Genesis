@@ -33,13 +33,16 @@ class ConstraintSolver:
 
         # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 3 constraints per equality
         self.len_constraints = (
-            5 * rigid_solver.collider._collider_info._max_contact_pairs[None]
+            5 * rigid_solver.collider._collider_info.max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
             + self._solver.n_equalities_candidate * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
 
         self.constraint_state = array_class.get_constraint_state(self, self._solver)
+        self.constraint_state.ti_n_equalities.from_numpy(
+            np.full((self._solver._B,), self._solver.n_equalities, dtype=gs.np_int)
+        )
 
         self._eq_const_info_cache = {}
 
@@ -204,7 +207,7 @@ class ConstraintSolver:
         )
         # timer.stamp("_func_update_qacc")
 
-        if self._solver._static_rigid_sim_config.noslip_iterations > 0:
+        if self._solver._options.noslip_iterations > 0:
             self.noslip()
 
         func_update_contact_force(
@@ -716,7 +719,7 @@ def add_equality_constraints(
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = dofs_state.ctrl_mode.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b in range(_B):
         for i_e in range(constraint_state.ti_n_equalities[i_b]):
             if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
@@ -962,7 +965,7 @@ def add_joint_limit_constraints(
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
     # TODO: sparse mode
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b in range(_B):
         for i_l in range(n_links):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -1020,7 +1023,7 @@ def add_frictionloss_constraints(
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
     # TODO: sparse mode
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b in range(_B):
         for i_l in range(n_links):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -1585,7 +1588,7 @@ def func_linesearch(
                         i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state
                     )
 
-                    while constraint_state.ls_it[i_b] < static_rigid_sim_config.ls_iterations:
+                    while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
                         pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = func_ls_point_fn(
                             i_b, (p1_alpha + p2_alpha) * 0.5, constraint_state
                         )
@@ -1959,7 +1962,7 @@ def initialize_Ma(
 
     _B = rigid_global_info.mass_mat.shape[2]
     n_entities = entities_info.n_links.shape[0]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in ti.ndrange(n_entities, _B):
         for i_d1_ in range(entities_info.n_dofs[i_e]):
             i_d1 = entities_info.dof_start[i_e] + i_d1_
@@ -2092,7 +2095,7 @@ def kernel_add_weld_constraint(
 ) -> ti.i32:
     overflow = gs.ti_bool(False)
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.ti_n_equalities[i_b]
@@ -2142,7 +2145,7 @@ def kernel_delete_weld_constraint(
     static_rigid_sim_config: ti.template(),
     static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         for i_e in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):

@@ -131,7 +131,7 @@ class Collider:
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            f"({self._collider_info._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
+            f"({self._collider_info.max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
             f"'max_collision_pairs'.{formats.RESET}"
         )
 
@@ -145,9 +145,9 @@ class Collider:
         """
         solver = self._solver
         n_geoms = solver.n_geoms_
-        n_equalities = solver._static_rigid_sim_config.n_equalities
-        enable_self_collision = solver._static_rigid_sim_config.enable_self_collision
-        enable_adjacent_collision = solver._static_rigid_sim_config.enable_adjacent_collision
+        n_equalities = solver.n_equalities
+        enable_self_collision = solver._enable_self_collision
+        enable_adjacent_collision = solver._enable_adjacent_collision
         batch_links_info = solver._static_rigid_sim_config.batch_links_info
 
         eq_type = solver.equalities_info.eq_type.to_numpy()[:, 0]
@@ -250,21 +250,20 @@ class Collider:
             self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
     def _init_max_contact_pairs(self, n_possible_pairs):
-        if self._solver._max_collision_pairs < n_possible_pairs:
+        if self._solver.max_collision_pairs < n_possible_pairs:
             gs.logger.warning(
-                f"max_collision_pairs {self._solver._max_collision_pairs} is"
+                f"max_collision_pairs {self._solver.max_collision_pairs} is"
                 f" smaller than the theoretical maximal possible pairs {n_possible_pairs}, it uses less memory"
                 f" but might lead to missing some collision pairs if there are too many collision pairs"
             )
-        max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
+        max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
         max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
         max_contact_pairs_broad = max_collision_pairs * self._collider_static_config.max_collision_pairs_broad_k
 
-        self._collider_info._max_possible_pairs[None] = n_possible_pairs
-        self._collider_info._max_collision_pairs[None] = max_collision_pairs
-        self._collider_info._max_collision_pairs_broad[None] = max_contact_pairs_broad
-
-        self._collider_info._max_contact_pairs[None] = max_contact_pairs
+        self._collider_info.max_possible_pairs[None] = n_possible_pairs
+        self._collider_info.max_collision_pairs[None] = max_collision_pairs
+        self._collider_info.max_collision_pairs_broad[None] = max_contact_pairs_broad
+        self._collider_info.max_contact_pairs[None] = max_contact_pairs
 
     def _init_terrain_state(self):
         if self._collider_static_config.has_terrain:
@@ -1151,6 +1150,7 @@ def func_check_collision_valid(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     constraint_state: array_class.ConstraintState,
     equalities_info: array_class.EqualitiesInfo,
@@ -1163,7 +1163,7 @@ def func_check_collision_valid(
         i_lb = geoms_info.link_idx[i_gb]
 
         # Filter out collision pairs that are involved in dynamically registered weld equality constraints
-        for i_eq in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
+        for i_eq in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
             if equalities_info.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
                 i_leqa = equalities_info.eq_obj1id[i_eq, i_b]
                 i_leqb = equalities_info.eq_obj2id[i_eq, i_b]
@@ -1288,6 +1288,7 @@ def func_broad_phase(
                             links_state,
                             links_info,
                             geoms_info,
+                            rigid_global_info,
                             static_rigid_sim_config,
                             constraint_state,
                             equalities_info,
@@ -1303,7 +1304,7 @@ def func_broad_phase(
                             continue
 
                         i_p = collider_state.n_broad_pairs[i_b]
-                        if i_p == collider_info._max_collision_pairs_broad[None]:
+                        if i_p == collider_info.max_collision_pairs_broad[None]:
                             # print(self._warn_msg_max_collision_pairs_broad)
                             break
                         collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
@@ -1343,6 +1344,7 @@ def func_broad_phase(
                                 links_state,
                                 links_info,
                                 geoms_info,
+                                rigid_global_info,
                                 static_rigid_sim_config,
                                 constraint_state,
                                 equalities_info,
@@ -1378,6 +1380,7 @@ def func_broad_phase(
                                     links_state,
                                     links_info,
                                     geoms_info,
+                                    rigid_global_info,
                                     static_rigid_sim_config,
                                     constraint_state,
                                     equalities_info,
@@ -2008,7 +2011,7 @@ def func_add_contact(
     collider_info: array_class.ColliderInfo,
 ):
     i_c = collider_state.n_contacts[i_b]
-    if i_c == collider_info._max_contact_pairs[None]:
+    if i_c == collider_info.max_contact_pairs[None]:
         # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         # print(self._warn_msg_max_collision_pairs)
@@ -2078,7 +2081,7 @@ def func_add_diff_contact_input(
     collider_info: array_class.ColliderInfo,
 ):
     i_c = collider_state.n_contacts[i_b]
-    if i_c < collider_info._max_contact_pairs[None]:
+    if i_c < collider_info.max_contact_pairs[None]:
         collider_state.diff_contact_input.geom_a[i_b, i_c] = i_ga
         collider_state.diff_contact_input.geom_b[i_b, i_c] = i_gb
         collider_state.diff_contact_input.local_pos1_a[i_b, i_c] = gjk_state.diff_contact_input.local_pos1_a[i_b, i_d]
