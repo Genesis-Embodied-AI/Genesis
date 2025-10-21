@@ -12,7 +12,7 @@ if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
 
 
-# FIXME: NamedTuple in Python < 3.11 does not support annotation types that are not callable
+# Note that NamedTuple in Python < 3.11 does not support annotation types that are not callable
 V_ANNOTATION = ti.types.ndarray() if gs.use_ndarray else ti.template
 V = ti.ndarray if gs.use_ndarray else ti.field
 V_VEC = ti.Vector.ndarray if gs.use_ndarray else ti.Vector.field

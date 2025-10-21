@@ -2436,14 +2436,14 @@ def update_qacc_from_qvel_delta(
                 i_d = rigid_global_info.awake_dofs[i_d_, i_b]
                 dofs_state.acc[i_d, i_b] = (
                     dofs_state.vel[i_d, i_b] - dofs_state.vel_prev[i_d, i_b]
-                ) / rigid_global_info.substep_dt[i_b]
+                ) / rigid_global_info.substep_dt[None]
                 dofs_state.vel[i_d, i_b] = dofs_state.vel_prev[i_d, i_b]
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(n_dofs, _B):
             dofs_state.acc[i_d, i_b] = (
                 dofs_state.vel[i_d, i_b] - dofs_state.vel_prev[i_d, i_b]
-            ) / rigid_global_info.substep_dt[i_b]
+            ) / rigid_global_info.substep_dt[None]
             dofs_state.vel[i_d, i_b] = dofs_state.vel_prev[i_d, i_b]
 
 
@@ -2462,14 +2462,14 @@ def update_qvel(
                 i_d = rigid_global_info.awake_dofs[i_d_, i_b]
                 dofs_state.vel_prev[i_d, i_b] = dofs_state.vel[i_d, i_b]
                 dofs_state.vel[i_d, i_b] = (
-                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[i_b]
+                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
                 )
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(n_dofs, _B):
             dofs_state.vel_prev[i_d, i_b] = dofs_state.vel[i_d, i_b]
             dofs_state.vel[i_d, i_b] = (
-                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[i_b]
+                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
             )
 
 
@@ -3201,14 +3201,14 @@ def func_compute_mass_matrix(
                     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                         rigid_global_info.mass_mat[i_d, i_d, i_b] += (
-                            dofs_info.damping[I_d] * rigid_global_info.substep_dt[i_b]
+                            dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                         )
                         if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                             dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                         ):
                             # qM += d qfrc_actuator / d qvel
                             rigid_global_info.mass_mat[i_d, i_d, i_b] += (
-                                dofs_info.kv[I_d] * rigid_global_info.substep_dt[i_b]
+                                dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                             )
     else:
         # crb initialize
@@ -3278,12 +3278,12 @@ def func_compute_mass_matrix(
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_d, i_b in ti.ndrange(n_dofs, _B):
                 I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.damping[I_d] * rigid_global_info.substep_dt[i_b]
+                rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                 if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                     dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                 ):
                     # qM += d qfrc_actuator / d qvel
-                    rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * rigid_global_info.substep_dt[i_b]
+                    rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
 
 
 @ti.func
@@ -3319,14 +3319,14 @@ def func_factor_mass(
                         if ti.static(implicit_damping):
                             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                             rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                                dofs_info.damping[I_d] * rigid_global_info.substep_dt[i_b]
+                                dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                             )
                             if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                 if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                     dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                 ):
                                     rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                                        dofs_info.kv[I_d] * rigid_global_info.substep_dt[i_b]
+                                        dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                     )
 
                     for i_d_ in range(n_dofs):
@@ -3359,14 +3359,14 @@ def func_factor_mass(
                     if ti.static(implicit_damping):
                         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                         rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                            dofs_info.damping[I_d] * rigid_global_info.substep_dt[i_b]
+                            dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                         )
                         if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                             if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                 dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                             ):
                                 rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
-                                    dofs_info.kv[I_d] * rigid_global_info.substep_dt[i_b]
+                                    dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                 )
 
                 for i_d_ in range(n_dofs):
@@ -5724,7 +5724,6 @@ def func_integrate(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
     n_links = links_info.root_idx.shape[0]
@@ -5734,7 +5733,7 @@ def func_integrate(
             for i_d_ in range(rigid_global_info.n_awake_dofs[i_b]):
                 i_d = rigid_global_info.awake_dofs[i_d_, i_b]
                 dofs_state.vel[i_d, i_b] = (
-                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[i_b]
+                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
                 )
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -5768,7 +5767,7 @@ def func_integrate(
                                     dofs_state.vel[dof_start + 5, i_b],
                                 ]
                             )
-                            * rigid_global_info.substep_dt[i_b]
+                            * rigid_global_info.substep_dt[None]
                         )
                         qrot = gu.ti_rotvec_to_quat(ang)
                         rot = gu.ti_transform_quat_by_quat(qrot, rot)
@@ -5786,7 +5785,7 @@ def func_integrate(
                                 dofs_state.vel[dof_start + 2, i_b],
                             ]
                         )
-                        pos = pos + vel * rigid_global_info.substep_dt[i_b]
+                        pos = pos + vel * rigid_global_info.substep_dt[None]
                         for j in ti.static(range(3)):
                             rigid_global_info.qpos[q_start + j, i_b] = pos[j]
                         for j in ti.static(range(4)):
@@ -5810,7 +5809,7 @@ def func_integrate(
                                     dofs_state.vel[dof_start + 5, i_b],
                                 ]
                             )
-                            * rigid_global_info.substep_dt[i_b]
+                            * rigid_global_info.substep_dt[None]
                         )
                         qrot = gu.ti_rotvec_to_quat(ang)
                         rot = gu.ti_transform_quat_by_quat(qrot, rot)
@@ -5821,14 +5820,14 @@ def func_integrate(
                         for j in range(q_end - q_start):
                             rigid_global_info.qpos[q_start + j, i_b] = (
                                 rigid_global_info.qpos[q_start + j, i_b]
-                                + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[i_b]
+                                + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[None]
                             )
 
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(n_dofs, _B):
             dofs_state.vel[i_d, i_b] = (
-                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[i_b]
+                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
             )
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -5860,7 +5859,7 @@ def func_integrate(
                         dofs_state.vel[dof_start + 2, i_b],
                     ]
                 )
-                pos = pos + vel * rigid_global_info.substep_dt[i_b]
+                pos = pos + vel * rigid_global_info.substep_dt[None]
                 for j in ti.static(range(3)):
                     rigid_global_info.qpos[q_start + j, i_b] = pos[j]
             if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
@@ -5881,7 +5880,7 @@ def func_integrate(
                             dofs_state.vel[dof_start + rot_offset + 2, i_b],
                         ]
                     )
-                    * rigid_global_info.substep_dt[i_b]
+                    * rigid_global_info.substep_dt[None]
                 )
                 qrot = gu.ti_rotvec_to_quat(ang)
                 rot = gu.ti_transform_quat_by_quat(qrot, rot)
@@ -5891,7 +5890,7 @@ def func_integrate(
                 for j in range(q_end - q_start):
                     rigid_global_info.qpos[q_start + j, i_b] = (
                         rigid_global_info.qpos[q_start + j, i_b]
-                        + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[i_b]
+                        + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[None]
                     )
 
 
@@ -6762,7 +6761,9 @@ def kernel_update_drone_propeller_vgeoms(
     _B = propellers_revs.shape[1]
     for i_pp, i_b in ti.ndrange(n_propellers, _B):
         i_vg = propellers_vgeom_idxs[i_pp]
-        rad = propellers_revs[i_pp, i_b] * propellers_spin[i_pp] * rigid_global_info.substep_dt[i_b] * np.pi / 30.0
+        rad = (
+            propellers_revs[i_pp, i_b] * propellers_spin[i_pp] * rigid_global_info.substep_dt[None] * ti.math.pi / 30.0
+        )
         vgeoms_state.quat[i_vg, i_b] = gu.ti_transform_quat_by_quat(
             gu.ti_rotvec_to_quat(ti.Vector([0.0, 0.0, rad], dt=gs.ti_float)),
             vgeoms_state.quat[i_vg, i_b],

@@ -2093,14 +2093,13 @@ def kernel_add_weld_constraint(
 
             relpose = gu.ti_quat_mul(gu.ti_inv_quat(links_state.quat[link1_idx, i_b]), links_state.quat[link2_idx, i_b])
 
-            equalities_info.eq_data[i_e, i_b][6] = relpose[0]
-            equalities_info.eq_data[i_e, i_b][7] = relpose[1]
-            equalities_info.eq_data[i_e, i_b][8] = relpose[2]
-            equalities_info.eq_data[i_e, i_b][9] = relpose[3]
+            for i_4 in ti.static(range(4)):
+                equalities_info.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
 
             equalities_info.eq_data[i_e, i_b][10] = 1.0
+
             equalities_info.sol_params[i_e, i_b] = ti.Vector(
-                [2 * rigid_global_info.substep_dt[i_b], 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00]
+                [2 * rigid_global_info.substep_dt[None], 1.0, 0.9, 0.95, 0.001, 0.5, 2.0]
             )
 
             constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1
