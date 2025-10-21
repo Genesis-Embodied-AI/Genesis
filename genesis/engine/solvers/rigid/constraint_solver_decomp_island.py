@@ -997,14 +997,14 @@ class ConstraintSolverIsland:
 
         if ti.static(self._solver_type == gs.constraint_solver.CG):
             for i_e in range(self._solver.n_entities):
-                self._solver._mass_mat_mask[i_e, i_b] = 0
+                self._solver._mass_mat_mask[i_e, i_b] = False
             for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
                 i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                 i_e = self.contact_island.entity_id[i_e_, i_b]
-                self._solver._mass_mat_mask[i_e_, i_b] = 1
+                self._solver._mass_mat_mask[i_e_, i_b] = True
             self._solver._func_solve_mass_batched(self.grad, self.Mgrad, i_b)
             for i_e in range(self._solver.n_entities):
-                self._solver._mass_mat_mask[i_e, i_b] = 1
+                self._solver._mass_mat_mask[i_e, i_b] = True
         elif ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(island, i_b)
 

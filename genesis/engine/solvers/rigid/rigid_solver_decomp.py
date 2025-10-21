@@ -467,11 +467,11 @@ class RigidSolver(Solver):
         self.mass_mat_D_inv = self._rigid_global_info.mass_mat_D_inv
         self._mass_mat_mask = self._rigid_global_info._mass_mat_mask
         self.meaninertia = self._rigid_global_info.meaninertia
-        self._rigid_global_info._mass_mat_mask.fill(1)
+
+        self._mass_mat_mask.fill(True)
 
         # tree structure information
         mass_parent_mask = np.zeros((self.n_dofs_, self.n_dofs_), dtype=gs.np_float)
-
         for i_l in range(self.n_links):
             j_l = i_l
             while j_l != -1:
@@ -3386,7 +3386,7 @@ def func_factor_mass(
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
                 i_e = rigid_global_info.awake_entities[i_e_, i_b]
 
-                if rigid_global_info._mass_mat_mask[i_e, i_b] == 1:
+                if rigid_global_info._mass_mat_mask[i_e, i_b]:
                     entity_dof_start = entities_info.dof_start[i_e]
                     entity_dof_end = entities_info.dof_end[i_e]
                     n_dofs = entities_info.n_dofs[i_e]
@@ -3426,7 +3426,7 @@ def func_factor_mass(
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
-            if rigid_global_info._mass_mat_mask[i_e, i_b] == 1:
+            if rigid_global_info._mass_mat_mask[i_e, i_b]:
                 entity_dof_start = entities_info.dof_start[i_e]
                 entity_dof_end = entities_info.dof_end[i_e]
                 n_dofs = entities_info.n_dofs[i_e]
@@ -3481,7 +3481,7 @@ def func_solve_mass_batched(
         for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
             i_e = rigid_global_info.awake_entities[i_e_, i_b]
 
-            if rigid_global_info._mass_mat_mask[i_e, i_b] == 1:
+            if rigid_global_info._mass_mat_mask[i_e, i_b]:
                 entity_dof_start = entities_info.dof_start[i_e]
                 entity_dof_end = entities_info.dof_end[i_e]
                 n_dofs = entities_info.n_dofs[i_e]
@@ -3504,7 +3504,7 @@ def func_solve_mass_batched(
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e in range(n_entities):
-            if rigid_global_info._mass_mat_mask[i_e, i_b] == 1:
+            if rigid_global_info._mass_mat_mask[i_e, i_b]:
                 entity_dof_start = entities_info.dof_start[i_e]
                 entity_dof_end = entities_info.dof_end[i_e]
                 n_dofs = entities_info.n_dofs[i_e]
@@ -4085,7 +4085,7 @@ def func_implicit_damping(
         or static_rigid_sim_config.integrator == gs.integrator.Euler
     ):
         for i_e, i_b in ti.ndrange(n_entities, _B):
-            rigid_global_info._mass_mat_mask[i_e, i_b] = 0
+            rigid_global_info._mass_mat_mask[i_e, i_b] = False
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
@@ -4094,13 +4094,13 @@ def func_implicit_damping(
             for i_d in range(entity_dof_start, entity_dof_end):
                 I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                 if dofs_info.damping[I_d] > gs.EPS:
-                    rigid_global_info._mass_mat_mask[i_e, i_b] = 1
+                    rigid_global_info._mass_mat_mask[i_e, i_b] = True
                 if ti.static(static_rigid_sim_config.integrator != gs.integrator.Euler):
                     if (
                         (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION)
                         or (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY)
                     ) and dofs_info.kv[I_d] > gs.EPS:
-                        rigid_global_info._mass_mat_mask[i_e, i_b] = 1
+                        rigid_global_info._mass_mat_mask[i_e, i_b] = True
 
     func_factor_mass(
         implicit_damping=True,
@@ -4124,7 +4124,7 @@ def func_implicit_damping(
         or static_rigid_sim_config.integrator == gs.integrator.Euler
     ):
         for i_e, i_b in ti.ndrange(n_entities, _B):
-            rigid_global_info._mass_mat_mask[i_e, i_b] = 1
+            rigid_global_info._mass_mat_mask[i_e, i_b] = True
 
 
 @ti.kernel(pure=gs.use_pure)
