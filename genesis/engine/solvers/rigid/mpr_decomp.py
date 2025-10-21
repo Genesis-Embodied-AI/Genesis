@@ -10,15 +10,9 @@ import genesis.engine.solvers.rigid.support_field_decomp as support_field
 
 @ti.data_oriented
 class MPR:
-    @ti.data_oriented
-    class MPRStaticConfig:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-
     def __init__(self, rigid_solver):
         self._solver = rigid_solver
-        self._mpr_static_config = MPR.MPRStaticConfig(
+        self._mpr_info = array_class.get_mpr_info(
             # It has been observed in practice that increasing this threshold makes collision detection instable,
             # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
             CCD_EPS=1e-9 if gs.ti_float == ti.f32 else 1e-10,
@@ -77,15 +71,15 @@ def mpr_swap(mpr_state: array_class.MPRState, i, j, i_ga, i_gb, i_b):
 
 
 @ti.func
-def mpr_point_segment_dist2(mpr_static_config: ti.template(), P, A, B):
+def mpr_point_segment_dist2(mpr_info: array_class.MPRInfo, P, A, B):
     AB = B - A
     AP = P - A
     AB_AB = AB.dot(AB)
     AP_AB = AP.dot(AB)
     t = AP_AB / AB_AB
-    if t < mpr_static_config.CCD_EPS:
+    if t < mpr_info.CCD_EPS[None]:
         t = gs.ti_float(0.0)
-    elif t > 1.0 - mpr_static_config.CCD_EPS:
+    elif t > 1.0 - mpr_info.CCD_EPS[None]:
         t = gs.ti_float(1.0)
     Q = A + AB * t
 
@@ -93,7 +87,7 @@ def mpr_point_segment_dist2(mpr_static_config: ti.template(), P, A, B):
 
 
 @ti.func
-def mpr_point_tri_depth(mpr_static_config: ti.template(), P, x0, B, C):
+def mpr_point_tri_depth(mpr_info: array_class.MPRInfo, P, x0, B, C):
     d1 = B - x0
     d2 = C - x0
     a = x0 - P
@@ -107,29 +101,29 @@ def mpr_point_tri_depth(mpr_static_config: ti.template(), P, x0, B, C):
     d = w * v - r * r
     dist = s = t = gs.ti_float(0.0)
     pdir = gs.ti_vec3([0.0, 0.0, 0.0])
-    if ti.abs(d) < mpr_static_config.CCD_EPS:
+    if ti.abs(d) < mpr_info.CCD_EPS[None]:
         s = t = -1.0
     else:
         s = (q * r - w * p) / d
         t = (-s * r - q) / w
 
     if (
-        (s > -mpr_static_config.CCD_EPS)
-        and (s < 1.0 + mpr_static_config.CCD_EPS)
-        and (t > -mpr_static_config.CCD_EPS)
-        and (t < 1.0 + mpr_static_config.CCD_EPS)
-        and (t + s < 1.0 + mpr_static_config.CCD_EPS)
+        (s > -mpr_info.CCD_EPS[None])
+        and (s < 1.0 + mpr_info.CCD_EPS[None])
+        and (t > -mpr_info.CCD_EPS[None])
+        and (t < 1.0 + mpr_info.CCD_EPS[None])
+        and (t + s < 1.0 + mpr_info.CCD_EPS[None])
     ):
         pdir = x0 + d1 * s + d2 * t
         dist = (P - pdir).norm_sqr()
     else:
-        dist, pdir = mpr_point_segment_dist2(mpr_static_config, P, x0, B)
-        dist2, pdir2 = mpr_point_segment_dist2(mpr_static_config, P, x0, C)
+        dist, pdir = mpr_point_segment_dist2(mpr_info, P, x0, B)
+        dist2, pdir2 = mpr_point_segment_dist2(mpr_info, P, x0, C)
         if dist2 < dist:
             dist = dist2
             pdir = pdir2
 
-        dist2, pdir2 = mpr_point_segment_dist2(mpr_static_config, P, B, C)
+        dist2, pdir2 = mpr_point_segment_dist2(mpr_info, P, B, C)
         if dist2 < dist:
             dist = dist2
             pdir = pdir2
@@ -147,28 +141,28 @@ def mpr_portal_dir(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 
 @ti.func
 def mpr_portal_encapsules_origin(
-    mpr_state: array_class.MPRState, mpr_static_config: ti.template(), direction, i_ga, i_gb, i_b
+    mpr_state: array_class.MPRState, mpr_info: array_class.MPRInfo, direction, i_ga, i_gb, i_b
 ):
     dot = mpr_state.simplex_support.v[1, i_b].dot(direction)
-    return dot > -mpr_static_config.CCD_EPS
+    return dot > -mpr_info.CCD_EPS[None]
 
 
 @ti.func
-def mpr_portal_can_encapsule_origin(mpr_static_config: ti.template(), v, direction):
+def mpr_portal_can_encapsule_origin(mpr_info: array_class.MPRInfo, v, direction):
     dot = v.dot(direction)
-    return dot > -mpr_static_config.CCD_EPS
+    return dot > -mpr_info.CCD_EPS[None]
 
 
 @ti.func
 def mpr_portal_reach_tolerance(
-    mpr_state: array_class.MPRState, mpr_static_config: ti.template(), v, direction, i_ga, i_gb, i_b
+    mpr_state: array_class.MPRState, mpr_info: array_class.MPRInfo, v, direction, i_ga, i_gb, i_b
 ):
     dv1 = mpr_state.simplex_support.v[1, i_b].dot(direction)
     dv2 = mpr_state.simplex_support.v[2, i_b].dot(direction)
     dv3 = mpr_state.simplex_support.v[3, i_b].dot(direction)
     dv4 = v.dot(direction)
     dot1 = ti.min(dv4 - dv1, dv4 - dv2, dv4 - dv3)
-    return dot1 < mpr_static_config.CCD_TOLERANCE + mpr_static_config.CCD_EPS * ti.max(1.0, dot1)
+    return dot1 < mpr_info.CCD_TOLERANCE[None] + mpr_info.CCD_EPS[None] * ti.max(1.0, dot1)
 
 
 @ti.func
@@ -284,7 +278,7 @@ def mpr_refine_portal(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     i_ga,
@@ -295,7 +289,7 @@ def mpr_refine_portal(
     while True:
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
 
-        if mpr_portal_encapsules_origin(mpr_state, mpr_static_config, direction, i_ga, i_gb, i_b):
+        if mpr_portal_encapsules_origin(mpr_state, mpr_info, direction, i_ga, i_gb, i_b):
             ret = 0
             break
 
@@ -313,8 +307,8 @@ def mpr_refine_portal(
             i_b,
         )
 
-        if not mpr_portal_can_encapsule_origin(mpr_static_config, v, direction) or mpr_portal_reach_tolerance(
-            mpr_state, mpr_static_config, v, direction, i_ga, i_gb, i_b
+        if not mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr_portal_reach_tolerance(
+            mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b
         ):
             ret = -1
             break
@@ -327,7 +321,7 @@ def mpr_refine_portal(
 def mpr_find_pos(
     static_rigid_sim_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     i_ga,
     i_gb,
     i_b,
@@ -343,7 +337,7 @@ def mpr_find_pos(
 
     sum_ = b.sum()
 
-    if sum_ < mpr_static_config.CCD_EPS:
+    if sum_ < mpr_info.CCD_EPS[None]:
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
         b[0] = 0.0
         for i in range(1, 4):
@@ -391,7 +385,7 @@ def mpr_find_penetration(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     i_ga,
     i_gb,
     i_b,
@@ -419,8 +413,8 @@ def mpr_find_penetration(
             i_b,
         )
         if (
-            mpr_portal_reach_tolerance(mpr_state, mpr_static_config, v, direction, i_ga, i_gb, i_b)
-            or iterations > mpr_static_config.CCD_ITERATIONS
+            mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
+            or iterations > mpr_info.CCD_ITERATIONS[None]
         ):
             # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
             # to the origin that lies inside the portal.
@@ -445,7 +439,7 @@ def mpr_find_penetration(
             # https://archive.org/details/game-programming-gems-7
             if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
                 penetration, pdir = mpr_point_tri_depth(
-                    mpr_static_config,
+                    mpr_info,
                     gs.ti_vec3([0.0, 0.0, 0.0]),
                     mpr_state.simplex_support.v[1, i_b],
                     mpr_state.simplex_support.v[2, i_b],
@@ -457,7 +451,7 @@ def mpr_find_penetration(
                 normal = -direction
 
             is_col = True
-            pos = mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_static_config, i_ga, i_gb, i_b)
+            pos = mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_info, i_ga, i_gb, i_b)
             break
 
         mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
@@ -495,7 +489,7 @@ def mpr_discover_portal(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     i_ga,
     i_gb,
     i_b,
@@ -507,8 +501,8 @@ def mpr_discover_portal(
     mpr_state.simplex_support.v[0, i_b] = center_a - center_b
     mpr_state.simplex_size[i_b] = 1
 
-    if (ti.abs(mpr_state.simplex_support.v[0, i_b]) < mpr_static_config.CCD_EPS).all():
-        mpr_state.simplex_support.v[0, i_b][0] += 10.0 * mpr_static_config.CCD_EPS
+    if (ti.abs(mpr_state.simplex_support.v[0, i_b]) < mpr_info.CCD_EPS[None]).all():
+        mpr_state.simplex_support.v[0, i_b][0] += 10.0 * mpr_info.CCD_EPS[None]
 
     direction = -mpr_state.simplex_support.v[0, i_b].normalized()
 
@@ -534,12 +528,12 @@ def mpr_discover_portal(
     dot = v.dot(direction)
 
     ret = 0
-    if dot < mpr_static_config.CCD_EPS:
+    if dot < mpr_info.CCD_EPS[None]:
         ret = -1
     else:
         direction = mpr_state.simplex_support.v[0, i_b].cross(mpr_state.simplex_support.v[1, i_b])
-        if direction.dot(direction) < mpr_static_config.CCD_EPS:
-            if (ti.abs(mpr_state.simplex_support.v[1, i_b]) < mpr_static_config.CCD_EPS).all():
+        if direction.dot(direction) < mpr_info.CCD_EPS[None]:
+            if (ti.abs(mpr_state.simplex_support.v[1, i_b]) < mpr_info.CCD_EPS[None]).all():
                 ret = 1
             else:
                 ret = 2
@@ -559,7 +553,7 @@ def mpr_discover_portal(
                 i_b,
             )
             dot = v.dot(direction)
-            if dot < mpr_static_config.CCD_EPS:
+            if dot < mpr_info.CCD_EPS[None]:
                 ret = -1
             else:
                 mpr_state.simplex_support.v1[2, i_b] = v1
@@ -596,7 +590,7 @@ def mpr_discover_portal(
                         i_b,
                     )
                     dot = v.dot(direction)
-                    if dot < mpr_static_config.CCD_EPS:
+                    if dot < mpr_info.CCD_EPS[None]:
                         ret = -1
                         break
 
@@ -604,7 +598,7 @@ def mpr_discover_portal(
 
                     va = mpr_state.simplex_support.v[1, i_b].cross(v)
                     dot = va.dot(mpr_state.simplex_support.v[0, i_b])
-                    if dot < -mpr_static_config.CCD_EPS:
+                    if dot < -mpr_info.CCD_EPS[None]:
                         mpr_state.simplex_support.v1[2, i_b] = v1
                         mpr_state.simplex_support.v2[2, i_b] = v2
                         mpr_state.simplex_support.v[2, i_b] = v
@@ -613,7 +607,7 @@ def mpr_discover_portal(
                     if not cont:
                         va = v.cross(mpr_state.simplex_support.v[2, i_b])
                         dot = va.dot(mpr_state.simplex_support.v[0, i_b])
-                        if dot < -mpr_static_config.CCD_EPS:
+                        if dot < -mpr_info.CCD_EPS[None]:
                             mpr_state.simplex_support.v1[1, i_b] = v1
                             mpr_state.simplex_support.v2[1, i_b] = v2
                             mpr_state.simplex_support.v[1, i_b] = v
@@ -643,7 +637,7 @@ def guess_geoms_center(
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     static_rigid_sim_config: ti.template(),
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     i_ga,
     i_gb,
     i_b,
@@ -685,7 +679,7 @@ def guess_geoms_center(
 
     # Completely different center logics if a normal guess is provided
     if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-        if (ti.abs(normal_ws) > mpr_static_config.CCD_EPS).any():
+        if (ti.abs(normal_ws) > mpr_info.CCD_EPS[None]).any():
             # Must start from the center of each bounding box
             center_a_local = 0.5 * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
             center_a = gu.ti_transform_by_trans_quat(center_a_local, g_pos_a, g_quat_a)
@@ -730,7 +724,7 @@ def func_mpr_contact_from_centers(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     i_ga,
@@ -748,7 +742,7 @@ def func_mpr_contact_from_centers(
         collider_info=collider_info,
         collider_static_config=collider_static_config,
         mpr_state=mpr_state,
-        mpr_static_config=mpr_static_config,
+        mpr_info=mpr_info,
         i_ga=i_ga,
         i_gb=i_gb,
         i_b=i_b,
@@ -773,7 +767,7 @@ def func_mpr_contact_from_centers(
             collider_info,
             collider_static_config,
             mpr_state,
-            mpr_static_config,
+            mpr_info,
             support_field_info,
             support_field_static_config,
             i_ga,
@@ -791,7 +785,7 @@ def func_mpr_contact_from_centers(
                 collider_info,
                 collider_static_config,
                 mpr_state,
-                mpr_static_config,
+                mpr_info,
                 i_ga,
                 i_gb,
                 i_b,
@@ -809,7 +803,7 @@ def func_mpr_contact(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
     support_field_static_config: ti.template(),
     i_ga,
@@ -822,7 +816,7 @@ def func_mpr_contact(
         geoms_info,
         geoms_init_AABB,
         static_rigid_sim_config,
-        mpr_static_config,
+        mpr_info,
         i_ga,
         i_gb,
         i_b,
@@ -836,7 +830,7 @@ def func_mpr_contact(
         collider_info=collider_info,
         collider_static_config=collider_static_config,
         mpr_state=mpr_state,
-        mpr_static_config=mpr_static_config,
+        mpr_info=mpr_info,
         support_field_info=support_field_info,
         support_field_static_config=support_field_static_config,
         i_ga=i_ga,

@@ -567,6 +567,21 @@ def get_mpr_state(B_):
     )
 
 
+@DATA_ORIENTED
+class StructMPRInfo(BASE_CLASS):
+    CCD_EPS: V_ANNOTATION
+    CCD_TOLERANCE: V_ANNOTATION
+    CCD_ITERATIONS: V_ANNOTATION
+
+
+def get_mpr_info(**kwargs):
+    return StructMPRInfo(
+        CCD_EPS=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["CCD_EPS"]),
+        CCD_TOLERANCE=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["CCD_TOLERANCE"]),
+        CCD_ITERATIONS=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["CCD_ITERATIONS"]),
+    )
+
+
 # =========================================== GJK ===========================================
 
 
@@ -1703,6 +1718,7 @@ RigidGlobalInfo = StructRigidGlobalInfo if gs.use_ndarray else ti.template()
 ColliderState = StructColliderState if gs.use_ndarray else ti.template()
 ColliderInfo = StructColliderInfo if gs.use_ndarray else ti.template()
 MPRState = StructMPRState if gs.use_ndarray else ti.template()
+MPRInfo = StructMPRInfo if gs.use_ndarray else ti.template()
 SupportFieldInfo = StructSupportFieldInfo if gs.use_ndarray else ti.template()
 ConstraintState = StructConstraintState if gs.use_ndarray else ti.template()
 GJKState = StructGJKState if gs.use_ndarray else ti.template()
