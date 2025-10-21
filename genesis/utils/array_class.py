@@ -596,9 +596,9 @@ def get_gjk_simplex_vertex(solver):
     )
 
 
-def get_epa_polytope_vertex(solver, gjk_static_config):
+def get_epa_polytope_vertex(solver, gjk_info):
     _B = solver._B
-    max_num_polytope_verts = 5 + gjk_static_config.epa_max_iterations
+    max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
 
     return StructMDVertex(
         obj1=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
@@ -807,12 +807,12 @@ class StructGJKState(BASE_CLASS):
     diff_penetration: V_ANNOTATION
 
 
-def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
+def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
     _B = solver._B
     enable_mujoco_compatibility = static_rigid_sim_config.enable_mujoco_compatibility
-    polytope_max_faces = gjk_static_config.polytope_max_faces
-    max_contacts_per_pair = gjk_static_config.max_contacts_per_pair
-    max_contact_polygon_verts = gjk_static_config.max_contact_polygon_verts
+    polytope_max_faces = gjk_info.polytope_max_faces[None]
+    max_contacts_per_pair = gjk_info.max_contacts_per_pair[None]
+    max_contact_polygon_verts = gjk_info.max_contact_polygon_verts[None]
     requires_grad = solver._static_rigid_sim_config.requires_grad
 
     # FIXME: Define GJKState and MujocoCompatGJKState that derives from the former but defines additional attributes
@@ -828,10 +828,10 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
         nsimplex=V(dtype=gs.ti_int, shape=(_B,)),
         # EPA polytope
         polytope=get_epa_polytope(solver),
-        polytope_verts=get_epa_polytope_vertex(solver, gjk_static_config),
+        polytope_verts=get_epa_polytope_vertex(solver, gjk_info),
         polytope_faces=get_epa_polytope_face(solver, polytope_max_faces),
         polytope_faces_map=V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
-        polytope_horizon_data=get_epa_polytope_horizon_data(solver, 6 + gjk_static_config.epa_max_iterations),
+        polytope_horizon_data=get_epa_polytope_horizon_data(solver, 6 + gjk_info.epa_max_iterations[None]),
         polytope_horizon_stack=get_epa_polytope_horizon_data(solver, polytope_max_faces * 3),
         # Multi-contact detection (MuJoCo compatibility)
         contact_faces=get_contact_face(solver, max_contact_polygon_verts),
@@ -852,6 +852,94 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_static_config):
         n_diff_contact_input=V(dtype=gs.ti_int, shape=(_B,)),
         diff_penetration=V(dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
     )
+
+
+@DATA_ORIENTED
+class StructGJKInfo(BASE_CLASS):
+    max_contacts_per_pair: V_ANNOTATION
+    max_contact_polygon_verts: V_ANNOTATION
+    # Maximum number of iterations for GJK and EPA algorithms
+    gjk_max_iterations: V_ANNOTATION
+    epa_max_iterations: V_ANNOTATION
+    FLOAT_MIN: V_ANNOTATION
+    FLOAT_MIN_SQ: V_ANNOTATION
+    FLOAT_MAX: V_ANNOTATION
+    FLOAT_MAX_SQ: V_ANNOTATION
+    # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
+    tolerance: V_ANNOTATION
+    # If the distance between two objects is smaller than this value, we consider them colliding.
+    collision_eps: V_ANNOTATION
+    # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
+    # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
+    # coplanarity) than this threshold.
+    simplex_max_degeneracy_sq: V_ANNOTATION
+    polytope_max_faces: V_ANNOTATION
+    # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
+    # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
+    # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
+    # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
+    # we consider the projection invalid, because it means numerical errors are too large.
+    polytope_max_reprojection_error: V_ANNOTATION
+    # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
+    # tolerance to be considered as a valid parallel contact.
+    contact_face_tol: V_ANNOTATION
+    contact_edge_tol: V_ANNOTATION
+    # Epsilon values for differentiable contact. [eps_boundary] denotes the maximum distance between the face
+    # and the support point in the direction of the face normal. If this distance is 0, the face is on the
+    # boundary of the Minkowski difference. For [eps_distance], the distance between the origin and the face
+    # should not exceed this eps value plus the default EPA depth. For [eps_affine], the affine coordinates
+    # of the origin's projection onto the face should not violate [0, 1] range by this eps value.
+    # FIXME: Adjust these values based on the case study.
+    diff_contact_eps_boundary: V_ANNOTATION
+    diff_contact_eps_distance: V_ANNOTATION
+    diff_contact_eps_affine: V_ANNOTATION
+    # The minimum norm of the normal to be considered as a valid normal in the differentiable formulation.
+    diff_contact_min_normal_norm: V_ANNOTATION
+    # The minimum penetration depth to be considered as a valid contact in the differentiable formulation.
+    # The contact with penetration depth smaller than this value is ignored in the differentiable formulation.
+    # This should be large enough to be safe from numerical errors, because in the backward pass, the computed
+    # penetration depth could be different from the forward pass due to the numerical errors. If this value is
+    # too small, the non-zero penetration depth could be falsely computed to 0 in the backward pass and thus
+    # produce nan values for the contact normal.
+    diff_contact_min_penetration: V_ANNOTATION
+
+
+def get_gjk_info(**kwargs):
+    return StructGJKInfo(
+        max_contacts_per_pair=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["max_contacts_per_pair"]),
+        max_contact_polygon_verts=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["max_contact_polygon_verts"]),
+        gjk_max_iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["gjk_max_iterations"]),
+        epa_max_iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["epa_max_iterations"]),
+        FLOAT_MIN=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["FLOAT_MIN"]),
+        FLOAT_MIN_SQ=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["FLOAT_MIN"] ** 2),
+        FLOAT_MAX=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["FLOAT_MAX"]),
+        FLOAT_MAX_SQ=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["FLOAT_MAX"] ** 2),
+        tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["tolerance"]),
+        collision_eps=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["collision_eps"]),
+        simplex_max_degeneracy_sq=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["simplex_max_degeneracy_sq"]),
+        polytope_max_faces=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["polytope_max_faces"]),
+        polytope_max_reprojection_error=V_SCALAR_FROM(
+            dtype=gs.ti_float, value=kwargs["polytope_max_reprojection_error"]
+        ),
+        contact_face_tol=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["contact_face_tol"]),
+        contact_edge_tol=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["contact_edge_tol"]),
+        diff_contact_eps_boundary=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_contact_eps_boundary"]),
+        diff_contact_eps_distance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_contact_eps_distance"]),
+        diff_contact_eps_affine=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_contact_eps_affine"]),
+        diff_contact_min_normal_norm=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_contact_min_normal_norm"]),
+        diff_contact_min_penetration=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_contact_min_penetration"]),
+    )
+
+
+@ti.data_oriented
+class StructGJKStaticConfig:  # (NamedTuple):
+    # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
+    # However, we keep the code here for compatibility with MuJoCo and for possible future use.
+    enable_mujoco_multi_contact: bool
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 # =========================================== SupportField ===========================================
@@ -1618,6 +1706,7 @@ MPRState = StructMPRState if gs.use_ndarray else ti.template()
 SupportFieldInfo = StructSupportFieldInfo if gs.use_ndarray else ti.template()
 ConstraintState = StructConstraintState if gs.use_ndarray else ti.template()
 GJKState = StructGJKState if gs.use_ndarray else ti.template()
+GJKInfo = StructGJKInfo if gs.use_ndarray else ti.template()
 SDFInfo = StructSDFInfo if gs.use_ndarray else ti.template()
 ContactIslandState = StructContactIslandState if gs.use_ndarray else ti.template()
 DiffContactInput = StructDiffContactInput if gs.use_ndarray else ti.template()
