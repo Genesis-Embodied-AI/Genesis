@@ -343,7 +343,7 @@ class Mesh(RBC):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
-                if not morph.parse_glb_with_trimesh:
+                if not morph.parse_glb_with_zup:
                     gs.logger.warning(
                         "GLTF is using y-up while Genesis uses z-up. Please set parse_glb_with_zup=True"
                         " in morph options if you find the mesh is 90-degree rotated. We will set parse_glb_with_zup=True"
