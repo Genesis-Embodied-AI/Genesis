@@ -21,6 +21,13 @@ V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 DATA_ORIENTED = dataclasses.dataclass if gs.use_ndarray else ti.data_oriented
 BASE_CLASS = object if gs.use_ndarray else NamedTuple
 
+
+def V_SCALAR_FROM(dtype, value):
+    data = V(dtype=dtype, shape=())
+    data.fill(value)
+    return data
+
+
 # =========================================== RigidGlobalInfo ===========================================
 
 
@@ -61,30 +68,6 @@ class StructRigidGlobalInfo(BASE_CLASS):
 def get_rigid_global_info(solver):
     _B = solver._B
 
-    substep_dt = V(dtype=gs.ti_float, shape=(_B,))
-    substep_dt.fill(solver._substep_dt)
-    iterations = V(dtype=gs.ti_int, shape=())
-    iterations.fill(solver._options.iterations)
-    tolerance = V(dtype=gs.ti_float, shape=())
-    tolerance.fill(solver._options.tolerance)
-    ls_iterations = V(dtype=gs.ti_int, shape=())
-    ls_iterations.fill(solver._options.ls_iterations)
-    ls_tolerance = V(dtype=gs.ti_float, shape=())
-    ls_tolerance.fill(solver._options.ls_tolerance)
-
-    noslip_iterations = V(dtype=gs.ti_int, shape=())
-    noslip_iterations.fill(solver._options.noslip_iterations)
-    noslip_tolerance = V(dtype=gs.ti_float, shape=())
-    noslip_tolerance.fill(solver._options.noslip_tolerance)
-    n_equalities = V(dtype=gs.ti_int, shape=())
-    n_equalities.fill(solver._n_equalities)
-    n_equalities_candidate = V(dtype=gs.ti_int, shape=())
-    n_equalities_candidate.fill(solver.n_equalities_candidate)
-    hibernation_thresh_acc = V(dtype=gs.ti_float, shape=())
-    hibernation_thresh_acc.fill(solver._hibernation_thresh_acc)
-    hibernation_thresh_vel = V(dtype=gs.ti_float, shape=())
-    hibernation_thresh_vel.fill(solver._hibernation_thresh_vel)
-
     return StructRigidGlobalInfo(
         n_awake_dofs=V(dtype=gs.ti_int, shape=(_B,)),
         awake_dofs=V(dtype=gs.ti_int, shape=(solver.n_dofs_, _B)),
@@ -104,17 +87,17 @@ def get_rigid_global_info(solver):
         meaninertia=V(dtype=gs.ti_float, shape=(_B,)),
         mass_parent_mask=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         gravity=V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
-        substep_dt=substep_dt,
-        iterations=iterations,
-        tolerance=tolerance,
-        ls_iterations=ls_iterations,
-        ls_tolerance=ls_tolerance,
-        noslip_iterations=noslip_iterations,
-        noslip_tolerance=noslip_tolerance,
-        n_equalities=n_equalities,
-        n_equalities_candidate=n_equalities_candidate,
-        hibernation_thresh_acc=hibernation_thresh_acc,
-        hibernation_thresh_vel=hibernation_thresh_vel,
+        substep_dt=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._substep_dt),
+        iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._options.iterations),
+        tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._options.tolerance),
+        ls_iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._options.ls_iterations),
+        ls_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._options.ls_tolerance),
+        noslip_iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._options.noslip_iterations),
+        noslip_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._options.noslip_tolerance),
+        n_equalities=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._n_equalities),
+        n_equalities_candidate=V_SCALAR_FROM(dtype=gs.ti_int, value=solver.n_equalities_candidate),
+        hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._hibernation_thresh_acc),
+        hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._hibernation_thresh_vel),
     )
 
 
@@ -507,31 +490,13 @@ class StructColliderInfo(BASE_CLASS):
     diff_normal_tolerance: V_ANNOTATION
 
 
-def get_collider_info(
-    solver,
-    n_vert_neighbors,
-    collider_static_config,
-    **kwargs,
-):
+def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs):
     for geom in solver.geoms:
         if geom.type == gs.GEOM_TYPE.TERRAIN:
             terrain_hf_shape = geom.entity.terrain_hf.shape
             break
     else:
         terrain_hf_shape = 1
-
-    mc_perturbation = V(dtype=gs.ti_float, shape=())
-    mc_perturbation.fill(kwargs["mc_perturbation"])
-    mc_tolerance = V(dtype=gs.ti_float, shape=())
-    mc_tolerance.fill(kwargs["mc_tolerance"])
-    mpr_to_sdf_overlap_ratio = V(dtype=gs.ti_float, shape=())
-    mpr_to_sdf_overlap_ratio.fill(kwargs["mpr_to_sdf_overlap_ratio"])
-    box_MAXCONPAIR = V(dtype=gs.ti_int, shape=())
-    box_MAXCONPAIR.fill(kwargs["box_MAXCONPAIR"])
-    diff_pos_tolerance = V(dtype=gs.ti_float, shape=())
-    diff_pos_tolerance.fill(kwargs["diff_pos_tolerance"])
-    diff_normal_tolerance = V(dtype=gs.ti_float, shape=())
-    diff_normal_tolerance.fill(kwargs["diff_normal_tolerance"])
 
     return StructColliderInfo(
         vert_neighbors=V(dtype=gs.ti_int, shape=(max(n_vert_neighbors, 1),)),
@@ -546,12 +511,12 @@ def get_collider_info(
         terrain_rc=V(dtype=gs.ti_int, shape=2),
         terrain_scale=V(dtype=gs.ti_float, shape=2),
         terrain_xyz_maxmin=V(dtype=gs.ti_float, shape=6),
-        mc_perturbation=mc_perturbation,
-        mc_tolerance=mc_tolerance,
-        mpr_to_sdf_overlap_ratio=mpr_to_sdf_overlap_ratio,
-        box_MAXCONPAIR=box_MAXCONPAIR,
-        diff_pos_tolerance=diff_pos_tolerance,
-        diff_normal_tolerance=diff_normal_tolerance,
+        mc_perturbation=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_perturbation"]),
+        mc_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_tolerance"]),
+        mpr_to_sdf_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_sdf_overlap_ratio"]),
+        box_MAXCONPAIR=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["box_MAXCONPAIR"]),
+        diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_pos_tolerance"]),
+        diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_normal_tolerance"]),
     )
 
 
