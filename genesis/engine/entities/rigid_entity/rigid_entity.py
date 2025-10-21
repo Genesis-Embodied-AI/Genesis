@@ -1398,7 +1398,6 @@ class RigidEntity(Entity):
             self._solver.entities_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
         )
 
         if self._solver.n_envs == 0:
@@ -1424,7 +1423,6 @@ class RigidEntity(Entity):
         entities_info: array_class.EntitiesInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     ):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):

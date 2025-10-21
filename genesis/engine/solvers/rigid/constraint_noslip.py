@@ -13,7 +13,6 @@ def kernel_build_efc_AR_b(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
@@ -62,7 +61,6 @@ def kernel_noslip(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
@@ -172,7 +170,6 @@ def kernel_dual_finish(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.qfrc_constraint.shape[1]
@@ -269,7 +266,6 @@ def compute_A_diag(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]

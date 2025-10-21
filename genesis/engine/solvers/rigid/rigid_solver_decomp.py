@@ -227,7 +227,6 @@ class RigidSolver(Solver):
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
         # FIXME: Must resort on 'getattr' because of 'AvatarSolver' that is completely broken...
-        self._static_rigid_sim_cache_key = array_class.get_static_rigid_sim_cache_key(self)
         self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
             para_level=self.sim._para_level,
             requires_grad=self.sim.options.requires_grad,
@@ -311,7 +310,6 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             decompose=True,
         )
 
@@ -427,7 +425,6 @@ class RigidSolver(Solver):
             dofs_info=self.dofs_info,
             force_update=force_update,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
         # Compute meaninertia from mass matrix
@@ -436,7 +433,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             entities_info=self.entities_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
     def _init_mass_mat(self):
@@ -486,7 +482,6 @@ class RigidSolver(Solver):
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
         # just in case
@@ -521,7 +516,6 @@ class RigidSolver(Solver):
                 links_state=self.links_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
         self.joints_info = self.data_manager.joints_info
@@ -544,7 +538,6 @@ class RigidSolver(Solver):
                 # taichi variables
                 joints_info=self.joints_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
         # Check if the initial configuration is out-of-bounds
@@ -598,7 +591,6 @@ class RigidSolver(Solver):
                 faces_info=self.faces_info,
                 edges_info=self.edges_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def _init_vvert_fields(self):
@@ -618,7 +610,6 @@ class RigidSolver(Solver):
                 vverts_info=self.vverts_info,
                 vfaces_info=self.vfaces_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def _init_geom_fields(self):
@@ -677,7 +668,6 @@ class RigidSolver(Solver):
                 verts_info=self.verts_info,
                 geoms_init_AABB=self.geoms_init_AABB,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def _init_vgeom_fields(self):
@@ -699,7 +689,6 @@ class RigidSolver(Solver):
                 # taichi variables
                 vgeoms_info=self.vgeoms_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def _init_entity_fields(self):
@@ -727,7 +716,6 @@ class RigidSolver(Solver):
                 dofs_info=self.dofs_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def _init_equality_fields(self):
@@ -748,7 +736,6 @@ class RigidSolver(Solver):
                 # taichi variables
                 equalities_info=self.equalities_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
             if self._use_contact_island:
                 gs.logger.warn("contact island is not supported for equality constraints yet")
@@ -814,7 +801,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
         # timer.stamp("kernel_step_1")
 
@@ -823,7 +809,6 @@ class RigidSolver(Solver):
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
         else:
             self._func_constraint_force()
@@ -843,7 +828,6 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
             # timer.stamp("kernel_step_2")
 
@@ -907,7 +891,6 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
 
@@ -919,7 +902,6 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
     def _func_forward_kinematics_entity(self, i_e, envs_idx):
@@ -935,7 +917,6 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
@@ -961,7 +942,6 @@ class RigidSolver(Solver):
             links_state=self.links_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             force_update_fixed_geoms=force_update_fixed_geoms,
         )
 
@@ -1146,7 +1126,6 @@ class RigidSolver(Solver):
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
             kernel_step_2(
                 dofs_state=self.dofs_state,
@@ -1163,7 +1142,6 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def substep_post_coupling_grad(self, f):
@@ -1187,7 +1165,6 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
     def update_vgeoms_render_T(self):
@@ -1198,7 +1175,6 @@ class RigidSolver(Solver):
             links_state=self.links_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
         )
 
     def get_state(self, f):
@@ -1231,7 +1207,6 @@ class RigidSolver(Solver):
                 geoms_state=self.geoms_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
         else:
             state = None
@@ -1268,7 +1243,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
             self.collider.reset(envs_idx)
             self.collider.clear(envs_idx)
@@ -1517,7 +1491,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
@@ -1567,7 +1540,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
@@ -1643,7 +1615,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def set_global_sol_params(self, sol_params, *, unsafe=False):
@@ -1831,7 +1802,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
@@ -1870,7 +1840,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None, *, unsafe=False):
@@ -2208,18 +2177,10 @@ class RigidSolver(Solver):
         return self.constraint_solver.get_equality_constraints(as_tensor, to_torch)
 
     def clear_external_force(self):
-        kernel_clear_external_force(
-            self.links_state, self._rigid_global_info, self._static_rigid_sim_config, self._static_rigid_sim_cache_key
-        )
+        kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
 
     def update_vgeoms(self):
-        kernel_update_vgeoms(
-            self.vgeoms_info,
-            self.vgeoms_state,
-            self.links_state,
-            self._static_rigid_sim_config,
-            self._static_rigid_sim_cache_key,
-        )
+        kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
@@ -2287,7 +2248,6 @@ class RigidSolver(Solver):
             self.entities_info,
             self._rigid_global_info,
             self._static_rigid_sim_config,
-            self._static_rigid_sim_cache_key,
         )
 
     def update_drone_propeller_vgeoms(self, n_propellers, propellers_vgeom_idxs, propellers_revs, propellers_spin):
@@ -2466,7 +2426,6 @@ def update_qacc_from_qvel_delta(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = dofs_state.ctrl_mode.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
@@ -2493,7 +2452,6 @@ def update_qvel(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     _B = dofs_state.vel.shape[1]
     n_dofs = dofs_state.vel.shape[0]
@@ -2525,7 +2483,6 @@ def kernel_compute_mass_matrix(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     decompose: ti.template(),
 ):
     func_compute_mass_matrix(
@@ -2558,7 +2515,6 @@ def kernel_init_invweight(
     dofs_info: array_class.DofsInfo,
     force_update: ti.template(),
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     if ti.static(static_rigid_sim_config.batch_links_info):
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -2593,7 +2549,6 @@ def kernel_init_meaninertia(
     rigid_global_info: array_class.RigidGlobalInfo,
     entities_info: array_class.EntitiesInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = rigid_global_info.mass_mat.shape[0]
     n_entities = entities_info.n_links.shape[0]
@@ -2631,7 +2586,6 @@ def kernel_init_dof_fields(
     # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to gstaichi
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_dofs = dofs_state.ctrl_mode.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
@@ -2693,7 +2647,6 @@ def kernel_init_link_fields(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_links = links_parent_idx.shape[0]
     _B = links_state.pos.shape[1]
@@ -2766,7 +2719,6 @@ def kernel_init_joint_fields(
     # taichi variables
     joints_info: array_class.JointsInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     for I_j in ti.grouped(joints_info.type):
         i_j = I_j[0]
@@ -2799,7 +2751,6 @@ def kernel_init_vert_fields(
     faces_info: array_class.FacesInfo,
     edges_info: array_class.EdgesInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_verts = verts.shape[0]
     n_faces = faces.shape[0]
@@ -2841,7 +2792,6 @@ def kernel_init_vvert_fields(
     vverts_info: array_class.VVertsInfo,
     vfaces_info: array_class.VFacesInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_vverts = vverts.shape[0]
     n_vfaces = vfaces.shape[0]
@@ -2893,7 +2843,6 @@ def kernel_init_geom_fields(
     verts_info: array_class.VertsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,  # TODO: move to rigid global info
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_geoms = geoms_pos.shape[0]
     _B = geoms_state.friction_ratio.shape[1]
@@ -2969,7 +2918,6 @@ def kernel_adjust_link_inertia(
     ratio: ti.f32,
     links_info: array_class.LinksInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     if ti.static(static_rigid_sim_config.batch_links_info):
         _B = links_info.root_idx.shape[1]
@@ -3000,7 +2948,6 @@ def kernel_init_vgeom_fields(
     # taichi variables
     vgeoms_info: array_class.VGeomsInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_vgeoms = vgeoms_pos.shape[0]
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -3040,7 +2987,6 @@ def kernel_init_entity_fields(
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_entities = entities_dof_start.shape[0]
     _B = entities_state.hibernated.shape[1]
@@ -3091,7 +3037,6 @@ def kernel_init_equality_fields(
     # taichi variables
     equalities_info: array_class.EqualitiesInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_equalities = equalities_eq_obj1id.shape[0]
     _B = equalities_info.eq_obj1id.shape[1]
@@ -3119,7 +3064,6 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     contact_island_state: array_class.ContactIslandState,
 ):
     func_forward_dynamics(
@@ -3145,7 +3089,6 @@ def kernel_update_acc(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     func_update_acc(
         update_cacc=True,
@@ -3559,7 +3502,6 @@ def kernel_rigid_entity_inverse_kinematics(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     # convert to ti Vector
     pos_mask = ti.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.ti_float)
@@ -3920,7 +3862,6 @@ def kernel_clear_external_force(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     func_clear_external_force(
         links_state=links_state,
@@ -4007,7 +3948,6 @@ def kernel_step_1(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
@@ -4121,7 +4061,6 @@ def kernel_step_2(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4210,7 +4149,6 @@ def kernel_forward_kinematics_links_geoms(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -4655,7 +4593,6 @@ def kernel_forward_kinematics_entity(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -4875,7 +4812,6 @@ def kernel_update_geoms(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     force_update_fixed_geoms: ti.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
@@ -5024,7 +4960,6 @@ def kernel_update_geom_aabbs(
     geoms_state: array_class.GeomsState,
     geoms_init_AABB: array_class.GeomsInitAABB,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_geoms = geoms_state.pos.shape[0]
     _B = geoms_state.pos.shape[1]
@@ -5050,7 +4985,6 @@ def kernel_update_vgeoms(
     vgeoms_state: array_class.VGeomsState,
     links_state: array_class.LinksState,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     """
     Vgeoms are only for visualization purposes.
@@ -6047,7 +5981,6 @@ def kernel_update_geoms_render_T(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_geoms = geoms_state.pos.shape[0]
     _B = geoms_state.pos.shape[1]
@@ -6069,7 +6002,6 @@ def kernel_update_vgeoms_render_T(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_vgeoms = vgeoms_info.link_idx.shape[0]
     _B = links_state.pos.shape[1]
@@ -6098,7 +6030,6 @@ def kernel_get_state(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
 
     n_qs = qpos.shape[1]
