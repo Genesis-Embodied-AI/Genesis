@@ -353,7 +353,6 @@ class Collider:
             self._gjk._gjk_static_config,
             self._sdf._sdf_info,
             self._support_field._support_field_info,
-            self._support_field._support_field_static_config,
         )
         func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
@@ -380,7 +379,6 @@ class Collider:
                 self._mpr._mpr_state,
                 self._mpr._mpr_info,
                 self._support_field._support_field_info,
-                self._support_field._support_field_static_config,
             )
             # timer.stamp("func_narrow_phase_any_vs_terrain")
         if self._collider_static_config.has_nonconvex_nonterrain:
@@ -967,7 +965,6 @@ def func_contact_mpr_terrain(
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
@@ -1008,7 +1005,6 @@ def func_contact_mpr_terrain(
                 collider_info,
                 collider_static_config,
                 support_field_info,
-                support_field_static_config,
                 direction,
                 i_ga,
                 i_b,
@@ -1070,7 +1066,6 @@ def func_contact_mpr_terrain(
                                     mpr_state,
                                     mpr_info,
                                     support_field_info,
-                                    support_field_static_config,
                                     i_ga,
                                     i_gb,
                                     i_b,
@@ -1440,7 +1435,6 @@ def func_narrow_phase_convex_vs_convex(
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
@@ -1494,7 +1488,6 @@ def func_narrow_phase_convex_vs_convex(
                         gjk_static_config=gjk_static_config,
                         sdf_info=sdf_info,
                         support_field_info=support_field_info,
-                        support_field_static_config=support_field_static_config,
                     )
                 else:
                     if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
@@ -1520,7 +1513,6 @@ def func_narrow_phase_convex_vs_convex(
                             gjk_static_config=gjk_static_config,
                             sdf_info=sdf_info,
                             support_field_info=support_field_info,
-                            support_field_static_config=support_field_static_config,
                         )
 
 
@@ -1673,7 +1665,6 @@ def func_narrow_phase_any_vs_terrain(
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1707,7 +1698,6 @@ def func_narrow_phase_any_vs_terrain(
                         mpr_state,
                         mpr_info,
                         support_field_info,
-                        support_field_static_config,
                     )
 
 
@@ -2185,7 +2175,6 @@ def func_convex_convex_contact(
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
         if ti.static(sys.platform == "darwin"):
@@ -2269,7 +2258,6 @@ def func_convex_convex_contact(
                         collider_info,
                         collider_static_config,
                         support_field_info,
-                        support_field_static_config,
                         normal,
                         i_gb,
                         i_b,
@@ -2309,7 +2297,6 @@ def func_convex_convex_contact(
                                     mpr_state,
                                     mpr_info,
                                     support_field_info,
-                                    support_field_static_config,
                                     i_ga,
                                     i_gb,
                                     i_b,
@@ -2349,7 +2336,6 @@ def func_convex_convex_contact(
                                 gjk_state,
                                 gjk_info,
                                 support_field_info,
-                                support_field_static_config,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -2369,7 +2355,6 @@ def func_convex_convex_contact(
                                 gjk_info,
                                 gjk_static_config,
                                 support_field_info,
-                                support_field_static_config,
                                 i_ga,
                                 i_gb,
                                 i_b,
