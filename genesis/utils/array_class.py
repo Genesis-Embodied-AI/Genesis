@@ -440,11 +440,18 @@ class StructColliderState(BASE_CLASS):
     diff_contact_input: StructDiffContactInput
 
 
-def get_collider_state(solver, static_rigid_sim_config, n_possible_pairs, collider_static_config):
+def get_collider_state(
+    solver,
+    static_rigid_sim_config,
+    n_possible_pairs,
+    max_collision_pairs_broad_k,
+    collider_info,
+    collider_static_config,
+):
     _B = solver._B
     n_geoms = solver.n_geoms_
     max_collision_pairs = min(solver.max_collision_pairs, n_possible_pairs)
-    max_collision_pairs_broad = max_collision_pairs * collider_static_config.max_collision_pairs_broad_k
+    max_collision_pairs_broad = max_collision_pairs * max_collision_pairs_broad_k
     max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
     requires_grad = static_rigid_sim_config.requires_grad
 
@@ -456,8 +463,8 @@ def get_collider_state(solver, static_rigid_sim_config, n_possible_pairs, collid
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         active_buffer_awake=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         active_buffer_hib=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
-        box_depth=V(dtype=gs.ti_float, shape=(collider_static_config.box_MAXCONPAIR, _B)),
-        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_static_config.box_MAXCONPAIR, _B)),
+        box_depth=V(dtype=gs.ti_float, shape=(collider_info.box_MAXCONPAIR[None], _B)),
+        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_info.box_MAXCONPAIR[None], _B)),
         box_pts=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
         box_lines=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
         box_linesu=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
@@ -489,15 +496,42 @@ class StructColliderInfo(BASE_CLASS):
     terrain_rc: V_ANNOTATION
     terrain_scale: V_ANNOTATION
     terrain_xyz_maxmin: V_ANNOTATION
+    # multi contact perturbation and tolerance
+    mc_perturbation: V_ANNOTATION
+    mc_tolerance: V_ANNOTATION
+    mpr_to_sdf_overlap_ratio: V_ANNOTATION
+    # maximum number of contact points for box-box collision detection
+    box_MAXCONPAIR: V_ANNOTATION
+    # differentiable contact tolerance
+    diff_pos_tolerance: V_ANNOTATION
+    diff_normal_tolerance: V_ANNOTATION
 
 
-def get_collider_info(solver, n_vert_neighbors, collider_static_config):
+def get_collider_info(
+    solver,
+    n_vert_neighbors,
+    collider_static_config,
+    **kwargs,
+):
     for geom in solver.geoms:
         if geom.type == gs.GEOM_TYPE.TERRAIN:
             terrain_hf_shape = geom.entity.terrain_hf.shape
             break
     else:
         terrain_hf_shape = 1
+
+    mc_perturbation = V(dtype=gs.ti_float, shape=())
+    mc_perturbation.fill(kwargs["mc_perturbation"])
+    mc_tolerance = V(dtype=gs.ti_float, shape=())
+    mc_tolerance.fill(kwargs["mc_tolerance"])
+    mpr_to_sdf_overlap_ratio = V(dtype=gs.ti_float, shape=())
+    mpr_to_sdf_overlap_ratio.fill(kwargs["mpr_to_sdf_overlap_ratio"])
+    box_MAXCONPAIR = V(dtype=gs.ti_int, shape=())
+    box_MAXCONPAIR.fill(kwargs["box_MAXCONPAIR"])
+    diff_pos_tolerance = V(dtype=gs.ti_float, shape=())
+    diff_pos_tolerance.fill(kwargs["diff_pos_tolerance"])
+    diff_normal_tolerance = V(dtype=gs.ti_float, shape=())
+    diff_normal_tolerance.fill(kwargs["diff_normal_tolerance"])
 
     return StructColliderInfo(
         vert_neighbors=V(dtype=gs.ti_int, shape=(max(n_vert_neighbors, 1),)),
@@ -512,7 +546,29 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config):
         terrain_rc=V(dtype=gs.ti_int, shape=2),
         terrain_scale=V(dtype=gs.ti_float, shape=2),
         terrain_xyz_maxmin=V(dtype=gs.ti_float, shape=6),
+        mc_perturbation=mc_perturbation,
+        mc_tolerance=mc_tolerance,
+        mpr_to_sdf_overlap_ratio=mpr_to_sdf_overlap_ratio,
+        box_MAXCONPAIR=box_MAXCONPAIR,
+        diff_pos_tolerance=diff_pos_tolerance,
+        diff_normal_tolerance=diff_normal_tolerance,
     )
+
+
+# FIXME: Fast cache does not support 'NamedTuple' for now.
+# See PR: https://github.com/Genesis-Embodied-AI/gstaichi/pull/248.
+@ti.data_oriented
+class StructColliderStaticConfig:  # (NamedTuple):
+    has_nonconvex_nonterrain: bool
+    has_terrain: bool
+    # maximum number of contact pairs per collision pair
+    n_contacts_per_pair: int
+    # ccd algorithm
+    ccd_algorithm: int
+
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 # =========================================== MPR ===========================================
@@ -1514,8 +1570,6 @@ def get_entities_state(solver):
 # =================================== StructRigidSimStaticConfig ===================================
 
 
-# FIXME: Fast cache does not support 'NamedTuple' for now.
-# See PR: https://github.com/Genesis-Embodied-AI/gstaichi/pull/248.
 @ti.data_oriented
 class StructRigidSimStaticConfig:  # (NamedTuple):
     para_level: int
