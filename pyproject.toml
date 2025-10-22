@@ -155,12 +155,7 @@ addopts = [
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",
-    # FIXME: Must enable rerun failures because of fast cache collision between distributed workers.
     # Note that the retry mechanism is not compatible with "--forked".
-    "--reruns=2",
-    "--reruns-delay=30",
-    "--only-rerun=ValidationError",
-    "--only-rerun=JSONDecodeError",
     "-m not (benchmarks or examples)",
 ]
 filterwarnings = [
