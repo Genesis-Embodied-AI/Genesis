@@ -83,8 +83,11 @@ def ti_rotvec_to_R(rotvec):
 def ti_rotvec_to_quat(rotvec):
     quat = ti.Vector.zero(gs.ti_float, 4)
 
-    theta = rotvec.norm()
-    if theta > gs.EPS:
+    # We need to use [norm_sqr] instead of [norm] to avoid nan gradients in the backward pass. Even when theta = 0,
+    # the gradient of [norm] operation is computed and used (it is multiplied by 0 but still results in nan gradients).
+    thetasq = rotvec.norm_sqr()
+    if thetasq > (gs.EPS * gs.EPS):
+        theta = ti.sqrt(thetasq)
         theta_half = 0.5 * theta
         c, s = ti.cos(theta_half), ti.sin(theta_half)
 
