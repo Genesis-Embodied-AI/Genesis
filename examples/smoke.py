@@ -76,7 +76,7 @@ class Jet(object):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-n", "--num_steps", type=int, default=200)
-    parser.add_argument("-c", "--cpu", action="store_true", default=True)
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
     args.num_steps = 1 if "PYTEST_VERSION" in os.environ else args.num_steps
