@@ -56,38 +56,13 @@ class FEMSolver(Solver):
         # lazy initialization
         self._constraints_initialized = False
 
-    def _batch_shape(self, shape=None, first_dim=False, B=None):
-        if B is None:
-            B = self._B
-
-        if shape is None:
-            return (B,)
-        elif isinstance(shape, (list, tuple)):
-            return (B,) + shape if first_dim else shape + (B,)
-        else:
-            return (B, shape) if first_dim else (shape, B)
-
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self._floor_height)
 
     def init_batch_fields(self):
-        self.batch_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self._batch_shape(),
-            needs_grad=False,
-        )
-
-        self.batch_pcg_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self._batch_shape(),
-            needs_grad=False,
-        )
-
-        self.batch_linesearch_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self._batch_shape(),
-            needs_grad=False,
-        )
+        self.batch_active = ti.field(dtype=gs.ti_bool, shape=(self._B,), needs_grad=False)
+        self.batch_pcg_active = ti.field(dtype=gs.ti_bool, shape=(self._B,), needs_grad=False)
+        self.batch_linesearch_active = ti.field(dtype=gs.ti_bool, shape=(self._B,), needs_grad=False)
 
         pcg_state = ti.types.struct(
             rTr=gs.ti_float,
@@ -98,12 +73,7 @@ class FEMSolver(Solver):
             alpha=gs.ti_float,
             beta=gs.ti_float,
         )
-
-        self.pcg_state = pcg_state.field(
-            shape=self._batch_shape(),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
-        )
+        self.pcg_state = pcg_state.field(shape=(self._B,), needs_grad=False, layout=ti.Layout.SOA)
 
         linesearch_state = ti.types.struct(
             prev_energy=gs.ti_float,
@@ -111,12 +81,7 @@ class FEMSolver(Solver):
             step_size=gs.ti_float,
             m=gs.ti_float,
         )
-
-        self.linesearch_state = linesearch_state.field(
-            shape=self._batch_shape(),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
-        )
+        self.linesearch_state = linesearch_state.field(shape=(self._B,), needs_grad=False, layout=ti.Layout.SOA)
 
     def init_element_fields(self):
         # element state in vertices
@@ -185,17 +150,17 @@ class FEMSolver(Solver):
 
         # construct field
         self.elements_v = element_state_v.field(
-            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_vertices)),
+            shape=(self.sim.substeps_local + 1, self.n_vertices, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.elements_el = element_state_el.field(
-            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_elements)),
+            shape=(self.sim.substeps_local + 1, self.n_elements, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.elements_el_ng = element_state_el_ng.field(
-            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_elements)),
+            shape=(self.sim.substeps_local + 1, self.n_elements, self._B),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -206,17 +171,15 @@ class FEMSolver(Solver):
         )
 
         self.elements_el_energy = element_state_el_energy.field(
-            shape=self._batch_shape((self.n_elements), first_dim=True),
+            shape=(self._B, self.n_elements),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
 
-        self.elements_el_hessian = ti.field(
-            shape=self._batch_shape((3, 3, self.n_elements), first_dim=True), dtype=gs.ti_mat3
-        )
+        self.elements_el_hessian = ti.field(shape=(self._B, 3, 3, self.n_elements), dtype=gs.ti_mat3)
 
         self.elements_v_energy = element_state_v_energy.field(
-            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            shape=(self._B, self.n_vertices),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -228,13 +191,13 @@ class FEMSolver(Solver):
         )
 
         self.pcg_state_v = pcg_state_v.field(
-            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            shape=(self._B, self.n_vertices),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
 
         self.linesearch_state_v = linesearch_state_v.field(
-            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            shape=(self._B, self.n_vertices),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -267,7 +230,7 @@ class FEMSolver(Solver):
         )
 
         self.surface_render_v = surface_state_render_v.field(
-            shape=self._batch_shape((n_vertices_max)),
+            shape=(n_vertices_max, self._B),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -351,7 +314,7 @@ class FEMSolver(Solver):
         )
 
         self.vertex_constraints = vertex_constraint_info.field(
-            shape=self._batch_shape((self.n_vertices,)), needs_grad=False, layout=ti.Layout.AOS
+            shape=(self.n_vertices, self._B), needs_grad=False, layout=ti.Layout.AOS
         )
 
         self.vertex_constraints.is_constrained.fill(False)
@@ -1082,21 +1045,12 @@ class FEMSolver(Solver):
         if self.is_active:
             if not ckpt_name in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
-                self._ckpt[ckpt_name]["pos"] = torch.zeros(
-                    self._batch_shape((self.n_vertices, 3), first_dim=True), dtype=gs.tc_float
-                )
-                self._ckpt[ckpt_name]["vel"] = torch.zeros(
-                    self._batch_shape((self.n_vertices, 3), first_dim=True), dtype=gs.tc_float
-                )
-                self._ckpt[ckpt_name]["active"] = torch.zeros(
-                    self._batch_shape((self.n_elements,), first_dim=True), dtype=gs.tc_int
-                )
+                self._ckpt[ckpt_name]["pos"] = torch.zeros((self._B, self.n_vertices, 3), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["vel"] = torch.zeros((self._B, self.n_vertices, 3), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self.n_elements), dtype=gs.tc_int)
 
             self._kernel_get_state(
-                0,
-                self._ckpt[ckpt_name]["pos"],
-                self._ckpt[ckpt_name]["vel"],
-                self._ckpt[ckpt_name]["active"],
+                0, self._ckpt[ckpt_name]["pos"], self._ckpt[ckpt_name]["vel"], self._ckpt[ckpt_name]["active"]
             )
 
             self.copy_frame(self.sim.substeps_local, 0)
