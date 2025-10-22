@@ -204,7 +204,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     bw_y: V_ANNOTATION
     bw_w: V_ANNOTATION
 
-      
+
 def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
