@@ -17,10 +17,10 @@ def main():
         "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
     )
     parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", default=True)
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
-    steps = int(1.0 / dt if "PYTEST_VERSION" not in os.environ else 5)
+    args.cpu = args.cpu if "PYTEST_VERSION" not in os.environ else True
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)
 
@@ -30,6 +30,8 @@ def main():
     else:  # implicit
         dt = args.dt if args.dt is not None else 1e-3
         substeps = args.substeps if args.substeps is not None else 1
+
+    steps = int(1.0 / dt if "PYTEST_VERSION" not in os.environ else 5)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
