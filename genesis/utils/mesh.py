@@ -35,6 +35,9 @@ from .misc import (
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
 CVX_PATH_QUANTIZE_FACTOR = 1e-6
+Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
+    [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
+)
 
 
 class MeshInfo:
@@ -505,6 +508,7 @@ def create_texture(image, factor, encoding):
 
 
 def apply_transform(transform, positions, normals=None):
+    # Note that here transform's translation is on the bottom row, different from that in Genesis and trimesh.
     transformed_positions = (np.column_stack([positions, np.ones(len(positions))]) @ transform)[:, :3]
 
     transformed_normals = normals
