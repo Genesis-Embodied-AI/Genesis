@@ -587,7 +587,7 @@ class RigidEntity(Entity):
         if self.n_dofs == 0:
             return
 
-        self._jacobian = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape((6, self.n_dofs)))
+        self._jacobian = ti.field(dtype=gs.ti_float, shape=(6, self.n_dofs, self._solver._B))
 
         # compute joint limit in q space
         q_limit_lower = []
@@ -610,33 +610,19 @@ class RigidEntity(Entity):
         # for storing intermediate results
         self._IK_n_tgts = self._solver._options.IK_max_targets
         self._IK_error_dim = self._IK_n_tgts * 6
-        self._IK_mat = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self._IK_error_dim, self._IK_error_dim))
-        )
-        self._IK_inv = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self._IK_error_dim, self._IK_error_dim))
-        )
-        self._IK_L = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self._IK_error_dim, self._IK_error_dim))
-        )
-        self._IK_U = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self._IK_error_dim, self._IK_error_dim))
-        )
-        self._IK_y = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self._IK_error_dim, self._IK_error_dim))
-        )
-        self._IK_qpos_orig = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
-        self._IK_qpos_best = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_qs))
-        self._IK_delta_qpos = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self.n_dofs))
-        self._IK_vec = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._IK_error_dim))
-        self._IK_err_pose = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._IK_error_dim))
-        self._IK_err_pose_best = ti.field(dtype=gs.ti_float, shape=self._solver._batch_shape(self._IK_error_dim))
-        self._IK_jacobian = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self._IK_error_dim, self.n_dofs))
-        )
-        self._IK_jacobian_T = ti.field(
-            dtype=gs.ti_float, shape=self._solver._batch_shape((self.n_dofs, self._IK_error_dim))
-        )
+        self._IK_mat = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_inv = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_L = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_U = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_y = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_qpos_orig = ti.field(dtype=gs.ti_float, shape=(self.n_qs, self._solver._B))
+        self._IK_qpos_best = ti.field(dtype=gs.ti_float, shape=(self.n_qs, self._solver._B))
+        self._IK_delta_qpos = ti.field(dtype=gs.ti_float, shape=(self.n_dofs, self._solver._B))
+        self._IK_vec = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._solver._B))
+        self._IK_err_pose = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._solver._B))
+        self._IK_err_pose_best = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._solver._B))
+        self._IK_jacobian = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self.n_dofs, self._solver._B))
+        self._IK_jacobian_T = ti.field(dtype=gs.ti_float, shape=(self.n_dofs, self._IK_error_dim, self._solver._B))
 
     def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
         if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
@@ -1412,7 +1398,6 @@ class RigidEntity(Entity):
             self._solver.entities_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
         )
 
         if self._solver.n_envs == 0:
@@ -1438,7 +1423,6 @@ class RigidEntity(Entity):
         entities_info: array_class.EntitiesInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
         static_rigid_sim_config: ti.template(),
-        static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     ):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
@@ -1462,7 +1446,7 @@ class RigidEntity(Entity):
                 static_rigid_sim_config,
             )
 
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             for i in ti.static(range(3)):
                 links_pos[i_b_, i_l_, i] = links_state.pos[links_idx[i_l_], envs_idx[i_b_]][i]
@@ -2026,7 +2010,7 @@ class RigidEntity(Entity):
         """
         self._solver.update_verts_for_geoms(range(self.geom_start, self.geom_end))
 
-        tensor = torch.empty(self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
         has_fixed_verts, has_free_vertices = len(self._fixed_verts_idx_local) > 0, len(self._free_verts_idx_local) > 0
         if has_fixed_verts:
             _kernel_get_fixed_verts(

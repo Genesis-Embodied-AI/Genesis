@@ -308,20 +308,16 @@ class RRT(PathPlanner):
             self._rrt_max_nodes = max_nodes
             self._rrt_pos_tol = pos_tol
             self._rrt_max_step_size = max_step_size
-            self._rrt_start_configuration = ti.field(
-                dtype=gs.ti_float, shape=self._solver._batch_shape(self._entity.n_qs)
-            )
-            self._rrt_goal_configuration = ti.field(
-                dtype=gs.ti_float, shape=self._solver._batch_shape(self._entity.n_qs)
-            )
+            self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
+            self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
             self.struct_rrt_node_info = ti.types.struct(
                 configuration=ti.types.vector(self._entity.n_qs, gs.ti_float),
                 parent_idx=gs.ti_int,
             )
-            self._rrt_node_info = self.struct_rrt_node_info.field(shape=self._solver._batch_shape(self._rrt_max_nodes))
-            self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
-            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=self._solver._batch_shape())
-            self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+            self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
+            self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
+            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=(self._solver._B,))
+            self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
             self._is_rrt_init = True
 
     def _reset_rrt_fields(self):
@@ -654,21 +650,17 @@ class RRTConnect(PathPlanner):
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
             self._rrt_max_step_size = max_step_size
-            self._rrt_start_configuration = ti.field(
-                dtype=gs.ti_float, shape=self._solver._batch_shape(self._entity.n_qs)
-            )
-            self._rrt_goal_configuration = ti.field(
-                dtype=gs.ti_float, shape=self._solver._batch_shape(self._entity.n_qs)
-            )
+            self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
+            self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
             self.struct_rrt_node_info = ti.types.struct(
                 configuration=ti.types.vector(self._entity.n_qs, gs.ti_float),
                 parent_idx=gs.ti_int,
                 child_idx=gs.ti_int,
             )
-            self._rrt_node_info = self.struct_rrt_node_info.field(shape=self._solver._batch_shape(self._rrt_max_nodes))
-            self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
-            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=self._solver._batch_shape())
-            self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=self._solver._batch_shape())
+            self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
+            self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
+            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=(self._solver._B,))
+            self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
             self._is_rrt_connect_init = True
 
     def _reset_rrt_connect_fields(self):

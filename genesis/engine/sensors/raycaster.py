@@ -130,7 +130,7 @@ def kernel_update_aabbs(
     fixed_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    aabb_state: array_class.AABBState,
+    aabb_state: ti.template(),
 ):
     for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
         aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)

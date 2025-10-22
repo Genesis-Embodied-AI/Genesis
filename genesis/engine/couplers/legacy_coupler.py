@@ -85,11 +85,12 @@ class LegacyCoupler(RBC):
                 link_idx=gs.ti_int,
                 local_pos=gs.ti_vec3,
             )
-            pbd_batch_shape = self.pbd_solver._batch_shape(self.pbd_solver._n_particles)
 
-            self.particle_attach_info = struct_particle_attach_info.field(shape=pbd_batch_shape, layout=ti.Layout.SOA)
+            self.particle_attach_info = struct_particle_attach_info.field(
+                shape=(self.pbd_solver._n_particles, self.pbd_solver._B), layout=ti.Layout.SOA
+            )
             self.particle_attach_info.link_idx.fill(-1)
-            self.particle_attach_info.local_pos.fill(gs.ti_vec3(0.0, 0.0, 0.0))
+            self.particle_attach_info.local_pos.fill(0.0)
 
         if self._mpm_sph:
             self.mpm_sph_stencil_size = int(np.floor(self.mpm_solver.dx / self.sph_solver.hash_grid_cell_size) + 2)
@@ -328,7 +329,7 @@ class LegacyCoupler(RBC):
             #################### particle -> rigid ####################
             # Compute delta momentum and apply to rigid body.
             delta_mv = mass * (vel - vel_old)
-            force = -delta_mv / rigid_global_info.substep_dt[i_b]
+            force = -delta_mv / rigid_global_info.substep_dt[None]
             self.rigid_solver._func_apply_external_force(
                 pos_world,
                 force,
