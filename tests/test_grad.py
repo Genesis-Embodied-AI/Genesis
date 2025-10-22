@@ -182,7 +182,6 @@ def test_diff_solver(backend, monkeypatch):
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-            static_rigid_sim_cache_key=rigid_solver._static_rigid_sim_cache_key,
         )
         func_solve(
             entities_info=rigid_solver.entities_info,
@@ -190,7 +189,6 @@ def test_diff_solver(backend, monkeypatch):
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-            static_rigid_sim_cache_key=rigid_solver._static_rigid_sim_cache_key,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
@@ -211,7 +209,6 @@ def test_diff_solver(backend, monkeypatch):
         rigid_global_info=rigid_solver._rigid_global_info,
         static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
         contact_island_state=constraint_solver.contact_island.contact_island_state,
-        static_rigid_sim_cache_key=rigid_solver._static_rigid_sim_cache_key,
     )
     rigid_solver._func_constraint_clear()
     constraint_solver.add_equality_constraints()
