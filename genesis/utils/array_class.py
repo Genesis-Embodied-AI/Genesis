@@ -1,6 +1,5 @@
 import math
 import dataclasses
-from typing import NamedTuple
 
 import gstaichi as ti
 import numpy as np
@@ -12,14 +11,50 @@ if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
 
 
-# Note that NamedTuple in Python < 3.11 does not support annotation types that are not callable
 V_ANNOTATION = ti.types.ndarray() if gs.use_ndarray else ti.template
 V = ti.ndarray if gs.use_ndarray else ti.field
 V_VEC = ti.Vector.ndarray if gs.use_ndarray else ti.Vector.field
 V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 
 DATA_ORIENTED = dataclasses.dataclass if gs.use_ndarray else ti.data_oriented
-BASE_CLASS = object if gs.use_ndarray else NamedTuple
+
+
+class AutoInitMeta(type):
+    def __new__(cls, name, bases, namespace):
+        field_names = namespace["__annotations__"].keys()
+
+        def __init__(self, *args, **kwargs):
+            assigned = {}
+
+            # Assign positional arguments
+            if len(args) > len(field_names):
+                raise TypeError(f"{name}() takes {len(field_names)} positional arguments but {len(args)} were given")
+            for field, value in zip(field_names, args):
+                assigned[field] = value
+
+            # Assign keyword arguments
+            for key, value in kwargs.items():
+                if key not in field_names:
+                    raise TypeError(f"{name}() got unexpected keyword argument '{key}'")
+                if key in assigned:
+                    raise TypeError(f"{name}() got multiple values for argument '{key}'")
+                assigned[key] = value
+
+            # Check for missing arguments
+            for field in field_names:
+                if field not in assigned:
+                    raise TypeError(f"{name}() missing required argument: '{field}'")
+
+            # Set attributes
+            for field, value in assigned.items():
+                setattr(self, field, value)
+
+        namespace["__init__"] = __init__
+
+        return super().__new__(cls, name, bases, namespace)
+
+
+BASE_METACLASS = type if gs.use_ndarray else AutoInitMeta
 
 
 def V_SCALAR_FROM(dtype, value):
@@ -32,7 +67,7 @@ def V_SCALAR_FROM(dtype, value):
 
 
 @DATA_ORIENTED
-class StructRigidGlobalInfo(BASE_CLASS):
+class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
     n_awake_dofs: V_ANNOTATION
     awake_dofs: V_ANNOTATION
     n_awake_entities: V_ANNOTATION
@@ -105,7 +140,7 @@ def get_rigid_global_info(solver):
 
 
 @DATA_ORIENTED
-class StructConstraintState(BASE_CLASS):
+class StructConstraintState(metaclass=BASE_METACLASS):
     n_constraints: V_ANNOTATION
     ti_n_equalities: V_ANNOTATION
     jac: V_ANNOTATION
@@ -231,7 +266,7 @@ def get_constraint_state(constraint_solver, solver):
 
 
 @DATA_ORIENTED
-class StructContactData(BASE_CLASS):
+class StructContactData(metaclass=BASE_METACLASS):
     geom_a: V_ANNOTATION
     geom_b: V_ANNOTATION
     penetration: V_ANNOTATION
@@ -263,7 +298,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
 
 
 @DATA_ORIENTED
-class StructDiffContactInput(BASE_CLASS):
+class StructDiffContactInput(metaclass=BASE_METACLASS):
     ### Non-differentiable input data
     # Geom id of the two geometries
     geom_a: V_ANNOTATION
@@ -308,7 +343,7 @@ def get_diff_contact_input(solver, max_contacts_per_pair):
 
 
 @DATA_ORIENTED
-class StructSortBuffer(BASE_CLASS):
+class StructSortBuffer(metaclass=BASE_METACLASS):
     value: V_ANNOTATION
     i_g: V_ANNOTATION
     is_max: V_ANNOTATION
@@ -325,7 +360,7 @@ def get_sort_buffer(solver):
 
 
 @DATA_ORIENTED
-class StructContactCache(BASE_CLASS):
+class StructContactCache(metaclass=BASE_METACLASS):
     normal: V_ANNOTATION
 
 
@@ -337,7 +372,7 @@ def get_contact_cache(solver):
 
 
 @DATA_ORIENTED
-class StructAggList(BASE_CLASS):
+class StructAggList(metaclass=BASE_METACLASS):
     curr: V_ANNOTATION
     n: V_ANNOTATION
     start: V_ANNOTATION
@@ -355,7 +390,7 @@ def get_agg_list(solver):
 
 
 @DATA_ORIENTED
-class StructContactIslandState(BASE_CLASS):
+class StructContactIslandState(metaclass=BASE_METACLASS):
     ci_edges: V_ANNOTATION
     edge_id: V_ANNOTATION
     constraint_list: V_ANNOTATION
@@ -397,7 +432,7 @@ def get_contact_island_state(solver, collider):
 
 
 @DATA_ORIENTED
-class StructColliderState(BASE_CLASS):
+class StructColliderState(metaclass=BASE_METACLASS):
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
     active_buffer: V_ANNOTATION
@@ -465,7 +500,7 @@ def get_collider_state(
 
 
 @DATA_ORIENTED
-class StructColliderInfo(BASE_CLASS):
+class StructColliderInfo(metaclass=BASE_METACLASS):
     vert_neighbors: V_ANNOTATION
     vert_neighbor_start: V_ANNOTATION
     vert_n_neighbors: V_ANNOTATION
@@ -520,10 +555,8 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
     )
 
 
-# FIXME: Fast cache does not support 'NamedTuple' for now.
-# See PR: https://github.com/Genesis-Embodied-AI/gstaichi/pull/248.
 @ti.data_oriented
-class StructColliderStaticConfig:  # (NamedTuple):
+class StructColliderStaticConfig(metaclass=AutoInitMeta):
     has_nonconvex_nonterrain: bool
     has_terrain: bool
     # maximum number of contact pairs per collision pair
@@ -540,7 +573,7 @@ class StructColliderStaticConfig:  # (NamedTuple):
 
 
 @DATA_ORIENTED
-class StructMPRSimplexSupport(BASE_CLASS):
+class StructMPRSimplexSupport(metaclass=BASE_METACLASS):
     v1: V_ANNOTATION
     v2: V_ANNOTATION
     v: V_ANNOTATION
@@ -555,7 +588,7 @@ def get_mpr_simplex_support(B_):
 
 
 @DATA_ORIENTED
-class StructMPRState(BASE_CLASS):
+class StructMPRState(metaclass=BASE_METACLASS):
     simplex_support: StructMPRSimplexSupport
     simplex_size: V_ANNOTATION
 
@@ -568,7 +601,7 @@ def get_mpr_state(B_):
 
 
 @DATA_ORIENTED
-class StructMPRInfo(BASE_CLASS):
+class StructMPRInfo(metaclass=BASE_METACLASS):
     CCD_EPS: V_ANNOTATION
     CCD_TOLERANCE: V_ANNOTATION
     CCD_ITERATIONS: V_ANNOTATION
@@ -586,7 +619,7 @@ def get_mpr_info(**kwargs):
 
 
 @DATA_ORIENTED
-class StructMDVertex(BASE_CLASS):
+class StructMDVertex(metaclass=BASE_METACLASS):
     # Vertex of the Minkowski difference
     obj1: V_ANNOTATION
     obj2: V_ANNOTATION
@@ -627,7 +660,7 @@ def get_epa_polytope_vertex(solver, gjk_info):
 
 
 @DATA_ORIENTED
-class StructGJKSimplex(BASE_CLASS):
+class StructGJKSimplex(metaclass=BASE_METACLASS):
     nverts: V_ANNOTATION
     dist: V_ANNOTATION
 
@@ -642,7 +675,7 @@ def get_gjk_simplex(solver):
 
 
 @DATA_ORIENTED
-class StructGJKSimplexBuffer(BASE_CLASS):
+class StructGJKSimplexBuffer(metaclass=BASE_METACLASS):
     normal: V_ANNOTATION
     sdist: V_ANNOTATION
 
@@ -657,7 +690,7 @@ def get_gjk_simplex_buffer(solver):
 
 
 @DATA_ORIENTED
-class StructEPAPolytope(BASE_CLASS):
+class StructEPAPolytope(metaclass=BASE_METACLASS):
     nverts: V_ANNOTATION
     nfaces: V_ANNOTATION
     nfaces_map: V_ANNOTATION
@@ -678,7 +711,7 @@ def get_epa_polytope(solver):
 
 
 @DATA_ORIENTED
-class StructEPAPolytopeFace(BASE_CLASS):
+class StructEPAPolytopeFace(metaclass=BASE_METACLASS):
     verts_idx: V_ANNOTATION
     adj_idx: V_ANNOTATION
     normal: V_ANNOTATION
@@ -701,7 +734,7 @@ def get_epa_polytope_face(solver, polytope_max_faces):
 
 
 @DATA_ORIENTED
-class StructEPAPolytopeHorizonData(BASE_CLASS):
+class StructEPAPolytopeHorizonData(metaclass=BASE_METACLASS):
     face_idx: V_ANNOTATION
     edge_idx: V_ANNOTATION
 
@@ -716,7 +749,7 @@ def get_epa_polytope_horizon_data(solver, polytope_max_horizons):
 
 
 @DATA_ORIENTED
-class StructContactFace(BASE_CLASS):
+class StructContactFace(metaclass=BASE_METACLASS):
     vert1: V_ANNOTATION
     vert2: V_ANNOTATION
     endverts: V_ANNOTATION
@@ -741,7 +774,7 @@ def get_contact_face(solver, max_contact_polygon_verts):
 
 
 @DATA_ORIENTED
-class StructContactNormal(BASE_CLASS):
+class StructContactNormal(metaclass=BASE_METACLASS):
     endverts: V_ANNOTATION
     normal: V_ANNOTATION
     id: V_ANNOTATION
@@ -758,7 +791,7 @@ def get_contact_normal(solver, max_contact_polygon_verts):
 
 
 @DATA_ORIENTED
-class StructContactHalfspace(BASE_CLASS):
+class StructContactHalfspace(metaclass=BASE_METACLASS):
     normal: V_ANNOTATION
     dist: V_ANNOTATION
 
@@ -773,7 +806,7 @@ def get_contact_halfspace(solver, max_contact_polygon_verts):
 
 
 @DATA_ORIENTED
-class StructWitness(BASE_CLASS):
+class StructWitness(metaclass=BASE_METACLASS):
     point_obj1: V_ANNOTATION
     point_obj2: V_ANNOTATION
 
@@ -788,7 +821,7 @@ def get_witness(solver, max_contacts_per_pair):
 
 
 @DATA_ORIENTED
-class StructGJKState(BASE_CLASS):
+class StructGJKState(metaclass=BASE_METACLASS):
     support_mesh_prev_vertex_id: V_ANNOTATION
     simplex_vertex: StructMDVertex
     simplex_buffer: StructGJKSimplexBuffer
@@ -870,7 +903,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
 
 
 @DATA_ORIENTED
-class StructGJKInfo(BASE_CLASS):
+class StructGJKInfo(metaclass=BASE_METACLASS):
     max_contacts_per_pair: V_ANNOTATION
     max_contact_polygon_verts: V_ANNOTATION
     # Maximum number of iterations for GJK and EPA algorithms
@@ -947,7 +980,7 @@ def get_gjk_info(**kwargs):
 
 
 @ti.data_oriented
-class StructGJKStaticConfig:  # (NamedTuple):
+class StructGJKStaticConfig(metaclass=AutoInitMeta):
     # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
     # However, we keep the code here for compatibility with MuJoCo and for possible future use.
     enable_mujoco_multi_contact: bool
@@ -961,7 +994,7 @@ class StructGJKStaticConfig:  # (NamedTuple):
 
 
 @DATA_ORIENTED
-class StructSupportFieldInfo(BASE_CLASS):
+class StructSupportFieldInfo(metaclass=BASE_METACLASS):
     support_cell_start: V_ANNOTATION
     support_v: V_ANNOTATION
     support_vid: V_ANNOTATION
@@ -981,7 +1014,7 @@ def get_support_field_info(n_geoms, n_support_cells, **kwargs):
 
 
 @DATA_ORIENTED
-class StructSDFGeomInfo(BASE_CLASS):
+class StructSDFGeomInfo(metaclass=BASE_METACLASS):
     T_mesh_to_sdf: V_ANNOTATION
     sdf_res: V_ANNOTATION
     sdf_max: V_ANNOTATION
@@ -1000,7 +1033,7 @@ def get_sdf_geom_info(n_geoms):
 
 
 @DATA_ORIENTED
-class StructSDFInfo(BASE_CLASS):
+class StructSDFInfo(metaclass=BASE_METACLASS):
     geoms_info: StructSDFGeomInfo
     geoms_sdf_start: V_ANNOTATION
     geoms_sdf_val: V_ANNOTATION
@@ -1022,7 +1055,7 @@ def get_sdf_info(n_geoms, n_cells):
 
 
 @DATA_ORIENTED
-class StructDofsInfo(BASE_CLASS):
+class StructDofsInfo(metaclass=BASE_METACLASS):
     stiffness: V_ANNOTATION
     invweight: V_ANNOTATION
     armature: V_ANNOTATION
@@ -1057,7 +1090,7 @@ def get_dofs_info(solver):
 
 
 @DATA_ORIENTED
-class StructDofsState(BASE_CLASS):
+class StructDofsState(metaclass=BASE_METACLASS):
     force: V_ANNOTATION
     qf_bias: V_ANNOTATION
     qf_passive: V_ANNOTATION
@@ -1123,7 +1156,7 @@ def get_dofs_state(solver):
 
 
 @DATA_ORIENTED
-class StructLinksState(BASE_CLASS):
+class StructLinksState(metaclass=BASE_METACLASS):
     cinr_inertial: V_ANNOTATION
     cinr_pos: V_ANNOTATION
     cinr_quat: V_ANNOTATION
@@ -1198,7 +1231,7 @@ def get_links_state(solver):
 
 
 @DATA_ORIENTED
-class StructLinksInfo(BASE_CLASS):
+class StructLinksInfo(metaclass=BASE_METACLASS):
     parent_idx: V_ANNOTATION
     root_idx: V_ANNOTATION
     q_start: V_ANNOTATION
@@ -1248,7 +1281,7 @@ def get_links_info(solver):
 
 
 @DATA_ORIENTED
-class StructJointsInfo(BASE_CLASS):
+class StructJointsInfo(metaclass=BASE_METACLASS):
     type: V_ANNOTATION
     sol_params: V_ANNOTATION
     q_start: V_ANNOTATION
@@ -1275,7 +1308,7 @@ def get_joints_info(solver):
 
 
 @DATA_ORIENTED
-class StructJointsState(BASE_CLASS):
+class StructJointsState(metaclass=BASE_METACLASS):
     xanchor: V_ANNOTATION
     xaxis: V_ANNOTATION
 
@@ -1293,7 +1326,7 @@ def get_joints_state(solver):
 
 
 @DATA_ORIENTED
-class StructGeomsInfo(BASE_CLASS):
+class StructGeomsInfo(metaclass=BASE_METACLASS):
     pos: V_ANNOTATION
     center: V_ANNOTATION
     quat: V_ANNOTATION
@@ -1360,7 +1393,7 @@ def get_geoms_info(solver):
 
 
 @DATA_ORIENTED
-class StructGeomsState(BASE_CLASS):
+class StructGeomsState(metaclass=BASE_METACLASS):
     pos: V_ANNOTATION
     quat: V_ANNOTATION
     aabb_min: V_ANNOTATION
@@ -1393,7 +1426,7 @@ def get_geoms_state(solver):
 
 
 @DATA_ORIENTED
-class StructVertsInfo(BASE_CLASS):
+class StructVertsInfo(metaclass=BASE_METACLASS):
     init_pos: V_ANNOTATION
     init_normal: V_ANNOTATION
     geom_idx: V_ANNOTATION
@@ -1419,7 +1452,7 @@ def get_verts_info(solver):
 
 
 @DATA_ORIENTED
-class StructFacesInfo(BASE_CLASS):
+class StructFacesInfo(metaclass=BASE_METACLASS):
     verts_idx: V_ANNOTATION
     geom_idx: V_ANNOTATION
 
@@ -1437,7 +1470,7 @@ def get_faces_info(solver):
 
 
 @DATA_ORIENTED
-class StructEdgesInfo(BASE_CLASS):
+class StructEdgesInfo(metaclass=BASE_METACLASS):
     v0: V_ANNOTATION
     v1: V_ANNOTATION
     length: V_ANNOTATION
@@ -1457,7 +1490,7 @@ def get_edges_info(solver):
 
 
 @DATA_ORIENTED
-class StructVertsState(BASE_CLASS):
+class StructVertsState(metaclass=BASE_METACLASS):
     pos: V_ANNOTATION
 
 
@@ -1477,7 +1510,7 @@ def get_fixed_verts_state(solver):
 
 
 @DATA_ORIENTED
-class StructVvertsInfo(BASE_CLASS):
+class StructVvertsInfo(metaclass=BASE_METACLASS):
     init_pos: V_ANNOTATION
     init_vnormal: V_ANNOTATION
     vgeom_idx: V_ANNOTATION
@@ -1497,7 +1530,7 @@ def get_vverts_info(solver):
 
 
 @DATA_ORIENTED
-class StructVfacesInfo(BASE_CLASS):
+class StructVfacesInfo(metaclass=BASE_METACLASS):
     vverts_idx: V_ANNOTATION
     vgeom_idx: V_ANNOTATION
 
@@ -1515,7 +1548,7 @@ def get_vfaces_info(solver):
 
 
 @DATA_ORIENTED
-class StructVgeomsInfo(BASE_CLASS):
+class StructVgeomsInfo(metaclass=BASE_METACLASS):
     pos: V_ANNOTATION
     quat: V_ANNOTATION
     link_idx: V_ANNOTATION
@@ -1549,7 +1582,7 @@ def get_vgeoms_info(solver):
 
 
 @DATA_ORIENTED
-class StructVgeomsState(BASE_CLASS):
+class StructVgeomsState(metaclass=BASE_METACLASS):
     pos: V_ANNOTATION
     quat: V_ANNOTATION
 
@@ -1567,7 +1600,7 @@ def get_vgeoms_state(solver):
 
 
 @DATA_ORIENTED
-class StructEqualitiesInfo(BASE_CLASS):
+class StructEqualitiesInfo(metaclass=BASE_METACLASS):
     eq_obj1id: V_ANNOTATION
     eq_obj2id: V_ANNOTATION
     eq_data: V_ANNOTATION
@@ -1591,7 +1624,7 @@ def get_equalities_info(solver):
 
 
 @DATA_ORIENTED
-class StructEntitiesInfo(BASE_CLASS):
+class StructEntitiesInfo(metaclass=BASE_METACLASS):
     dof_start: V_ANNOTATION
     dof_end: V_ANNOTATION
     n_dofs: V_ANNOTATION
@@ -1627,7 +1660,7 @@ def get_entities_info(solver):
 
 
 @DATA_ORIENTED
-class StructEntitiesState(BASE_CLASS):
+class StructEntitiesState(metaclass=BASE_METACLASS):
     hibernated: V_ANNOTATION
 
 
@@ -1641,7 +1674,7 @@ def get_entities_state(solver):
 
 
 @ti.data_oriented
-class StructRigidSimStaticConfig:  # (NamedTuple):
+class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     para_level: int
     requires_grad: bool
     use_hibernation: bool
