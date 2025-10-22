@@ -188,6 +188,21 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     # Optional Newton fields
     nt_H: V_ANNOTATION
     nt_vec: V_ANNOTATION
+    # Backward gradients
+    dL_dqacc: V_ANNOTATION
+    dL_dM: V_ANNOTATION
+    dL_djac: V_ANNOTATION
+    dL_daref: V_ANNOTATION
+    dL_defc_D: V_ANNOTATION
+    dL_dforce: V_ANNOTATION
+    # Backward buffers for linear system solver
+    bw_u: V_ANNOTATION
+    bw_r: V_ANNOTATION
+    bw_p: V_ANNOTATION
+    bw_Ap: V_ANNOTATION
+    bw_Ju: V_ANNOTATION
+    bw_y: V_ANNOTATION
+    bw_w: V_ANNOTATION
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -259,6 +274,20 @@ def get_constraint_state(constraint_solver, solver):
         cg_pg_dot_pMg=V(gs.ti_float, shape=(_B,)),
         nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        # Backward gradients
+        dL_dqacc=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        dL_dM=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
+        dL_djac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
+        dL_daref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        dL_defc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        dL_dforce=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        bw_u=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        bw_r=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        bw_p=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        bw_Ap=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        bw_Ju=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        bw_y=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        bw_w=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
     )
 
 
