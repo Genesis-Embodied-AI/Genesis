@@ -49,7 +49,7 @@ class ParticleEntity(Entity):
     idx : int
         Index of this entity in the simulation.
     particle_start : int
-        Global index offset for this entity’s particles in the solver.
+        Global index offset for this entity's particles in the solver.
     vvert_start : int, optional
         Global index offset for vertex-based rendering, used for skinning.
     vface_start : int, optional

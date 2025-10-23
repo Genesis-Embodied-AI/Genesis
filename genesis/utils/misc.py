@@ -67,7 +67,7 @@ class redirect_libc_stderr:
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
         sys.stderr.flush()
 
-        if os.name == "posix":  # macOS, Linux, *BSD, …
+        if os.name == "posix":  # macOS, Linux, *BSD, ...
             libc = ctypes.CDLL(None)
             libc.fflush(None)
             libc.dup2(self.fd.fileno(), self.stderr_fileno)

@@ -854,7 +854,7 @@ class RigidEntity(Entity):
         link : RigidLink
             The target link.
         local_point : torch.Tensor or None, shape (3,)
-            Coordinates of the point in the link’s *local* frame.
+            Coordinates of the point in the link's *local* frame.
             If None, the link origin is used (back-compat).
 
         Returns

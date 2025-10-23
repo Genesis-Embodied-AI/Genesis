@@ -1313,7 +1313,7 @@ class Scene(RBC):
         Returns
         -------
         dict[str, np.ndarray]
-            Mapping ``"Class.attr[.member]" → array`` with raw field data.
+            Mapping ``"Class.attr[.member]" -> array`` with raw field data.
         """
         arrays: dict[str, np.ndarray] = {}
 

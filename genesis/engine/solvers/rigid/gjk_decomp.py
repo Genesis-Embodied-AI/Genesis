@@ -2537,7 +2537,7 @@ def func_cmp_bit(
     shift,
 ):
     """
-    Compare one bit of v1 and v2 that sits at position `shift` (shift = 0 for the LSB, 1 for the next bit, …).
+    Compare one bit of v1 and v2 that sits at position `shift` (shift = 0 for the LSB, 1 for the next bit, ...).
 
     Returns:
     -------

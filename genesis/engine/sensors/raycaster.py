@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 @ti.func
 def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
     """
-    Möller-Trumbore ray-triangle intersection.
+    Moller-Trumbore ray-triangle intersection.
 
     Returns: vec4(t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
     """
