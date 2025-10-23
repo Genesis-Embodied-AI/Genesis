@@ -12,7 +12,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, logging_level=logging.DEBUG)
+    gs.init(backend=gs.gpu, logging_level=logging.DEBUG, performance_mode=True)
     dt = 1e-3
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, 0.0)),

@@ -12,17 +12,18 @@ import logging
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level=logging.INFO)
+    gs.init(backend=gs.gpu, logging_level=logging.INFO, performance_mode=True)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("--vis_ipc", action="store_true", default=False)
     args = parser.parse_args()
 
+    dt = 2e-3
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=2e-3, gravity=(0.0, 0.0, -9.8)),
+        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=2e-3,  
+            dt=dt,
             gravity=(0.0, 0.0, -9.8),
             contact_d_hat=0.01,  # Contact barrier distance (10mm) - must be appropriate for mesh resolution
             contact_friction_mu=0.3,  # Friction coefficient
