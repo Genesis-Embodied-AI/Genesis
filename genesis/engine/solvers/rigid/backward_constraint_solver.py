@@ -60,8 +60,8 @@ def kernel_solve_adjoint_u(
     static_rigid_sim_config: ti.template(),
 ):
     r"""
-    Solve for the adjoint vector [u] from Au = g, where A = ∂F/∂qacc (primal Hessian on the active set) and g = ∂L/∂qacc.
-    Intuitively, [u] is a sensitivity vector that translates the upstream gradient ∂L/∂qacc into the primal space.
+    Solve for the adjoint vector [u] from Au = g, where A = dF/dqacc (primal Hessian on the active set) and g = dL/dqacc.
+    Intuitively, [u] is a sensitivity vector that translates the upstream gradient dL/dqacc into the primal space.
     This adjoint vector [u] can be used an intermediate variable to compute the downstream gradients. Since A is a
     Semi-Positive Definite (SPD) matrix, we can solve A * u = g using either Cholesky decomposition or CG solver.
     When Newton solver was used, we reuse the Cholesky decomposition of A (= L * L^T) to solve A * u = g. Otherwise,

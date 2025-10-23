@@ -70,7 +70,7 @@ class Solver(RBC):
             key_base = ".".join((self.__class__.__name__, attr_name))
             data = value.to_numpy()
 
-            # StructField → data is a dict: flatten each member
+            # StructField -> data is a dict: flatten each member
             if isinstance(data, dict):
                 for sub_name, sub_arr in data.items():
                     arrays[f"{key_base}.{sub_name}"] = sub_arr

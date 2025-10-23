@@ -21,9 +21,6 @@ pytestmark = [
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact(backend):
-    if gs.use_ndarray:
-        pytest.skip(reason="GsTaichi dynamic array type does not support AutoDiff.")
-
     RTOL = 1e-4
 
     scene = gs.Scene(
@@ -141,14 +138,13 @@ def test_diff_contact(backend):
 # gradient estimates through finite difference method. This small perturbation is not supported by 32-bit precision in
 # stable way.
 @pytest.mark.required
-@pytest.mark.field_only
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_diff_solver(backend, monkeypatch):
-    RTOL = 1e-4
-
     from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
+
+    RTOL = 1e-4
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -338,8 +334,6 @@ def test_differentiable_push(precision, show_viewer):
         pytest.skip(reason="GsTaichi does not support AutoDiff on non-CPU backend on Mac OS for now.")
     if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
         pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
-    if gs.use_ndarray:
-        pytest.skip(reason="GsTaichi dynamic array type does not support AutoDiff.")
 
     HORIZON = 10
 
