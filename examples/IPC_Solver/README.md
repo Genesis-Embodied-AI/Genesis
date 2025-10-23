@@ -11,21 +11,27 @@ This repo shows how to use IPC coupler. (Incremental Potential Contact) algorith
 
 1. **Basic cloth simulation:**
    ```bash
-   python examples/IPC_Solver/ipc_cloth.py
+   python examples/IPC_Solver/ipc_cloth.py -v
    ```
   Expected: A cloth sheet falls under gravity and collides with the ground plane
 
 2. **Robotic grasping of deformables:**
    ```bash
-   python examples/IPC_Solver/ipc_grasp.py
+   python examples/IPC_Solver/ipc_grasp.py --ipc -v
    ```
  Expected: Franka Panda arm grasps and manipulates a deformable object with IPC contact resolution
 
 3. **Interactive cloth manipulation (requires trajectory data):**
    ```bash
-   python examples/IPC_Solver/ipc_arm_cloth.py
+   python examples/IPC_Solver/ipc_arm_cloth.py -v
    ```
     Expected: Playback of recorded trajectory showing arm-cloth interaction
+
+   ```bash
+   python examples/IPC_Solver/ipc_twist_cloth_band.py -v
+   ```
+    Expected: four rigid cubes hold and twist a cloth band
+    
 
 **Verification:**
 - No interpenetration between objects during contact
