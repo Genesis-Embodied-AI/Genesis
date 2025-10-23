@@ -6,7 +6,7 @@ import numpy as np
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level=logging.DEBUG)
+    gs.init(backend=gs.gpu, logging_level=logging.DEBUG, performance_mode=True)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--ipc", action="store_true", default=False)
@@ -14,9 +14,11 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
+    dt = 1e-2
+
     coupler_options = (
         gs.options.IPCCouplerOptions(
-            dt=1e-3,
+            dt=dt,
             gravity=(0.0, 0.0, -9.8),
             ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.8,
@@ -30,7 +32,7 @@ def main():
     args.vis = args.vis or args.vis_ipc
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-3, gravity=(0.0, 0.0, -9.8)),
+        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
         coupler_options=coupler_options,
         show_viewer=args.vis,
     )
@@ -76,7 +78,7 @@ def main():
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
     # hold
-    for i in range(100):
+    for i in range(int(0.1 / dt)):
         franka.set_qpos(qpos)
         scene.step()
 
@@ -88,7 +90,7 @@ def main():
     print(f"New kp: {franka.get_dofs_kp()}")
     # grasp
     finder_pos = 0.0
-    for i in range(100):
+    for i in range(int(0.1 / dt)):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(np.array([finder_pos, finder_pos]), fingers_dof)
         scene.step()
@@ -99,7 +101,7 @@ def main():
         quat=np.array([0, 1, 0, 0]),
     )
 
-    for i in range(200):
+    for i in range(int(0.2 / dt)):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(np.array([finder_pos, finder_pos]), fingers_dof)
         scene.step()

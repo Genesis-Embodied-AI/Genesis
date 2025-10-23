@@ -56,13 +56,15 @@ class KeyboardDevice:
 
 def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     ########################## init ##########################
-    gs.init(seed=0, precision="32", logging_level="info", backend=gs.cpu)
+    gs.init(seed=0, precision="32", logging_level="info", backend=gs.gpu, performance_mode=True)
     np.set_printoptions(precision=7, suppress=True)
+
+    dt = 1e-2
 
     ########################## create a scene ##########################
     coupler_options = (
         gs.options.IPCCouplerOptions(
-            dt=1e-3,
+            dt=dt,
             gravity=(0.0, 0.0, -9.8),
             ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.8,
@@ -75,7 +77,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     )
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-3),
+        sim_options=gs.options.SimOptions(dt=dt, gravity=(0, 0, -9.8)),
         coupler_options=coupler_options,
         rigid_options=gs.options.RigidOptions(
             enable_joint_limit=True,

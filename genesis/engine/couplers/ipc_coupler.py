@@ -438,10 +438,13 @@ class IPCCoupler(RBC):
                         self._ipc_abd_contact.apply_to(merged_mesh)
                         from uipc.unit import MPa
 
+                        # Use half density for IPC ABD to avoid double-counting mass
+                        # (the other half is in Genesis rigid solver, scaled in _scale_genesis_rigid_link_masses)
+                        entity_rho = rigid_solver._entities[link_data["entity_idx"]].material.rho
                         abd.apply_to(
                             merged_mesh,
                             kappa=10.0 * MPa,
-                            mass_density=rigid_solver._entities[link_data["entity_idx"]].material.rho,
+                            mass_density=entity_rho / 2.0,
                         )
 
                         # Apply soft transform constraints
@@ -524,6 +527,57 @@ class IPCCoupler(RBC):
                 except Exception as e:
                     gs.logger.warning(f"Failed to create IPC object for link {link_idx}: {e}")
                     continue
+
+        # Scale down Genesis rigid solver masses for links added to IPC
+        # Since both Genesis and IPC simulate these rigid bodies, divide mass by 2
+        self._scale_genesis_rigid_link_masses(link_geoms)
+
+    def _scale_genesis_rigid_link_masses(self, link_geoms_dict):
+        """
+        Scale down Genesis rigid solver mass properties for links that were added to IPC.
+        Both Genesis and IPC will simulate these rigid bodies, so we divide by 2 to avoid
+        double-counting mass.
+
+        This scales:
+        - inertial_mass: scalar mass
+        - inertial_i: 3x3 inertia tensor (scales linearly with mass)
+
+        Parameters
+        ----------
+        link_geoms_dict : dict
+            Dictionary mapping link_idx to their geometry data (from _add_rigid_geoms_to_ipc)
+        """
+        rigid_solver = self.rigid_solver
+
+        # Get all link indices that were added to IPC
+        ipc_link_indices = set(link_geoms_dict.keys())
+
+        if not ipc_link_indices:
+            return
+
+        gs.logger.info(f"Scaling Genesis rigid mass for {len(ipc_link_indices)} links added to IPC (dividing by 2)")
+
+        # Scale mass properties for each link
+        for link_idx in ipc_link_indices:
+            # Scale inertial mass
+            original_mass = float(rigid_solver.links_info.inertial_mass[link_idx])
+            rigid_solver.links_info.inertial_mass[link_idx] = original_mass / 2.0
+
+            # Scale inertia tensor (inertia scales linearly with mass for same geometry)
+            original_inertia = rigid_solver.links_info.inertial_i[link_idx]
+            rigid_solver.links_info.inertial_i[link_idx] = original_inertia / 2.0
+
+            gs.logger.debug(
+                f"  Link {link_idx}: mass {original_mass:.6f} -> {original_mass/2.0:.6f} kg, "
+                f"inertia scaled by 0.5"
+            )
+
+        # After scaling inertial_mass and inertial_i, we need to recompute derived quantities:
+        # - mass_mat: mass matrix (computed from inertial_mass and inertial_i)
+        # - invweight: inverse weight (computed from mass_mat)
+        # - meaninertia: mean inertia (computed from mass_mat)
+        gs.logger.info("Recomputing mass matrix and derived quantities after scaling")
+        rigid_solver._init_invweight_and_meaninertia(force_update=True)
 
     def _add_cloth_entities_to_ipc(self):
         """Add cloth entities to IPC scene"""
