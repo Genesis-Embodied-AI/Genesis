@@ -27,8 +27,9 @@ def main():
             gravity=(0.0, 0.0, -9.8),
             contact_d_hat=0.01,  # Contact barrier distance (10mm) - must be appropriate for mesh resolution
             contact_friction_mu=0.3,  # Friction coefficient
-            IPC_self_contact=False,  # Enable cloth self-collision
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies
+            IPC_self_contact=False,  # Disable rigid self-contact in IPC
+            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
+            disable_genesis_ground_contact=True,  # Disable Genesis ground contact to avoid double contact handling
             enable_ipc_gui=args.vis_ipc,
         ),
         show_viewer=args.vis,
@@ -47,48 +48,42 @@ def main():
         morph=gs.morphs.Mesh(
             file="meshes/grid20x20.obj",
             scale=2.0, 
-            pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, 0.3)))),
-            euler=(90, 0, 0),
+            pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, 0.8)))),
+            euler=(0, 0, 0),
         ),
         material=gs.materials.Cloth(
             E=10e5,  # Young's modulus (Pa) - soft cloth (10 kPa)
             nu=0.499,  # Poisson's ratio - nearly incompressible
-            rho=200,  # Density (kg/m³) - typical fabric
+            rho=200,  # Density (kg/m³)
             thickness=0.001,  # Shell thickness (m) - 1mm
-            bending_stiffness=100.0,  # Bending resistance
+            bending_stiffness=50.0,  # Bending resistance
         ),
         surface=gs.surfaces.Plastic(color=(0.3, 0.5, 0.8, 1.0), double_sided=True),
     )
 
-    # Add 16 rigid cubes uniformly distributed under the cloth (4x4 grid)
     cube_size = 0.2
     cube_height = 0.3  # Height below cloth
-    grid_spacing = 0.6  # Spacing between cubes
 
-    for i in range(4):
-        for j in range(4):
-            x = (i - 1.5) * grid_spacing  # Center the grid
-            y = (j - 1.5) * grid_spacing
-            scene.add_entity(
-                morph=gs.morphs.Box(
-                    pos=tuple(map(sum, zip(SCENE_POS, (x, y, cube_height)))),
-                    size=(cube_size, cube_size, cube_size),
-                ),
-                material=gs.materials.Rigid(rho=500, friction=0.3),
-                surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
-            )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=tuple(map(sum, zip(SCENE_POS, (0 ,0, cube_height)))),
+            size=(cube_size, cube_size, cube_size),
+        ),
+        material=gs.materials.Rigid(rho=500, friction=0.3),
+        surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
+    )
 
     # Optional: Add another FEM volume object
-    # soft_ball = scene.add_entity(
-    #     morph=gs.morphs.Sphere(
-    #         pos=tuple(map(sum, zip(SCENE_POS, (0.2, 0.0, 0.6)))),
-    #         radius=0.08
-    #     ),
-    #     material=gs.materials.FEM.Elastic(
-    #         E=1.0e5, nu=0.45, rho=1000.0, model="stable_neohookean"
-    #     ),
-    #     surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.3, 0.8)),
-    # )
+    soft_ball = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=tuple(map(sum, zip(SCENE_POS, (0.5, 0.0, 0.1)))),
+            radius=0.08
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=1.0e3, nu=0.3, rho=1000.0, model="stable_neohookean"
+        ),
+        surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.3, 0.8)),
+    )
 
     gs.logger.info("Building scene...")
     scene.build(n_envs=1)
@@ -102,7 +97,6 @@ def main():
         if i % 100 == 0:
             print(f"  Step {i}/{horizon}")
 
-    print("\nSimulation completed successfully!")
 
 
 if __name__ == "__main__":
