@@ -307,7 +307,6 @@ class FEMSolver(Solver):
             target_pos=gs.ti_vec3,  # target position for the constraint
             is_soft_constraint=gs.ti_bool,  # use spring for soft constraints
             stiffness=gs.ti_float,  # spring stiffness
-            damping=gs.ti_float,  # spring damping
             link_idx=gs.ti_int,  # index of the rigid link (-1 if not linked)
             link_offset_pos=gs.ti_vec3,  # offset position of link
             link_init_quat=gs.ti_vec4,  # offset rotation of link

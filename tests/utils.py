@@ -1,6 +1,7 @@
 import platform
 import io
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -154,10 +155,10 @@ def get_git_commit_info(ref="HEAD"):
         remote_url = subprocess.check_output(
             ["git", "remote", "get-url", remote_name], cwd=TEST_DIR, encoding="utf-8"
         ).strip()
-        if remote_url.startswith("https://github.com/"):
-            remote_handle = remote_url[19:-4]
-        elif remote_url.startswith("git@github.com:"):
-            remote_handle = remote_url[15:-4]
+        try:
+            remote_handle = re.search(r"github\.com[:/](.+?)(?:\.git)?$", remote_url).group(1)
+        except AttributeError:
+            pass
         if remote_handle == REPOSITY_URL:
             is_commit_on_default_branch = True
             break
