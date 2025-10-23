@@ -127,7 +127,7 @@ def init(
             raise_exception("Genesis previous initialized. GsTaichi dynamic array type cannot be disabled anymore.")
     if _use_ndarray and backend == gs_backend.metal:
         raise_exception("GsTaichi dynamic array type is not supported on Apple Metal GPU backend.")
-    is_pure_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "0") == "0"
+    is_pure_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
     if use_pure is None:
         _use_pure = not is_pure_disabled and _use_ndarray
     else:
