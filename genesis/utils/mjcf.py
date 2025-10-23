@@ -150,7 +150,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
-        raise gs.raise_exception(f"'{xml}' is not a valid MJCF file.")
+        raise gs.raise_exception(f"'{xml}' is not a valid MJCF or URDF file.")
 
     return mj
 
