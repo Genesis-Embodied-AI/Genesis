@@ -13,10 +13,11 @@ def main():
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu, logging_level=logging.DEBUG)
+    dt = 1e-3
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-3, gravity=(0.0, 0.0, 0.0)),
+        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, 0.0)),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=1e-3,
+            dt=dt,
             gravity=(0.0, 0.0, 0.0),
             ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios
             IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
@@ -28,18 +29,18 @@ def main():
     # FEM bodies use StableNeoHookean constitution, Rigid bodies use ABD constitution
 
     scene.add_entity(gs.morphs.Plane())
-    SCENE_POS = (0.0, 0.0, 0.0)
+    SCENE_POS = np.array([0.0, 0.0, 0.0])
 
     # FEM entities (added to IPC as deformable bodies)
     blob = scene.add_entity(
-        morph=gs.morphs.Sphere(pos=tuple(map(sum, zip(SCENE_POS, (0.3, -0.0, 0.4)))), radius=0.1),
+        morph=gs.morphs.Sphere(pos=tuple(SCENE_POS + np.array([0.3, 0.0, 0.4])), radius=0.1),
         material=gs.materials.FEM.Elastic(E=1.0e5, nu=0.45, rho=1000.0, model="stable_neohookean"),
     )
 
     # Rigid bodies (added to both Genesis rigid solver AND IPC as ABD objects)
     # This enables contact between rigid bodies and FEM bodies through IPC
     rigid_cube = scene.add_entity(
-        morph=gs.morphs.Box(pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0, 0.4)))), size=(0.1, 0.1, 0.1), euler=(0, 0, 0)),
+        morph=gs.morphs.Box(pos=tuple(SCENE_POS + np.array([0.0, 0.0, 0.4])), size=(0.1, 0.1, 0.1), euler=(0, 0, 0)),
         material=gs.materials.Rigid(rho=1000, friction=0.3),
         surface=gs.surfaces.Plastic(color=(0.8, 0.2, 0.2, 0.8)),
     )
@@ -91,22 +92,84 @@ def main():
         rigid_linear_momentum = rigid_mass * rigid_vel
 
         # === FEM body linear momentum ===
-        # Get FEM blob COM position from entity
-        fem_entity = blob  # Reference to blob entity
-        fem_state = fem_entity.get_state()
-        fem_pos = fem_state.pos.detach().cpu().numpy()
+        # Get FEM vertex data from IPC using libuipc API
+        from uipc.backend import SceneVisitor
+        from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+        from uipc import builtin
 
-        # Ensure fem_pos is a 1D array of shape (3,)
-        fem_pos = np.atleast_1d(fem_pos).flatten()[:3]
+        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
 
-        # Compute FEM COM velocity using finite difference
-        if fem_prev_pos is not None:
-            fem_vel = (fem_pos - fem_prev_pos) / dt
+        fem_vertex_positions = None
+        fem_vertex_masses = None
+
+        # Find FEM geometry in IPC scene
+        for geo_slot in visitor.geometries():
+            if isinstance(geo_slot, SimplicialComplexSlot):
+                geo = geo_slot.geometry()
+                if geo.dim() == 3:  # FEM is 3D
+                    try:
+                        meta_attrs = geo.meta()
+                        solver_type_attr = meta_attrs.find("solver_type")
+                        if solver_type_attr:
+                            solver_type = str(solver_type_attr.view()[0])
+                            if solver_type == "fem":
+                                # Get geometry (merge instances if needed)
+                                proc_geo = geo
+                                if geo.instances().size() >= 1:
+                                    proc_geo = merge(apply_transform(geo))
+
+                                # Get vertex positions
+                                fem_vertex_positions = proc_geo.positions().view().reshape(-1, 3)
+
+                                # Get vertex masses (mass = volume * mass_density)
+                                volume_attr = proc_geo.vertices().find(builtin.volume)
+                                mass_density_attr = proc_geo.vertices().find(builtin.mass_density)
+
+                                if volume_attr and mass_density_attr:
+                                    volumes = volume_attr.view().reshape(-1)
+                                    mass_densities = mass_density_attr.view().reshape(-1)
+                                    fem_vertex_masses = volumes * mass_densities
+                                else:
+                                    # Fallback: uniform mass distribution
+                                    n_vertices = len(fem_vertex_positions)
+                                    fem_vertex_masses = np.ones(n_vertices) * (fem_total_mass / n_vertices)
+
+                                break
+                    except Exception as e:
+                        continue
+
+        # Compute FEM linear momentum using finite difference on vertex positions
+        if fem_vertex_positions is not None and fem_vertex_masses is not None:
+            # Compute vertex velocities using finite difference
+            if fem_prev_pos is not None:
+                fem_vertex_velocities = (fem_vertex_positions - fem_prev_pos) / dt
+            else:
+                # First step: zero velocity
+                fem_vertex_velocities = np.zeros_like(fem_vertex_positions)
+
+            # Store current positions for next step
+            fem_prev_pos = fem_vertex_positions.copy()
+
+            # Compute linear momentum: P = sum(m_i * v_i)
+            fem_linear_momentum = np.sum(fem_vertex_masses[:, np.newaxis] * fem_vertex_velocities, axis=0)
+
+            # Also compute average velocity
+            fem_total_mass_actual = np.sum(fem_vertex_masses)
+            fem_vel = fem_linear_momentum / fem_total_mass_actual if fem_total_mass_actual > 0 else np.zeros(3)
         else:
-            fem_vel = np.zeros(3)  # First step: zero velocity
+            # Fallback to COM-based calculation
+            fem_entity = blob
+            fem_state = fem_entity.get_state()
+            fem_pos = fem_state.pos.detach().cpu().numpy()
+            fem_pos = np.atleast_1d(fem_pos).flatten()[:3]
 
-        fem_prev_pos = fem_pos.copy()
-        fem_linear_momentum = fem_total_mass * fem_vel
+            if fem_prev_pos is not None:
+                fem_vel = (fem_pos - fem_prev_pos) / dt
+            else:
+                fem_vel = np.zeros(3)
+
+            fem_prev_pos = fem_pos.copy()
+            fem_linear_momentum = fem_total_mass * fem_vel
 
         # === Total momentum ===
         total_linear_momentum = rigid_linear_momentum + fem_linear_momentum
@@ -137,7 +200,10 @@ def main():
     rigid_v_history = []
     fem_v_history = []
 
-    for i_step in range(300):
+    test_time = 0.30  # seconds
+    n_steps = int(test_time / dt)
+
+    for i_step in range(n_steps):
         # Compute momentum at every step
         (total_p, rigid_p, fem_p, rigid_v, fem_v, rigid_m, fem_m) = compute_total_linear_momentum()
 
@@ -150,7 +216,7 @@ def main():
         fem_v_history.append(np.asarray(fem_v).flatten().copy())
 
         # Print every 100 steps
-        if i_step % 100 == 0:
+        if i_step % (n_steps // 10) == 0:
             # Ensure all are numpy arrays
             total_p = np.asarray(total_p).flatten()
             rigid_p = np.asarray(rigid_p).flatten()
