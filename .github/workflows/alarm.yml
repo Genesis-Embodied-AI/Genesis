@@ -129,8 +129,8 @@ jobs:
               sys.exit(0)
 
           current_bm = artifacts_parse_csv_summary(current_txt_path)
-          bids_list = sorted(current_bm.keys())
-          assert bids_list
+          bids_set = set(current_bm.keys())
+          assert bids_set
 
           # ----- W&B baselines -----
 
@@ -143,21 +143,23 @@ jobs:
           api = wandb.Api()
           runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
 
+          is_complete = False
           records_by_rev = {}
           for i, run in enumerate(runs_iter):
-              # Skip runs did not finish for some reason
-              if run.state != "finished":
-                  continue
-
               # Abort if still not complete after checking enough runs.
               # This would happen if a new benchmark has been added, and not enough past data is available yet.
               if i == MAX_FETCH_REVISIONS:
-                  continue
+                  break
 
               # Early return if enough complete records have been collected
-              records_is_complete = [sorted(record.keys()) == bids_list for record in records_by_rev.values()]
-              if sum(records_is_complete) == MAX_VALID_REVISIONS:
+              records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+              is_complete = sum(records_is_complete) == MAX_VALID_REVISIONS
+              if is_complete:
                   break
+
+              # Skip runs did not finish for some reason
+              if run.state != "finished":
+                  continue
 
               # Load config and summary, with support of legacy runs
               config, summary = run.config, run.summary
@@ -178,14 +180,14 @@ jobs:
 
               # Do not store new records if the desired number of revision is already reached
               if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
-                  break
+                  continue
 
               # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
               # Note that the rigid body benchmark suite is the only one being supported for now.
               sid, bid = config["benchmark_id"].split("-", 1)
               nbid = normalize_benchmark_id(bid)
               if sid != "rigid_body":
-                  pass
+                  continue
 
               # Make sure that stats are valid
               try:
@@ -201,10 +203,6 @@ jobs:
                   "runtime_fps": summary["runtime_fps"],
                   "compile_time": summary["compile_time"],
               }
-          else:
-              raise RuntimeError("Not enough complete W&B records found.")
-
-          records_by_rev = dict(kv for kv, flag in zip(records_by_rev.items(), records_is_complete) if flag)
 
           def mean_of(metric, bid):
               num, tot = 0, 0.0
@@ -252,7 +250,7 @@ jobs:
                   fmt_pct(d_ct, highlight=is_ct_reg)
               ])
 
-              reg_found |= is_rt_reg or is_ct_reg
+              reg_found |= bool(is_rt_reg or is_ct_reg)
 
           header_rt = [
             "| status | benchmark_id | current FPS | baseline FPS | Δ FPS |",
