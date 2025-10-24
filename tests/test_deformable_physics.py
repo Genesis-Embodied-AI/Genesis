@@ -8,7 +8,8 @@ import genesis as gs
 from .utils import assert_allclose
 
 
-@pytest.mark.required
+# This test cannot be flagged as required because it takes 500s + 250s to run on CPU.
+# @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
 def test_muscle(n_envs, muscle_material, show_viewer):
