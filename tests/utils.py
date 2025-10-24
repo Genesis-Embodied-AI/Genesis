@@ -164,14 +164,14 @@ def get_git_commit_info(ref="HEAD"):
             break
     else:
         is_commit_on_default_branch = False
+    revision = f"{revision}@{remote_handle}"
 
-    # Return the contribution date as timestamp if and only if the HEAD commit is contained on main branch
+    # Return the contribution date as timestamp if and only if the HEAD commit is on main branch
     if is_commit_on_default_branch:
         timestamp = get_git_commit_timestamp(ref)
-        return revision, timestamp
+    else:
+        timestamp = float("nan")
 
-    revision = f"{revision}@{remote_handle}"
-    timestamp = float("nan")
     return revision, timestamp
 
 
