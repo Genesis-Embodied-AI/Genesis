@@ -124,10 +124,10 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             morph=gs.morphs.Mesh(
                 file="meshes/grid20x20.obj",
                 scale=0.5,
-                pos=tuple(map(sum, zip(SCENE_POS, (1.0, 0.0, 0.3)))),
+                pos=tuple(map(sum, zip(SCENE_POS, (0.5, 0.0, 0.1)))),
                 euler=(90, 0, 0),
             ),
-            material=gs.materials.Cloth(
+            material=gs.materials.FEM.Cloth(
                 E=1e5,  # Young's modulus (Pa) - soft cloth (10 kPa)
                 nu=0.499,  # Poisson's ratio - nearly incompressible
                 rho=200,  # Density (kg/m³) - typical fabric
