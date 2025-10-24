@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==3.1.1b2",
+    "gstaichi==3.1.1rc1",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
