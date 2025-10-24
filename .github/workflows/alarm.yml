@@ -191,10 +191,14 @@ jobs:
 
               # Make sure that stats are valid
               try:
+                  is_valid = True
                   for k in METRIC_KEYS:
                       v = summary[k]
                       if not isinstance(v, (float, int)) or math.isnan(v):
-                          continue
+                          is_valid = False
+                          break
+                  if not is_valid:
+                      continue
               except KeyError:
                   continue
 
@@ -205,13 +209,13 @@ jobs:
               }
 
           def mean_of(metric, bid):
-              num, tot = 0, 0.0
+              tot = 0.0
               for record in records_by_rev.values():
-                  val = record[bid].get(metric)
-                  if val is not None and not math.isnan(val):
-                      tot += val
-                      num += 1
-              if num < MAX_VALID_REVISIONS:
+                  stats = record.get(bid)
+                  if stats is None:
+                      break
+                  tot += record[bid][metric]
+              else:
                   # Refuse the compute stats if data are missing
                   return float("nan")
               return tot / MAX_VALID_REVISIONS
