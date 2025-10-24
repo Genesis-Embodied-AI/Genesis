@@ -675,20 +675,14 @@ def parse_geoms(mj, scale, surface, xml_path):
 
     # Parse geometry group if available
     for link_g_info in links_g_info:
-        has_visual_group = any(g_info["group"] > 0 for g_info in link_g_info)
         for g_info in link_g_info.copy():
-            # Duplicate collision geometries as visual in accordance with Mujoco logics
-            create_visual = False
-            if g_info["contype"] or g_info["conaffinity"]:
-                if has_visual_group:
-                    # If groups are defined, only create visual for geoms in visual groups (1 or 2)
-                    create_visual = g_info["group"] in (1, 2)
-                else:
-                    # If no groups defined, always create visual duplicates for collision geoms.
-                    # This handles the case where we have a mix of collision and non-collision geoms.
-                    create_visual = True
+            # Skip visual geometries
+            if not (g_info["contype"] or g_info["conaffinity"]):
+                continue
 
-            if create_visual:
+            # Duplicate collision geometries as visual in accordance with Mujoco logics:
+            # If groups are defined, only create visual for geoms in visual groups (0, 1 or 2).
+            if g_info["group"] in (0, 1, 2):
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
                 vmesh = gs.Mesh(
