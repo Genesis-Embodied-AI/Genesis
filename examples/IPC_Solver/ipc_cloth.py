@@ -6,9 +6,12 @@ with Genesis. The cloth is simulated using NeoHookeanShell constitution.
 """
 
 import argparse
+import logging
+
+import numpy as np
+from huggingface_hub import snapshot_download
 
 import genesis as gs
-import logging
 
 
 def main():
@@ -39,16 +42,21 @@ def main():
     # Ground plane
     scene.add_entity(gs.morphs.Plane())
 
-    SCENE_POS = (0.0, 0.0, 0.0)
-
     # Cloth using Cloth material
     # Note: Using coarse grid mesh to avoid IPC thickness violations
     # The built-in cloth.obj is too dense for IPC's contact detection
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        revision="72b04f7125e21df1bebd54a7f7b39d1cd832331c",
+        allow_patterns="grid20x20.obj",
+        max_workers=1,
+    )
     cloth = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file="meshes/grid20x20.obj",
-            scale=2.0, 
-            pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, 1.5)))),
+            file=f"{asset_path}/grid20x20.obj",
+            scale=2.0,
+            pos=(0.0, 0.0, 1.5),
             euler=(0, 0, 0),
         ),
         material=gs.materials.FEM.Cloth(
@@ -66,7 +74,7 @@ def main():
 
     scene.add_entity(
         morph=gs.morphs.Box(
-            pos=tuple(map(sum, zip(SCENE_POS, (0 ,0, cube_height)))),
+            pos=(0, 0, cube_height),
             size=(cube_size, cube_size, cube_size),
         ),
         material=gs.materials.Rigid(rho=500, friction=0.3),
@@ -75,13 +83,8 @@ def main():
 
     # Optional: Add another FEM volume object
     soft_ball = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=tuple(map(sum, zip(SCENE_POS, (0.5, 0.0, 0.1)))),
-            radius=0.08
-        ),
-        material=gs.materials.FEM.Elastic(
-            E=1.0e3, nu=0.3, rho=1000.0, model="stable_neohookean"
-        ),
+        morph=gs.morphs.Sphere(pos=(0.5, 0.0, 0.1), radius=0.08),
+        material=gs.materials.FEM.Elastic(E=1.0e3, nu=0.3, rho=1000.0, model="stable_neohookean"),
         surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.3, 0.8)),
     )
 
@@ -96,7 +99,6 @@ def main():
         scene.step()
         if i % 100 == 0:
             print(f"  Step {i}/{horizon}")
-
 
 
 if __name__ == "__main__":

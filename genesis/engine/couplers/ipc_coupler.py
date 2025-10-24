@@ -76,6 +76,8 @@ class IPCCoupler(RBC):
         self._init_ipc()
         self._add_objects_to_ipc()
         self._finalize_ipc()
+        if self.options.enable_ipc_gui:
+            self._init_ipc_gui()
 
     def _init_ipc(self):
         """Initialize IPC system components"""
@@ -294,8 +296,9 @@ class IPCCoupler(RBC):
                 moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                 if is_cloth:
                     # Apply shell material for cloth
-                    nks.apply_to(mesh, moduli=moduli, mass_density=entity.material.rho,
-                                thickness=entity.material.thickness)
+                    nks.apply_to(
+                        mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
+                    )
                     # Apply bending stiffness if specified
                     if entity.material.bending_stiffness is not None:
                         dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
@@ -395,6 +398,7 @@ class IPCCoupler(RBC):
 
                         # Transform vertices by geom relative transform
                         import genesis.utils.geom as gu
+
                         geom_rot_mat = gu.quat_to_R(geom_rel_quat)
                         transformed_verts = geom_verts @ geom_rot_mat.T + geom_rel_pos
 
@@ -599,8 +603,7 @@ class IPCCoupler(RBC):
             rigid_solver.links_info.inertial_i[link_idx] = original_inertia / 2.0
 
             gs.logger.debug(
-                f"  Link {link_idx}: mass {original_mass:.6f} -> {original_mass/2.0:.6f} kg, "
-                f"inertia scaled by 0.5"
+                f"  Link {link_idx}: mass {original_mass:.6f} -> {original_mass/2.0:.6f} kg, " f"inertia scaled by 0.5"
             )
 
         # After scaling inertial_mass and inertial_i, we need to recompute derived quantities:
@@ -1004,15 +1007,15 @@ class IPCCoupler(RBC):
 
                     from scipy.spatial.transform import Rotation as R
 
-                    rotvec = R.from_matrix(R_rel).as_rotvec() 
+                    rotvec = R.from_matrix(R_rel).as_rotvec()
 
                     inertia_tensor_local = rigid_solver.links_info.inertial_i[link_idx].to_numpy()
-                    
+
                     # I_world = R_current * I_local * R_current^T
                     inertia_tensor_world = R_current @ inertia_tensor_local @ R_current.T
 
                     angular_torque = rotation_strength * inertia_tensor_world @ rotvec / dt2
-                    
+
                     # Format forces for Genesis API
                     # _sanitize_2D_io_variables expects:
                     # - Non-parallelized (n_envs=0): shape (n_links, 3)
@@ -1035,7 +1038,7 @@ class IPCCoupler(RBC):
                     # Apply forces to Genesis rigid body
                     rigid_solver.apply_links_external_force(force=force_input, **apply_kwargs)
 
-                    rigid_solver.apply_links_external_torque(torque=torque_input,  **apply_kwargs)
+                    rigid_solver.apply_links_external_torque(torque=torque_input, **apply_kwargs)
 
                 except Exception as e:
                     gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
@@ -1050,3 +1053,42 @@ class IPCCoupler(RBC):
         """Reset coupling state"""
         # IPC doesn't need special reset logic currently
         pass
+
+    def _init_ipc_gui(self):
+        """Initialize IPC GUI for debugging"""
+        try:
+            import polyscope as ps
+            from uipc.gui import SceneGUI
+
+            self.ps = ps
+
+            # Initialize SceneGUI for IPC scene
+            self._ipc_scene_gui = SceneGUI(self._ipc_scene)
+
+            # Initialize polyscope if not already done
+            if not ps.is_initialized():
+                ps.init()
+
+            # Register IPC GUI with polyscope
+            self._ipc_scene_gui.register()
+            self._ipc_scene_gui.set_edge_width(1)
+
+            # Set up ground plane display in polyscope to match Genesis z=0
+            ps.set_up_dir("z_up")
+            ps.set_ground_plane_height(0.0)  # Set at z=0 to match Genesis
+
+            # Show polyscope window for first frame to initialize properly
+            ps.show(forFrames=1)
+            # Flag to control GUI updates
+            self.sim._scene._ipc_gui_enabled = True
+
+            gs.logger.info("IPC GUI initialized successfully")
+
+        except Exception as e:
+            gs.logger.warning(f"Failed to initialize IPC GUI: {e}")
+            self.sim._scene._ipc_gui_enabled = False
+
+    def update_ipc_gui(self):
+        """Update IPC GUI"""
+        self.ps.frame_tick()  # Non-blocking frame update
+        self._ipc_scene_gui.update()

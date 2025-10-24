@@ -41,14 +41,14 @@ def main():
     # FEM bodies use StableNeoHookean constitution, Rigid bodies use ABD constitution
 
     scene.add_entity(gs.morphs.Plane())
-    SCENE_POS = (0.0, 0.0, 0.0)
 
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
     scene.sim.coupler.set_ipc_link_filter(
-        entity=franka, link_names=["left_finger", "right_finger"],
+        entity=franka,
+        link_names=["left_finger", "right_finger"],
     )
 
     material = (
@@ -63,7 +63,6 @@ def main():
         surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.2, 0.5)),
     )
 
-    
     scene.build()
     print("Scene built successfully!")
 

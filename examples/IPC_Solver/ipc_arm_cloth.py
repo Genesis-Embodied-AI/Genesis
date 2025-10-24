@@ -20,13 +20,15 @@ esc	- Quit
 import random
 import threading
 import argparse
-import genesis as gs
 import numpy as np
 import csv
 import os
 from datetime import datetime
 from pynput import keyboard
 from scipy.spatial.transform import Rotation as R
+from huggingface_hub import snapshot_download
+
+import genesis as gs
 
 
 class KeyboardDevice:
@@ -108,9 +110,9 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             euler=(0, 0, 0),
         ),
     )
-    SCENE_POS = (0.0, 0.0, 0.0)
     scene.sim.coupler.set_ipc_link_filter(
-        entity=entities["robot"], link_names=["left_finger", "right_finger"],
+        entity=entities["robot"],
+        link_names=["left_finger", "right_finger"],
     )
 
     material = (
@@ -124,7 +126,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             morph=gs.morphs.Mesh(
                 file="meshes/grid20x20.obj",
                 scale=0.5,
-                pos=tuple(map(sum, zip(SCENE_POS, (0.5, 0.0, 0.1)))),
+                pos=(0.5, 0.0, 0.1),
                 euler=(90, 0, 0),
             ),
             material=gs.materials.FEM.Cloth(
@@ -139,7 +141,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
 
     # Add 16 rigid cubes uniformly distributed under the cloth (4x4 grid)
     cube_size = 0.05
-    cube_height = 0.02501  # Height 
+    cube_height = 0.02501  # Height
     grid_spacing = 0.15  # Spacing between cubes
 
     for i in range(4):
@@ -148,7 +150,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             y = (j - 1.5) * grid_spacing
             scene.add_entity(
                 morph=gs.morphs.Box(
-                    pos=tuple(map(sum, zip(SCENE_POS, (x, y, cube_height)))),
+                    pos=(x, y, cube_height),
                     size=(cube_size, cube_size, cube_size),
                     fixed=True,
                 ),
@@ -202,23 +204,32 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
 
     # Load trajectory if in playback mode
     if mode == "playback":
-        if trajectory_file and os.path.exists(trajectory_file):
-            with open(trajectory_file, "r", newline='') as f:
-                reader = csv.DictReader(f)
-                trajectory = []
-                for row in reader:
-                    step_data = {
-                        "target_pos": np.array([float(row["pos_x"]), float(row["pos_y"]), float(row["pos_z"])]),
-                        "target_quat": np.array([float(row["quat_x"]), float(row["quat_y"]), float(row["quat_z"]), float(row["quat_w"])]),
-                        "gripper_closed": row["gripper_closed"] == "True",
-                        "step": int(row["step"]),
-                    }
-                    trajectory.append(step_data)
-            print(f"\nLoaded trajectory from {trajectory_file}")
-            print(f"Trajectory length: {len(trajectory)} steps")
-        else:
-            print(f"Error: Trajectory file {trajectory_file} not found!")
-            return
+        if not trajectory_file or not os.path.exists(trajectory_file):
+            file_name = "grasp_cloth1.csv"
+            trajectory_file = snapshot_download(
+                repo_type="dataset",
+                repo_id="Genesis-Intelligence/assets",
+                revision="72b04f7125e21df1bebd54a7f7b39d1cd832331c",
+                allow_patterns=f"{file_name}",
+                max_workers=1,
+            )
+            trajectory_file = os.path.join(trajectory_file, file_name)
+
+        with open(trajectory_file, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            trajectory = []
+            for row in reader:
+                step_data = {
+                    "target_pos": np.array([float(row["pos_x"]), float(row["pos_y"]), float(row["pos_z"])]),
+                    "target_quat": np.array(
+                        [float(row["quat_x"]), float(row["quat_y"]), float(row["quat_z"]), float(row["quat_w"])]
+                    ),
+                    "gripper_closed": row["gripper_closed"] == "True",
+                    "step": int(row["step"]),
+                }
+                trajectory.append(step_data)
+        print(f"\nLoaded trajectory from {trajectory_file}")
+        print(f"Trajectory length: {len(trajectory)} steps")
 
     print(f"\nMode: {mode.upper()}")
     if mode == "record":
@@ -339,22 +350,24 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
         os.makedirs(traj_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.join(traj_dir, f"trajectory_{timestamp}.csv")
-        with open(filename, "w", newline='') as f:
+        with open(filename, "w", newline="") as f:
             fieldnames = ["step", "pos_x", "pos_y", "pos_z", "quat_x", "quat_y", "quat_z", "quat_w", "gripper_closed"]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for step_data in trajectory:
-                writer.writerow({
-                    "step": step_data["step"],
-                    "pos_x": step_data["target_pos"][0],
-                    "pos_y": step_data["target_pos"][1],
-                    "pos_z": step_data["target_pos"][2],
-                    "quat_x": step_data["target_quat"][0],
-                    "quat_y": step_data["target_quat"][1],
-                    "quat_z": step_data["target_quat"][2],
-                    "quat_w": step_data["target_quat"][3],
-                    "gripper_closed": step_data["gripper_closed"],
-                })
+                writer.writerow(
+                    {
+                        "step": step_data["step"],
+                        "pos_x": step_data["target_pos"][0],
+                        "pos_y": step_data["target_pos"][1],
+                        "pos_z": step_data["target_pos"][2],
+                        "quat_x": step_data["target_quat"][0],
+                        "quat_y": step_data["target_quat"][1],
+                        "quat_z": step_data["target_quat"][2],
+                        "quat_w": step_data["target_quat"][3],
+                        "gripper_closed": step_data["gripper_closed"],
+                    }
+                )
         print(f"\nTrajectory saved to {filename}")
         print(f"Total steps: {len(trajectory)}")
 
@@ -392,8 +405,8 @@ def main():
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="grap_cloth1.csv",
-        help="Trajectory file to load (for playback mode, default: grap_cloth1.csv)",
+        default="grasp_cloth1.csv",
+        help="Trajectory file to load (for playback mode, default: grasp_cloth1.csv)",
     )
     parser.add_argument("--list", action="store_true", help="List available trajectories and exit")
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show Genesis viewer")
