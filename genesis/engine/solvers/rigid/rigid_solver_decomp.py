@@ -2473,7 +2473,7 @@ def update_qvel(
             )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_compute_mass_matrix(
     # taichi variables
     links_state: array_class.LinksState,
@@ -2506,7 +2506,7 @@ def kernel_compute_mass_matrix(
         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_invweight(
     envs_idx: ti.types.ndarray(),
     links_invweight: ti.types.ndarray(),
@@ -2543,7 +2543,7 @@ def kernel_init_invweight(
                 dofs_info.invweight[i_d] = dofs_invweight[i_d]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_meaninertia(
     envs_idx: ti.types.ndarray(),
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -2566,7 +2566,7 @@ def kernel_init_meaninertia(
             rigid_global_info.meaninertia[i_b] = 1.0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_dof_fields(
     # input np array
     dofs_motion_ang: ti.types.ndarray(),
@@ -2623,7 +2623,7 @@ def kernel_init_dof_fields(
             rigid_global_info.n_awake_dofs[i_b] = n_dofs
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_link_fields(
     links_parent_idx: ti.types.ndarray(),
     links_root_idx: ti.types.ndarray(),
@@ -2707,7 +2707,7 @@ def kernel_init_link_fields(
             rigid_global_info.n_awake_links[i_b] = n_links
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_joint_fields(
     joints_type: ti.types.ndarray(),
     joints_sol_params: ti.types.ndarray(),
@@ -2736,7 +2736,7 @@ def kernel_init_joint_fields(
             joints_info.pos[I_j][j] = joints_pos[i_j, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_vert_fields(
     verts: ti.types.ndarray(),
     faces: ti.types.ndarray(),
@@ -2782,7 +2782,7 @@ def kernel_init_vert_fields(
         edges_info.length[i_ed] = (verts_info.init_pos[edges[i_ed, 0]] - verts_info.init_pos[edges[i_ed, 1]]).norm()
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_vvert_fields(
     vverts: ti.types.ndarray(),
     vfaces: ti.types.ndarray(),
@@ -2810,7 +2810,7 @@ def kernel_init_vvert_fields(
         vfaces_info.vgeom_idx[i_vf] = vverts_vgeom_idx[vfaces[i_vf, 0]]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_geom_fields(
     geoms_pos: ti.types.ndarray(),
     geoms_center: ti.types.ndarray(),
@@ -2912,7 +2912,7 @@ def kernel_init_geom_fields(
         geoms_state.friction_ratio[i_g, i_b] = 1.0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_adjust_link_inertia(
     link_idx: ti.i32,
     ratio: ti.f32,
@@ -2935,7 +2935,7 @@ def kernel_adjust_link_inertia(
             links_info.inertial_i[link_idx][j1, j2] *= ratio
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_vgeom_fields(
     vgeoms_pos: ti.types.ndarray(),
     vgeoms_quat: ti.types.ndarray(),
@@ -2971,7 +2971,7 @@ def kernel_init_vgeom_fields(
             vgeoms_info.color[i_vg][j] = vgeoms_color[i_vg, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_entity_fields(
     entities_dof_start: ti.types.ndarray(),
     entities_dof_end: ti.types.ndarray(),
@@ -3026,7 +3026,7 @@ def kernel_init_entity_fields(
             rigid_global_info.n_awake_entities[i_b] = n_entities
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_equality_fields(
     equalities_type: ti.types.ndarray(),
     equalities_eq_obj1id: ti.types.ndarray(),
@@ -3052,7 +3052,7 @@ def kernel_init_equality_fields(
             equalities_info.sol_params[i_eq, i_b][j] = equalities_sol_params[i_eq, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_forward_dynamics(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -3081,7 +3081,7 @@ def kernel_forward_dynamics(
     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_acc(
     dofs_state: array_class.DofsState,
     links_info: array_class.LinksInfo,
@@ -3468,7 +3468,7 @@ def func_solve_mass(
         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_rigid_entity_inverse_kinematics(
     links_idx: ti.types.ndarray(),
     poss: ti.types.ndarray(),
@@ -3857,7 +3857,7 @@ def func_forward_dynamics(
     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_clear_external_force(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -3933,7 +3933,7 @@ def func_update_cartesian_space(
     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_step_1(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -4045,7 +4045,7 @@ def func_implicit_damping(
             rigid_global_info.mass_mat_mask[i_e, i_b] = True
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_step_2(
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
@@ -4135,7 +4135,7 @@ def kernel_step_2(
             )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_forward_kinematics_links_geoms(
     envs_idx: ti.types.ndarray(),
     links_state: array_class.LinksState,
@@ -4580,7 +4580,7 @@ def func_forward_velocity(
             )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_forward_kinematics_entity(
     i_e: ti.int32,
     envs_idx: ti.types.ndarray(),
@@ -4803,7 +4803,7 @@ def func_forward_velocity_entity(
         links_state.cd_ang[i_l, i_b] = cvel_ang
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_geoms(
     envs_idx: ti.types.ndarray(),
     entities_info: array_class.EntitiesInfo,
@@ -4876,7 +4876,7 @@ def func_update_geoms(
                 geoms_state.verts_updated[i_g, i_b] = False
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_verts_for_geoms(
     geoms_idx: ti.types.ndarray(),
     geoms_state: array_class.GeomsState,
@@ -4945,7 +4945,7 @@ def func_update_all_verts(
             )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_all_verts(
     geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
@@ -4979,7 +4979,7 @@ def kernel_update_geom_aabbs(
         geoms_state.aabb_max[i_g, i_b] = upper
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_vgeoms(
     vgeoms_info: array_class.VGeomsInfo,
     vgeoms_state: array_class.VGeomsState,
@@ -5142,7 +5142,7 @@ def func_hibernate_entity_and_zero_dof_velocities(
         geoms_state.hibernated[i_g, i_b] = True
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_apply_links_external_force(
     force: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -5158,7 +5158,7 @@ def kernel_apply_links_external_force(
         func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local, links_state)
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_apply_links_external_torque(
     torque: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -5974,7 +5974,7 @@ def func_integrate_dq_entity(
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_geoms_render_T(
     geoms_render_T: ti.types.ndarray(),
     geoms_state: array_class.GeomsState,
@@ -5993,7 +5993,7 @@ def kernel_update_geoms_render_T(
             geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_vgeoms_render_T(
     vgeoms_render_T: ti.types.ndarray(),
     vgeoms_info: array_class.VGeomsInfo,
@@ -6015,7 +6015,7 @@ def kernel_update_vgeoms_render_T(
 
 
 # FIXME: This kernel cannot use 'pure' because  'gs.Tensor' is currently not support by GsTaichi
-@ti.kernel(pure=False)
+@ti.kernel(fastcache=False)
 def kernel_get_state(
     qpos: ti.types.ndarray(),
     vel: ti.types.ndarray(),
@@ -6060,7 +6060,7 @@ def kernel_get_state(
 
 
 # FIXME: This kernel cannot use 'pure' because  'gs.Tensor' is currently not support by GsTaichi
-@ti.kernel(pure=False)
+@ti.kernel(fastcache=False)
 def kernel_set_state(
     qpos: ti.types.ndarray(),
     dofs_vel: ti.types.ndarray(),
@@ -6104,7 +6104,7 @@ def kernel_set_state(
         geoms_state.friction_ratio[i_l, envs_idx[i_b_]] = friction_ratio[envs_idx[i_b_], i_l]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_pos(
     relative: ti.i32,
     pos: ti.types.ndarray(),
@@ -6139,7 +6139,7 @@ def kernel_set_links_pos(
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_quat(
     relative: ti.i32,
     quat: ti.types.ndarray(),
@@ -6193,7 +6193,7 @@ def kernel_set_links_quat(
                     rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_mass_shift(
     mass: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -6206,7 +6206,7 @@ def kernel_set_links_mass_shift(
         links_state.mass_shift[links_idx[i_l_], envs_idx[i_b_]] = mass[i_b_, i_l_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_COM_shift(
     com: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -6220,7 +6220,7 @@ def kernel_set_links_COM_shift(
             links_state.i_pos_shift[links_idx[i_l_], envs_idx[i_b_]][j] = com[i_b_, i_l_, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_inertial_mass(
     inertial_mass: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -6237,7 +6237,7 @@ def kernel_set_links_inertial_mass(
             links_info.inertial_mass[links_idx[i_l_]] = inertial_mass[i_l_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_geoms_friction_ratio(
     friction_ratio: ti.types.ndarray(),
     geoms_idx: ti.types.ndarray(),
@@ -6250,7 +6250,7 @@ def kernel_set_geoms_friction_ratio(
         geoms_state.friction_ratio[geoms_idx[i_g_], envs_idx[i_b_]] = friction_ratio[i_b_, i_g_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_qpos(
     qpos: ti.types.ndarray(),
     qs_idx: ti.types.ndarray(),
@@ -6263,7 +6263,7 @@ def kernel_set_qpos(
         rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_global_sol_params(
     sol_params: ti.types.ndarray(),
     geoms_info: array_class.GeomsInfo,
@@ -6293,7 +6293,7 @@ def kernel_set_global_sol_params(
             equalities_info.sol_params[i_eq, i_b][j] = sol_params[j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_sol_params(
     constraint_type: ti.template(),
     sol_params: ti.types.ndarray(),
@@ -6326,7 +6326,7 @@ def kernel_set_sol_params(
                 equalities_info.sol_params[inputs_idx[i_eq_], envs_idx[i_b_]][j] = sol_params[i_b_, i_eq_, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_kp(
     kp: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6343,7 +6343,7 @@ def kernel_set_dofs_kp(
             dofs_info.kp[dofs_idx[i_d_]] = kp[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_kv(
     kv: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6360,7 +6360,7 @@ def kernel_set_dofs_kv(
             dofs_info.kv[dofs_idx[i_d_]] = kv[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_force_range(
     lower: ti.types.ndarray(),
     upper: ti.types.ndarray(),
@@ -6380,7 +6380,7 @@ def kernel_set_dofs_force_range(
             dofs_info.force_range[dofs_idx[i_d_]][1] = upper[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_stiffness(
     stiffness: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6397,7 +6397,7 @@ def kernel_set_dofs_stiffness(
             dofs_info.stiffness[dofs_idx[i_d_]] = stiffness[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_armature(
     armature: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6414,7 +6414,7 @@ def kernel_set_dofs_armature(
             dofs_info.armature[dofs_idx[i_d_]] = armature[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_damping(
     damping: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6431,7 +6431,7 @@ def kernel_set_dofs_damping(
             dofs_info.damping[dofs_idx[i_d_]] = damping[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_frictionloss(
     frictionloss: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6448,7 +6448,7 @@ def kernel_set_dofs_frictionloss(
             dofs_info.frictionloss[dofs_idx[i_d_]] = frictionloss[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_limit(
     lower: ti.types.ndarray(),
     upper: ti.types.ndarray(),
@@ -6468,7 +6468,7 @@ def kernel_set_dofs_limit(
             dofs_info.limit[dofs_idx[i_d_]][1] = upper[i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_velocity(
     velocity: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6481,7 +6481,7 @@ def kernel_set_dofs_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = velocity[i_b_, i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_zero_velocity(
     dofs_idx: ti.types.ndarray(),
     envs_idx: ti.types.ndarray(),
@@ -6493,7 +6493,7 @@ def kernel_set_dofs_zero_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_position(
     position: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6566,7 +6566,7 @@ def kernel_set_dofs_position(
                     rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos0[i_q, i_b] + dofs_state.pos[i_d, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_control_dofs_force(
     force: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6580,7 +6580,7 @@ def kernel_control_dofs_force(
         dofs_state.ctrl_force[dofs_idx[i_d_], envs_idx[i_b_]] = force[i_b_, i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_control_dofs_velocity(
     velocity: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6603,7 +6603,7 @@ def kernel_control_dofs_velocity(
     return has_gains
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_control_dofs_position(
     position: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6626,7 +6626,7 @@ def kernel_control_dofs_position(
     return has_gains
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_links_vel(
     tensor: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -6654,7 +6654,7 @@ def kernel_get_links_vel(
             tensor[i_b_, i_l_, j] = vel[j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_links_acc(
     tensor: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -6681,7 +6681,7 @@ def kernel_get_links_acc(
             tensor[i_b_, i_l_, j] = acc_classic_lin[j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_dofs_control_force(
     tensor: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),
@@ -6713,7 +6713,7 @@ def kernel_get_dofs_control_force(
         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_drone_rpm(
     n_propellers: ti.i32,
     propellers_link_idxs: ti.types.ndarray(),
@@ -6745,7 +6745,7 @@ def kernel_set_drone_rpm(
             func_apply_link_external_torque(torque, i_l, i_b, 1, 1, links_state)
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_drone_propeller_vgeoms(
     n_propellers: ti.i32,
     propellers_vgeom_idxs: ti.types.ndarray(),
@@ -6770,12 +6770,12 @@ def kernel_update_drone_propeller_vgeoms(
         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_geom_friction(geoms_idx: ti.i32, friction: ti.f32, geoms_info: array_class.GeomsInfo):
     geoms_info.friction[geoms_idx] = friction
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_geoms_friction(
     friction: ti.types.ndarray(),
     geoms_idx: ti.types.ndarray(),

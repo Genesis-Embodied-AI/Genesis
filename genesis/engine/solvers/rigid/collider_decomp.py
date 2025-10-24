@@ -518,7 +518,7 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     return matres
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_reset(
     envs_idx: ti.types.ndarray(),
     static_rigid_sim_config: ti.template(),
@@ -537,7 +537,7 @@ def collider_kernel_reset(
 
 
 # only used with hibernation ??
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_collider_clear(
     envs_idx: ti.types.ndarray(),
     links_state: array_class.LinksState,
@@ -589,7 +589,7 @@ def kernel_collider_clear(
             collider_state.n_contacts[i_b] = 0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_get_contacts(
     is_padded: ti.template(),
     iout: ti.types.ndarray(),
@@ -1166,7 +1166,7 @@ def func_check_collision_valid(
     return is_valid
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_broad_phase(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1414,7 +1414,7 @@ def func_broad_phase(
                                     break
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1516,7 +1516,7 @@ def func_narrow_phase_convex_vs_convex(
                         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_diff_convex_vs_convex(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1600,7 +1600,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1652,7 +1652,7 @@ def func_narrow_phase_convex_specializations(
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1701,7 +1701,7 @@ def func_narrow_phase_any_vs_terrain(
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_nonconvex_vs_nonterrain(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,

@@ -388,7 +388,7 @@ class ConstraintSolver:
         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def constraint_solver_kernel_clear(
     envs_idx: ti.types.ndarray(),
     static_rigid_sim_config: ti.template(),
@@ -402,7 +402,7 @@ def constraint_solver_kernel_clear(
         constraint_state.n_constraints_frictionloss[i_b] = 0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def constraint_solver_kernel_reset(
     envs_idx: ti.types.ndarray(),
     constraint_state: array_class.ConstraintState,
@@ -421,7 +421,7 @@ def constraint_solver_kernel_reset(
             constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def add_collision_constraints(
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -705,7 +705,7 @@ def func_equality_joint(
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def add_equality_constraints(
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -949,7 +949,7 @@ def func_equality_weld(
         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def add_joint_limit_constraints(
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
@@ -1006,7 +1006,7 @@ def add_joint_limit_constraints(
                             constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def add_frictionloss_constraints(
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
@@ -1274,7 +1274,7 @@ def func_nt_chol_solve(
         constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_d, i_d, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_update_contact_force(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -1316,7 +1316,7 @@ def func_update_contact_force(
             )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_update_qacc(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -1332,7 +1332,7 @@ def func_update_qacc(
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_solve(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -1967,7 +1967,7 @@ def initialize_Ma(
             Ma[i_d1, i_b] = Ma_
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_init_solver(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -2074,7 +2074,7 @@ def func_init_solver(
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_add_weld_constraint(
     link1_idx: ti.i32,
     link2_idx: ti.i32,
@@ -2125,7 +2125,7 @@ def kernel_add_weld_constraint(
     return overflow
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_delete_weld_constraint(
     link1_idx: ti.i32,
     link2_idx: ti.i32,
@@ -2151,7 +2151,7 @@ def kernel_delete_weld_constraint(
                 constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_equality_constraints(
     is_padded: ti.template(),
     iout: ti.types.ndarray(),
