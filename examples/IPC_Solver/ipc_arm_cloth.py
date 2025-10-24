@@ -22,7 +22,7 @@ import threading
 import argparse
 import genesis as gs
 import numpy as np
-import pickle
+import csv
 import os
 from datetime import datetime
 from pynput import keyboard
@@ -59,17 +59,17 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     gs.init(seed=0, precision="32", logging_level="info", backend=gs.gpu, performance_mode=True)
     np.set_printoptions(precision=7, suppress=True)
 
-    dt = 1e-2
+    dt = 1e-3
 
     ########################## create a scene ##########################
     coupler_options = (
         gs.options.IPCCouplerOptions(
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
-            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
+            ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.8,
             IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-            two_way_coupling=False,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
+            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
             enable_ipc_gui=enable_ipc_gui,
         )
         if use_ipc
@@ -129,7 +129,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
                 E=1e5,  # Young's modulus (Pa) - soft cloth (10 kPa)
                 nu=0.499,  # Poisson's ratio - nearly incompressible
                 rho=200,  # Density (kg/m³) - typical fabric
-                thickness=0.001,  # Shell thickness (m) - 1mm
+                thickness=0.002,  # Shell thickness (m) - 2mm
                 bending_stiffness=100.0,  # Bending resistance
             ),
             surface=gs.surfaces.Plastic(color=(0.3, 0.5, 0.8, 1.0), double_sided=True),
@@ -137,7 +137,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
 
     # Add 16 rigid cubes uniformly distributed under the cloth (4x4 grid)
     cube_size = 0.05
-    cube_height = 0.1  # Height below cloth
+    cube_height = 0.02501  # Height 
     grid_spacing = 0.15  # Spacing between cubes
 
     for i in range(4):
@@ -148,6 +148,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
                 morph=gs.morphs.Box(
                     pos=tuple(map(sum, zip(SCENE_POS, (x, y, cube_height)))),
                     size=(cube_size, cube_size, cube_size),
+                    fixed=True,
                 ),
                 material=gs.materials.Rigid(rho=500, friction=0.3),
                 surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
@@ -200,8 +201,17 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
     # Load trajectory if in playback mode
     if mode == "playback":
         if trajectory_file and os.path.exists(trajectory_file):
-            with open(trajectory_file, "rb") as f:
-                trajectory = pickle.load(f)
+            with open(trajectory_file, "r", newline='') as f:
+                reader = csv.DictReader(f)
+                trajectory = []
+                for row in reader:
+                    step_data = {
+                        "target_pos": np.array([float(row["pos_x"]), float(row["pos_y"]), float(row["pos_z"])]),
+                        "target_quat": np.array([float(row["quat_x"]), float(row["quat_y"]), float(row["quat_z"]), float(row["quat_w"])]),
+                        "gripper_closed": row["gripper_closed"] == "True",
+                        "step": int(row["step"]),
+                    }
+                    trajectory.append(step_data)
             print(f"\nLoaded trajectory from {trajectory_file}")
             print(f"Trajectory length: {len(trajectory)} steps")
         else:
@@ -326,9 +336,23 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
         traj_dir = os.path.join(script_dir, "trajectories")
         os.makedirs(traj_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(traj_dir, f"trajectory_{timestamp}.pkl")
-        with open(filename, "wb") as f:
-            pickle.dump(trajectory, f)
+        filename = os.path.join(traj_dir, f"trajectory_{timestamp}.csv")
+        with open(filename, "w", newline='') as f:
+            fieldnames = ["step", "pos_x", "pos_y", "pos_z", "quat_x", "quat_y", "quat_z", "quat_w", "gripper_closed"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for step_data in trajectory:
+                writer.writerow({
+                    "step": step_data["step"],
+                    "pos_x": step_data["target_pos"][0],
+                    "pos_y": step_data["target_pos"][1],
+                    "pos_z": step_data["target_pos"][2],
+                    "quat_x": step_data["target_quat"][0],
+                    "quat_y": step_data["target_quat"][1],
+                    "quat_z": step_data["target_quat"][2],
+                    "quat_w": step_data["target_quat"][3],
+                    "gripper_closed": step_data["gripper_closed"],
+                })
         print(f"\nTrajectory saved to {filename}")
         print(f"Total steps: {len(trajectory)}")
 
@@ -342,7 +366,7 @@ def list_trajectories():
         print("No trajectories folder found.")
         return []
 
-    files = [f for f in os.listdir(traj_dir) if f.endswith(".pkl")]
+    files = [f for f in os.listdir(traj_dir) if f.endswith(".csv")]
     if not files:
         print("No trajectory files found.")
         return []
@@ -355,7 +379,7 @@ def list_trajectories():
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive IPC Arm Control with Trajectory Recording/Playback")
-    parser.add_argument("--ipc", action="store_true", default=True, help="Enable IPC coupling")
+    parser.add_argument("--ipc", action="store_true", default=False, help="Enable IPC coupling")
     parser.add_argument(
         "--mode",
         type=str,
@@ -366,8 +390,8 @@ def main():
     parser.add_argument(
         "--trajectory",
         type=str,
-        default="grap_cloth1.pkl",
-        help="Trajectory file to load (for playback mode, default: grap_cloth1.pkl)",
+        default="grap_cloth1.csv",
+        help="Trajectory file to load (for playback mode, default: grap_cloth1.csv)",
     )
     parser.add_argument("--list", action="store_true", help="List available trajectories and exit")
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show Genesis viewer")

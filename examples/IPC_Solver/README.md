@@ -17,13 +17,13 @@ This repo shows how to use IPC coupler. (Incremental Potential Contact) algorith
 
 2. **Robotic grasping of deformables:**
    ```bash
-   python examples/IPC_Solver/ipc_grasp.py --ipc -v
+   python examples/IPC_Solver/ipc_grasp.py -v --ipc
    ```
  Expected: Franka Panda arm grasps and manipulates a deformable object with IPC contact resolution
 
 3. **Interactive cloth manipulation (requires trajectory data):**
    ```bash
-   python examples/IPC_Solver/ipc_arm_cloth.py -v
+   python examples/IPC_Solver/ipc_arm_cloth.py -v --ipc
    ```
     Expected: Playback of recorded trajectory showing arm-cloth interaction
 
