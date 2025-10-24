@@ -216,9 +216,9 @@ jobs:
                       break
                   tot += record[bid][metric]
               else:
-                  # Refuse the compute stats if data are missing
-                  return float("nan")
-              return tot / MAX_VALID_REVISIONS
+                  # Only compute stats if all data are available
+                  return tot / MAX_VALID_REVISIONS
+              return float("nan")
 
           # ----- build TWO tables -----
 
