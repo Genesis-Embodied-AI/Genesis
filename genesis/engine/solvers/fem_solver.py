@@ -1192,6 +1192,44 @@ class FEMSolver(Solver):
             self.surface[i_global].active = True
 
     @ti.kernel
+    def _kernel_add_cloth_for_rendering(
+        self,
+        f: ti.i32,
+        n_surfaces: ti.i32,
+        v_start: ti.i32,
+        s_start: ti.i32,
+        verts: ti.types.ndarray(),
+        tri2v: ti.types.ndarray(),
+    ):
+        """
+        Add cloth vertices and surfaces for rendering only (no physics computation).
+        Cloth is simulated by IPC, but needs to be in FEM solver's rendering pipeline.
+        """
+        # Add vertices for rendering
+        n_verts_local = verts.shape[0]
+        for i_v, i_b in ti.ndrange(n_verts_local, self._B):
+            i_global = i_v + v_start
+            for j in ti.static(range(3)):
+                self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
+            self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        # Initialize vertex info (mass will be managed by IPC, set to dummy value)
+        for i_v in range(n_verts_local):
+            i_global = i_v + v_start
+            self.elements_v_info[i_global].mass = 1.0  # Dummy value, not used for cloth
+            self.elements_v_info[i_global].mass_over_dt2 = 0.0
+            self.elements_v_info[i_global].friction_mu = 0.0
+
+        # Add surface triangles for rendering
+        for i_s in range(n_surfaces):
+            i_global = i_s + s_start
+            for j in ti.static(range(3)):
+                self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
+            # For cloth, tri2el points to itself (no tetrahedral element)
+            self.surface[i_global].tri2el = i_global
+            self.surface[i_global].active = True
+
+    @ti.kernel
     def _kernel_set_elements_pos(
         self,
         f: ti.i32,

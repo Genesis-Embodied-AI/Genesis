@@ -1,19 +1,22 @@
 """
 Cloth material for IPC-based cloth simulation.
 
-This material is used exclusively with IPCCoupler and ClothEntity.
+This material is used with FEMEntity and IPCCoupler for shell/membrane simulation.
 """
 
 import genesis as gs
-from .base import Material
+from .base import Base
 
 
-class Cloth(Material):
+class Cloth(Base):
     """
     Cloth material for thin shell/membrane simulation using IPC.
 
     This material is designed for cloth, fabric, and other thin flexible materials.
     It uses shell-based FEM formulation (NeoHookeanShell) in the IPC backend.
+
+    When used with FEMEntity, it signals to IPCCoupler that this entity should be
+    treated as a 2D shell (cloth) rather than a 3D volumetric FEM object.
 
     Parameters
     ----------
@@ -29,19 +32,22 @@ class Cloth(Material):
     bending_stiffness : float, optional
         Bending resistance coefficient. If None, no bending resistance.
         Default is None.
+    model : str, optional
+        FEM material model (not used for cloth, kept for compatibility).
+        Default is "stable_neohookean".
 
     Notes
     -----
     - Only works with IPCCoupler enabled
     - Requires GPU backend
-    - Cannot be used with Genesis FEM solver
     - Only accepts surface mesh morphs (Mesh, etc.)
+    - Uses FEMEntity infrastructure but simulated as 2D shell in IPC
 
     Examples
     --------
     >>> cloth = scene.add_entity(
     ...     morph=gs.morphs.Mesh(file="cloth.obj"),
-    ...     material=gs.materials.Cloth(
+    ...     material=gs.materials.FEM.Cloth(
     ...         E=10e3, nu=0.49, rho=200,
     ...         thickness=0.001, bending_stiffness=10.0
     ...     ),
@@ -55,29 +61,15 @@ class Cloth(Material):
         rho=200.0,  # Density (kg/m³)
         thickness=0.001,  # Shell thickness (m)
         bending_stiffness=None,  # Optional bending stiffness
+        model="stable_neohookean",  # FEM model (unused for cloth)
     ):
-        super().__init__()
+        # Call FEM base constructor
+        super().__init__(E=E, nu=nu, rho=rho)
 
-        self._E = E
-        self._nu = nu
-        self._rho = rho
+        # Cloth-specific properties
         self._thickness = thickness
         self._bending_stiffness = bending_stiffness
-
-    @property
-    def E(self):
-        """Young's modulus (Pa)."""
-        return self._E
-
-    @property
-    def nu(self):
-        """Poisson's ratio."""
-        return self._nu
-
-    @property
-    def rho(self):
-        """Material density (kg/m³)."""
-        return self._rho
+        self._model = model
 
     @property
     def thickness(self):
@@ -89,5 +81,10 @@ class Cloth(Material):
         """Bending stiffness coefficient."""
         return self._bending_stiffness
 
+    @property
+    def model(self):
+        """FEM material model name (unused for cloth)."""
+        return self._model
+
     def __repr__(self):
-        return f"<gs.Cloth(E={self.E}, nu={self.nu}, rho={self.rho}, thickness={self.thickness})>"
+        return f"<gs.materials.FEM.Cloth(E={self.E}, nu={self.nu}, rho={self.rho}, thickness={self.thickness})>"

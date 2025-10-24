@@ -48,10 +48,10 @@ def main():
         morph=gs.morphs.Mesh(
             file="meshes/grid20x20.obj",
             scale=2.0, 
-            pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, 0.8)))),
+            pos=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, 1.5)))),
             euler=(0, 0, 0),
         ),
-        material=gs.materials.Cloth(
+        material=gs.materials.FEM.Cloth(
             E=10e5,  # Young's modulus (Pa) - soft cloth (10 kPa)
             nu=0.499,  # Poisson's ratio - nearly incompressible
             rho=200,  # Density (kg/m³)

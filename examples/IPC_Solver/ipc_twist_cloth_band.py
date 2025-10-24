@@ -56,7 +56,7 @@ def main():
         morph=gs.morphs.Mesh(
             file="meshes/band.obj",
         ),
-        material=gs.materials.Cloth(
+        material=gs.materials.FEM.Cloth(
             E=1e5,  # 5.0 MPa Young's modulus
             nu=0.45,  # Poisson's ratio
             rho=100,  # 0.1e3 kg/m^3 density

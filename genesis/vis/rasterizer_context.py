@@ -167,7 +167,6 @@ class RasterizerContext:
         self.on_sph()
         self.on_pbd()
         self.on_fem()
-        self.on_cloth()
 
         # segmentation mapping
         self.seg_color_map.generate_seg_colors()
@@ -808,54 +807,6 @@ class RasterizerContext:
                         update_data = self._scene.reorder_vertices(node, vertices)
                         buffer_updates[self._scene.get_buffer_id(node, "pos")] = update_data
 
-    def on_cloth(self):
-        """Initialize cloth entities for rendering."""
-        from genesis.engine.entities import ClothEntity
-
-        # Find all cloth entities
-        cloth_entities = [e for e in self.sim._entities if isinstance(e, ClothEntity)]
-
-        for cloth_entity in cloth_entities:
-            if cloth_entity.surface.vis_mode == "visual":
-                # Ensure rendering fields are initialized
-                if not cloth_entity._rendering_initialized:
-                    cloth_entity._init_rendering_fields(n_envs=self.sim._B)
-
-                # Get rendering state (vertices and faces)
-                vertices_all = cloth_entity.surface_render_v.vertices.to_numpy(dtype=gs.np_float)
-                triangles = cloth_entity.surface_render_f.indices.to_numpy(dtype=gs.np_int).reshape((-1, 3))
-
-                for idx in self.rendered_envs_idx:
-                    vertices = vertices_all[:, idx]
-
-                    mesh = trimesh.Trimesh(vertices, triangles, process=False)
-                    mesh.visual = mu.surface_uvs_to_trimesh_visual(
-                        cloth_entity.surface, n_verts=cloth_entity.n_vertices
-                    )
-                    self.add_static_node(
-                        cloth_entity,
-                        pyrender.Mesh.from_trimesh(mesh, double_sided=cloth_entity.surface.double_sided),
-                        i_b=idx,
-                    )
-
-    def update_cloth(self, buffer_updates):
-        """Update cloth entity rendering."""
-        from genesis.engine.entities import ClothEntity
-
-        # Find all cloth entities
-        cloth_entities = [e for e in self.sim._entities if isinstance(e, ClothEntity)]
-
-        for cloth_entity in cloth_entities:
-            if cloth_entity.surface.vis_mode == "visual":
-                vertices_all = cloth_entity.surface_render_v.vertices.to_numpy(dtype=gs.np_float)
-
-                for idx in self.rendered_envs_idx:
-                    vertices = vertices_all[:, idx]
-
-                    node = self.static_nodes[(idx, cloth_entity.uid)]
-                    update_data = self._scene.reorder_vertices(node, vertices)
-                    buffer_updates[self._scene.get_buffer_id(node, "pos")] = update_data
-
     def update_sensors(self, buffer_updates):
         self.sim._sensor_manager.draw_debug(self, buffer_updates)
 
@@ -1028,7 +979,6 @@ class RasterizerContext:
         self.update_sph(self.buffer)
         self.update_pbd(self.buffer)
         self.update_fem(self.buffer)
-        self.update_cloth(self.buffer)
         self.update_sensors(self.buffer)
 
     def add_light(self, light):

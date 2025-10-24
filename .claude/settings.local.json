@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Work/Code/Sig/libuipc_13.0/src/pybind/pyuipc/builtin/**)",
+      "Read(//c/Work/Code/Sig/libuipc_13.0/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

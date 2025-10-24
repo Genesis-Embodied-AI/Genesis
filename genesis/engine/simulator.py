@@ -181,11 +181,6 @@ class Simulator(RBC):
         elif isinstance(material, gs.materials.FEM.Base):
             entity = self.fem_solver.add_entity(self.n_entities, material, morph, surface)
 
-        elif isinstance(material, gs.materials.Cloth):
-            # Cloth entities are managed by IPCCoupler, not a dedicated solver
-            from .entities import ClothEntity
-            entity = ClothEntity(self.scene, material, morph, surface, self.n_entities)
-
         elif isinstance(material, gs.materials.Hybrid):
             entity = HybridEntity(
                 self.n_entities, self.scene, material, morph, surface
