@@ -235,7 +235,7 @@ jobs:
                   is_rt_reg, is_ct_reg = d_rt < -tol_rt, d_ct > tol_ct
               else:
                   d_rt, d_ct = float("nan"), float("nan")
-                  is_rt_reg = None
+                  is_rt_reg, is_ct_reg = None, None
 
               rows_rt.append([
                   status_picto(is_rt_reg),
