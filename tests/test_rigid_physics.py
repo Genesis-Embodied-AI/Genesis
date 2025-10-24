@@ -1692,7 +1692,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     robot.set_dofs_velocity(initial_velocity)
 
     robot.set_dofs_frictionloss(np.array([0.0, 0.0]))
-    frictionloss = robot.get_dofs_frictionloss()
+    frictionloss = robot.get_dofs_frictionloss().cpu().numpy()
     np.testing.assert_allclose(frictionloss, np.array([0.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
@@ -1700,7 +1700,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 
     robot.set_dofs_velocity(initial_velocity)
     robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
-    frictionloss = robot.get_dofs_frictionloss()
+    frictionloss = robot.get_dofs_frictionloss().cpu().numpy()
     np.testing.assert_allclose(frictionloss, np.array([1.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
@@ -1711,7 +1711,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 
     robot.set_dofs_velocity(initial_velocity)
     robot.set_dofs_frictionloss(np.array([0.5]), dofs_idx_local=[0])
-    frictionloss = robot.get_dofs_frictionloss(dofs_idx_local=[0])
+    frictionloss = robot.get_dofs_frictionloss(dofs_idx_local=[0]).cpu().numpy()
     np.testing.assert_allclose(frictionloss, np.array([0.5]), atol=tol)
     for _ in range(10):
         gs_sim.step()
