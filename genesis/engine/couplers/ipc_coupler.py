@@ -66,6 +66,10 @@ class IPCCoupler(RBC):
         self._ipc_scene_subscenes = {}
         self._use_subscenes = False  # Will be set in _init_ipc based on number of environments
 
+        # IPC link filter: maps entity_idx -> set of link_idx to include in IPC
+        # If entity_idx not in dict or value is None, all links of that entity participate
+        self._ipc_link_filters = {}
+
     def build(self) -> None:
         """Build IPC system"""
         # Initialize IPC system
@@ -316,9 +320,10 @@ class IPCCoupler(RBC):
                 entity_idx = rigid_solver.links_info.entity_idx[link_idx]
                 entity = rigid_solver._entities[entity_idx]
 
-                # Check if this link should be included in IPC based on entity's filter
-                if hasattr(entity, "_ipc_link_filter") and entity._ipc_link_filter is not None:
-                    if link_idx not in entity._ipc_link_filter:
+                # Check if this link should be included in IPC based on coupler's filter
+                if entity_idx in self._ipc_link_filters:
+                    link_filter = self._ipc_link_filters[entity_idx]
+                    if link_filter is not None and link_idx not in link_filter:
                         continue  # Skip this geom/link
 
                 # Initialize link group if not exists
@@ -689,6 +694,46 @@ class IPCCoupler(RBC):
     def is_active(self) -> bool:
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
+
+    def set_ipc_link_filter(self, entity, link_names=None, link_indices=None):
+        """
+        Set which links of an entity should participate in IPC simulation.
+
+        Parameters
+        ----------
+        entity : RigidEntity
+            The rigid entity to set the filter for
+        link_names : list of str, optional
+            Names of links to include in IPC. If None and link_indices is None, all links participate.
+        link_indices : list of int, optional
+            Local indices of links to include in IPC. If None and link_names is None, all links participate.
+        """
+        if link_names is None and link_indices is None:
+            # Remove filter for this entity (all links participate)
+            if entity._idx in self._ipc_link_filters:
+                del self._ipc_link_filters[entity._idx]
+            return
+
+        link_filter = set()
+
+        if link_names is not None:
+            # Convert link names to solver-level indices
+            for name in link_names:
+                link = entity.get_link(name=name)
+                if link is not None:
+                    # Use solver-level index
+                    link_filter.add(link.idx)
+                else:
+                    gs.logger.warning(f"Link name '{name}' not found in entity")
+
+        if link_indices is not None:
+            # Convert local link indices to solver-level indices
+            for local_idx in link_indices:
+                solver_link_idx = local_idx + entity._link_start
+                link_filter.add(solver_link_idx)
+
+        # Store filter for this entity
+        self._ipc_link_filters[entity._idx] = link_filter
 
     def preprocess(self, f):
         """Preprocessing step before coupling"""
