@@ -109,7 +109,9 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
         ),
     )
     SCENE_POS = (0.0, 0.0, 0.0)
-    entities["robot"].set_ipc_link_filter(link_names=["left_finger", "right_finger"])
+    scene.sim.coupler.set_ipc_link_filter(
+        entity=entities["robot"], link_names=["left_finger", "right_finger"],
+    )
 
     material = (
         gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")

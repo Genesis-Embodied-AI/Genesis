@@ -46,7 +46,10 @@ def main():
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    franka.set_ipc_link_filter(link_names=["left_finger", "right_finger"])
+
+    scene.sim.coupler.set_ipc_link_filter(
+        entity=franka, link_names=["left_finger", "right_finger"],
+    )
 
     material = (
         gs.materials.FEM.Elastic(E=5.0e3, nu=0.45, rho=1000.0, model="stable_neohookean")
@@ -60,9 +63,8 @@ def main():
         surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.2, 0.5)),
     )
 
+    
     scene.build()
-
-    # Show IPC GUI for debugging
     print("Scene built successfully!")
 
     motors_dof = np.arange(7)
