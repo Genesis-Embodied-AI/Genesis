@@ -556,7 +556,6 @@ class FileMorph(Morph):
 
             if not os.path.exists(file):
                 file = os.path.join(gs.utils.get_assets_dir(), self.file)
-                print(gs.utils.get_assets_dir(), file)
 
             if not os.path.exists(file):
                 gs.raise_exception(f"File not found in either current directory or assets directory: '{self.file}'.")
