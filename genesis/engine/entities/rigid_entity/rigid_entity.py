@@ -2485,6 +2485,26 @@ class RigidEntity(Entity):
         return self._solver.get_dofs_damping(dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
+    def get_dofs_frictionloss(self, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Get the friction loss for the entity's dofs.
+
+        Parameters
+        ----------
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        frictionloss : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
+            The friction loss for the entity's dofs.
+        """
+        dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_frictionloss(dofs_idx, envs_idx, unsafe=unsafe)
+
+    @gs.assert_built
     def get_mass_mat(self, envs_idx=None, decompose=False, *, unsafe=False):
         dofs_idx = self._get_idx(None, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose, unsafe=unsafe)
