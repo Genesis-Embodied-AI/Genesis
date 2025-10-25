@@ -202,15 +202,19 @@ def init(
     elif gs.logger.level == _logging.DEBUG:
         taichi_kwargs.update(log_level=ti.INFO)
     if debug:
-        if backend == gs_backend.cpu:
-            taichi_kwargs.update(cpu_max_num_threads=1)
-        else:
+        if backend != gs_backend.cpu:
             logger.warning("Debug mode is partially supported for GPU backend.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
+
+    ti_num_cpu_threads = 1 if debug else os.environ.get("TI_NUM_THREADS")
+    if ti_num_cpu_threads is not None:
+        taichi_kwargs.update(
+            cpu_max_num_threads=int(ti_num_cpu_threads),
+        )
 
     if seed is not None:
         global SEED
@@ -283,7 +287,7 @@ def init(
             ("🐛 debug", debug),
             ("📏 precision", precision),
             ("🏎️ performance", performance_mode),
-            ("ℹ️ verbose", _logging.getLevelName(gs.logger.level)),
+            ("💬 verbose", _logging.getLevelName(gs.logger.level)),
         )
     )
     logger.info(f"🚀 Genesis initialized. {msg_options}")

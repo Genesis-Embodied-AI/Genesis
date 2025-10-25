@@ -2088,6 +2088,12 @@ class RigidSolver(Solver):
         tensor = ti_to_torch(self.dofs_info.damping, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
+    def get_dofs_frictionloss(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
+        tensor = ti_to_torch(self.dofs_info.frictionloss, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
+        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+
     def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False, *, unsafe=False):
         tensor = ti_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, unsafe=unsafe)
 
