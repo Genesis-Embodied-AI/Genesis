@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 import numpy as np
 import genesis as gs
@@ -78,18 +79,18 @@ def main():
     # hold
     qpos = franka.inverse_kinematics(link=end_effector, pos=(0.65, 0.0, 0.13), quat=(0, 1, 0, 0))
     franka.control_dofs_position(qpos[motors_dof], motors_dof)
-    for i in range(15):
+    for i in range(15 if "PYTEST_VERSION" not in os.environ else 1):
         scene.step()
 
     # grasp
-    for i in range(10):
+    for i in range(10 if "PYTEST_VERSION" not in os.environ else 1):
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         scene.step()
 
     # lift
     qpos = franka.inverse_kinematics(link=end_effector, pos=(0.65, 0.0, 0.3), quat=(0, 1, 0, 0))
     franka.control_dofs_position(qpos[motors_dof], motors_dof)
-    for i in range(40):
+    for i in range(40 if "PYTEST_VERSION" not in os.environ else 1):
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         scene.step()
 
