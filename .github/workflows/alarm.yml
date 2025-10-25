@@ -332,8 +332,10 @@ jobs:
             echo "SCRIPT_OUTPUT=" >> "$GITHUB_ENV"
           fi
 
-          # Export regression status
+          # Export status
+          echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+
       - name: Add PR comment
         if: ${{ env.SCRIPT_OUTPUT != '' }}
         uses: actions/github-script@v8
@@ -359,16 +361,17 @@ jobs:
               issue_number: data[0].number,
               body: process.env.COMMENT_BODY
             });
+
       - name: Publish PR check
         if: always()
         uses: actions/github-script@v8
         env:
           CHECK_NAME: Benchmark Comparison
           CHECK_BODY: ${{ env.CHECK_OUTPUT }}
+          CONCLUSION: ${{ env.CONCLUSION }}
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
         with:
           script: |
-            const conclusion = 'success';
             const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
               ? '🔴 Regressions detected. See tables below.'
               : '✅ No regressions detected. See tables below.';
@@ -378,7 +381,7 @@ jobs:
               head_sha: context.payload.workflow_run.head_sha,
               name: process.env.CHECK_NAME,
               status: 'completed',
-              conclusion,
+              conclusion: process.env.CONCLUSION,
               output: {
                 title: process.env.CHECK_NAME,
                 summary,
