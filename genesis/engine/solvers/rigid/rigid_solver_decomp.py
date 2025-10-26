@@ -1115,6 +1115,7 @@ class RigidSolver(Solver):
         if self.is_active:
             # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
             from genesis.engine.couplers import IPCCoupler
+
             if isinstance(self.sim.coupler, IPCCoupler):
                 return
 
