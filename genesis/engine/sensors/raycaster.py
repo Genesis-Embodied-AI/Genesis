@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 @ti.func
 def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
     """
-    Möller-Trumbore ray-triangle intersection.
+    Moller-Trumbore ray-triangle intersection.
 
     Returns: vec4(t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
     """
@@ -130,7 +130,7 @@ def kernel_update_aabbs(
     fixed_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    aabb_state: array_class.AABBState,
+    aabb_state: ti.template(),
 ):
     for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
         aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)

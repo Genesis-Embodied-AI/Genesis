@@ -40,7 +40,7 @@ logger: Logger | None = None
 device: torch.device | None = None
 backend: gs_backend | None = None
 use_ndarray: bool | None = None
-use_pure: bool | None = None
+use_fastcache: bool | None = None
 EPS: float | None = None
 
 
@@ -117,7 +117,7 @@ def init(
         backend = gs_backend.cpu
 
     # Configure GsTaichi fast cache and array type
-    global use_ndarray, use_pure
+    global use_ndarray, use_fastcache
     is_ndarray_disabled = (os.environ.get("GS_ENABLE_NDARRAY") or ("0" if sys.platform == "darwin" else "1")) == "0"
     if use_ndarray is None:
         _use_ndarray = not (is_ndarray_disabled or performance_mode)
@@ -127,14 +127,14 @@ def init(
             raise_exception("Genesis previous initialized. GsTaichi dynamic array type cannot be disabled anymore.")
     if _use_ndarray and backend == gs_backend.metal:
         raise_exception("GsTaichi dynamic array type is not supported on Apple Metal GPU backend.")
-    is_pure_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "0") == "0"
-    if use_pure is None:
-        _use_pure = not is_pure_disabled and _use_ndarray
+    is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
+    if use_fastcache is None:
+        _use_fastcache = not is_fastcache_disabled and _use_ndarray
     else:
-        _use_pure = use_pure
-        if use_pure and is_pure_disabled:
+        _use_fastcache = use_fastcache
+        if use_fastcache and is_fastcache_disabled:
             raise_exception("Genesis previous initialized. GsTaichi fast cache mode cannot be disabled anymore.")
-    use_ndarray, use_pure = _use_ndarray, _use_pure
+    use_ndarray, use_fastcache = _use_ndarray, _use_fastcache
 
     # Define the right dtypes in accordance with selected backend and precision
     global ti_float, np_float, tc_float
@@ -202,15 +202,19 @@ def init(
     elif gs.logger.level == _logging.DEBUG:
         taichi_kwargs.update(log_level=ti.INFO)
     if debug:
-        if backend == gs_backend.cpu:
-            taichi_kwargs.update(cpu_max_num_threads=1)
-        else:
+        if backend != gs_backend.cpu:
             logger.warning("Debug mode is partially supported for GPU backend.")
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
+
+    ti_num_cpu_threads = 1 if debug else os.environ.get("TI_NUM_THREADS")
+    if ti_num_cpu_threads is not None:
+        taichi_kwargs.update(
+            cpu_max_num_threads=int(ti_num_cpu_threads),
+        )
 
     if seed is not None:
         global SEED
@@ -267,7 +271,7 @@ def init(
         setattr(ti._logging, ti_name, getattr(logger, gs_name))
 
     # Dealing with default backend
-    if use_pure:
+    if use_fastcache:
         logger.debug("[GsTaichi] Enabling pure kernels for fast cache mode.")
     if use_ndarray:
         logger.debug("[GsTaichi] Enabling GsTaichi dynamic array type to avoid scene-specific compilation.")
@@ -283,7 +287,7 @@ def init(
             ("🐛 debug", debug),
             ("📏 precision", precision),
             ("🏎️ performance", performance_mode),
-            ("ℹ️ verbose", _logging.getLevelName(gs.logger.level)),
+            ("💬 verbose", _logging.getLevelName(gs.logger.level)),
         )
     )
     logger.info(f"🚀 Genesis initialized. {msg_options}")

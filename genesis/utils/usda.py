@@ -29,8 +29,6 @@ cs_encode = {
     "": None,
 }
 
-yup_rotation = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
-
 
 def get_input_attribute_value(shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
@@ -362,7 +360,7 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
         if prim.IsA(UsdGeom.Mesh):
             matrix = np.asarray(xform_cache.GetLocalToWorldTransform(prim), dtype=np.float32)
             if yup:
-                matrix[:3, :3] @= np.asarray(yup_rotation, dtype=np.float32)
+                matrix @= mu.Y_UP_TRANSFORM
             mesh_usd = UsdGeom.Mesh(prim)
             mesh_spec = prim.GetPrimStack()[-1]
             mesh_id = mesh_spec.layer.identifier + mesh_spec.path.pathString

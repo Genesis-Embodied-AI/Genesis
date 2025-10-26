@@ -80,17 +80,19 @@ def test_rigid_mpm_muscle(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize(
-    "material_type",
+    "n_envs, material_type",
     [
-        gs.materials.PBD.Liquid,
-        gs.materials.SPH.Liquid,
-        gs.materials.MPM.Liquid,
-        gs.materials.MPM.Sand,
-        gs.materials.MPM.Snow,
-        gs.materials.MPM.Elastic,  # This makes little sense but nothing prevents doing this
+        (0, gs.materials.SPH.Liquid),
+        (1, gs.materials.SPH.Liquid),
+        (2, gs.materials.SPH.Liquid),
+        (2, gs.materials.PBD.Liquid),
+        (2, gs.materials.MPM.Liquid),
+        (2, gs.materials.MPM.Sand),
+        (2, gs.materials.MPM.Snow),
+        (2, gs.materials.MPM.Elastic),  # This makes little sense but nothing prevents doing this
     ],
 )
-def test_fluid_emitter(material_type, show_viewer):
+def test_fluid_emitter(n_envs, material_type, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=4e-3,
@@ -134,7 +136,7 @@ def test_fluid_emitter(material_type, show_viewer):
             color=(0.7, 0.85, 1.0, 0.7),
         ),
     )
-    scene.build(n_envs=2)
+    scene.build(n_envs=n_envs)
 
     emitter.emit_omni()
     for i in range(5):

@@ -621,7 +621,7 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.mark.parametrize("runnable", ["anymal_c", "batched_franka"])
+@pytest.mark.parametrize("runnable", ["anymal_c", "batched_franka", "random"])
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_envs", [30000])
 @pytest.mark.parametrize("gjk", [False, True])

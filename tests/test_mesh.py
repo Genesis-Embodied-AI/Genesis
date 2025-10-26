@@ -353,13 +353,14 @@ def test_usd_bake(usd_file, show_viewer):
 def test_urdf_with_existing_glb(tmp_path, show_viewer):
     glb_file = "usd/sneaker_airforce.glb"
     asset_path = get_hf_dataset(pattern=glb_file)
+    glb_path = os.path.join(asset_path, glb_file)
 
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="shoe">
               <link name="base">
                 <visual>
-                  <geometry><mesh filename="{os.path.join(asset_path, glb_file)}"/></geometry>
+                  <geometry><mesh filename="{glb_path}"/></geometry>
                 </visual>
               </link>
             </robot>
@@ -370,11 +371,18 @@ def test_urdf_with_existing_glb(tmp_path, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    robot = scene.add_entity(
+    robot_urdf = scene.add_entity(
         gs.morphs.URDF(
             file=urdf_path,
         ),
     )
+    robot_mesh = scene.add_entity(
+        gs.morphs.Mesh(
+            file=glb_path,
+            parse_glb_with_zup=True,
+        ),
+    )
+    check_gs_meshes(robot_urdf.vgeoms[0].vmesh, robot_mesh.vgeoms[0].vmesh, "robot")
 
 
 @pytest.mark.required

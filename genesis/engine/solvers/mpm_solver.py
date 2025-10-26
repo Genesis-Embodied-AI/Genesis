@@ -69,17 +69,6 @@ class MPMSolver(Solver):
         # boundary
         self.setup_boundary()
 
-    def _batch_shape(self, shape=None, first_dim=False, B=None):
-        if B is None:
-            B = self._B
-
-        if shape is None:
-            return (B,)
-        elif isinstance(shape, (list, tuple)):
-            return (B,) + shape if first_dim else shape + (B,)
-        else:
-            return (B, shape) if first_dim else (shape, B)
-
     def setup_boundary(self):
         # safety padding
         self.boundary_padding = 3 * self._dx
@@ -128,12 +117,12 @@ class MPMSolver(Solver):
 
         # construct fields
         self.particles = struct_particle_state.field(
-            shape=self._batch_shape((self._sim.substeps_local + 1, self._n_particles)),
+            shape=(self._sim.substeps_local + 1, self._n_particles, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.particles_ng = struct_particle_state_ng.field(
-            shape=self._batch_shape((self._sim.substeps_local + 1, self._n_particles)),
+            shape=(self._sim.substeps_local + 1, self._n_particles, self._B),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -141,7 +130,7 @@ class MPMSolver(Solver):
             shape=self._n_particles, needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_render = struct_particle_state_render.field(
-            shape=self._batch_shape(self._n_particles), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
 
     def init_grid_fields(self):
@@ -151,7 +140,7 @@ class MPMSolver(Solver):
             vel_out=gs.ti_vec3,  # output momentum/velocity
         )
         self.grid = grid_cell_state.field(
-            shape=self._batch_shape((self._sim.substeps_local + 1, *self._grid_res)),
+            shape=(self._sim.substeps_local + 1, *self._grid_res, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
@@ -161,14 +150,14 @@ class MPMSolver(Solver):
             support_idxs=ti.types.vector(self._n_vvert_supports, gs.ti_int),
             support_weights=ti.types.vector(self._n_vvert_supports, gs.ti_float),
         )
-        self.vverts_info = struct_vvert_info.field(shape=max(1, self._n_vverts), layout=ti.Layout.SOA)
+        self.vverts_info = struct_vvert_info.field(shape=(max(1, self._n_vverts),), layout=ti.Layout.SOA)
 
         struct_vvert_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             active=gs.ti_bool,
         )
         self.vverts_render = struct_vvert_state_render.field(
-            shape=self._batch_shape(max(1, self._n_vverts)), layout=ti.Layout.SOA
+            shape=(max(1, self._n_vverts), self._B), layout=ti.Layout.SOA
         )
 
     def init_ckpt(self):

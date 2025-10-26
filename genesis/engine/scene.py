@@ -803,8 +803,7 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
-                self._sim.build()
+            self._sim.build()
 
             # reset state
             self._reset()
@@ -1317,7 +1316,7 @@ class Scene(RBC):
         Returns
         -------
         dict[str, np.ndarray]
-            Mapping ``"Class.attr[.member]" → array`` with raw field data.
+            Mapping ``"Class.attr[.member]" -> array`` with raw field data.
         """
         arrays: dict[str, np.ndarray] = {}
 

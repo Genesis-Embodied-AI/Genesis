@@ -13,7 +13,7 @@ class Liquid(Base):
     Parameters
     ----------
     rho: float, optional
-        The rest density of the fluid in kg/m³. Default is 1000.0.
+        The rest density of the fluid in kg/m^3. Default is 1000.0.
     sampler: str, optional
         Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
         'pbs' on supported platforms, 'random' otherwise.
@@ -44,7 +44,7 @@ class Liquid(Base):
 
     @property
     def rho(self):
-        """The rest density of the fluid (kg/m³)."""
+        """The rest density of the fluid (kg/m^3)."""
         return self._rho
 
     @property
