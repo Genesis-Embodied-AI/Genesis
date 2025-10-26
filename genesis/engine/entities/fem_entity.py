@@ -61,6 +61,7 @@ class FEMEntity(Entity):
 
         # Check if this is cloth (elements are already triangles)
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
+
         is_cloth = isinstance(self.material, ClothMaterial)
 
         if is_cloth:
@@ -358,6 +359,7 @@ class FEMEntity(Entity):
             # Cloth: load surface mesh directly (no tetrahedralization)
             if isinstance(self.morph, gs.options.morphs.Mesh):
                 import trimesh
+
                 mesh = trimesh.load_mesh(self._morph.file)
                 verts = mesh.vertices * self._morph.scale + np.array(self._morph.pos)
                 faces = mesh.faces
@@ -409,7 +411,9 @@ class FEMEntity(Entity):
 
         if is_cloth:
             # Cloth: add only vertices and surfaces for rendering (no physics computation)
-            gs.logger.info(f"Entity {self.uid} is cloth - adding to FEM solver for rendering only (physics managed by IPC)")
+            gs.logger.info(
+                f"Entity {self.uid} is cloth - adding to FEM solver for rendering only (physics managed by IPC)"
+            )
             self._solver._kernel_add_cloth_for_rendering(
                 f=self._sim.cur_substep_local,
                 n_surfaces=self._n_surfaces,
