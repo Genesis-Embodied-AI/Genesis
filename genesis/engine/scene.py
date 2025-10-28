@@ -803,8 +803,7 @@ class Scene(RBC):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
             # simulator
-            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
-                self._sim.build()
+            self._sim.build()
 
             # reset state
             self._reset()
@@ -916,7 +915,8 @@ class Scene(RBC):
 
         # Clear the entire cache of the visualizer.
         # TODO: Could be optimized to only clear cache associated the the environments being reset.
-        self._visualizer.reset()
+        if self._visualizer.is_built:
+            self._visualizer.reset()
 
         # TODO: sets _next_particle = 0; not sure this is env isolation safe
         for emitter in self._emitters:
@@ -1313,7 +1313,7 @@ class Scene(RBC):
         Returns
         -------
         dict[str, np.ndarray]
-            Mapping ``"Class.attr[.member]" → array`` with raw field data.
+            Mapping ``"Class.attr[.member]" -> array`` with raw field data.
         """
         arrays: dict[str, np.ndarray] = {}
 

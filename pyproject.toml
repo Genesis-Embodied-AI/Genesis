@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==3.0.0",
+    "gstaichi==3.1.1",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
@@ -36,7 +36,7 @@ dependencies = [
     # Used for parsing `.glb` mesh files
     "pygltflib==1.16.0",
     # Used for parsing `.usd` mesh files
-    "usd-core",
+    "usd-core<25.11",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen>=0.6.4",
     # Used for some advanced mesh processing such as `skeletonization`
@@ -155,12 +155,7 @@ addopts = [
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",
-    # FIXME: Must enable rerun failures because of fast cache collision between distributed workers.
     # Note that the retry mechanism is not compatible with "--forked".
-    "--reruns=2",
-    "--reruns-delay=30",
-    "--only-rerun=ValidationError",
-    "--only-rerun=JSONDecodeError",
     "-m not (benchmarks or examples)",
 ]
 filterwarnings = [

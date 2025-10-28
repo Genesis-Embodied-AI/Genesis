@@ -25,12 +25,13 @@ class Visualizer(RBC):
         self._t = -1
         self._scene = scene
 
+        self._is_built = False
         self._context = None
         self._viewer = None
         self._rasterizer = None
         self._raytracer = None
         self._batch_renderer = None
-        self.viewer_lock = None  # check if null to know if the Visualizer has been built
+        self.viewer_lock = DummyViewerLock()
 
         # Rasterizer context is shared by viewer and rasterizer
         try:
@@ -153,6 +154,7 @@ class Visualizer(RBC):
         else:
             gs.raise_exception("`add_light` is specific to batch renderer.")
 
+    @gs.assert_built
     def reset(self):
         self._t = -1
 
@@ -164,9 +166,8 @@ class Visualizer(RBC):
         if self._batch_renderer is not None:
             self._batch_renderer.reset()
 
-        if self.viewer_lock is not None:
-            if self._viewer is not None:
-                self._viewer.update(auto_refresh=True)
+        if self._viewer is not None:
+            self._viewer.update(auto_refresh=True)
 
     def build(self):
         self._context.build(self._scene)
@@ -174,8 +175,6 @@ class Visualizer(RBC):
         if self._viewer is not None:
             self._viewer.build(self._scene)
             self.viewer_lock = self._viewer.lock
-        else:
-            self.viewer_lock = DummyViewerLock()
 
         self._rasterizer.build()
         if self._raytracer is not None:
@@ -187,6 +186,9 @@ class Visualizer(RBC):
         # Batch renderer needs to be built after cameras are built
         if self._batch_renderer is not None:
             self._batch_renderer.build()
+
+        # Fully initialized at this point
+        self._is_built = True
 
         # Make sure that the viewer is fully compiled and in a clean state
         self.reset()
@@ -256,6 +258,10 @@ class Visualizer(RBC):
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def is_built(self) -> bool:
+        return self._is_built
 
     @property
     def viewer(self):

@@ -44,17 +44,6 @@ class SPHSolver(Solver):
         # boundary
         self.setup_boundary()
 
-    def _batch_shape(self, shape=None, first_dim=False, B=None):
-        if B is None:
-            B = self._B
-
-        if shape is None:
-            return (B,)
-        elif isinstance(shape, (list, tuple)):
-            return (B,) + shape if first_dim else shape + (B,)
-        else:
-            return (B, shape) if first_dim else (shape, B)
-
     def setup_boundary(self):
         self.boundary = CubeBoundary(
             lower=self._lower_bound,
@@ -99,26 +88,26 @@ class SPHSolver(Solver):
 
         # construct fields
         self.particles = struct_particle_state.field(
-            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_ng = struct_particle_state_ng.field(
-            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_info = struct_particle_info.field(
             shape=(self._n_particles,), needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_reordered = struct_particle_state.field(
-            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_ng_reordered = struct_particle_state_ng.field(
-            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_info_reordered = struct_particle_info.field(
-            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
 
         self.particles_render = struct_particle_state_render.field(
-            shape=self._batch_shape((self._n_particles,)), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
 
     def init_ckpt(self):

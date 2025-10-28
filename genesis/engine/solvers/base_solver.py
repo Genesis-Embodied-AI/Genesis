@@ -27,6 +27,8 @@ class Solver(RBC):
         self._gravity = None
         self._entities: list[Entity] = gs.List()
 
+        self.data_manager = None
+
         # force fields
         self._ffs = list()
 
@@ -68,23 +70,20 @@ class Solver(RBC):
             key_base = ".".join((self.__class__.__name__, attr_name))
             data = value.to_numpy()
 
-            # StructField → data is a dict: flatten each member
+            # StructField -> data is a dict: flatten each member
             if isinstance(data, dict):
                 for sub_name, sub_arr in data.items():
-                    arrays[f"{key_base}.{sub_name}"] = (
-                        sub_arr if isinstance(sub_arr, np.ndarray) else np.asarray(sub_arr)
-                    )
+                    arrays[f"{key_base}.{sub_name}"] = sub_arr
             else:
-                arrays[key_base] = data if isinstance(data, np.ndarray) else np.asarray(data)
+                arrays[key_base] = data
 
-        # if it has data_manager, add it to the arrays
-        if hasattr(self, "data_manager"):
+        if self.data_manager is not None:
             for attr_name, struct in self.data_manager.__dict__.items():
-                for sub_name, value in struct.__dict__.items():
-                    # if it's a ti.Field or ti.Ndarray, convert to numpy
-                    if isinstance(value, (ti.Field, ti.Ndarray)):
+                for sub_name in dir(struct):
+                    sub_arr = getattr(struct, sub_name)
+                    if isinstance(sub_arr, (ti.Field, ti.Ndarray)):
                         store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
-                        arrays[store_name] = value.to_numpy()
+                        arrays[store_name] = sub_arr.to_numpy()
 
         return arrays
 
@@ -115,10 +114,10 @@ class Solver(RBC):
             value.from_numpy(arr)
 
         # if it has data_manager, add it to the arrays
-        if hasattr(self, "data_manager"):
+        if self.data_manager is not None:
             for attr_name, struct in self.data_manager.__dict__.items():
-                for sub_name, sub_arr in struct.__dict__.items():
-                    # if it's a ti.Field or ti.Ndarray, convert to numpy
+                for sub_name in dir(struct):
+                    sub_arr = getattr(struct, sub_name)
                     if isinstance(sub_arr, (ti.Field, ti.Ndarray)):
                         store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
                         if store_name in arr_dict:

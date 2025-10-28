@@ -127,7 +127,7 @@ class ViewerInteraction(ViewerInteractionBase):
     @override
     def on_draw(self) -> None:
         super().on_draw()
-        if self.scene._visualizer is not None and self.scene._visualizer.viewer_lock is not None:
+        if self.scene._visualizer is not None and self.scene._visualizer.is_built:
             self.scene.clear_debug_objects()
             mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
 

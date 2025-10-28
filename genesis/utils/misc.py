@@ -67,7 +67,7 @@ class redirect_libc_stderr:
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
         sys.stderr.flush()
 
-        if os.name == "posix":  # macOS, Linux, *BSD, …
+        if os.name == "posix":  # macOS, Linux, *BSD, ...
             libc = ctypes.CDLL(None)
             libc.fflush(None)
             libc.dup2(self.fd.fileno(), self.stderr_fileno)
@@ -189,6 +189,8 @@ def get_device(backend: gs_backend, device_idx: Optional[int] = None):
     elif backend == gs_backend.cuda:
         if not torch.cuda.is_available():
             gs.raise_exception("torch cuda not available")
+        if device_idx is None:
+            device_idx = torch.cuda.current_device()
         device = torch.device("cuda", device_idx)
         device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name

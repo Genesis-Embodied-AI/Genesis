@@ -71,11 +71,7 @@ def split_all_surface_tets(verts, elems):
     """
     F, *_ = igl.boundary_facets(elems)
     on_surface = np.zeros(verts.shape[0], dtype=bool)
-    on_surface[
-        F.reshape(
-            -1,
-        )
-    ] = True
+    on_surface[F.reshape(-1)] = True
     all_on_surface = np.all(on_surface[elems], axis=1)
     if not all_on_surface.any():
         return verts, elems

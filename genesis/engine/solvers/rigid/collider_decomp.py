@@ -42,15 +42,17 @@ class CCD_ALGORITHM_CODE(IntEnum):
 
 @ti.data_oriented
 class Collider:
-
-    @ti.data_oriented
-    class ColliderStaticConfig:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
+
+        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
+        self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
+        self._mpr_to_sdf_overlap_ratio = 0.4
+        # multiplier k for the maximum number of contact pairs for the broad phase
+        self._max_collision_pairs_broad_k = 20
+        self._box_MAXCONPAIR = 16
+        self._diff_pos_tolerance = 1e-2
+        self._diff_normal_tolerance = 1e-2
 
         self._init_static_config()
         self._init_collision_fields()
@@ -77,28 +79,15 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
-        # Initialize the static config
-        self._collider_static_config = Collider.ColliderStaticConfig(
-            has_nonconvex_nonterrain=np.logical_and(
-                self._solver.geoms_info.is_convex.to_numpy() == 0,
-                self._solver.geoms_info.type.to_numpy() != gs.GEOM_TYPE.TERRAIN,
-            ).any(),
-            has_terrain=(self._solver.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN).any(),
-            # multi contact perturbation and tolerance
-            mc_perturbation=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
-            mc_tolerance=1e-3 if self._solver._enable_mujoco_compatibility else 1e-2,
-            mpr_to_sdf_overlap_ratio=0.4,
-            # multiplier k for the maximum number of contact pairs for the broad phase
-            max_collision_pairs_broad_k=20,
-            # maximum number of contact pairs per collision pair
+        # Initialize the static config, which stores every data that are compile-time constants.
+        # Note that updating any of them will trigger recompilation.
+        self._collider_static_config = array_class.StructColliderStaticConfig(
+            has_nonconvex_nonterrain=not all(
+                geom.is_convex or geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms
+            ),
+            has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms),
             n_contacts_per_pair=20 if self._solver._static_rigid_sim_config.requires_grad else 5,
-            # maximum number of contact points for box-box collision detection
-            box_MAXCONPAIR=16,
-            # ccd algorithm
             ccd_algorithm=ccd_algorithm,
-            # differentiable contact tolerance
-            diff_pos_tolerance=1e-2,
-            diff_normal_tolerance=1e-2,
         )
 
     def _init_collision_fields(self) -> None:
@@ -107,22 +96,34 @@ class Collider:
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
 
-        # Initialize [state], which stores every MUTABLE collision data.
-        n_possible_pairs = max(n_possible_pairs_, 1)
-        self._collider_state = array_class.get_collider_state(
-            self._solver, self._solver._static_rigid_sim_config, n_possible_pairs, self._collider_static_config
-        )
-        # array_class.ColliderState(self._solver, n_possible_pairs, self._collider_static_config)
-
-        # Initialize [info], which stores every IMMUTABLE collision data.
-        # self._collider_info = array_class.ColliderInfo(self._solver, n_vert_neighbors, self._collider_static_config)
+        # Initialize [info], which stores every data that must be considered mutable from taichi's perspective,
+        # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
         self._collider_info = array_class.get_collider_info(
-            self._solver, n_vert_neighbors, self._collider_static_config
+            self._solver,
+            n_vert_neighbors,
+            self._collider_static_config,
+            mc_perturbation=self._mc_perturbation,
+            mc_tolerance=self._mc_tolerance,
+            mpr_to_sdf_overlap_ratio=self._mpr_to_sdf_overlap_ratio,
+            box_MAXCONPAIR=self._box_MAXCONPAIR,
+            diff_pos_tolerance=self._diff_pos_tolerance,
+            diff_normal_tolerance=self._diff_normal_tolerance,
         )
         self._init_collision_pair_validity(collision_pair_validity)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(n_possible_pairs_)
         self._init_terrain_state()
+
+        # Initialize [state], which stores every data that are may be updated at every single simulation step
+        n_possible_pairs = max(n_possible_pairs_, 1)
+        self._collider_state = array_class.get_collider_state(
+            self._solver,
+            self._solver._static_rigid_sim_config,
+            n_possible_pairs,
+            self._max_collision_pairs_broad_k,
+            self._collider_info,
+            self._collider_static_config,
+        )
 
         # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state / info.
         self._contacts_info_cache = {}
@@ -131,7 +132,7 @@ class Collider:
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         self._warn_msg_max_collision_pairs = (
             f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            f"({self._collider_info._max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
+            f"({self._collider_info.max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
             f"'max_collision_pairs'.{formats.RESET}"
         )
 
@@ -145,9 +146,9 @@ class Collider:
         """
         solver = self._solver
         n_geoms = solver.n_geoms_
-        n_equalities = solver._static_rigid_sim_config.n_equalities
-        enable_self_collision = solver._static_rigid_sim_config.enable_self_collision
-        enable_adjacent_collision = solver._static_rigid_sim_config.enable_adjacent_collision
+        n_equalities = solver.n_equalities
+        enable_self_collision = solver._enable_self_collision
+        enable_adjacent_collision = solver._enable_adjacent_collision
         batch_links_info = solver._static_rigid_sim_config.batch_links_info
 
         eq_type = solver.equalities_info.eq_type.to_numpy()[:, 0]
@@ -250,21 +251,20 @@ class Collider:
             self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
     def _init_max_contact_pairs(self, n_possible_pairs):
-        if self._solver._max_collision_pairs < n_possible_pairs:
+        if self._solver.max_collision_pairs < n_possible_pairs:
             gs.logger.warning(
-                f"max_collision_pairs {self._solver._max_collision_pairs} is"
+                f"max_collision_pairs {self._solver.max_collision_pairs} is"
                 f" smaller than the theoretical maximal possible pairs {n_possible_pairs}, it uses less memory"
                 f" but might lead to missing some collision pairs if there are too many collision pairs"
             )
-        max_collision_pairs = min(self._solver._max_collision_pairs, n_possible_pairs)
+        max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
         max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
-        max_contact_pairs_broad = max_collision_pairs * self._collider_static_config.max_collision_pairs_broad_k
+        max_contact_pairs_broad = max_collision_pairs * self._max_collision_pairs_broad_k
 
-        self._collider_info._max_possible_pairs[None] = n_possible_pairs
-        self._collider_info._max_collision_pairs[None] = max_collision_pairs
-        self._collider_info._max_collision_pairs_broad[None] = max_contact_pairs_broad
-
-        self._collider_info._max_contact_pairs[None] = max_contact_pairs
+        self._collider_info.max_possible_pairs[None] = n_possible_pairs
+        self._collider_info.max_collision_pairs[None] = max_collision_pairs
+        self._collider_info.max_collision_pairs_broad[None] = max_contact_pairs_broad
+        self._collider_info.max_contact_pairs[None] = max_contact_pairs
 
     def _init_terrain_state(self):
         if self._collider_static_config.has_terrain:
@@ -294,7 +294,6 @@ class Collider:
         collider_kernel_reset(
             envs_idx,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
             self._collider_state,
         )
         self._contacts_info_cache = {}
@@ -307,7 +306,6 @@ class Collider:
             self._solver.links_state,
             self._solver.links_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
             self._collider_state,
         )
 
@@ -320,7 +318,6 @@ class Collider:
             self._solver.geoms_state,
             self._solver.geoms_init_AABB,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
         )
         # timer.stamp("func_update_aabbs")
         func_broad_phase(
@@ -330,7 +327,6 @@ class Collider:
             self._solver.geoms_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
             self._solver.constraint_solver.constraint_state,
             self._collider_state,
             self._solver.equalities_info,
@@ -347,17 +343,16 @@ class Collider:
             self._solver.faces_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
             self._mpr._mpr_state,
-            self._mpr._mpr_static_config,
+            self._mpr._mpr_info,
             self._gjk._gjk_state,
+            self._gjk._gjk_info,
             self._gjk._gjk_static_config,
             self._sdf._sdf_info,
             self._support_field._support_field_info,
-            self._support_field._support_field_static_config,
         )
         func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
@@ -366,7 +361,6 @@ class Collider:
             self._solver.verts_info,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
@@ -379,14 +373,12 @@ class Collider:
                 self._solver.geoms_init_AABB,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
-                self._solver._static_rigid_sim_cache_key,
                 self._collider_state,
                 self._collider_info,
                 self._collider_static_config,
                 self._mpr._mpr_state,
-                self._mpr._mpr_static_config,
+                self._mpr._mpr_info,
                 self._support_field._support_field_info,
-                self._support_field._support_field_static_config,
             )
             # timer.stamp("func_narrow_phase_any_vs_terrain")
         if self._collider_static_config.has_nonconvex_nonterrain:
@@ -400,7 +392,6 @@ class Collider:
                 self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
-                self._solver._static_rigid_sim_cache_key,
                 self._collider_state,
                 self._collider_info,
                 self._collider_static_config,
@@ -439,7 +430,6 @@ class Collider:
                 fout,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
-                self._solver._static_rigid_sim_cache_key,
                 self._collider_state,
                 self._collider_info,
             )
@@ -502,10 +492,10 @@ class Collider:
             self._solver.geoms_state,
             self._solver.geoms_info,
             self._solver._static_rigid_sim_config,
-            self._solver._static_rigid_sim_cache_key,
             self._collider_state,
             self._collider_info,
             self._gjk._gjk_state,
+            self._gjk._gjk_info,
             self._gjk._gjk_static_config,
         )
 
@@ -528,11 +518,10 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     return matres
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_reset(
     envs_idx: ti.types.ndarray(),
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -548,13 +537,12 @@ def collider_kernel_reset(
 
 
 # only used with hibernation ??
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_collider_clear(
     envs_idx: ti.types.ndarray(),
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -601,14 +589,13 @@ def kernel_collider_clear(
             collider_state.n_contacts[i_b] = 0
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_get_contacts(
     is_padded: ti.template(),
     iout: ti.types.ndarray(),
     fout: ti.types.ndarray(),
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
 ):
@@ -976,18 +963,15 @@ def func_contact_mpr_terrain(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
     margin = gs.ti_float(0.0)
 
     is_return = False
-    tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
-    )
+    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
     # pos = self._solver.geoms_state[i_ga, i_b].pos - self._solver.geoms_state[i_gb, i_b].pos
     # for i in range(3):
     #     if self._solver.terrain_xyz_maxmin[i] < pos[i] - r2 - margin or \
@@ -1021,7 +1005,6 @@ def func_contact_mpr_terrain(
                 collider_info,
                 collider_static_config,
                 support_field_info,
-                support_field_static_config,
                 direction,
                 i_ga,
                 i_b,
@@ -1081,9 +1064,8 @@ def func_contact_mpr_terrain(
                                     collider_info,
                                     collider_static_config,
                                     mpr_state,
-                                    mpr_static_config,
+                                    mpr_info,
                                     support_field_info,
-                                    support_field_static_config,
                                     i_ga,
                                     i_gb,
                                     i_b,
@@ -1151,6 +1133,7 @@ def func_check_collision_valid(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     constraint_state: array_class.ConstraintState,
     equalities_info: array_class.EqualitiesInfo,
@@ -1163,7 +1146,7 @@ def func_check_collision_valid(
         i_lb = geoms_info.link_idx[i_gb]
 
         # Filter out collision pairs that are involved in dynamically registered weld equality constraints
-        for i_eq in range(static_rigid_sim_config.n_equalities, constraint_state.ti_n_equalities[i_b]):
+        for i_eq in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
             if equalities_info.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
                 i_leqa = equalities_info.eq_obj1id[i_eq, i_b]
                 i_leqb = equalities_info.eq_obj2id[i_eq, i_b]
@@ -1183,7 +1166,7 @@ def func_check_collision_valid(
     return is_valid
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_broad_phase(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1191,7 +1174,6 @@ def func_broad_phase(
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to gstaichi
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
@@ -1288,6 +1270,7 @@ def func_broad_phase(
                             links_state,
                             links_info,
                             geoms_info,
+                            rigid_global_info,
                             static_rigid_sim_config,
                             constraint_state,
                             equalities_info,
@@ -1303,7 +1286,7 @@ def func_broad_phase(
                             continue
 
                         i_p = collider_state.n_broad_pairs[i_b]
-                        if i_p == collider_info._max_collision_pairs_broad[None]:
+                        if i_p == collider_info.max_collision_pairs_broad[None]:
                             # print(self._warn_msg_max_collision_pairs_broad)
                             break
                         collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
@@ -1343,6 +1326,7 @@ def func_broad_phase(
                                 links_state,
                                 links_info,
                                 geoms_info,
+                                rigid_global_info,
                                 static_rigid_sim_config,
                                 constraint_state,
                                 equalities_info,
@@ -1378,6 +1362,7 @@ def func_broad_phase(
                                     links_state,
                                     links_info,
                                     geoms_info,
+                                    rigid_global_info,
                                     static_rigid_sim_config,
                                     constraint_state,
                                     equalities_info,
@@ -1429,7 +1414,7 @@ def func_broad_phase(
                                     break
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1440,17 +1425,16 @@ def func_narrow_phase_convex_vs_convex(
     faces_info: array_class.FacesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
@@ -1494,17 +1478,16 @@ def func_narrow_phase_convex_vs_convex(
                         verts_info=verts_info,
                         faces_info=faces_info,
                         static_rigid_sim_config=static_rigid_sim_config,
-                        static_rigid_sim_cache_key=static_rigid_sim_cache_key,
                         collider_state=collider_state,
                         collider_info=collider_info,
                         collider_static_config=collider_static_config,
                         mpr_state=mpr_state,
-                        mpr_static_config=mpr_static_config,
+                        mpr_info=mpr_info,
                         gjk_state=gjk_state,
+                        gjk_info=gjk_info,
                         gjk_static_config=gjk_static_config,
                         sdf_info=sdf_info,
                         support_field_info=support_field_info,
-                        support_field_static_config=support_field_static_config,
                     )
                 else:
                     if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
@@ -1520,29 +1503,28 @@ def func_narrow_phase_convex_vs_convex(
                             verts_info=verts_info,
                             faces_info=faces_info,
                             static_rigid_sim_config=static_rigid_sim_config,
-                            static_rigid_sim_cache_key=static_rigid_sim_cache_key,
                             collider_state=collider_state,
                             collider_info=collider_info,
                             collider_static_config=collider_static_config,
                             mpr_state=mpr_state,
-                            mpr_static_config=mpr_static_config,
+                            mpr_info=mpr_info,
                             gjk_state=gjk_state,
+                            gjk_info=gjk_info,
                             gjk_static_config=gjk_static_config,
                             sdf_info=sdf_info,
                             support_field_info=support_field_info,
-                            support_field_static_config=support_field_static_config,
                         )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_diff_convex_vs_convex(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
     gjk_static_config: ti.template(),
 ):
     # Compute reference contacts
@@ -1559,7 +1541,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
                     geoms_state,
                     collider_state.diff_contact_input,
-                    gjk_static_config,
+                    gjk_info,
                     i_ga,
                     i_gb,
                     i_b,
@@ -1596,7 +1578,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
                     geoms_state,
                     collider_state.diff_contact_input,
-                    gjk_static_config,
+                    gjk_info,
                     i_ga,
                     i_gb,
                     i_b,
@@ -1618,7 +1600,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1626,7 +1608,6 @@ def func_narrow_phase_convex_specializations(
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
@@ -1652,7 +1633,6 @@ def func_narrow_phase_convex_specializations(
                         geoms_init_AABB,
                         verts_info,
                         static_rigid_sim_config,
-                        static_rigid_sim_cache_key,
                         collider_state,
                         collider_info,
                         collider_static_config,
@@ -1672,21 +1652,19 @@ def func_narrow_phase_convex_specializations(
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1718,13 +1696,12 @@ def func_narrow_phase_any_vs_terrain(
                         collider_info,
                         collider_static_config,
                         mpr_state,
-                        mpr_static_config,
+                        mpr_info,
                         support_field_info,
-                        support_field_static_config,
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_nonconvex_vs_nonterrain(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1735,7 +1712,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
     edges_info: array_class.EdgesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
@@ -1761,7 +1737,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                 ):
                     is_col = False
                     tolerance = func_compute_tolerance(
-                        i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
+                        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
                     )
                     for i in range(2):
                         if i == 1:
@@ -1819,7 +1795,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 for i_rot in range(1, 5):
                                     axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
-                                    qrot = gu.ti_rotvec_to_quat(collider_static_config.mc_perturbation * axis)
+                                    qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis)
                                     func_rotate_frame(i_ga, contact_pos_i, qrot, i_b, geoms_state, geoms_info)
                                     func_rotate_frame(
                                         i_gb, contact_pos_i, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info
@@ -1860,8 +1836,8 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                             # First-order correction of the normal direction
                                             twist_rotvec = ti.math.clamp(
                                                 normal.cross(normal_i),
-                                                -collider_static_config.mc_perturbation,
-                                                collider_static_config.mc_perturbation,
+                                                -collider_info.mc_perturbation[None],
+                                                collider_info.mc_perturbation[None],
                                             )
                                             normal += twist_rotvec.cross(normal)
 
@@ -1934,7 +1910,6 @@ def func_plane_box_contact(
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
@@ -1970,7 +1945,7 @@ def func_plane_box_contact(
             n_con = 1
             contact_pos_0 = contact_pos
             tolerance = func_compute_tolerance(
-                i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
+                i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
             )
             for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
                 if n_con < ti.static(collider_static_config.n_contacts_per_pair):
@@ -2008,7 +1983,7 @@ def func_add_contact(
     collider_info: array_class.ColliderInfo,
 ):
     i_c = collider_state.n_contacts[i_b]
-    if i_c == collider_info._max_contact_pairs[None]:
+    if i_c == collider_info.max_contact_pairs[None]:
         # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
         # condition, while 'print' is slowing down the kernel even if every called in practice...
         # print(self._warn_msg_max_collision_pairs)
@@ -2078,7 +2053,7 @@ def func_add_diff_contact_input(
     collider_info: array_class.ColliderInfo,
 ):
     i_c = collider_state.n_contacts[i_b]
-    if i_c < collider_info._max_contact_pairs[None]:
+    if i_c < collider_info.max_contact_pairs[None]:
         collider_state.diff_contact_input.geom_a[i_b, i_c] = i_ga
         collider_state.diff_contact_input.geom_b[i_b, i_c] = i_gb
         collider_state.diff_contact_input.local_pos1_a[i_b, i_c] = gjk_state.diff_contact_input.local_pos1_a[i_b, i_d]
@@ -2190,17 +2165,16 @@ def func_convex_convex_contact(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
-    mpr_static_config: ti.template(),
+    mpr_info: array_class.MPRInfo,
     gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
 ):
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
         if ti.static(sys.platform == "darwin"):
@@ -2213,7 +2187,6 @@ def func_convex_convex_contact(
                 geoms_init_AABB=geoms_init_AABB,
                 verts_info=verts_info,
                 static_rigid_sim_config=static_rigid_sim_config,
-                static_rigid_sim_cache_key=static_rigid_sim_cache_key,
                 collider_state=collider_state,
                 collider_info=collider_info,
                 collider_static_config=collider_static_config,
@@ -2232,12 +2205,12 @@ def func_convex_convex_contact(
         )
 
         tolerance = func_compute_tolerance(
-            i_ga, i_gb, i_b, collider_static_config.mc_tolerance, geoms_info, geoms_init_AABB
+            i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
         )
         diff_pos_tolerance = func_compute_tolerance(
-            i_ga, i_gb, i_b, collider_static_config.diff_pos_tolerance, geoms_info, geoms_init_AABB
+            i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
         )
-        diff_normal_tolerance = collider_static_config.diff_normal_tolerance
+        diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
         # Backup state before local perturbation
         ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
@@ -2264,7 +2237,7 @@ def func_convex_convex_contact(
                 # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
                 # otherwise it would be more sensitive to ill-conditionning.
                 axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
-                qrot = gu.ti_rotvec_to_quat(collider_static_config.mc_perturbation * axis)
+                qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis)
                 func_rotate_frame(i_ga, contact_pos_0, qrot, i_b, geoms_state, geoms_info)
                 func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
 
@@ -2285,7 +2258,6 @@ def func_convex_convex_contact(
                         collider_info,
                         collider_static_config,
                         support_field_info,
-                        support_field_static_config,
                         normal,
                         i_gb,
                         i_b,
@@ -2323,9 +2295,8 @@ def func_convex_convex_contact(
                                     collider_info,
                                     collider_static_config,
                                     mpr_state,
-                                    mpr_static_config,
+                                    mpr_info,
                                     support_field_info,
-                                    support_field_static_config,
                                     i_ga,
                                     i_gb,
                                     i_b,
@@ -2363,9 +2334,8 @@ def func_convex_convex_contact(
                                 collider_state,
                                 collider_static_config,
                                 gjk_state,
-                                gjk_static_config,
+                                gjk_info,
                                 support_field_info,
-                                support_field_static_config,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -2382,9 +2352,9 @@ def func_convex_convex_contact(
                                 collider_state,
                                 collider_static_config,
                                 gjk_state,
+                                gjk_info,
                                 gjk_static_config,
                                 support_field_info,
-                                support_field_static_config,
                                 i_ga,
                                 i_gb,
                                 i_b,
@@ -2496,8 +2466,8 @@ def func_convex_convex_contact(
                         # Note that SDF does not take into account to direction of interest. As such, it cannot be
                         # used reliably for anything else than the point of deepest penetration.
                         prefer_sdf = (
-                            collider_static_config.mc_tolerance * penetration
-                            >= collider_static_config.mpr_to_sdf_overlap_ratio * tolerance
+                            collider_info.mc_tolerance[None] * penetration
+                            >= collider_info.mpr_to_sdf_overlap_ratio[None] * tolerance
                         )
 
                         if is_col_a and (
@@ -2584,8 +2554,8 @@ def func_convex_convex_contact(
                     # Rodrigues' rotation formula.
                     twist_rotvec = ti.math.clamp(
                         normal.cross(normal_0),
-                        -collider_static_config.mc_perturbation,
-                        collider_static_config.mc_perturbation,
+                        -collider_info.mc_perturbation[None],
+                        collider_info.mc_perturbation[None],
                     )
                     normal += twist_rotvec.cross(normal)
 
@@ -3168,7 +3138,7 @@ def func_box_box_contact(
                         if ti.abs(b) > gs.EPS:
                             for _j in ti.static(range(2)):
                                 j = 2 * _j - 1
-                                if n < collider_static_config.box_MAXCONPAIR:
+                                if n < collider_info.box_MAXCONPAIR[None]:
                                     l = s[q] * j
                                     c1 = (l - a) / b
                                     if 0 <= c1 and c1 <= 1:
@@ -3204,7 +3174,7 @@ def func_box_box_contact(
                 c1 = a * d - b * c
 
                 for i in range(4):
-                    if n < collider_static_config.box_MAXCONPAIR:
+                    if n < collider_info.box_MAXCONPAIR[None]:
                         llx = lx if (i // 2) else -lx
                         lly = ly if (i % 2) else -ly
 
@@ -3245,7 +3215,7 @@ def func_box_box_contact(
                 nf = n
 
                 for i in range(4):
-                    if n < collider_static_config.box_MAXCONPAIR:
+                    if n < collider_info.box_MAXCONPAIR[None]:
                         x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
 
                         if nl == 0:

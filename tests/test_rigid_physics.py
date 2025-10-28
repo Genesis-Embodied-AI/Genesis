@@ -1692,12 +1692,16 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     robot.set_dofs_velocity(initial_velocity)
 
     robot.set_dofs_frictionloss(np.array([0.0, 0.0]))
+    frictionloss = robot.get_dofs_frictionloss()
+    assert_allclose(frictionloss, np.array([0.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
     velocity_zero = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
 
     robot.set_dofs_velocity(initial_velocity)
     robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
+    frictionloss = robot.get_dofs_frictionloss()
+    assert_allclose(frictionloss, np.array([1.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
     velocity_high = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
@@ -1707,6 +1711,8 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 
     robot.set_dofs_velocity(initial_velocity)
     robot.set_dofs_frictionloss(np.array([0.5]), dofs_idx_local=[0])
+    frictionloss = robot.get_dofs_frictionloss(dofs_idx_local=[0])
+    assert_allclose(frictionloss, np.array([0.5]), atol=tol)
     for _ in range(10):
         gs_sim.step()
     velocity_medium = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
@@ -2753,6 +2759,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dofs_info.invweight),
         (gs_s.n_dofs, -1, gs_s.get_dofs_armature, gs_s.set_dofs_armature, gs_s.dofs_info.armature),
         (gs_s.n_dofs, -1, gs_s.get_dofs_damping, gs_s.set_dofs_damping, gs_s.dofs_info.damping),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_frictionloss, gs_s.set_dofs_frictionloss, gs_s.dofs_info.frictionloss),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.kp),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, gs_s.dofs_info.kv),
         (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
@@ -2786,6 +2793,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_invweight, None, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_armature, None, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_damping, None, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_frictionloss, gs_robot.set_dofs_frictionloss, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv, None),
         (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos, None),

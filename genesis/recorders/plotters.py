@@ -444,7 +444,9 @@ class BaseMPLPlotter(BasePlotter):
             return False
         if self._is_built:
             assert self.fig is not None
-            return isinstance(self.fig.canvas, FigureCanvasAgg)
+            # All Agg-based backends derives from the surfaceless Agg backend, so 'isinstance' cannot be used to
+            # discriminate the latter from others.
+            return type(self.fig.canvas) is FigureCanvasAgg
         return not self._options.show_window
 
 
