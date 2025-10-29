@@ -200,18 +200,10 @@ class RigidEntityState(RBC):
         self._s_global = s_global
 
         num_batch = self._entity._solver._B
-        self._pos = gs.zeros(
-            (num_batch, 3),
-            dtype=float,
-            requires_grad=self._entity.scene.requires_grad,
-            scene=self._entity.scene,
-        )
-        self._quat = gs.zeros(
-            (num_batch, 4),
-            dtype=float,
-            requires_grad=self._entity.scene.requires_grad,
-            scene=self._entity.scene,
-        )
+        requires_grad = self._entity.scene.requires_grad
+        scene = self._entity.scene
+        self._pos = gs.zeros((num_batch, 3), dtype=float, requires_grad=requires_grad, scene=scene)
+        self._quat = gs.zeros((num_batch, 4), dtype=float, requires_grad=requires_grad, scene=scene)
 
     def serializable(self):
         self._entity = None

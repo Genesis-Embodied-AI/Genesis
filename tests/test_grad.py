@@ -416,10 +416,8 @@ def test_differentiable_push(precision, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.precision("32")
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_rigid(show_viewer):
-
     dt = 1e-2
     horizon = 100
     substeps = 1
@@ -456,8 +454,8 @@ def test_differentiable_rigid(show_viewer):
     if show_viewer:
         target = scene.add_entity(
             gs.morphs.Box(
-                pos=goal_pos.cpu().tolist(),
-                quat=goal_quat.cpu().tolist(),
+                pos=goal_pos,
+                quat=goal_quat,
                 size=(0.1, 0.1, 0.2),
             ),
             surface=gs.surfaces.Default(

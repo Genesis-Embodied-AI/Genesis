@@ -1914,7 +1914,7 @@ def func_update_gradient(
         rigid_solver.func_solve_mass_batched(
             constraint_state.grad,
             constraint_state.Mgrad,
-            constraint_state.Mgrad,  # this will not be used anyway because is_backward is False
+            array_class.PLACEHOLDER,
             i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,

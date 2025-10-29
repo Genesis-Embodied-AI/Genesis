@@ -10,8 +10,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
-from genesis.engine.states.cache import QueriedStates
-from genesis.engine.states.solvers import RigidSolverState
+from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
 from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
@@ -128,10 +127,10 @@ class RigidSolver(Solver):
 
         self._queried_states = QueriedStates()
 
-        self.init_ckpt()
+        self._ckpt = dict()
 
     def init_ckpt(self):
-        self._ckpt = dict()
+        pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
         if isinstance(material, gs.materials.Avatar):
@@ -270,6 +269,9 @@ class RigidSolver(Solver):
 
             if isinstance(self.sim.coupler, SAPCoupler):
                 gs.raise_exception("SAPCoupler is not supported yet when requires_grad is True.")
+
+            if getattr(self._options, "noslip_iterations", 0) > 0:
+                gs.raise_exception("Noslip is not supported yet when requires_grad is True.")
 
         # Add terms for static inner loops, use 0 if not requires_grad to avoid re-compilation
         self._static_rigid_sim_config.max_n_links_per_entity = (
@@ -4159,7 +4161,7 @@ def func_factor_mass(
 def func_solve_mass_batched(
     vec: array_class.V_ANNOTATION,
     out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,  # Should not be None if backward
+    out_bw: array_class.V_ANNOTATION,
     i_b: ti.int32,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
