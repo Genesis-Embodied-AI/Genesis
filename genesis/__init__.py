@@ -226,11 +226,12 @@ def init(
         )
 
     # init gstaichi
+    ti_debug = debug and (os.environ.get("TI_DEBUG") != "0")
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=TI_ARCH[platform][backend],
             # Add a (hidden) mechanism to forceable disable taichi debug mode as it is still a bit experimental
-            debug=debug and backend == gs.cpu and (os.environ.get("TI_DEBUG") != "0"),
+            debug=ti_debug and backend == gs.cpu,
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
@@ -244,6 +245,9 @@ def init(
             default_fp=ti_float,
             **taichi_kwargs,
         )
+
+    # Disable debug checks for taichi
+    ti.lang._template_mapper.__builtins__["__debug__"] = ti_debug
 
     # Make sure that gstaichi arch is matching requirement, then set it in global scope
     ti_config = ti.lang.impl.current_cfg()
