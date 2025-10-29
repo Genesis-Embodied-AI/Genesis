@@ -100,15 +100,20 @@ class RigidEntity(Entity):
         self.init_ckpt()
 
     def init_tgt_keys(self):
-
         self._tgt_keys = ["pos", "quat", "qpos", "dofs_velocity"]
 
     def init_tgt_vars(self):
-
         # temp variable to store targets for next step
-        self._tgt = []
-        self._tgt_buffer = []
+        self._tgt = dict()
+        self._tgt_buffer = list()
         self.init_tgt_keys()
+
+    def update_tgt(self, key, value):
+        # Set [self._tgt] value while keeping the insertion order between keys. When a new key is inserted or an existing
+        # key is updated, the new element should be inserted at the end of the dict. This is because we need to keep
+        # the insertion order to correctly pass the gradients in the backward pass.
+        self._tgt.pop(key, None)
+        self._tgt[key] = value
 
     def init_ckpt(self):
         self._ckpt = dict()
@@ -1462,7 +1467,7 @@ class RigidEntity(Entity):
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
-                False,
+                is_backward=False,
             )
 
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -1489,7 +1494,7 @@ class RigidEntity(Entity):
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
-                False,
+                is_backward=False,
             )
 
     # ------------------------------------------------------------------------------------
@@ -1634,88 +1639,86 @@ class RigidEntity(Entity):
 
         # Apply targets sequentially
         _tgt = self._tgt.copy()
-        for tgt in _tgt:
-            k = tgt["key"]
+        for k, v in _tgt.items():
             assert k in self._tgt_keys, f"Invalid target key: {k} not in {self._tgt_keys}"
 
             # We do not need zero velocity here because if it was true, [set_dofs_velocity] from zero_velocity would
             # be in [tgt]
             zero_velocity = False
             if k == "pos":
-                _pos = tgt["pos"]
-                _envs_idx = tgt["envs_idx"]
-                _relative = tgt["relative"]
-                _unsafe = tgt["unsafe"]
+                _pos = v["pos"]
+                _envs_idx = v["envs_idx"]
+                _relative = v["relative"]
+                _unsafe = v["unsafe"]
 
                 self.set_pos(_pos, envs_idx=_envs_idx, relative=_relative, zero_velocity=zero_velocity, unsafe=_unsafe)
             elif k == "quat":
-                _quat = tgt["quat"]
-                _envs_idx = tgt["envs_idx"]
-                _relative = tgt["relative"]
-                _unsafe = tgt["unsafe"]
+                _quat = v["quat"]
+                _envs_idx = v["envs_idx"]
+                _relative = v["relative"]
+                _unsafe = v["unsafe"]
 
                 self.set_quat(
                     _quat, envs_idx=_envs_idx, relative=_relative, zero_velocity=zero_velocity, unsafe=_unsafe
                 )
             elif k == "qpos":
-                _qpos = tgt["qpos"]
-                _qs_idx_local = tgt["qs_idx_local"]
-                _envs_idx = tgt["envs_idx"]
-                _unsafe = tgt["unsafe"]
+                _qpos = v["qpos"]
+                _qs_idx_local = v["qs_idx_local"]
+                _envs_idx = v["envs_idx"]
+                _unsafe = v["unsafe"]
 
                 self.set_qpos(
                     _qpos, qs_idx_local=_qs_idx_local, envs_idx=_envs_idx, zero_velocity=zero_velocity, unsafe=_unsafe
                 )
             elif k == "dofs_velocity":
-                _velocity = tgt["velocity"]
-                _dofs_idx_local = tgt["dofs_idx_local"]
-                _envs_idx = tgt["envs_idx"]
-                _unsafe = tgt["unsafe"]
+                _velocity = v["velocity"]
+                _dofs_idx_local = v["dofs_idx_local"]
+                _envs_idx = v["envs_idx"]
+                _unsafe = v["unsafe"]
 
                 self.set_dofs_velocity(_velocity, dofs_idx_local=_dofs_idx_local, envs_idx=_envs_idx, unsafe=_unsafe)
 
-        self._tgt = []
+        self._tgt = dict()
 
     def process_input_grad(self):
         index = self._sim.cur_step_local - self._sim._steps_local
         _tgt = self._tgt_buffer[index].copy()
 
-        for tgt in reversed(_tgt):
-            k = tgt["key"]
+        for k, v in reversed(_tgt.items()):
             assert k in self._tgt_keys, f"Invalid target key: {k} not in {self._tgt_keys}"
             if k == "pos":
-                _pos = tgt["pos"]
-                _envs_idx = tgt["envs_idx"]
-                _relative = tgt["relative"]
-                _unsafe = tgt["unsafe"]
+                _pos = v["pos"]
+                _envs_idx = v["envs_idx"]
+                _relative = v["relative"]
+                _unsafe = v["unsafe"]
 
                 if _pos is not None and _pos.requires_grad:
                     _pos._backward_from_ti(self.set_pos_grad, _envs_idx, _relative, _unsafe)
 
             elif k == "quat":
-                _quat = tgt["quat"]
-                _envs_idx = tgt["envs_idx"]
-                _relative = tgt["relative"]
-                _unsafe = tgt["unsafe"]
+                _quat = v["quat"]
+                _envs_idx = v["envs_idx"]
+                _relative = v["relative"]
+                _unsafe = v["unsafe"]
 
                 if _quat is not None and _quat.requires_grad:
                     _quat._backward_from_ti(self.set_quat_grad, _envs_idx, _relative, _unsafe)
 
             elif k == "qpos":
-                _qpos = tgt["qpos"]
-                _qs_idx_local = tgt["qs_idx_local"]
-                _envs_idx = tgt["envs_idx"]
-                _unsafe = tgt["unsafe"]
+                _qpos = v["qpos"]
+                _qs_idx_local = v["qs_idx_local"]
+                _envs_idx = v["envs_idx"]
+                _unsafe = v["unsafe"]
 
                 if _qpos is not None and _qpos.requires_grad:
                     # TODO: Not implemented yet
                     raise NotImplementedError("Backward pass for set_qpos_grad is not implemented yet.")
 
             elif k == "dofs_velocity":
-                _velocity = tgt["velocity"]
-                _dofs_idx_local = tgt["dofs_idx_local"]
-                _envs_idx = tgt["envs_idx"]
-                _unsafe = tgt["unsafe"]
+                _velocity = v["velocity"]
+                _dofs_idx_local = v["dofs_idx_local"]
+                _envs_idx = v["envs_idx"]
+                _unsafe = v["unsafe"]
 
                 if _velocity is not None and _velocity.requires_grad:
                     _velocity._backward_from_ti(self.set_dofs_velocity_grad, _dofs_idx_local, _envs_idx, _unsafe)
@@ -2091,15 +2094,15 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         # Save in [tgt] for backward pass
-        self._tgt.append(
+        self.update_tgt(
+            "pos",
             {
-                "key": "pos",
                 "pos": pos,
                 "envs_idx": envs_idx,
                 "relative": relative,
                 "zero_velocity": zero_velocity,
                 "unsafe": unsafe,
-            }
+            },
         )
 
         if not unsafe:
@@ -2149,15 +2152,15 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         # Save in [tgt] for backward pass
-        self._tgt.append(
+        self.update_tgt(
+            "quat",
             {
-                "key": "quat",
                 "quat": quat,
                 "envs_idx": envs_idx,
                 "relative": relative,
                 "zero_velocity": zero_velocity,
                 "unsafe": unsafe,
-            }
+            },
         )
         if not unsafe:
             _quat = torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device).contiguous()
@@ -2280,15 +2283,15 @@ class RigidEntity(Entity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
         """
         # Save in [tgt] for backward pass
-        self._tgt.append(
+        self.update_tgt(
+            "qpos",
             {
-                "key": "qpos",
                 "qpos": qpos,
                 "qs_idx_local": qs_idx_local,
                 "envs_idx": envs_idx,
                 "zero_velocity": zero_velocity,
                 "unsafe": unsafe,
-            }
+            },
         )
 
         qs_idx = self._get_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
@@ -2387,14 +2390,14 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         # Save in [tgt] for backward pass
-        self._tgt.append(
+        self.update_tgt(
+            "dofs_velocity",
             {
-                "key": "dofs_velocity",
                 "velocity": velocity,
                 "dofs_idx_local": dofs_idx_local,
                 "envs_idx": envs_idx,
                 "unsafe": unsafe,
-            }
+            },
         )
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=False, unsafe=unsafe)
