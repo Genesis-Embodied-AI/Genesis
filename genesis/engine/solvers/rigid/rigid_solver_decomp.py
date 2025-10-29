@@ -255,7 +255,7 @@ class RigidSolver(Solver):
             enable_collision=self._enable_collision,
             box_box_detection=getattr(self, "_box_box_detection", True),
             sparse_solve=getattr(self._options, "sparse_solve", False),
-            integrator=getattr(self, "_integrator", gs.integrator.implicitfast),
+            integrator=getattr(self, "_integrator", gs.integrator.approximate_implicitfast),
             solver_type=getattr(self._options, "constraint_solver", gs.constraint_solver.CG),
         )
 
@@ -1460,7 +1460,6 @@ class RigidSolver(Solver):
                 geoms_state=self.geoms_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                static_rigid_sim_cache_key=self._static_rigid_sim_cache_key,
             )
 
     def collect_output_grads(self):
@@ -4784,7 +4783,7 @@ def kernel_clear_external_force(
     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_cartesian_space(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -7034,7 +7033,7 @@ def func_integrate(
                                 )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_copy_next_to_curr(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -7046,7 +7045,7 @@ def kernel_copy_next_to_curr(
         rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_save_adjoint_cache(
     f: ti.int32,
     dofs_state: array_class.DofsState,
@@ -7065,7 +7064,7 @@ def kernel_save_adjoint_cache(
         rigid_adjoint_cache.qpos[f, i_q, i_b] = rigid_global_info.qpos[i_q, i_b]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_copy_cartesian_space(
     src_dofs_state: array_class.DofsState,
     src_links_state: array_class.LinksState,
@@ -7337,7 +7336,7 @@ def kernel_set_state(
         geoms_state.friction_ratio[i_l, envs_idx[i_b_]] = friction_ratio[envs_idx[i_b_], i_l]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_state_grad(
     qpos_grad: ti.types.ndarray(),
     vel_grad: ti.types.ndarray(),
@@ -7348,7 +7347,6 @@ def kernel_get_state_grad(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    static_rigid_sim_cache_key: array_class.StaticRigidSimCacheKey,
 ):
     n_qs = qpos_grad.shape[1]
     n_dofs = vel_grad.shape[1]
@@ -7406,7 +7404,7 @@ def kernel_set_links_pos(
                     )
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_pos_grad(
     relative: ti.i32,
     pos_grad: ti.types.ndarray(),
@@ -7489,7 +7487,7 @@ def kernel_set_links_quat(
                     rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_quat_grad(
     relative: ti.i32,
     quat_grad: ti.types.ndarray(),
@@ -7806,7 +7804,7 @@ def kernel_set_dofs_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = velocity[i_b_, i_d_]
 
 
-@ti.kernel(pure=gs.use_pure)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_dofs_velocity_grad(
     velocity_grad: ti.types.ndarray(),
     dofs_idx: ti.types.ndarray(),

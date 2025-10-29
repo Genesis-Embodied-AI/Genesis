@@ -205,6 +205,7 @@ def test_diff_solver(backend, monkeypatch):
         rigid_global_info=rigid_solver._rigid_global_info,
         static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
         contact_island_state=constraint_solver.contact_island.contact_island_state,
+        is_backward=False,
     )
     rigid_solver._func_constraint_clear()
     constraint_solver.add_equality_constraints()

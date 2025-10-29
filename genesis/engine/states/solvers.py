@@ -51,6 +51,8 @@ class RigidSolverState:
     def __init__(self, scene, s_global):
         self.scene = scene
 
+        self._s_global = s_global
+
         _B = scene.sim.rigid_solver._B
         args = {
             "dtype": gs.tc_float,
