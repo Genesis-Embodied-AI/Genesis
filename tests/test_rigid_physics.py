@@ -3257,3 +3257,29 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
     dofs_info = terrain.solver.data_manager.dofs_info
     kp = dofs_info.kp.to_numpy()
     assert kp.shape == (9, 2) if batch_dofs_info else (9,)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("robot_path", ["xml/franka_emika_panda/panda.xml"])
+def test_reset_control(robot_path, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(gs.morphs.MJCF(file=robot_path))
+    scene.build()
+    qpos = np.random.rand(robot.n_dofs)
+    robot.set_dofs_position(qpos)
+    robot.control_dofs_position(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+    old_control_force = robot.get_dofs_control_force()
+    scene.reset()
+    new_control_force = robot.get_dofs_control_force()
+    assert old_control_force.abs().max() > gs.EPS
+    assert_allclose(new_control_force, 0, tol=gs.EPS)
