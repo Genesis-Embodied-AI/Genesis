@@ -1,5 +1,6 @@
 import math
 import dataclasses
+from functools import partial
 
 import gstaichi as ti
 import numpy as np
@@ -16,7 +17,7 @@ V = ti.ndarray if gs.use_ndarray else ti.field
 V_VEC = ti.Vector.ndarray if gs.use_ndarray else ti.Vector.field
 V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 
-DATA_ORIENTED = dataclasses.dataclass if gs.use_ndarray else ti.data_oriented
+DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else ti.data_oriented
 
 
 class AutoInitMeta(type):
