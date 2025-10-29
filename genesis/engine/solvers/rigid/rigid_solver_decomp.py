@@ -2250,7 +2250,7 @@ class RigidSolver(Solver):
 
     def set_dofs_velocity_grad(self, dofs_idx, envs_idx, unsafe, velocity_grad):
         velocity_grad_, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            velocity_grad.clone(), dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
+            velocity_grad, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             velocity_grad_ = velocity_grad_.unsqueeze(0)

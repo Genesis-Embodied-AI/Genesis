@@ -1637,91 +1637,67 @@ class RigidEntity(Entity):
         else:
             self._tgt_buffer.append(self._tgt.copy())
 
-        # Apply targets sequentially
-        _tgt = self._tgt.copy()
-        for k, v in _tgt.items():
-            assert k in self._tgt_keys, f"Invalid target key: {k} not in {self._tgt_keys}"
+        # Apply targets in the order of insertion
+        for key in self._tgt.keys():
+            data_kwargs = self._tgt[key]
 
             # We do not need zero velocity here because if it was true, [set_dofs_velocity] from zero_velocity would
             # be in [tgt]
-            zero_velocity = False
-            if k == "pos":
-                _pos = v["pos"]
-                _envs_idx = v["envs_idx"]
-                _relative = v["relative"]
-                _unsafe = v["unsafe"]
+            if "zero_velocity" in data_kwargs:
+                data_kwargs["zero_velocity"] = False
 
-                self.set_pos(_pos, envs_idx=_envs_idx, relative=_relative, zero_velocity=zero_velocity, unsafe=_unsafe)
-            elif k == "quat":
-                _quat = v["quat"]
-                _envs_idx = v["envs_idx"]
-                _relative = v["relative"]
-                _unsafe = v["unsafe"]
-
-                self.set_quat(
-                    _quat, envs_idx=_envs_idx, relative=_relative, zero_velocity=zero_velocity, unsafe=_unsafe
-                )
-            elif k == "qpos":
-                _qpos = v["qpos"]
-                _qs_idx_local = v["qs_idx_local"]
-                _envs_idx = v["envs_idx"]
-                _unsafe = v["unsafe"]
-
-                self.set_qpos(
-                    _qpos, qs_idx_local=_qs_idx_local, envs_idx=_envs_idx, zero_velocity=zero_velocity, unsafe=_unsafe
-                )
-            elif k == "dofs_velocity":
-                _velocity = v["velocity"]
-                _dofs_idx_local = v["dofs_idx_local"]
-                _envs_idx = v["envs_idx"]
-                _unsafe = v["unsafe"]
-
-                self.set_dofs_velocity(_velocity, dofs_idx_local=_dofs_idx_local, envs_idx=_envs_idx, unsafe=_unsafe)
+            match key:
+                case "pos":
+                    self.set_pos(**data_kwargs)
+                case "quat":
+                    self.set_quat(**data_kwargs)
+                case "qpos":
+                    self.set_qpos(**data_kwargs)
+                case "dofs_velocity":
+                    self.set_dofs_velocity(**data_kwargs)
+                case _:
+                    gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
 
         self._tgt = dict()
 
     def process_input_grad(self):
         index = self._sim.cur_step_local - self._sim._steps_local
-        _tgt = self._tgt_buffer[index].copy()
+        for key in reversed(self._tgt_buffer[index].keys()):
+            data_kwargs = self._tgt_buffer[index][key]
 
-        for k, v in reversed(_tgt.items()):
-            assert k in self._tgt_keys, f"Invalid target key: {k} not in {self._tgt_keys}"
-            if k == "pos":
-                _pos = v["pos"]
-                _envs_idx = v["envs_idx"]
-                _relative = v["relative"]
-                _unsafe = v["unsafe"]
+            match key:
+                # We need to unpack the data_kwargs because [_backward_from_ti] only supports positional arguments
+                case "pos":
+                    pos = data_kwargs.pop("pos")
+                    if pos.requires_grad:
+                        pos._backward_from_ti(
+                            self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"], data_kwargs["unsafe"]
+                        )
 
-                if _pos is not None and _pos.requires_grad:
-                    _pos._backward_from_ti(self.set_pos_grad, _envs_idx, _relative, _unsafe)
+                case "quat":
+                    quat = data_kwargs.pop("quat")
+                    if quat.requires_grad:
+                        quat._backward_from_ti(
+                            self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"], data_kwargs["unsafe"]
+                        )
 
-            elif k == "quat":
-                _quat = v["quat"]
-                _envs_idx = v["envs_idx"]
-                _relative = v["relative"]
-                _unsafe = v["unsafe"]
+                case "qpos":
+                    qpos = data_kwargs.pop("qpos")
+                    if qpos.requires_grad:
+                        raise NotImplementedError("Backward pass for set_qpos_grad is not implemented yet.")
 
-                if _quat is not None and _quat.requires_grad:
-                    _quat._backward_from_ti(self.set_quat_grad, _envs_idx, _relative, _unsafe)
-
-            elif k == "qpos":
-                _qpos = v["qpos"]
-                _qs_idx_local = v["qs_idx_local"]
-                _envs_idx = v["envs_idx"]
-                _unsafe = v["unsafe"]
-
-                if _qpos is not None and _qpos.requires_grad:
-                    # TODO: Not implemented yet
-                    raise NotImplementedError("Backward pass for set_qpos_grad is not implemented yet.")
-
-            elif k == "dofs_velocity":
-                _velocity = v["velocity"]
-                _dofs_idx_local = v["dofs_idx_local"]
-                _envs_idx = v["envs_idx"]
-                _unsafe = v["unsafe"]
-
-                if _velocity is not None and _velocity.requires_grad:
-                    _velocity._backward_from_ti(self.set_dofs_velocity_grad, _dofs_idx_local, _envs_idx, _unsafe)
+                case "dofs_velocity":
+                    velocity = data_kwargs.pop("velocity")
+                    # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
+                    if velocity is not None and velocity.requires_grad:
+                        velocity._backward_from_ti(
+                            self.set_dofs_velocity_grad,
+                            data_kwargs["dofs_idx_local"],
+                            data_kwargs["envs_idx"],
+                            data_kwargs["unsafe"],
+                        )
+                case _:
+                    gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
 
     def save_ckpt(self, ckpt_name):
         if ckpt_name not in self._ckpt:
@@ -1740,8 +1716,8 @@ class RigidEntity(Entity):
         state = RigidEntityState(self, self._sim.cur_step_global)
 
         solver_state = self._solver.get_state()
-        pos = solver_state.links_pos[:, self._base_links_idx].squeeze(-2)
-        quat = solver_state.links_quat[:, self._base_links_idx].squeeze(-2)
+        pos = solver_state.links_pos[:, self.base_link_idx]
+        quat = solver_state.links_quat[:, self.base_link_idx]
 
         assert state._pos.shape == pos.shape
         assert state._quat.shape == quat.shape
@@ -2123,7 +2099,7 @@ class RigidEntity(Entity):
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, unsafe, pos_grad):
-        tmp_pos_grad = pos_grad.unsqueeze(-2).clone()
+        tmp_pos_grad = pos_grad.unsqueeze(-2)
         self._solver.set_base_links_pos_grad(
             self._base_links_idx,
             envs_idx,
@@ -2180,7 +2156,7 @@ class RigidEntity(Entity):
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, unsafe, quat_grad):
-        tmp_quat_grad = quat_grad.unsqueeze(-2).clone()
+        tmp_quat_grad = quat_grad.unsqueeze(-2)
         self._solver.set_base_links_quat_grad(
             self._base_links_idx,
             envs_idx,
