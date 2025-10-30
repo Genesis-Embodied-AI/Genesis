@@ -183,6 +183,75 @@ class SAPCouplerOptions(BaseCouplerOptions):
     rigid_rigid_contact_type: str = "tet"
 
 
+class IPCCouplerOptions(BaseCouplerOptions):
+    """
+    Options configuring the Incremental Potential Contact (IPC) coupler.
+
+    Parameters
+    ----------
+    dt : float, optional
+        Time step for IPC simulation. Defaults to 0.001.
+    gravity : tuple, optional
+        Gravity vector for IPC simulation. Defaults to (0.0, 0.0, -9.8).
+    contact_d_hat : float, optional
+        Contact distance threshold. Defaults to 0.001.
+    contact_friction_enable : bool, optional
+        Whether to enable friction in contact. Defaults to True.
+    contact_friction_mu : float, optional
+        Friction coefficient. Defaults to 0.5.
+    contact_resistance : float, optional
+        Contact resistance/stiffness. Defaults to 1e9.
+    newton_velocity_tol : float, optional
+        Velocity tolerance for Newton solver. Defaults to 0.001.
+    line_search_max_iter : int, optional
+        Maximum iterations for line search. Defaults to 30.
+    linear_system_tol_rate : float, optional
+        Tolerance rate for linear system solver. Defaults to 1e-4.
+    sanity_check_enable : bool, optional
+        Whether to enable sanity checks. Defaults to False.
+    ipc_constraint_strength : tuple, optional
+        Strength ratios for IPC soft transform constraint coupling. Tuple of (translation_strength, rotation_strength).
+        Higher values create stiffer coupling between Genesis rigid bodies and IPC ABD objects. Defaults to (100.0, 100.0).
+    two_way_coupling : bool, optional
+        Whether to enable bidirectional coupling between IPC and Genesis rigid bodies.
+        When True, forces from IPC ABD constraint are applied back to Genesis rigid bodies.
+        When False, only Genesis → IPC coupling is active (one-way). Defaults to True.
+    IPC_self_contact : bool, optional
+        Whether to enable contact detection between rigid bodies in IPC system (ABD-ABD collisions).
+        When False, only FEM-FEM and FEM-ABD collisions are detected. Defaults to False.
+    disable_genesis_ground_contact : bool, optional
+        Whether to disable ground contact in Genesis rigid solver when using IPC.
+        When True, ground collision is only handled by IPC system, not by Genesis rigid solver.
+        This can be useful to avoid double-counting ground contacts. Defaults to False.
+    disable_ipc_ground_contact : bool, optional
+        Whether to disable ground contact in IPC system.
+        When True, all objects in IPC (FEM, cloth, rigid ABD) will not collide with ground plane.
+        Defaults to False.
+    disable_ipc_logging : bool, optional
+        Whether to disable IPC library logging output. Defaults to True.
+    enable_ipc_gui : bool, optional
+        Whether to enable IPC GUI visualization using polyscope. Defaults to False.
+    """
+
+    dt: float = 0.001
+    gravity: tuple = (0.0, 0.0, -9.8)
+    contact_d_hat: float = 0.001
+    contact_friction_enable: bool = True
+    contact_friction_mu: float = 0.5
+    contact_resistance: float = 1e9
+    newton_velocity_tol: float = 0.001
+    line_search_max_iter: int = 30
+    linear_system_tol_rate: float = 1e-4
+    sanity_check_enable: bool = False
+    ipc_constraint_strength: tuple = (100.0, 100.0)
+    two_way_coupling: bool = True
+    IPC_self_contact: bool = False
+    disable_genesis_ground_contact: bool = False
+    disable_ipc_ground_contact: bool = False
+    disable_ipc_logging: bool = True
+    enable_ipc_gui: bool = False
+
+
 ############################ Solvers inside simulator ############################
 """
 Parameters in these solver-specific options will override SimOptions if available.
