@@ -2,6 +2,7 @@ logs/
 tmp/
 MUJOCO_LOG.TXT
 imgui.ini
+.polyscope.ini
 .DS_Store
 sftp-config.json
 *.mp4
