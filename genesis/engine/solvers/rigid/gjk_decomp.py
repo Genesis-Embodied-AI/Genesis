@@ -57,8 +57,7 @@ class GJK:
         # 6 * epa_max_iterations is the maximum number of faces in the polytope.
         polytope_max_faces = 6 * epa_max_iterations
 
-        if False:
-            # if rigid_solver._static_rigid_sim_config.requires_grad:
+        if rigid_solver._static_rigid_sim_config.requires_grad:
             # For differentiable contact detection, we find multiple contact points for each pair.
             max_contacts_per_pair = 20
             max_contact_polygon_verts = 1

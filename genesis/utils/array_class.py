@@ -891,6 +891,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
     polytope_max_faces = gjk_info.polytope_max_faces[None]
     max_contacts_per_pair = gjk_info.max_contacts_per_pair[None]
     max_contact_polygon_verts = gjk_info.max_contact_polygon_verts[None]
+    requires_grad = solver._static_rigid_sim_config.requires_grad
 
     # FIXME: Define GJKState and MujocoCompatGJKState that derives from the former but defines additional attributes
     return StructGJKState(
@@ -927,7 +928,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
         distance=V(dtype=gs.ti_float, shape=(_B,)),
         diff_contact_input=get_diff_contact_input(solver, max(max_contacts_per_pair, 1)),
         n_diff_contact_input=V(dtype=gs.ti_int, shape=(_B,)),
-        diff_penetration=V(dtype=gs.ti_float, shape=_s((_B, max_contacts_per_pair), solver._requires_grad)),
+        diff_penetration=V(dtype=gs.ti_float, shape=_s((_B, max_contacts_per_pair), requires_grad)),
     )
 
 
