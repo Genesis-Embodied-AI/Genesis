@@ -232,7 +232,8 @@ def stream_writers(backend, printer_session):
 
     # Create new empty worker-specific report
     report_name = "-".join(filter(None, (report_path.stem, worker_id)))
-    report_path = report_path.with_name(f"{report_name}.txt")
+    ndarray_suffix = "_ndarray" if gs.use_ndarray else ""
+    report_path = report_path.with_name(f"{report_name}{ndarray_suffix}.txt")
     if report_path.exists():
         report_path.unlink()
     fd = open(report_path, "w")
@@ -628,7 +629,7 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
 def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
     with factory_logger(
         {
-            "env": runnable,
+            "env": runnable + ("_ndarray" if gs.use_ndarray else ""),
             "batch_size": n_envs,
             "constraint_solver": solver,
             "use_contact_island": False,
@@ -649,7 +650,7 @@ def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
 def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, gjk):
     with factory_logger(
         {
-            "env": f"cube#{n_cubes}",
+            "env": f"cube#{n_cubes}" + ("_ndarray" if gs.use_ndarray else ""),
             "batch_size": n_envs,
             "constraint_solver": solver,
             "use_contact_island": enable_island,
@@ -676,7 +677,7 @@ def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, 
 def test_box_pyramid(factory_logger, request, n_cubes, solver, enable_island, n_envs, gjk, enable_mujoco_compatibility):
     with factory_logger(
         {
-            "env": f"box_pyramid#{n_cubes}",
+            "env": f"box_pyramid#{n_cubes}" + ("_ndarray" if gs.use_ndarray else ""),
             "batch_size": n_envs,
             "constraint_solver": solver,
             "use_contact_island": enable_island,
