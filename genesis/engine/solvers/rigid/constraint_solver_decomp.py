@@ -172,9 +172,6 @@ class ConstraintSolver:
             if not has_equality_constraints:
                 return
 
-        # from genesis.utils.tools import create_timer
-
-        # timer = create_timer(name="resolve", level=3, ti_sync=True, skip_first_call=True)
         func_init_solver(
             dofs_state=self._solver.dofs_state,
             entities_info=self._solver.entities_info,
@@ -182,7 +179,6 @@ class ConstraintSolver:
             rigid_global_info=self._solver._rigid_global_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
-        # timer.stamp("_func_init_solver")
         func_solve(
             entities_info=self._solver.entities_info,
             dofs_state=self._solver.dofs_state,
@@ -191,13 +187,11 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-        # timer.stamp("_func_solve")
         func_update_qacc(
             dofs_state=self._solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
-        # timer.stamp("_func_update_qacc")
 
         if self._solver._options.noslip_iterations > 0:
             self.noslip()
@@ -208,10 +202,8 @@ class ConstraintSolver:
             constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
-        # timer.stamp("compute force")
 
     def noslip(self):
-        # return
         constraint_noslip.kernel_build_efc_AR_b(
             dofs_state=self._solver.dofs_state,
             entities_info=self._solver.entities_info,

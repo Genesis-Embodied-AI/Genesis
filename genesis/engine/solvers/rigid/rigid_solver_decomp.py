@@ -786,7 +786,6 @@ class RigidSolver(Solver):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
 
-        # timer = create_timer("rigid", level=1, ti_sync=True, skip_first_call=True)
         kernel_step_1(
             links_state=self.links_state,
             links_info=self.links_info,
@@ -802,7 +801,6 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
-        # timer.stamp("kernel_step_1")
 
         if isinstance(self.sim.coupler, SAPCoupler):
             update_qvel(
@@ -812,7 +810,6 @@ class RigidSolver(Solver):
             )
         else:
             self._func_constraint_force()
-            # timer.stamp("constraint_force")
             kernel_step_2(
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
@@ -829,7 +826,6 @@ class RigidSolver(Solver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             )
-            # timer.stamp("kernel_step_2")
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -845,33 +841,24 @@ class RigidSolver(Solver):
         return collision_pairs
 
     def _func_constraint_force(self):
-        # from genesis.utils.tools import create_timer
-
-        # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
         self._func_constraint_clear()
-        # timer.stamp("constraint_solver.clear")
         if not self._disable_constraint and not self._use_contact_island:
             self.constraint_solver.add_equality_constraints()
-            # timer.stamp("constraint_solver.add_equality_constraints")
 
         if self._enable_collision:
             self.collider.detection()
-            # timer.stamp("detection")
 
         if not self._disable_constraint:
             if self._use_contact_island:
                 self.constraint_solver.add_constraints()
-                # timer.stamp("constraint_solver.add_constraints")
             else:
                 self.constraint_solver.add_frictionloss_constraints()
                 if self._enable_collision:
                     self.constraint_solver.add_collision_constraints()
                 if self._enable_joint_limit:
                     self.constraint_solver.add_joint_limit_constraints()
-                # timer.stamp("constraint_solver.add_other_constraints")
 
             self.constraint_solver.resolve()
-            # timer.stamp("constraint_solver.resolve")
 
     def _func_constraint_clear(self):
         self.constraint_solver.constraint_state.n_constraints.fill(0)
