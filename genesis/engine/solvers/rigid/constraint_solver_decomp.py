@@ -985,8 +985,7 @@ def add_joint_limit_constraints(
                         imp, aref = gu.imp_aref(joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta)
                         diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
 
-                        n_con = constraint_state.n_constraints[i_b]
-                        constraint_state.n_constraints[i_b] = n_con + 1
+                        n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
                         constraint_state.diag[n_con, i_b] = diag
                         constraint_state.aref[n_con, i_b] = aref
                         constraint_state.efc_D[n_con, i_b] = 1 / diag
