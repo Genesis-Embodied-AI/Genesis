@@ -516,18 +516,6 @@ class ConstraintSolverIsland:
                 for i_c in range(self.len_constraints_):
                     self.jac_n_relevant_dofs[i_c, i_b] = 0
 
-    # def resolve(self):
-    #     from genesis.utils.tools import create_timer
-    #     timer = create_timer(name='resolve', level=3, ti_sync=True, skip_first_call=True)
-    #     self._func_init_solver()
-    #     timer.stamp('_func_init_solver')
-    #     self._func_solve()
-    #     timer.stamp('_func_solve')
-    #     self._func_update_qacc()
-    #     timer.stamp('_func_update_qacc')
-    #     self._func_update_contact_force()
-    #     timer.stamp('compute force')
-
     @ti.func
     def _func_update_contact_force(self, i_island: int, i_b: int):
         for i_island_entity in range(self.contact_island.island_entity[i_island, i_b].n):

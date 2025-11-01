@@ -387,7 +387,12 @@ from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
 
 with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
-    from pygel3d import graph, hmesh
+    try:
+        from pygel3d import graph, hmesh
+    except OSError as e:
+        # Import may fail because of missing system dependencies (libGLU.so.1).
+        # This is not blocking because it is only an issue for hybrig entities.
+        pass
 
     try:
         sys.path.append(os.path.join(_get_src_dir(), "ext/LuisaRender/build/bin"))

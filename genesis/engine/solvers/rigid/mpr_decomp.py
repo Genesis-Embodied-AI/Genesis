@@ -8,7 +8,6 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
 
 
-@ti.data_oriented
 class MPR:
     def __init__(self, rigid_solver):
         self._solver = rigid_solver

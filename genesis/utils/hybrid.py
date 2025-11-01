@@ -7,7 +7,6 @@ from itertools import combinations
 import networkx as nx
 import numpy as np
 from matplotlib.patches import FancyArrowPatch
-from pygel3d import graph, hmesh
 
 import genesis as gs
 from genesis.utils.misc import redirect_libc_stderr
@@ -16,10 +15,14 @@ from .misc import get_gel_cache_dir
 
 
 def load_hmesh(fpath: str):
+    from pygel3d import hmesh
+
     return hmesh.load(fpath)
 
 
 def trimesh_to_gelmesh(tmesh):
+    from pygel3d import hmesh
+
     return hmesh.Manifold.from_triangles(vertices=tmesh.vertices, faces=tmesh.faces)
 
 
@@ -32,6 +35,8 @@ def get_gel_path(positions, nodes, sampling):
 
 
 def skeletonization(mesh, sampling=True, verbose=False):
+    from pygel3d import graph
+
     assert isinstance(mesh, hmesh.Manifold), "The input mesh of skeletonization should be pygel3d.hmesh.Manifold"
     g = graph.from_mesh(mesh)
     if verbose:
