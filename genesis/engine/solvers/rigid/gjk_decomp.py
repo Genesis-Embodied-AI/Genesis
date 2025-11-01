@@ -841,7 +841,7 @@ def func_gjk_subdistance(
                     d = closest_point.dot(closest_point)
                     if d < dmin:
                         dmin = d
-                        _lambda.fill(0.0)
+                        _lambda = gs.ti_vec4(0.0, 0.0, 0.0, 0.0)
                         _lambda[k_1] = _lambda2d[0]
                         _lambda[k_2] = _lambda2d[1]
                         _lambda[k_3] = _lambda2d[2]
@@ -874,7 +874,7 @@ def func_gjk_subdistance(
                 d = closest_point.dot(closest_point)
                 if d < dmin:
                     dmin = d
-                    _lambda.fill(0.0)
+                    _lambda = gs.ti_vec4(0.0, 0.0, 0.0, 0.0)
                     _lambda[k_1] = _lambda1d[0]
                     _lambda[k_2] = _lambda1d[1]
             else:

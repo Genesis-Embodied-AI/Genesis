@@ -7,10 +7,11 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
     ########################## init ##########################
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
     ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(

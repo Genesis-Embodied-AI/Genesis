@@ -846,9 +846,8 @@ class RigidSolver(Solver):
 
     def _func_constraint_force(self):
         # from genesis.utils.tools import create_timer
-
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
-        self._func_constraint_clear()
+        _kernel_clear_counters(self.constraint_solver.constraint_state, self.collider._collider_state)
         # timer.stamp("constraint_solver.clear")
         if not self._disable_constraint and not self._use_contact_island:
             self.constraint_solver.add_equality_constraints()
@@ -872,12 +871,6 @@ class RigidSolver(Solver):
 
             self.constraint_solver.resolve()
             # timer.stamp("constraint_solver.resolve")
-
-    def _func_constraint_clear(self):
-        self.constraint_solver.constraint_state.n_constraints.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
-        self.collider._collider_state.n_contacts.fill(0)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
@@ -4218,7 +4211,7 @@ def func_COM_links(
         for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
             i_l = rigid_global_info.awake_links[i_l_, i_b]
 
-            links_state.root_COM[i_l, i_b].fill(0.0)
+            links_state.root_COM[i_l, i_b] = gs.ti_vec3(0.0, 0.0, 0.0)
             links_state.mass_sum[i_l, i_b] = 0.0
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -4379,7 +4372,7 @@ def func_COM_links(
     else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_l in range(n_links):
-            links_state.root_COM[i_l, i_b].fill(0.0)
+            links_state.root_COM[i_l, i_b] = gs.ti_vec3(0.0, 0.0, 0.0)
             links_state.mass_sum[i_l, i_b] = 0.0
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -5117,9 +5110,12 @@ def func_aggregate_awake_entities(
 
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
-    rigid_global_info.n_awake_entities.fill(0)
-    rigid_global_info.n_awake_links.fill(0)
-    rigid_global_info.n_awake_dofs.fill(0)
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_b in range(_B):
+        rigid_global_info.n_awake_entities[i_b] = 0
+        rigid_global_info.n_awake_links[i_b] = 0
+        rigid_global_info.n_awake_dofs[i_b] = 0
+
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in ti.ndrange(n_entities, _B):
         if entities_state.hibernated[i_e, i_b] or entities_info.n_dofs[i_e] == 0:
@@ -6815,3 +6811,16 @@ def kernel_set_geoms_friction(
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g_ in ti.ndrange(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
+
+
+@ti.kernel
+def _kernel_clear_counters(
+    constraint_state: array_class.ConstraintState,
+    collider_state: array_class.ColliderState,
+):
+    B = constraint_state.n_constraints.shape[0]
+    for i_b in range(B):
+        constraint_state.n_constraints[i_b] = 0
+        constraint_state.n_constraints_equality[i_b] = 0
+        constraint_state.n_constraints_frictionloss[i_b] = 0
+        collider_state.n_contacts[i_b] = 0

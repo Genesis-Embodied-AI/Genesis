@@ -28,11 +28,6 @@ class MPR:
         pass
 
 
-@ti.kernel
-def clear(mpr_state: ti.template()):
-    mpr_state.simplex_size.fill(0)
-
-
 @ti.func
 def func_point_in_geom_aabb(geoms_state: array_class.GeomsState, point, i_g, i_b):
     return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
