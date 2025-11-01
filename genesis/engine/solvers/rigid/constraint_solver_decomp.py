@@ -152,12 +152,6 @@ class ConstraintSolver:
     def resolve(self):
         solver = self._solver
 
-        # Early return if there is nothing to solve
-        if not solver._enable_collision and not solver._enable_joint_limit:
-            has_equality_constraints = np.any(self.constraint_state.ti_n_equalities.to_numpy())
-            if not has_equality_constraints:
-                return
-
         func_init_solver(
             dofs_state=solver.dofs_state,
             entities_info=solver.entities_info,
