@@ -236,6 +236,7 @@ class RigidSolver(Solver):
             enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
             enable_multi_contact=getattr(self, "_enable_multi_contact", True),
             enable_collision=self._enable_collision,
+            enable_joint_limit=getattr(self, "_enable_joint_limit", False),
             box_box_detection=getattr(self, "_box_box_detection", True),
             sparse_solve=getattr(self._options, "sparse_solve", False),
             integrator=getattr(self, "_integrator", gs.integrator.implicitfast),
@@ -854,11 +855,7 @@ class RigidSolver(Solver):
             if self._use_contact_island:
                 self.constraint_solver.add_constraints()
             else:
-                self.constraint_solver.add_frictionloss_constraints()
-                if self._enable_collision:
-                    self.constraint_solver.add_collision_constraints()
-                if self._enable_joint_limit:
-                    self.constraint_solver.add_joint_limit_constraints()
+                self.constraint_solver.add_inequality_constraints()
 
             self.constraint_solver.resolve()
 

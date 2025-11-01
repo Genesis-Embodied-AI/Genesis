@@ -208,9 +208,7 @@ def test_diff_solver(backend, monkeypatch):
     )
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()
-    constraint_solver.add_frictionloss_constraints()
-    constraint_solver.add_collision_constraints()
-    constraint_solver.add_joint_limit_constraints()
+    constraint_solver.add_inequality_constraints()
     constraint_solver.resolve()
 
     # Loss function to compute gradients using finite difference method

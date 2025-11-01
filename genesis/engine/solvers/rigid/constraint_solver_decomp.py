@@ -134,35 +134,16 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-    def add_frictionloss_constraints(self):
-        add_frictionloss_constraints(
-            links_info=self._solver.links_info,
-            joints_info=self._solver.joints_info,
-            dofs_info=self._solver.dofs_info,
-            dofs_state=self._solver.dofs_state,
-            rigid_global_info=self._solver._rigid_global_info,
-            constraint_state=self.constraint_state,
-            static_rigid_sim_config=self._solver._static_rigid_sim_config,
-        )
-
-    def add_collision_constraints(self):
-        add_collision_constraints(
+    def add_inequality_constraints(self):
+        add_inequality_constraints(
             links_info=self._solver.links_info,
             links_state=self._solver.links_state,
             dofs_state=self._solver.dofs_state,
+            dofs_info=self._solver.dofs_info,
+            joints_info=self._solver.joints_info,
             constraint_state=self.constraint_state,
             collider_state=self._collider._collider_state,
-            static_rigid_sim_config=self._solver._static_rigid_sim_config,
-        )
-
-    def add_joint_limit_constraints(self):
-        add_joint_limit_constraints(
-            links_info=self._solver.links_info,
-            joints_info=self._solver.joints_info,
-            dofs_info=self._solver.dofs_info,
-            dofs_state=self._solver.dofs_state,
             rigid_global_info=self._solver._rigid_global_info,
-            constraint_state=self.constraint_state,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
@@ -417,7 +398,7 @@ def constraint_solver_kernel_reset(
             constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@ti.func
 def add_collision_constraints(
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -759,6 +740,48 @@ def add_equality_constraints(
                 )
 
 
+@ti.kernel(fastcache=gs.use_fastcache)
+def add_inequality_constraints(
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    joints_info: array_class.JointsInfo,
+    constraint_state: array_class.ConstraintState,
+    collider_state: array_class.ColliderState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    add_frictionloss_constraints(
+        links_info=links_info,
+        joints_info=joints_info,
+        dofs_info=dofs_info,
+        dofs_state=dofs_state,
+        rigid_global_info=rigid_global_info,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+    if ti.static(static_rigid_sim_config.enable_collision):
+        add_collision_constraints(
+            links_info=links_info,
+            links_state=links_state,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            collider_state=collider_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    if ti.static(static_rigid_sim_config.enable_joint_limit):
+        add_joint_limit_constraints(
+            links_info=links_info,
+            joints_info=joints_info,
+            dofs_info=dofs_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
 @ti.func
 def func_equality_weld(
     i_b,
@@ -948,7 +971,7 @@ def func_equality_weld(
         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@ti.func
 def add_joint_limit_constraints(
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
@@ -1004,7 +1027,7 @@ def add_joint_limit_constraints(
                             constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@ti.func
 def add_frictionloss_constraints(
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,

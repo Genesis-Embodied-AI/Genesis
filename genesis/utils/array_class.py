@@ -1706,6 +1706,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_collision: bool
+    enable_joint_limit: bool
     box_box_detection: bool
     sparse_solve: bool
     integrator: int
