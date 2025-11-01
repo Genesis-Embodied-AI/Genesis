@@ -292,3 +292,145 @@ def test_utils_geom_tensor_identity(batch_shape):
 
         np.testing.assert_allclose(np_args[0], np_args[-1], atol=1e2 * gs.EPS)
         np.testing.assert_allclose(tensor_to_array(tc_args[0]), tensor_to_array(tc_args[-1]), atol=1e2 * gs.EPS)
+
+
+@pytest.mark.required
+def test_pyrender_vec3():
+    from genesis.ext.pyrender.interaction.vec3 import Vec3, Quat
+
+    # construction helpers enforce shape and dtype
+    v = Vec3.from_xyz(1.0, 2.0, 3.0)
+    assert v.v.shape == (3,)
+    assert v.v.dtype == np.float32
+    assert np.allclose(v.v, np.array([1.0, 2.0, 3.0], dtype=np.float32))
+    assert v.x == pytest.approx(1.0)
+    assert v.y == pytest.approx(2.0)
+    assert v.z == pytest.approx(3.0)
+
+    # from_array converts various dtypes to float32
+    v_i64 = Vec3.from_array(np.array([1, 2, 3], dtype=np.int64))
+    assert v_i64.v.dtype == np.float32
+    assert np.allclose(v_i64.v, [1, 2, 3])
+
+    v_f64 = Vec3.from_array(np.array([0.5, -1.5, 2.0], dtype=np.float64))
+    assert v_f64.v.dtype == np.float32
+    assert np.allclose(v_f64.v, [0.5, -1.5, 2.0])
+
+    # from_tensor
+    v_t = Vec3.from_tensor(torch.tensor([4.0, 5.0, 6.0], dtype=torch.float32))
+    assert np.allclose(v_t.v, [4.0, 5.0, 6.0])
+
+    # constants
+    assert np.allclose(Vec3.zero().v, np.zeros(3, dtype=np.float32))
+    assert np.allclose(Vec3.one().v, np.ones(3, dtype=np.float32))
+    assert np.allclose(Vec3.full(5.5).v, np.full(3, 5.5, dtype=np.float32))
+
+    # arithmetic ops and dtype preservation
+    a = Vec3.from_xyz(1, 2, 3)
+    b = Vec3.from_xyz(4, 5, 6)
+    c = a + b
+    d = b - a
+    assert np.allclose(c.v, [5, 7, 9])
+    assert np.allclose(d.v, [3, 3, 3])
+
+    m1 = a * 2.0
+    m2 = 2.0 * a
+    assert np.allclose(m1.v, [2, 4, 6])
+    assert np.allclose(m2.v, [2, 4, 6])
+    assert m1.v.dtype == np.float32 and m2.v.dtype == np.float32
+    assert np.allclose((-a).v, [-1, -2, -3])
+
+    # dot and cross
+    dot_ab = a.dot(b)
+    assert isinstance(dot_ab, float)
+    assert dot_ab == pytest.approx(1 * 4 + 2 * 5 + 3 * 6)
+
+    cross_ab = a.cross(b)
+    assert np.allclose(cross_ab.v, [-3.0, 6.0, -3.0])
+
+    # norms
+    assert a.sqr_magnitude() == pytest.approx(1.0 + 4.0 + 9.0)
+    assert a.magnitude() == pytest.approx(np.sqrt(a.sqr_magnitude()))
+    na = a.normalized()
+    assert na.v.dtype == np.float32
+    assert na.magnitude() == pytest.approx(1.0, rel=1e-6, abs=1e-6)
+    assert np.allclose(Vec3.zero().normalized().v, [0.0, 0.0, 0.0])
+
+    # copy is deep for underlying array
+    cp = a.copy()
+    assert cp is not a
+    cp.v[...] = 0.0
+    assert np.allclose(a.v, [1.0, 2.0, 3.0])
+    assert np.allclose(cp.v, [0.0, 0.0, 0.0])
+
+    # repr and tensor conversion
+    assert "Vec3(" in repr(a)
+    t = a.as_tensor()
+    assert isinstance(t, torch.Tensor)
+    assert t.dtype == torch.float32
+    assert np.allclose(t.cpu().numpy(), a.v)
+
+    # constructor guards
+    with pytest.raises(AssertionError):
+        Vec3(np.array([1, 2, 3, 4], dtype=np.float32))
+    with pytest.raises(AssertionError):
+        Vec3(np.array([1, 2, 3], dtype=np.float64))
+
+    # --- Quat tests ---
+    q = Quat.from_wxyz(1.0, 0.0, 0.0, 0.0)  # identity
+    assert q.v.shape == (4,)
+    assert q.v.dtype == np.float32
+    assert q.w == pytest.approx(1.0)
+    assert q.x == pytest.approx(0.0)
+    assert q.y == pytest.approx(0.0)
+    assert q.z == pytest.approx(0.0)
+
+    # from_array converts dtype and enforces shape
+    q_arr = Quat.from_array(np.array([0.5, 0.5, -0.5, 0.5], dtype=np.float64))
+    assert q_arr.v.dtype == np.float32
+    assert np.allclose(q_arr.v, [0.5, 0.5, -0.5, 0.5])
+
+    # from_tensor
+    q_t = Quat.from_tensor(torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32))
+    assert np.allclose(q_t.v, [0.0, 1.0, 0.0, 0.0])
+
+    # inverse
+    q_inv = q_arr.get_inverse()
+    assert q_inv.w == pytest.approx(q_arr.w)
+    assert np.allclose(q_inv.v[1:], -q_arr.v[1:])
+
+    # quat * quat (identity)
+    qq = q * q_arr
+    assert np.allclose(qq.v, q_arr.v)
+
+    # rotation of a vector by 90deg about z: (1,0,0) -> (0,1,0)
+    theta = np.pi / 2.0
+    qz = Quat.from_wxyz(np.cos(theta / 2.0), 0.0, 0.0, np.sin(theta / 2.0))
+    v_x = Vec3.from_xyz(1.0, 0.0, 0.0)
+    v_rot = qz * v_x
+    assert isinstance(v_rot, Vec3)
+    assert np.allclose(v_rot.v, [0.0, 1.0, 0.0], atol=1e-6)
+
+    # quat * quat inverse -> identity
+    q_unit = qz * qz.get_inverse()
+    assert np.allclose(q_unit.v, Quat.from_wxyz(1.0, 0.0, 0.0, 0.0).v, atol=1e-6)
+
+    # copy independence
+    q_cp = qz.copy()
+    assert q_cp is not qz
+    q_cp.v[...] = 0.0
+    assert np.allclose(qz.v, [np.cos(theta / 2.0), 0.0, 0.0, np.sin(theta / 2.0)])
+    assert np.allclose(q_cp.v, [0.0, 0.0, 0.0, 0.0])
+
+    # repr and tensor conversion
+    assert "Quat(" in repr(qz)
+    tq = qz.as_tensor()
+    assert isinstance(tq, torch.Tensor)
+    assert tq.dtype == torch.float32
+    assert np.allclose(tq.cpu().numpy(), qz.v)
+
+    # constructor guards
+    with pytest.raises(AssertionError):
+        Quat(np.array([1, 0, 0], dtype=np.float32))
+    with pytest.raises(AssertionError):
+        Quat(np.array([1, 0, 0, 0], dtype=np.float64))
