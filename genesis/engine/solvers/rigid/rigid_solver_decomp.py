@@ -13,7 +13,7 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch, ti_to_numpy
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
@@ -834,14 +834,19 @@ class RigidSolver(Solver):
     def detect_collision(self, env_idx=0):
         # TODO: support batching
         self._kernel_detect_collision()
-        n_collision = self.collider._collider_state.n_contacts.to_numpy()[env_idx]
+
+        n_collision = ti_to_numpy(self.collider._collider_state.n_contacts)[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = self.collider._collider_state.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
-        collision_pairs[:, 1] = self.collider._collider_state.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
+        collision_pairs[:, 0] = ti_to_numpy(self.collider._collider_state.contact_data.geom_a)[:n_collision, env_idx]
+        collision_pairs[:, 1] = ti_to_numpy(self.collider._collider_state.contact_data.geom_b)[:n_collision, env_idx]
+
         return collision_pairs
 
     def _func_constraint_force(self):
-        self._func_constraint_clear()
+        self.constraint_solver.constraint_state.n_constraints.fill(0)
+        self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
+        self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
+
         if not self._disable_constraint and not self._use_contact_island:
             self.constraint_solver.add_equality_constraints()
 
@@ -859,12 +864,6 @@ class RigidSolver(Solver):
                     self.constraint_solver.add_joint_limit_constraints()
 
             self.constraint_solver.resolve()
-
-    def _func_constraint_clear(self):
-        self.constraint_solver.constraint_state.n_constraints.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
-        self.collider._collider_state.n_contacts.fill(0)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
@@ -931,45 +930,6 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
             force_update_fixed_geoms=force_update_fixed_geoms,
         )
-
-    # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
-    # right now, a python-scope function is more convenient since .fill(0) only works on python scope for ndarray
-    # @ti.kernel
-    # def _func_constraint_clear(
-    #     self_unused,
-    #     links_state: array_class.LinksState,
-    #     links_info: array_class.LinksInfo,
-    #     collider_state: array_class.ColliderState,
-    #     static_rigid_sim_config: ti.template(),
-    # ):
-
-    #     if static_rigid_sim_config.enable_collision:
-    #         if ti.static(static_rigid_sim_config.use_hibernation):
-    #             collider_state.n_contacts_hibernated.fill(0)
-    #             _B = collider_state.n_contacts.shape[0]
-    #             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    #             for i_b in range(_B):
-    #                 # Advect hibernated contacts
-    #                 for i_c in range(collider_state.n_contacts[i_b]):
-    #                     i_la = collider_state.contact_data[i_c, i_b].link_a
-    #                     i_lb = collider_state.contact_data[i_c, i_b].link_b
-    #                     I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
-    #                     I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
-
-    #                     # Pair of hibernated-fixed links -> hibernated contact
-    #                     # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
-    #                     # once a new collision is detected
-    #                     if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-    #                         links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
-    #                     ):
-    #                         i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
-    #                         if i_c != i_c_hibernated:
-    #                             collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
-    #                         collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
-
-    #                 collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-    #         else:
-    #             collider_state.n_contacts.fill(0)
 
     def _process_dim(self, tensor, envs_idx=None):
         if self.n_envs == 0:
