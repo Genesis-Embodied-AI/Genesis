@@ -343,6 +343,9 @@ class ConstraintSolver:
         )
 
     def backward(self, dL_dqacc):
+        if not self._solver._requires_grad:
+            gs.raise_exception("Please set `requires_grad` to True in SimOptions to enable differentiable mode.")
+
         # Copy upstream gradients
         self.constraint_state.dL_dqacc.from_numpy(dL_dqacc)
 

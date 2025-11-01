@@ -149,6 +149,7 @@ def test_diff_solver(backend, monkeypatch):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
+            requires_grad=True,
         ),
         rigid_options=gs.options.RigidOptions(
             # We use Newton's method because it converges faster than CG, and therefore gives better gradient estimation
