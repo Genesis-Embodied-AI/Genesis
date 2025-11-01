@@ -6813,7 +6813,7 @@ def kernel_set_geoms_friction(
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
 
 
-@ti.kernel
+@ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_clear_counters(
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
