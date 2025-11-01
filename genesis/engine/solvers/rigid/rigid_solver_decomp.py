@@ -65,7 +65,6 @@ def _sanitize_sol_params(
     power[:] = power.clip(1)
 
 
-@ti.data_oriented
 class RigidSolver(Solver):
     # override typing
     _entities: list[RigidEntity] = gs.List()

@@ -40,7 +40,6 @@ class CCD_ALGORITHM_CODE(IntEnum):
     MJ_GJK = 3
 
 
-@ti.data_oriented
 class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
