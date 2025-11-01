@@ -1079,6 +1079,13 @@ def transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
     return new_pos, new_quat
 
 
+def inv_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
+    t_quat_inv = inv_quat(quat)
+    new_pos = transform_by_quat(pos - t_trans, t_quat_inv)
+    new_quat = transform_quat_by_quat(quat, t_quat_inv)
+    return new_pos, new_quat
+
+
 def transform_by_R(pos, R):
     """
     Transforms 3D points by a 3x3 rotation matrix or a batch of matrices, supporting both NumPy arrays and PyTorch
