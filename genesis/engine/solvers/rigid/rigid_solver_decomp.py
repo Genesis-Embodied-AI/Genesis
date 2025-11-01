@@ -842,9 +842,7 @@ class RigidSolver(Solver):
         return collision_pairs
 
     def _func_constraint_force(self):
-        self.constraint_solver.constraint_state.n_constraints.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
+        self.constraint_solver.clear(cache_only=not self._use_contact_island)
 
         if not self._disable_constraint and not self._use_contact_island:
             self.constraint_solver.add_equality_constraints()

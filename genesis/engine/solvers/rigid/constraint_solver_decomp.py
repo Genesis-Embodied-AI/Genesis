@@ -98,14 +98,16 @@ class ConstraintSolver:
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
 
-    def clear(self, envs_idx: npt.NDArray[np.int32] | None = None):
+    def clear(self, envs_idx: npt.NDArray[np.int32] | None = None, cache_only: bool = False):
         self._eq_const_info_cache.clear()
+        if cache_only:
+            return
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_clear(
-            envs_idx,
-            self._solver._static_rigid_sim_config,
-            self.constraint_state,
+            envs_idx=envs_idx,
+            constraint_state=self.constraint_state,
+            static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
     def reset(self, envs_idx=None):
@@ -404,6 +406,9 @@ def constraint_solver_kernel_reset(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
+        constraint_state.n_constraints[i_b] = 0
+        constraint_state.n_constraints_equality[i_b] = 0
+        constraint_state.n_constraints_frictionloss[i_b] = 0
         for i_d in range(n_dofs):
             constraint_state.qacc_ws[i_d, i_b] = 0
             for i_c in range(len_constraints):
@@ -712,6 +717,9 @@ def add_equality_constraints(
     _B = dofs_state.ctrl_mode.shape[1]
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b in range(_B):
+        constraint_state.n_constraints[i_b] = 0
+        constraint_state.n_constraints_equality[i_b] = 0
+
         for i_e in range(constraint_state.ti_n_equalities[i_b]):
             if equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
                 func_equality_connect(
@@ -1014,6 +1022,8 @@ def add_frictionloss_constraints(
     # TODO: sparse mode
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b in range(_B):
+        constraint_state.n_constraints_frictionloss[i_b] = 0
+
         for i_l in range(n_links):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
