@@ -844,10 +844,13 @@ class RigidSolver(Solver):
         collision_pairs[:, 1] = self.collider._collider_state.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
         return collision_pairs
 
+    def _func_constraint_clear(self):
+        _kernel_clear_counters(self.constraint_solver.constraint_state, self.collider._collider_state)
+
     def _func_constraint_force(self):
         # from genesis.utils.tools import create_timer
         # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
-        _kernel_clear_counters(self.constraint_solver.constraint_state, self.collider._collider_state)
+        self._func_constraint_clear()
         # timer.stamp("constraint_solver.clear")
         if not self._disable_constraint and not self._use_contact_island:
             self.constraint_solver.add_equality_constraints()
