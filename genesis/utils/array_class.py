@@ -231,15 +231,15 @@ def get_constraint_state(constraint_solver, solver):
 
     return StructConstraintState(
         n_constraints=V(dtype=gs.ti_int, shape=(_B,)),
-        ti_n_equalities=V(gs.ti_int, shape=(_B,)),
+        ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
         jac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
         diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        jac_relevant_dofs=V(gs.ti_int, shape=(len_constraints_, solver.n_dofs_, _B)),
-        jac_n_relevant_dofs=V(gs.ti_int, shape=(len_constraints_, _B)),
-        n_constraints_equality=V(gs.ti_int, shape=(_B,)),
-        n_constraints_frictionloss=V(gs.ti_int, shape=(_B,)),
-        improved=V(gs.ti_int, shape=(_B,)),
+        jac_relevant_dofs=V(dtype=gs.ti_int, shape=(len_constraints_, solver.n_dofs_, _B)),
+        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=(len_constraints_, _B)),
+        n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
+        n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
+        improved=V(dtype=gs.ti_int, shape=(_B,)),
         Jaref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
@@ -257,22 +257,22 @@ def get_constraint_state(constraint_solver, solver):
         qacc=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         qacc_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         qacc_prev=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        cost_ws=V(gs.ti_float, shape=(_B,)),
-        gauss=V(gs.ti_float, shape=(_B,)),
-        cost=V(gs.ti_float, shape=(_B,)),
-        prev_cost=V(gs.ti_float, shape=(_B,)),
-        gtol=V(gs.ti_float, shape=(_B,)),
+        cost_ws=V(dtype=gs.ti_float, shape=(_B,)),
+        gauss=V(dtype=gs.ti_float, shape=(_B,)),
+        cost=V(dtype=gs.ti_float, shape=(_B,)),
+        prev_cost=V(dtype=gs.ti_float, shape=(_B,)),
+        gtol=V(dtype=gs.ti_float, shape=(_B,)),
         mv=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
         quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
         candidates=V(dtype=gs.ti_float, shape=(12, _B)),
-        ls_it=V(gs.ti_float, shape=(_B,)),
-        ls_result=V(gs.ti_int, shape=(_B,)),
+        ls_it=V(dtype=gs.ti_float, shape=(_B,)),
+        ls_result=V(dtype=gs.ti_int, shape=(_B,)),
         cg_prev_grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         cg_prev_Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        cg_beta=V(gs.ti_float, shape=(_B,)),
-        cg_pg_dot_pMg=V(gs.ti_float, shape=(_B,)),
+        cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
+        cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         # Backward gradients
@@ -565,17 +565,17 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
 
     return StructColliderInfo(
         vert_neighbors=V(dtype=gs.ti_int, shape=(max(n_vert_neighbors, 1),)),
-        vert_neighbor_start=V(dtype=gs.ti_int, shape=solver.n_verts_),
-        vert_n_neighbors=V(dtype=gs.ti_int, shape=solver.n_verts_),
+        vert_neighbor_start=V(dtype=gs.ti_int, shape=(solver.n_verts_,)),
+        vert_n_neighbors=V(dtype=gs.ti_int, shape=(solver.n_verts_,)),
         collision_pair_validity=V(dtype=gs.ti_int, shape=(solver.n_geoms_, solver.n_geoms_)),
         max_possible_pairs=V(dtype=gs.ti_int, shape=()),
         max_collision_pairs=V(dtype=gs.ti_int, shape=()),
         max_contact_pairs=V(dtype=gs.ti_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.ti_int, shape=()),
         terrain_hf=V(dtype=gs.ti_float, shape=terrain_hf_shape),
-        terrain_rc=V(dtype=gs.ti_int, shape=2),
-        terrain_scale=V(dtype=gs.ti_float, shape=2),
-        terrain_xyz_maxmin=V(dtype=gs.ti_float, shape=6),
+        terrain_rc=V(dtype=gs.ti_int, shape=(2,)),
+        terrain_scale=V(dtype=gs.ti_float, shape=(2,)),
+        terrain_xyz_maxmin=V(dtype=gs.ti_float, shape=(6,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_tolerance"]),
         mpr_to_sdf_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_sdf_overlap_ratio"]),
@@ -593,10 +593,6 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
     n_contacts_per_pair: int
     # ccd algorithm
     ccd_algorithm: int
-
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
 
 # =========================================== MPR ===========================================
@@ -1014,10 +1010,6 @@ class StructGJKStaticConfig(metaclass=AutoInitMeta):
     # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
     # However, we keep the code here for compatibility with MuJoCo and for possible future use.
     enable_mujoco_multi_contact: bool
-
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
 
 # =========================================== SupportField ===========================================
@@ -1714,14 +1706,11 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_collision: bool
+    enable_joint_limit: bool
     box_box_detection: bool
     sparse_solve: bool
     integrator: int
     solver_type: int
-
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
 
 # =========================================== DataManager ===========================================

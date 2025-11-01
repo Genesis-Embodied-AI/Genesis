@@ -206,12 +206,9 @@ def test_diff_solver(backend, monkeypatch):
         static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
         contact_island_state=constraint_solver.contact_island.contact_island_state,
     )
-    rigid_solver._func_constraint_clear()
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()
-    constraint_solver.add_frictionloss_constraints()
-    constraint_solver.add_collision_constraints()
-    constraint_solver.add_joint_limit_constraints()
+    constraint_solver.add_inequality_constraints()
     constraint_solver.resolve()
 
     # Loss function to compute gradients using finite difference method

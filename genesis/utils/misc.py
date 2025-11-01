@@ -672,7 +672,7 @@ def _ti_to_python(
         if to_torch:
             out = out.movedim(out.ndim - ti_data_meta.ndim - 1, 0)
         else:
-            out = np.movedim(out, out.ndim - ti_data_meta.ndim - 1, 0)
+            out = np.moveaxis(out, out.ndim - ti_data_meta.ndim - 1, 0)
 
     # Extract slice if necessary.
     # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions, because this
