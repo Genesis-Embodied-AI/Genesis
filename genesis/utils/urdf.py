@@ -114,16 +114,24 @@ def parse_urdf(morph, surface):
                     if geom.geometry.geometry.scale is not None:
                         scale *= geom.geometry.geometry.scale
 
+                    mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geom.geometry.geometry.filename)
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
                         scale=scale,
                         surface=gs.surfaces.Collision() if geom_is_col else surface,
-                        metadata={
-                            "mesh_path": urdfpy.utils.get_filename(
-                                os.path.dirname(path), geom.geometry.geometry.filename
-                            )
-                        },
+                        metadata={"mesh_path": mesh_path},
                     )
+
+                    if mesh_path.lower().endswith(gs.morphs.GLTF_FORMATS):
+                        if morph.parse_glb_with_zup:
+                            mesh.convert_to_zup()
+                        else:
+                            gs.logger.warning(
+                                "This URDF file contains GLTF mesh, which is using y-up while Genesis uses z-up."
+                                " Please set parse_glb_with_zup=True in morph options if you find the mesh is"
+                                " 90-degree rotated. We will set parse_glb_with_zup=True and rotate glb mesh by"
+                                " default later and gradually enforce this option."
+                            )
 
                     if not geom_is_col and (morph.prioritize_urdf_material or not tmesh.visual.defined):
                         if geom.material is not None and geom.material.color is not None:
