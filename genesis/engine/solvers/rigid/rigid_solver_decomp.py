@@ -245,7 +245,7 @@ class RigidSolver(Solver):
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
-        self._func_apply_external_force = func_apply_external_force
+        self._func_apply_coupling_force = func_apply_coupling_force
 
         # For rigid solver, we initialize them even if the solver is not active because the coupler needs arguments like
         # rigid_solver.links_state, etc. regardless of the solver is active or not.
@@ -3810,6 +3810,11 @@ def func_forward_dynamics(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
     )
+    func_clear_coupling_force(
+        links_state=links_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
     # self._func_actuation()
     func_bias_force(
         dofs_state=dofs_state,
@@ -5144,10 +5149,10 @@ def kernel_apply_links_external_torque(
 
 
 @ti.func
-def func_apply_external_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
+def func_apply_coupling_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
     torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
-    links_state.cfrc_applied_ang[link_idx, env_idx] -= torque
-    links_state.cfrc_applied_vel[link_idx, env_idx] -= force
+    links_state.cfrc_coupling_ang[link_idx, env_idx] -= torque
+    links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
 
 
 @ti.func
@@ -5216,6 +5221,29 @@ def func_clear_external_force(
         for i_l, i_b in ti.ndrange(n_links, _B):
             links_state.cfrc_applied_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
             links_state.cfrc_applied_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+
+
+@ti.func
+def func_clear_coupling_force(
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = links_state.pos.shape[1]
+    n_links = links_state.pos.shape[0]
+
+    if ti.static(static_rigid_sim_config.use_hibernation):
+        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_b in range(_B):
+            for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
+                i_l = rigid_global_info.awake_links[i_l_, i_b]
+                links_state.cfrc_coupling_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                links_state.cfrc_coupling_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+    else:
+        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_l, i_b in ti.ndrange(n_links, _B):
+            links_state.cfrc_coupling_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            links_state.cfrc_coupling_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
 @ti.func
@@ -5527,8 +5555,12 @@ def func_update_force(
                     links_state.cd_ang[i_l, i_b], links_state.cd_vel[i_l, i_b], f2_ang, f2_vel
                 )
 
-                links_state.cfrc_vel[i_l, i_b] = f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b]
-                links_state.cfrc_ang[i_l, i_b] = f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b]
+                links_state.cfrc_vel[i_l, i_b] = (
+                    f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b] + links_state.cfrc_coupling_vel[i_l, i_b]
+                )
+                links_state.cfrc_ang[i_l, i_b] = (
+                    f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b] + links_state.cfrc_coupling_ang[i_l, i_b]
+                )
 
         for i_b in range(_B):
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
@@ -5561,8 +5593,12 @@ def func_update_force(
                 links_state.cd_ang[i_l, i_b], links_state.cd_vel[i_l, i_b], f2_ang, f2_vel
             )
 
-            links_state.cfrc_vel[i_l, i_b] = f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b]
-            links_state.cfrc_ang[i_l, i_b] = f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b]
+            links_state.cfrc_vel[i_l, i_b] = (
+                f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b] + links_state.cfrc_coupling_vel[i_l, i_b]
+            )
+            links_state.cfrc_ang[i_l, i_b] = (
+                f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b] + links_state.cfrc_coupling_ang[i_l, i_b]
+            )
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
