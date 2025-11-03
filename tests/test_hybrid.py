@@ -345,7 +345,7 @@ def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
         scene.step()
 
     # Check that the sand moved the box to the correct position
-    pos = obj_rigid.get_pos()
+    pos = obj_rigid.get_pos().cpu().numpy()
     target_pos = np.array([0.0, -0.55, 0.1])
     dist = np.linalg.norm(pos - target_pos)
     assert_allclose(dist, 0.0, atol=atol)
