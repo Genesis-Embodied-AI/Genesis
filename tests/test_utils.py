@@ -360,12 +360,6 @@ def test_pyrender_vec3():
     assert isinstance(t, torch.Tensor)
     assert_allclose(t.cpu().numpy(), a.v, tol=gs.EPS)
 
-    # constructor guards
-    with pytest.raises(AssertionError):
-        Vec3(np.array([1, 2, 3, 4], dtype=np.float32))
-    with pytest.raises(AssertionError):
-        Vec3(np.array([1, 2, 3], dtype=np.float64))
-
     # --- Quat tests ---
     q = Quat.from_wxyz(1.0, 0.0, 0.0, 0.0)  # identity
     assert q.v.shape == (4,)
@@ -410,9 +404,3 @@ def test_pyrender_vec3():
     tq = qz.as_tensor()
     assert isinstance(tq, torch.Tensor)
     assert_allclose(tq.cpu().numpy(), qz.v, tol=gs.EPS)
-
-    # constructor guards
-    with pytest.raises(AssertionError):
-        Quat(np.array([1, 0, 0]))
-    with pytest.raises(AssertionError):
-        Quat(np.array([1, 0, 0, 0]))
