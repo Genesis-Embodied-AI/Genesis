@@ -266,7 +266,7 @@ def test_diff_solver(backend, monkeypatch):
 
     ### Compute directional derivatives along random directions
     FD_EPS = 1e-3
-    TRIALS = 100
+    TRIALS = 200
 
     for dL_dx, x_type in (
         (dL_dforce, "force"),
