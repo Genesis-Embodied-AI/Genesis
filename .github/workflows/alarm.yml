@@ -212,15 +212,17 @@ jobs:
 
           def mean_of(metric, bid):
               tot = 0.0
+              count = 0
               for record in records_by_rev.values():
                   stats = record.get(bid)
                   if stats is None:
-                      break
+                      continue
                   tot += record[bid][metric]
-              else:
-                  # Only compute stats if all data are available
-                  return tot / MAX_VALID_REVISIONS
-              return float("nan")
+                  count += 1
+              
+              if count == 0:
+                  return float("nan")
+              return tot / count
 
           # ----- build TWO tables -----
 
@@ -229,6 +231,7 @@ jobs:
           for bid in sorted(current_bm.keys()):
               cur_rt = current_bm[bid]["runtime_fps"]
               cur_ct = current_bm[bid]["compile_time"]
+              # [mean_of] returns NaN if no valid baseline is found
               base_rt = mean_of("runtime_fps", bid)
               base_ct = mean_of("compile_time", bid)
 
@@ -245,14 +248,14 @@ jobs:
                   status_picto(is_rt_reg),
                   f"`{bid}`",
                   fmt_num(cur_rt),
-                  fmt_num(base_rt),
+                  fmt_num(base_rt) if not math.isnan(base_rt) else "Not Found",
                   fmt_pct(d_rt, highlight=is_rt_reg)
               ])
               rows_ct.append([
                   status_picto(is_ct_reg),
                   f"`{bid}`",
                   fmt_num(cur_ct),
-                  fmt_num(base_ct),
+                  fmt_num(base_ct) if not math.isnan(base_ct) else "Not Found",
                   fmt_pct(d_ct, highlight=is_ct_reg)
               ])
 
