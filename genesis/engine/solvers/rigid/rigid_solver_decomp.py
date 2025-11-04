@@ -87,6 +87,7 @@ class RigidSolver(Solver):
         self._max_collision_pairs = options.max_collision_pairs
         self._integrator = options.integrator
         self._box_box_detection = options.box_box_detection
+        self._requires_grad = self._sim.options.requires_grad
 
         self._use_contact_island = options.use_contact_island
         self._use_hibernation = options.use_hibernation and options.use_contact_island
@@ -1845,16 +1846,21 @@ class RigidSolver(Solver):
         Get constraint solver parameters.
         """
         if eqs_idx is not None:
-            if not unsafe:
-                assert envs_idx is None
-            tensor = ti_to_torch(self.equalities_info.sol_params, None, eqs_idx, transpose=True, unsafe=unsafe)
+            # Always batched
+            tensor = ti_to_torch(self.equalities_info.sol_params, envs_idx, eqs_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0:
                 tensor = tensor.squeeze(0)
         elif joints_idx is not None:
+            # Conditionally batched
+            if not unsafe and not self._options.batch_joints_info:
+                assert envs_idx is None
+            # batch_shape = (envs_idx, joints_idx) if self._options.batch_joints_info else (joints_idx,)
+            # tensor = ti_to_torch(self.joints_info.sol_params, *batch_shape, transpose=True, unsafe=unsafe)
             tensor = ti_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0 and self._options.batch_joints_info:
                 tensor = tensor.squeeze(0)
         else:
+            # Never batched
             if not unsafe:
                 assert envs_idx is None
             tensor = ti_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, unsafe=unsafe)

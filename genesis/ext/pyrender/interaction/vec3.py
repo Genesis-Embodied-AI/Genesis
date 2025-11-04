@@ -62,7 +62,7 @@ class Vec3:
         return f"Vec3({self.v[0]}, {self.v[1]}, {self.v[2]})"
 
     def as_tensor(self) -> torch.Tensor:
-        return torch.tensor(self.v, dtype=gs.tc_float)
+        return torch.tensor(self.v)
 
     @property
     def x(self) -> float:
@@ -155,7 +155,7 @@ class Quat:
         return f"Quat({self.v[0]}, {self.v[1]}, {self.v[2]}, {self.v[3]})"
 
     def as_tensor(self) -> torch.Tensor:
-        return torch.tensor(self.v, dtype=gs.tc_float)
+        return torch.tensor(self.v)
 
     @property
     def w(self) -> float:
