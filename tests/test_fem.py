@@ -462,7 +462,6 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
 
         # Update the viewer if requested
         if show_viewer:
-            # FIXME: Non-persistent markers are apparently broken...
             if it % max(int(1e-3 / (MOTION_SPEED * DT)), 1) == 0:
                 scene.visualizer.context.draw_debug_spheres(
                     poss=target_poss, radius=0.005, color=(1, 0, 1, 0.8), persistent=True
@@ -588,7 +587,6 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
 
         # Update the viewer if requested
         if show_viewer:
-            # FIXME: Non-persistent markers are apparently broken...
             if it % max(int(1e-3 / (MOTION_SPEED * DT)), 1) == 0:
                 scene.visualizer.context.draw_debug_spheres(
                     poss=target_poss, radius=0.005, color=(1, 0, 1, 0.8), persistent=True

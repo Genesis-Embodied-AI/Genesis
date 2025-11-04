@@ -32,7 +32,7 @@ jobs:
         id: dl
         uses: actions/download-artifact@v4
         with:
-          name: speed-test-results
+          pattern: speed-test-*
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ./artifacts
@@ -120,15 +120,17 @@ jobs:
                   return "ℹ️"
               return "🔴" if is_reg else "✅"
 
-          # ----- load artifact (current results) -----
+          # ----- load artifacts (current results) -----
 
-          current_txt_path = next(artifacts_dir.rglob("speed_test*.txt"), None)
-          if current_txt_path is None:
+          current_csv_paths = list(artifacts_dir.rglob("speed_test*.txt"))
+          if not current_csv_paths:
               pr_comment_path.touch()
               check_body_path.touch()
               sys.exit(0)
 
-          current_bm = artifacts_parse_csv_summary(current_txt_path)
+          current_bm = {}
+          for csv_path in current_csv_paths:
+              current_bm |= artifacts_parse_csv_summary(csv_path)
           bids_set = set(current_bm.keys())
           assert bids_set
 

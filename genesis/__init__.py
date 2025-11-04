@@ -226,11 +226,12 @@ def init(
         )
 
     # init gstaichi
+    ti_debug = debug and (os.environ.get("TI_DEBUG") != "0")
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=TI_ARCH[platform][backend],
             # Add a (hidden) mechanism to forceable disable taichi debug mode as it is still a bit experimental
-            debug=debug and backend == gs.cpu and (os.environ.get("TI_DEBUG") != "0"),
+            debug=ti_debug and backend == gs.cpu,
             check_out_of_bound=debug,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
@@ -244,6 +245,9 @@ def init(
             default_fp=ti_float,
             **taichi_kwargs,
         )
+
+    # Disable debug checks for taichi
+    ti.lang._template_mapper.__builtins__["__debug__"] = ti_debug
 
     # Make sure that gstaichi arch is matching requirement, then set it in global scope
     ti_config = ti.lang.impl.current_cfg()
@@ -383,7 +387,12 @@ from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
 
 with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
-    from pygel3d import graph, hmesh
+    try:
+        from pygel3d import graph, hmesh
+    except OSError as e:
+        # Import may fail because of missing system dependencies (libGLU.so.1).
+        # This is not blocking because it is only an issue for hybrig entities.
+        pass
 
     try:
         sys.path.append(os.path.join(_get_src_dir(), "ext/LuisaRender/build/bin"))

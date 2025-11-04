@@ -40,7 +40,6 @@ class CCD_ALGORITHM_CODE(IntEnum):
     MJ_GJK = 3
 
 
-@ti.data_oriented
 class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
@@ -310,16 +309,12 @@ class Collider:
         )
 
     def detection(self) -> None:
-        # from genesis.utils.tools import create_timer
-
         self._contacts_info_cache = {}
-        # timer = create_timer(name="69477ab0-5e75-47cb-a4a5-d4eebd9336ca", level=3, ti_sync=True, skip_first_call=True)
         rigid_solver.kernel_update_geom_aabbs(
             self._solver.geoms_state,
             self._solver.geoms_init_AABB,
             self._solver._static_rigid_sim_config,
         )
-        # timer.stamp("func_update_aabbs")
         func_broad_phase(
             self._solver.links_state,
             self._solver.links_info,
@@ -332,7 +327,6 @@ class Collider:
             self._solver.equalities_info,
             self._collider_info,
         )
-        # timer.stamp("func_broad_phase")
         func_narrow_phase_convex_vs_convex(
             self._solver.links_state,
             self._solver.links_info,
@@ -365,7 +359,6 @@ class Collider:
             self._collider_info,
             self._collider_static_config,
         )
-        # timer.stamp("func_narrow_phase")
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
                 self._solver.geoms_state,
@@ -380,7 +373,6 @@ class Collider:
                 self._mpr._mpr_info,
                 self._support_field._support_field_info,
             )
-            # timer.stamp("func_narrow_phase_any_vs_terrain")
         if self._collider_static_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
                 self._solver.links_state,
@@ -397,7 +389,6 @@ class Collider:
                 self._collider_static_config,
                 self._sdf._sdf_info,
             )
-            # timer.stamp("func_narrow_phase_nonconvex_vs_nonterrain")
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
@@ -1166,6 +1157,45 @@ def func_check_collision_valid(
     return is_valid
 
 
+@ti.func
+def func_collision_clear(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    collider_state: array_class.ColliderState,
+    static_rigid_sim_config: ti.template(),
+):
+    if ti.static(static_rigid_sim_config.enable_collision):
+        _B = collider_state.n_contacts.shape[0]
+        if ti.static(static_rigid_sim_config.use_hibernation):
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                collider_state.n_contacts_hibernated[i_b] = 0
+
+                # Advect hibernated contacts
+                for i_c in range(collider_state.n_contacts[i_b]):
+                    i_la = collider_state.contact_data[i_c, i_b].link_a
+                    i_lb = collider_state.contact_data[i_c, i_b].link_b
+                    I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
+                    I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
+
+                    # Pair of hibernated-fixed links -> hibernated contact
+                    # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
+                    # once a new collision is detected
+                    if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                        links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+                    ):
+                        i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
+                        if i_c != i_c_hibernated:
+                            collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
+                        collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
+
+                collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
+        else:
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                collider_state.n_contacts[i_b] = 0
+
+
 @ti.kernel(fastcache=gs.use_fastcache)
 def func_broad_phase(
     links_state: array_class.LinksState,
@@ -1188,6 +1218,9 @@ def func_broad_phase(
     """
     _B = collider_state.active_buffer.shape[1]
     n_geoms = collider_state.active_buffer.shape[0]
+
+    # Clear collider state
+    func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):

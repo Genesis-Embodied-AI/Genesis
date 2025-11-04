@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 import genesis as gs
 
-SCENE_POS = (0.5, 0.5, 1.0)
+SCENE_POS = np.array([0.5, 0.5, 1.0])
 
 
 def main():
@@ -51,12 +51,12 @@ def main():
     scene.add_entity(gs.morphs.Plane())
 
     blob = scene.add_entity(
-        morph=gs.morphs.Sphere(pos=tuple(map(sum, zip(SCENE_POS, (-0.3, -0.3, 0)))), radius=0.1),
+        morph=gs.morphs.Sphere(pos=SCENE_POS + np.array([-0.3, -0.3, 0]), radius=0.1),
         material=gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="linear_corotated"),
     )
 
     cube = scene.add_entity(
-        morph=gs.morphs.Box(pos=tuple(map(sum, zip(SCENE_POS, (0.3, 0.3, 0)))), size=(0.2, 0.2, 0.2)),
+        morph=gs.morphs.Box(pos=SCENE_POS + np.array([0.3, 0.3, 0]), size=(0.2, 0.2, 0.2)),
         material=gs.materials.FEM.Elastic(E=1.0e6, nu=0.45, rho=1000.0, model="linear_corotated"),
     )
 
@@ -68,7 +68,7 @@ def main():
     cam = scene.add_camera(
         res=(640, 480),
         pos=(-2.0, 3.0, 2.0),
-        lookat=tuple(map(sum, zip(SCENE_POS, (0.0, 0.0, -0.8)))),
+        lookat=SCENE_POS + np.array([0.0, 0.0, -0.8]),
         fov=30,
     )
 

@@ -45,7 +45,6 @@ class EPA_POLY_INIT_RETURN_CODE(IntEnum):
     P4_FALLBACK3 = 9
 
 
-@ti.data_oriented
 class GJK:
     def __init__(self, rigid_solver):
         # Initialize static configuration.

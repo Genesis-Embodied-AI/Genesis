@@ -13,7 +13,7 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch, ti_to_numpy
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
@@ -64,7 +64,6 @@ def _sanitize_sol_params(
     power[:] = power.clip(1)
 
 
-@ti.data_oriented
 class RigidSolver(Solver):
     # override typing
     _entities: list[RigidEntity] = gs.List()
@@ -87,7 +86,7 @@ class RigidSolver(Solver):
         self._max_collision_pairs = options.max_collision_pairs
         self._integrator = options.integrator
         self._box_box_detection = options.box_box_detection
-        self._requires_grad = self.sim.options.requires_grad
+        self._requires_grad = self._sim.options.requires_grad
 
         self._use_contact_island = options.use_contact_island
         self._use_hibernation = options.use_hibernation and options.use_contact_island
@@ -252,6 +251,7 @@ class RigidSolver(Solver):
             enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
             enable_multi_contact=getattr(self, "_enable_multi_contact", True),
             enable_collision=self._enable_collision,
+            enable_joint_limit=getattr(self, "_enable_joint_limit", False),
             box_box_detection=getattr(self, "_box_box_detection", True),
             sparse_solve=getattr(self._options, "sparse_solve", False),
             integrator=getattr(self, "_integrator", gs.integrator.approximate_implicitfast),
@@ -265,10 +265,13 @@ class RigidSolver(Solver):
                 gs.raise_exception(
                     "Only approximate_implicitfast integrator is supported yet when requires_grad is True."
                 )
-            from genesis.engine.couplers import SAPCoupler
+            from genesis.engine.couplers import SAPCoupler, IPCCoupler
 
             if isinstance(self.sim.coupler, SAPCoupler):
                 gs.raise_exception("SAPCoupler is not supported yet when requires_grad is True.")
+
+            if isinstance(self.sim.coupler, IPCCoupler):
+                gs.raise_exception("IPCCoupler is not supported yet when requires_grad is True.")
 
             if getattr(self._options, "noslip_iterations", 0) > 0:
                 gs.raise_exception("Noslip is not supported yet when requires_grad is True.")
@@ -880,7 +883,6 @@ class RigidSolver(Solver):
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=False,
         )
-        # timer.stamp("kernel_step_1")
 
         if isinstance(self.sim.coupler, SAPCoupler):
             update_qvel(
@@ -891,7 +893,6 @@ class RigidSolver(Solver):
             )
         else:
             self._func_constraint_force()
-            # timer.stamp("constraint_force")
             kernel_step_2(
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
@@ -909,7 +910,6 @@ class RigidSolver(Solver):
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 is_backward=False,
             )
-            # timer.stamp("kernel_step_2")
 
             kernel_copy_next_to_curr(
                 dofs_state=self.dofs_state,
@@ -947,46 +947,30 @@ class RigidSolver(Solver):
     def detect_collision(self, env_idx=0):
         # TODO: support batching
         self._kernel_detect_collision()
-        n_collision = self.collider._collider_state.n_contacts.to_numpy()[env_idx]
+
+        n_collision = ti_to_numpy(self.collider._collider_state.n_contacts)[env_idx]
         collision_pairs = np.empty((n_collision, 2), dtype=np.int32)
-        collision_pairs[:, 0] = self.collider._collider_state.contact_data.geom_a.to_numpy()[:n_collision, env_idx]
-        collision_pairs[:, 1] = self.collider._collider_state.contact_data.geom_b.to_numpy()[:n_collision, env_idx]
+        collision_pairs[:, 0] = ti_to_numpy(self.collider._collider_state.contact_data.geom_a)[:n_collision, env_idx]
+        collision_pairs[:, 1] = ti_to_numpy(self.collider._collider_state.contact_data.geom_b)[:n_collision, env_idx]
+
         return collision_pairs
 
     def _func_constraint_force(self):
-        # from genesis.utils.tools import create_timer
+        self.constraint_solver.clear(cache_only=not self._use_contact_island)
 
-        # timer = create_timer(name="constraint_force", level=2, ti_sync=True, skip_first_call=True)
-        self._func_constraint_clear()
-        # timer.stamp("constraint_solver.clear")
         if not self._disable_constraint and not self._use_contact_island:
             self.constraint_solver.add_equality_constraints()
-            # timer.stamp("constraint_solver.add_equality_constraints")
 
         if self._enable_collision:
             self.collider.detection()
-            # timer.stamp("detection")
 
         if not self._disable_constraint:
             if self._use_contact_island:
                 self.constraint_solver.add_constraints()
-                # timer.stamp("constraint_solver.add_constraints")
             else:
-                self.constraint_solver.add_frictionloss_constraints()
-                if self._enable_collision:
-                    self.constraint_solver.add_collision_constraints()
-                if self._enable_joint_limit:
-                    self.constraint_solver.add_joint_limit_constraints()
-                # timer.stamp("constraint_solver.add_other_constraints")
+                self.constraint_solver.add_inequality_constraints()
 
             self.constraint_solver.resolve()
-            # timer.stamp("constraint_solver.resolve")
-
-    def _func_constraint_clear(self):
-        self.constraint_solver.constraint_state.n_constraints.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_equality.fill(0)
-        self.constraint_solver.constraint_state.n_constraints_frictionloss.fill(0)
-        self.collider._collider_state.n_contacts.fill(0)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
@@ -1057,45 +1041,6 @@ class RigidSolver(Solver):
             force_update_fixed_geoms=force_update_fixed_geoms,
             is_backward=is_backward,
         )
-
-    # TODO: we need to use a kernel to clear the constraints if hibernation is enabled
-    # right now, a python-scope function is more convenient since .fill(0) only works on python scope for ndarray
-    # @ti.kernel
-    # def _func_constraint_clear(
-    #     self_unused,
-    #     links_state: array_class.LinksState,
-    #     links_info: array_class.LinksInfo,
-    #     collider_state: array_class.ColliderState,
-    #     static_rigid_sim_config: ti.template(),
-    # ):
-
-    #     if static_rigid_sim_config.enable_collision:
-    #         if ti.static(static_rigid_sim_config.use_hibernation):
-    #             collider_state.n_contacts_hibernated.fill(0)
-    #             _B = collider_state.n_contacts.shape[0]
-    #             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    #             for i_b in range(_B):
-    #                 # Advect hibernated contacts
-    #                 for i_c in range(collider_state.n_contacts[i_b]):
-    #                     i_la = collider_state.contact_data[i_c, i_b].link_a
-    #                     i_lb = collider_state.contact_data[i_c, i_b].link_b
-    #                     I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
-    #                     I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
-
-    #                     # Pair of hibernated-fixed links -> hibernated contact
-    #                     # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
-    #                     # once a new collision is detected
-    #                     if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-    #                         links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
-    #                     ):
-    #                         i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
-    #                         if i_c != i_c_hibernated:
-    #                             collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
-    #                         collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
-
-    #                 collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-    #         else:
-    #             collider_state.n_contacts.fill(0)
 
     def _process_dim(self, tensor, envs_idx=None):
         if self.n_envs == 0:
@@ -1226,6 +1171,13 @@ class RigidSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
+            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
+            from genesis.engine.couplers import IPCCoupler
+
+            if isinstance(self.sim.coupler, IPCCoupler):
+                return
+
+            # Run Genesis rigid simulation step
             self.substep(f)
 
     def substep_pre_coupling_grad(self, f):
@@ -1377,9 +1329,12 @@ class RigidSolver(Solver):
             )
 
     def substep_post_coupling(self, f):
-        from genesis.engine.couplers import SAPCoupler
+        from genesis.engine.couplers import SAPCoupler, IPCCoupler
 
-        if self.is_active and isinstance(self.sim.coupler, SAPCoupler):
+        if not self.is_active:
+            return
+
+        if isinstance(self.sim.coupler, SAPCoupler):
             update_qacc_from_qvel_delta(
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
@@ -1429,6 +1384,17 @@ class RigidSolver(Solver):
                     force_update_fixed_geoms=False,
                     is_backward=False,
                 )
+        elif isinstance(self.sim.coupler, IPCCoupler):
+            # For IPCCoupler, perform full rigid body computation in post-coupling phase
+            # This allows IPC to handle rigid bodies during the coupling phase
+            # Temporarily disable ground collision if requested
+            if self.sim.coupler.options.disable_genesis_ground_contact:
+                original_enable_collision = self._enable_collision
+                self._enable_collision = False
+                self.substep(f)
+                self._enable_collision = original_enable_collision
+            else:
+                self.substep(f)
 
     def substep_post_coupling_grad(self, f):
         pass
@@ -2343,16 +2309,21 @@ class RigidSolver(Solver):
         Get constraint solver parameters.
         """
         if eqs_idx is not None:
-            if not unsafe:
-                assert envs_idx is None
-            tensor = ti_to_torch(self.equalities_info.sol_params, None, eqs_idx, transpose=True, unsafe=unsafe)
+            # Always batched
+            tensor = ti_to_torch(self.equalities_info.sol_params, envs_idx, eqs_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0:
                 tensor = tensor.squeeze(0)
         elif joints_idx is not None:
+            # Conditionally batched
+            if not unsafe and not self._options.batch_joints_info:
+                assert envs_idx is None
+            # batch_shape = (envs_idx, joints_idx) if self._options.batch_joints_info else (joints_idx,)
+            # tensor = ti_to_torch(self.joints_info.sol_params, *batch_shape, transpose=True, unsafe=unsafe)
             tensor = ti_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0 and self._options.batch_joints_info:
                 tensor = tensor.squeeze(0)
         else:
+            # Never batched
             if not unsafe:
                 assert envs_idx is None
             tensor = ti_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, unsafe=unsafe)

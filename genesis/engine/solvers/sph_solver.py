@@ -44,6 +44,9 @@ class SPHSolver(Solver):
         # boundary
         self.setup_boundary()
 
+        # Coefficient for computing stable timestep
+        self._stable_dt_coef = 1.0
+
     def setup_boundary(self):
         self.boundary = CubeBoundary(
             lower=self._lower_bound,
@@ -133,6 +136,19 @@ class SPHSolver(Solver):
 
             for entity in self.entities:
                 entity._add_to_solver()
+
+            # Compute stable timestep for the given particle properties (mu) and support radius and print warning
+            # if the current timestep is larger than the stable timestep. This formula is derived from
+            # [_task_compute_non_pressure_forces] function, which computes the acceleration due to non-pressure forces.
+            stable_dt = (
+                self._stable_dt_coef * (0.01 * self._support_radius**2) / self.particles_info.mu.to_numpy().max()
+            )
+            if self.substep_dt > stable_dt:
+                gs.logger.warning(
+                    f"Current timestep ({self.substep_dt:.4g}) is larger than the stable timestep "
+                    f"({stable_dt:.4g}) for SPH solver. "
+                    "Please consider reducing the timestep, liquid viscosity (mu), or increasing the particle size."
+                )
 
             # TODO: Support per-particle density
             self._density0 = self.particles_info[0].rho
