@@ -263,7 +263,7 @@ def test_diff_solver(backend, monkeypatch):
     dL_dforce = ti_to_torch(constraint_solver.constraint_state.dL_dforce)
 
     ### Compute directional derivatives along random directions
-    FD_EPS = 1e-4
+    FD_EPS = 1e-3
     TRIALS = 100
 
     for dL_dx, x_type in (

@@ -85,9 +85,7 @@ class Collider:
                 geom.is_convex or geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms
             ),
             has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms),
-            # FIXME: The line below will cause error for tests/test_grad.py::test_diff_solver[cpu], why?
-            # n_contacts_per_pair=20 if self._solver._static_rigid_sim_config.requires_grad else 5,
-            n_contacts_per_pair=5,
+            n_contacts_per_pair=20 if self._solver._static_rigid_sim_config.requires_grad else 5,
             ccd_algorithm=ccd_algorithm,
         )
 
