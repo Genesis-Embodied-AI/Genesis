@@ -3810,11 +3810,6 @@ def func_forward_dynamics(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
     )
-    func_clear_coupling_force(
-        links_state=links_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
     # self._func_actuation()
     func_bias_force(
         dofs_state=dofs_state,
@@ -5224,29 +5219,6 @@ def func_clear_external_force(
 
 
 @ti.func
-def func_clear_coupling_force(
-    links_state: array_class.LinksState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    _B = links_state.pos.shape[1]
-    n_links = links_state.pos.shape[0]
-
-    if ti.static(static_rigid_sim_config.use_hibernation):
-        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_b in range(_B):
-            for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
-                i_l = rigid_global_info.awake_links[i_l_, i_b]
-                links_state.cfrc_coupling_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
-                links_state.cfrc_coupling_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
-    else:
-        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_l, i_b in ti.ndrange(n_links, _B):
-            links_state.cfrc_coupling_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            links_state.cfrc_coupling_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
-
-
-@ti.func
 def func_torque_and_passive_force(
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
@@ -5609,6 +5581,12 @@ def func_update_force(
                 if i_p != -1:
                     links_state.cfrc_vel[i_p, i_b] = links_state.cfrc_vel[i_p, i_b] + links_state.cfrc_vel[i_l, i_b]
                     links_state.cfrc_ang[i_p, i_b] = links_state.cfrc_ang[i_p, i_b] + links_state.cfrc_ang[i_l, i_b]
+
+    # Clear coupling forces after use
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l, i_b in ti.ndrange(n_links, _B):
+        links_state.cfrc_coupling_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+        links_state.cfrc_coupling_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
 @ti.func
