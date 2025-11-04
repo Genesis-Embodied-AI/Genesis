@@ -60,8 +60,8 @@ class ConstraintSolverIsland:
 
         self.efc_D = ti.field(dtype=gs.ti_float, shape=(self.len_constraints_, self._B))
         self.efc_force = ti.field(dtype=gs.ti_float, shape=(self.len_constraints_, self._B))
-        self.active = ti.field(dtype=gs.ti_int, shape=(self.len_constraints_, self._B))
-        self.prev_active = ti.field(dtype=gs.ti_int, shape=(self.len_constraints_, self._B))
+        self.active = ti.field(dtype=gs.ti_bool, shape=(self.len_constraints_, self._B))
+        self.prev_active = ti.field(dtype=gs.ti_bool, shape=(self.len_constraints_, self._B))
         self.qfrc_constraint = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
         self.qacc = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
         self.qacc_ws = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
