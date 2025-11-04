@@ -102,6 +102,7 @@ def test_diff_contact(backend):
                     box0_input_pos = box0_init_pos + sign * rand_dx[0, 0] * FD_EPS
                     box1_input_pos = box1_init_pos + sign * rand_dx[1, 0] * FD_EPS
                 else:
+                    # FIXME: The quaternion should be normalized
                     box0_input_quat = box0_init_quat + sign * rand_dx[0, 0] * FD_EPS
                     box1_input_quat = box1_init_quat + sign * rand_dx[1, 0] * FD_EPS
 

@@ -20,7 +20,7 @@ V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else ti.data_oriented
 
 
-def _shape(shape, is_on):
+def maybe_shape(shape, is_on):
     return shape if is_on else ()
 
 
@@ -228,8 +228,8 @@ def get_constraint_state(constraint_solver, solver):
                 "smaller 'max_collision_pairs' in RigidOptions to reduce the size of reserved memory. "
             )
 
-    efc_AR_shape = _shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
-    efc_b_shape = _shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
+    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
+    efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
 
     return StructConstraintState(
         n_constraints=V(dtype=gs.ti_int, shape=(_B,)),
@@ -278,19 +278,19 @@ def get_constraint_state(constraint_solver, solver):
         nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         # Backward gradients
-        dL_dqacc=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        dL_dM=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
-        dL_djac=V(dtype=gs.ti_float, shape=_shape((len_constraints_, solver.n_dofs_, _B), solver._requires_grad)),
-        dL_daref=V(dtype=gs.ti_float, shape=_shape((len_constraints_, _B), solver._requires_grad)),
-        dL_defc_D=V(dtype=gs.ti_float, shape=_shape((len_constraints_, _B), solver._requires_grad)),
-        dL_dforce=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        bw_u=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        bw_r=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        bw_p=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        bw_Ap=V(dtype=gs.ti_float, shape=_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        bw_Ju=V(dtype=gs.ti_float, shape=_shape((len_constraints_, _B), solver._requires_grad)),
-        bw_y=V(dtype=gs.ti_float, shape=_shape((len_constraints_, _B), solver._requires_grad)),
-        bw_w=V(dtype=gs.ti_float, shape=_shape((len_constraints_, _B), solver._requires_grad)),
+        dL_dqacc=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        dL_dM=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
+        dL_djac=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, solver.n_dofs_, _B), solver._requires_grad)),
+        dL_daref=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        dL_defc_D=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        dL_dforce=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_u=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_r=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_p=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_Ap=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_Ju=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        bw_y=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        bw_w=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
     )
 
 
@@ -359,19 +359,21 @@ def get_diff_contact_input(solver, max_contacts_per_pair):
 
     requires_grad = solver._requires_grad
     return StructDiffContactInput(
-        geom_a=V(dtype=gs.ti_int, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        geom_b=V(dtype=gs.ti_int, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos1_a=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos1_b=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos1_c=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos2_a=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos2_b=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos2_c=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        w_local_pos1=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        w_local_pos2=V_VEC(3, dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        ref_id=V(dtype=gs.ti_int, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        valid=V(dtype=gs.ti_int, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
-        ref_penetration=V(dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad), needs_grad=True),
+        geom_a=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        geom_b=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        local_pos1_a=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        local_pos1_b=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        local_pos1_c=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        local_pos2_a=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        local_pos2_b=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        local_pos2_c=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        w_local_pos1=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        w_local_pos2=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        ref_id=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        valid=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+        ref_penetration=V(
+            dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad), needs_grad=True
+        ),
     )
 
 
@@ -927,7 +929,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
         distance=V(dtype=gs.ti_float, shape=(_B,)),
         diff_contact_input=get_diff_contact_input(solver, max(max_contacts_per_pair, 1)),
         n_diff_contact_input=V(dtype=gs.ti_int, shape=(_B,)),
-        diff_penetration=V(dtype=gs.ti_float, shape=_shape((_B, max_contacts_per_pair), requires_grad)),
+        diff_penetration=V(dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
     )
 
 
