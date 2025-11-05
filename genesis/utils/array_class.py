@@ -1214,6 +1214,8 @@ class StructLinksState(metaclass=BASE_METACLASS):
     cfrc_vel: V_ANNOTATION
     cfrc_applied_ang: V_ANNOTATION
     cfrc_applied_vel: V_ANNOTATION
+    cfrc_coupling_ang: V_ANNOTATION
+    cfrc_coupling_vel: V_ANNOTATION
     contact_force: V_ANNOTATION
     hibernated: V_ANNOTATION
 
@@ -1252,6 +1254,8 @@ def get_links_state(solver):
         cfrc_vel=V(dtype=gs.ti_vec3, shape=shape),
         cfrc_applied_ang=V(dtype=gs.ti_vec3, shape=shape),
         cfrc_applied_vel=V(dtype=gs.ti_vec3, shape=shape),
+        cfrc_coupling_ang=V(dtype=gs.ti_vec3, shape=shape),
+        cfrc_coupling_vel=V(dtype=gs.ti_vec3, shape=shape),
         contact_force=V(dtype=gs.ti_vec3, shape=shape),
         hibernated=V(dtype=gs.ti_int, shape=shape),
     )

@@ -246,7 +246,7 @@ def factory_logger(stream_writers):
     class Logger:
         def __init__(self, hparams: dict[str, Any]):
             self.hparams = {**hparams, "dtype": "ndarray" if gs.use_ndarray else "field"}
-            self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(hparams, delimiter="-")))
+            self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(self.hparams, delimiter="-")))
 
             self.logger = None
             self.wandb_run = None
@@ -660,7 +660,6 @@ def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, 
     with factory_logger(
         {
             "env": f"cube#{n_cubes}",
-            "dtype": "ndarray" if gs.use_ndarray else "field",
             "batch_size": n_envs,
             "constraint_solver": solver,
             "use_contact_island": enable_island,
