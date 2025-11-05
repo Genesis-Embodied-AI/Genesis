@@ -109,9 +109,15 @@ jobs:
               return out
 
           def fmt_num(v):
-              return f"{int(v):,}" if isinstance(v, int) or v.is_integer() else f"{v:.2f}"
+              if math.isnan(v):
+                  return "---"
+              if isinstance(v, int) or v.is_integer():
+                  return f"{int(v):,}"
+              return f"{v:.2f}"
 
           def fmt_pct(v, *, highlight=False):
+              if math.isnan(v):
+                  return "---"
               s = f"{v:+.2f}%"
               return f"**{s}**" if highlight else s
 
@@ -211,16 +217,16 @@ jobs:
               }
 
           def mean_of(metric, bid):
-              tot = 0.0
-              count = 0
+              tot, count = 0.0, 0
               for record in records_by_rev.values():
                   stats = record.get(bid)
                   if stats is None:
                       continue
                   tot += record[bid][metric]
                   count += 1
-              
-              mean = float("nan") if count == 0 else tot / count
+              if count == 0:
+                  return float("nan"), 0
+              mean = tot / count
               return mean, count
 
           # ----- build TWO tables -----
@@ -249,14 +255,14 @@ jobs:
                   status_picto(is_rt_reg),
                   f"`{bid}`",
                   fmt_num(cur_rt),
-                  fmt_num(base_rt) if base_rt_defined else f"Undefined ({fmt_num(base_rt)})",
+                  fmt_num(base_rt),
                   fmt_pct(d_rt, highlight=is_rt_reg)
               ])
               rows_ct.append([
                   status_picto(is_ct_reg),
                   f"`{bid}`",
                   fmt_num(cur_ct),
-                  fmt_num(base_ct) if base_ct_defined else f"Undefined ({fmt_num(base_ct)})",
+                  fmt_num(base_ct),
                   fmt_pct(d_ct, highlight=is_ct_reg)
               ])
 
