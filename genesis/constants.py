@@ -47,6 +47,7 @@ class CTRL_MODE(IntEnum):
     FORCE = 0
     VELOCITY = 1
     POSITION = 2
+    POSITION_VELOCITY = 3
 
 
 ######### User accessible constants do not capitalize #########
