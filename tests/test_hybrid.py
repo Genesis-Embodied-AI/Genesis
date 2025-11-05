@@ -3,6 +3,7 @@ import pytest
 import torch
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, get_hf_dataset
 
@@ -278,3 +279,71 @@ def test_sap_fem_vs_robot(show_viewer):
 
     # Check that the legs of the ants are resting on the sphere
     assert_allclose(robot.get_qpos()[-4:].abs(), 1.0, tol=0.1)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("substeps", [1, 10])
+def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
+    # This test is aimining at two things:
+    # 1) When substep = 1, the rigid object should be affected by the MPM particles
+    # 2) Regardless of substeps, as far as the substep dt is the same, they should give consistent results
+    substep_dt = 4e-4
+    horizon_substeps = 100
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=substep_dt * substeps,
+            substeps=substeps,
+        ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-0.5, -1.0, 0.0),
+            upper_bound=(0.5, 1.0, 1),
+        ),
+        vis_options=gs.options.VisOptions(
+            visualize_mpm_boundary=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_fov=30,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+
+    obj_rigid = scene.add_entity(
+        material=gs.materials.Rigid(
+            rho=1.0,
+        ),
+        morph=gs.morphs.Box(
+            pos=(0.0, -0.25, 0.1),
+            size=(0.2, 0.2, 0.2),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.4, 0.4),
+            vis_mode="visual",
+        ),
+    )
+
+    obj_sand = scene.add_entity(
+        material=gs.materials.MPM.Liquid(),
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.2),
+            size=(0.3, 0.3, 0.3),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.3, 0.3, 1.0),
+            vis_mode="particle",
+        ),
+    )
+
+    scene.build()
+
+    horizon = horizon_substeps // substeps
+    for i in range(horizon):
+        scene.step()
+
+    # Check that the sand moved the box along the negative Y direction
+    pos = tensor_to_array(obj_rigid.get_pos())
+    assert pos[1] + 0.25 < 0.0

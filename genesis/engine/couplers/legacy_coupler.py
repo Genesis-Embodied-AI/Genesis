@@ -330,7 +330,7 @@ class LegacyCoupler(RBC):
             # Compute delta momentum and apply to rigid body.
             delta_mv = mass * (vel - vel_old)
             force = -delta_mv / rigid_global_info.substep_dt[None]
-            self.rigid_solver._func_apply_external_force(
+            self.rigid_solver._func_apply_coupling_force(
                 pos_world,
                 force,
                 geoms_info.link_idx[geom_idx],
@@ -908,7 +908,7 @@ class LegacyCoupler(RBC):
             delta_mv = mass * (new_vel - vel)
             force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
 
-            self.rigid_solver._func_apply_external_force(
+            self.rigid_solver._func_apply_coupling_force(
                 pos_world,
                 force,
                 geoms_info.link_idx[geom_idx],
