@@ -87,6 +87,7 @@ class RigidSolver(Solver):
         self._max_collision_pairs = options.max_collision_pairs
         self._integrator = options.integrator
         self._box_box_detection = options.box_box_detection
+        self._requires_grad = self._sim.options.requires_grad
 
         self._use_contact_island = options.use_contact_island
         self._use_hibernation = options.use_hibernation and options.use_contact_island
@@ -245,7 +246,7 @@ class RigidSolver(Solver):
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
-        self._func_apply_external_force = func_apply_external_force
+        self._func_apply_coupling_force = func_apply_coupling_force
 
         # For rigid solver, we initialize them even if the solver is not active because the coupler needs arguments like
         # rigid_solver.links_state, etc. regardless of the solver is active or not.
@@ -1845,16 +1846,21 @@ class RigidSolver(Solver):
         Get constraint solver parameters.
         """
         if eqs_idx is not None:
-            if not unsafe:
-                assert envs_idx is None
-            tensor = ti_to_torch(self.equalities_info.sol_params, None, eqs_idx, transpose=True, unsafe=unsafe)
+            # Always batched
+            tensor = ti_to_torch(self.equalities_info.sol_params, envs_idx, eqs_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0:
                 tensor = tensor.squeeze(0)
         elif joints_idx is not None:
+            # Conditionally batched
+            if not unsafe and not self._options.batch_joints_info:
+                assert envs_idx is None
+            # batch_shape = (envs_idx, joints_idx) if self._options.batch_joints_info else (joints_idx,)
+            # tensor = ti_to_torch(self.joints_info.sol_params, *batch_shape, transpose=True, unsafe=unsafe)
             tensor = ti_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0 and self._options.batch_joints_info:
                 tensor = tensor.squeeze(0)
         else:
+            # Never batched
             if not unsafe:
                 assert envs_idx is None
             tensor = ti_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, unsafe=unsafe)
@@ -5144,10 +5150,10 @@ def kernel_apply_links_external_torque(
 
 
 @ti.func
-def func_apply_external_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
+def func_apply_coupling_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
     torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
-    links_state.cfrc_applied_ang[link_idx, env_idx] -= torque
-    links_state.cfrc_applied_vel[link_idx, env_idx] -= force
+    links_state.cfrc_coupling_ang[link_idx, env_idx] -= torque
+    links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
 
 
 @ti.func
@@ -5527,8 +5533,12 @@ def func_update_force(
                     links_state.cd_ang[i_l, i_b], links_state.cd_vel[i_l, i_b], f2_ang, f2_vel
                 )
 
-                links_state.cfrc_vel[i_l, i_b] = f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b]
-                links_state.cfrc_ang[i_l, i_b] = f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b]
+                links_state.cfrc_vel[i_l, i_b] = (
+                    f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b] + links_state.cfrc_coupling_vel[i_l, i_b]
+                )
+                links_state.cfrc_ang[i_l, i_b] = (
+                    f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b] + links_state.cfrc_coupling_ang[i_l, i_b]
+                )
 
         for i_b in range(_B):
             for i_e_ in range(rigid_global_info.n_awake_entities[i_b]):
@@ -5561,8 +5571,12 @@ def func_update_force(
                 links_state.cd_ang[i_l, i_b], links_state.cd_vel[i_l, i_b], f2_ang, f2_vel
             )
 
-            links_state.cfrc_vel[i_l, i_b] = f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b]
-            links_state.cfrc_ang[i_l, i_b] = f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b]
+            links_state.cfrc_vel[i_l, i_b] = (
+                f1_vel + f2_vel + links_state.cfrc_applied_vel[i_l, i_b] + links_state.cfrc_coupling_vel[i_l, i_b]
+            )
+            links_state.cfrc_ang[i_l, i_b] = (
+                f1_ang + f2_ang + links_state.cfrc_applied_ang[i_l, i_b] + links_state.cfrc_coupling_ang[i_l, i_b]
+            )
 
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_e, i_b in ti.ndrange(n_entities, _B):
@@ -5573,6 +5587,12 @@ def func_update_force(
                 if i_p != -1:
                     links_state.cfrc_vel[i_p, i_b] = links_state.cfrc_vel[i_p, i_b] + links_state.cfrc_vel[i_l, i_b]
                     links_state.cfrc_ang[i_p, i_b] = links_state.cfrc_ang[i_p, i_b] + links_state.cfrc_ang[i_l, i_b]
+
+    # Clear coupling forces after use
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l, i_b in ti.ndrange(n_links, _B):
+        links_state.cfrc_coupling_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+        links_state.cfrc_coupling_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
 @ti.func
