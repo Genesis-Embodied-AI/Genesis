@@ -3,6 +3,7 @@ import pytest
 import torch
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, get_hf_dataset
 
@@ -344,5 +345,5 @@ def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
         scene.step()
 
     # Check that the sand moved the box along the negative Y direction
-    pos = obj_rigid.get_pos().cpu().numpy()
+    pos = tensor_to_array(obj_rigid.get_pos())
     assert pos[1] + 0.25 < 0.0
