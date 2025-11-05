@@ -109,9 +109,15 @@ jobs:
               return out
 
           def fmt_num(v):
-              return f"{int(v):,}" if isinstance(v, int) or v.is_integer() else f"{v:.2f}"
+              if math.isnan(v):
+                  return "---"
+              if isinstance(v, int) or v.is_integer():
+                  return f"{int(v):,}"
+              return f"{v:.2f}"
 
           def fmt_pct(v, *, highlight=False):
+              if math.isnan(v):
+                  return "---"
               s = f"{v:+.2f}%"
               return f"**{s}**" if highlight else s
 
@@ -211,16 +217,17 @@ jobs:
               }
 
           def mean_of(metric, bid):
-              tot = 0.0
+              tot, count = 0.0, 0
               for record in records_by_rev.values():
                   stats = record.get(bid)
                   if stats is None:
-                      break
+                      continue
                   tot += record[bid][metric]
-              else:
-                  # Only compute stats if all data are available
-                  return tot / MAX_VALID_REVISIONS
-              return float("nan")
+                  count += 1
+              if count == 0:
+                  return float("nan"), 0
+              mean = tot / count
+              return mean, count
 
           # ----- build TWO tables -----
 
@@ -229,14 +236,17 @@ jobs:
           for bid in sorted(current_bm.keys()):
               cur_rt = current_bm[bid]["runtime_fps"]
               cur_ct = current_bm[bid]["compile_time"]
-              base_rt = mean_of("runtime_fps", bid)
-              base_ct = mean_of("compile_time", bid)
+              base_rt, base_rt_cnt = mean_of("runtime_fps", bid)
+              base_ct, base_ct_cnt = mean_of("compile_time", bid)
+              is_base_rt_defined = base_rt_cnt == MAX_VALID_REVISIONS
+              is_base_ct_defined = base_ct_cnt == MAX_VALID_REVISIONS
 
               if math.isfinite(base_rt) and math.isfinite(base_ct):
                   base_rt, base_ct = math.ceil(base_rt), math.ceil(base_ct)
                   d_rt = (cur_rt - base_rt) / base_rt * 100.0
                   d_ct = (cur_ct - base_ct) / base_ct * 100.0
-                  is_rt_reg, is_ct_reg = d_rt < -tol_rt, d_ct > tol_ct
+                  is_rt_reg = d_rt < -tol_rt if is_base_rt_defined else None
+                  is_ct_reg = d_ct > tol_ct if is_base_ct_defined else None
               else:
                   d_rt, d_ct = float("nan"), float("nan")
                   is_rt_reg, is_ct_reg = None, None
