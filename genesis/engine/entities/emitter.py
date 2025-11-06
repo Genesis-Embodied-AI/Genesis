@@ -163,7 +163,7 @@ class Emitter(RBC):
             vels = speed * direction
 
             if n_particles > self._entity.n_particles:
-                gs.logger.warning(
+                gs.raise_exception(
                     f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum "
                     f"number of particles ({self._entity.n_particles})."
                 )
