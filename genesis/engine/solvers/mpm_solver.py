@@ -1,5 +1,4 @@
 from typing import TYPE_CHECKING
-from enum import IntEnum
 
 import numpy as np
 import gstaichi as ti
@@ -402,7 +401,7 @@ class MPMSolver(Solver):
     ) -> ti.i32:
         is_success = True
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if self.particles_ng[f, i_p, i_b].active:
+            if is_success and self.particles_ng[f, i_p, i_b].active:
                 base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
                 fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
@@ -434,20 +433,19 @@ class MPMSolver(Solver):
                     new_vel += weight * grid_vel
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
 
-                if ti.math.isnan(new_vel).any():
+                if not ti.math.isnan(new_vel).any():
+                    # compute actual new_pos with new_vel
+                    new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
+
+                    # impose boundary for safety, in case simulation explodes and tries to access illegal cell address
+                    new_pos, new_vel = self.boundary.impose_pos_vel(new_pos, new_vel)
+
+                    # advect to next frame
+                    self.particles[f + 1, i_p, i_b].vel = new_vel
+                    self.particles[f + 1, i_p, i_b].C = new_C
+                    self.particles[f + 1, i_p, i_b].pos = new_pos
+                else:
                     is_success = False
-
-                # compute actual new_pos with new_vel
-                new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
-
-                # impose boundary for safety, in case simulation explodes and tries to access illegal cell address
-                new_pos, new_vel = self.boundary.impose_pos_vel(new_pos, new_vel)
-
-                # advect to next frame
-                self.particles[f + 1, i_p, i_b].vel = new_vel
-                self.particles[f + 1, i_p, i_b].C = new_C
-                self.particles[f + 1, i_p, i_b].pos = new_pos
-
             else:
                 self.particles[f + 1, i_p, i_b].vel = self.particles[f, i_p, i_b].vel
                 self.particles[f + 1, i_p, i_b].pos = self.particles[f, i_p, i_b].pos
