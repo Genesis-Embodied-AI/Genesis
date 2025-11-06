@@ -2638,6 +2638,7 @@ def kernel_init_dof_fields(
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.FORCE
+        dofs_state.ctrl_force[i_d, i_b] = gs.ti_float(0.0)
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -6116,6 +6117,8 @@ def kernel_set_state(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b_ in ti.ndrange(n_dofs, envs_idx.shape[0]):
         dofs_state.vel[i_d, envs_idx[i_b_]] = dofs_vel[envs_idx[i_b_], i_d]
+        dofs_state.ctrl_force[i_d, envs_idx[i_b_]] = gs.ti_float(0.0)
+        dofs_state.ctrl_mode[i_d, envs_idx[i_b_]] = gs.CTRL_MODE.FORCE
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b_ in ti.ndrange(n_links, envs_idx.shape[0]):
