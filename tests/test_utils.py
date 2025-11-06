@@ -1,3 +1,4 @@
+import math
 from unittest.mock import patch
 
 import pytest
@@ -6,6 +7,7 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
@@ -404,3 +406,20 @@ def test_pyrender_vec3():
     tq = qz.as_tensor()
     assert isinstance(tq, torch.Tensor)
     assert_allclose(tq.cpu().numpy(), qz.v, tol=gs.EPS)
+
+
+def test_fps_tracker():
+    n_envs = 23
+    tracker = FPSTracker(alpha=0, n_envs=n_envs)
+    tracker.step(current_time=10.0)
+    assert not tracker.step(current_time=10.0)
+    assert not tracker.step(current_time=10.0)
+    assert not tracker.step(current_time=10.0)
+    fps = tracker.step(current_time=10.2)
+    assert math.isclose(fps, n_envs * 4 / 0.2)
+
+    assert not tracker.step(current_time=10.21)
+    assert not tracker.step(current_time=10.22)
+    assert not tracker.step(current_time=10.29)
+    fps = tracker.step(current_time=10.31)
+    assert math.isclose(fps, n_envs * 4 / 0.2)

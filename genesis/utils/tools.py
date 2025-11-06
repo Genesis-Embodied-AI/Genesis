@@ -185,19 +185,20 @@ class FPSTracker:
         self.minimum_interval_seconds = minimum_interval_seconds
         self.steps_since_last_print: int = 0
 
-    def step(self):
-        current_time = time.perf_counter()
+    def step(self, current_time: float | None = None) -> float | None:
+        if not current_time:
+            current_time = time.perf_counter()
 
         if self.last_time:
             dt = current_time - self.last_time
         else:
             self.last_time = current_time
-            return
+            return None
 
         self.steps_since_last_print += 1
 
         if self.minimum_interval_seconds and current_time - self.last_time < self.minimum_interval_seconds:
-            return
+            return None
 
         if self.dt_ema:
             self.dt_ema = self.alpha * self.dt_ema + (1 - self.alpha) * dt
@@ -214,3 +215,4 @@ class FPSTracker:
             gs.logger.info(f"Running at ~<{fps:.2f}>~ FPS.")
         self.last_time = current_time
         self.steps_since_last_print = 0
+        return self.total_fps
