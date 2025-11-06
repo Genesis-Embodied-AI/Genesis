@@ -402,13 +402,14 @@ class IPCCoupler(RBC):
                         geom_rot_mat = gu.quat_to_R(geom_rel_quat)
                         transformed_verts = geom_verts @ geom_rot_mat.T + geom_rel_pos
 
-                        # Convert trimesh to tetmesh
+                        # Create uipc trimesh for rigid body (ABD doesn't need tetmesh)
                         try:
-                            tri_mesh = trimesh.Trimesh(vertices=transformed_verts, faces=geom_faces)
-                            verts, elems = mu.tetrahedralize_mesh(tri_mesh, tet_cfg=dict())
-                            rigid_mesh = tetmesh(verts.astype(np.float64), elems.astype(np.int32))
+                            from uipc.geometry import trimesh as uipc_trimesh
 
-                            # Store mesh and geom info
+                            # Create uipc trimesh directly (dim=2, surface mesh for ABD)
+                            rigid_mesh = uipc_trimesh(transformed_verts.astype(np.float64), geom_faces.astype(np.int32))
+
+                            # Store uipc mesh (SimplicialComplex) for merging
                             link_geoms[link_idx]["meshes"].append((i_g, rigid_mesh))
 
                         except Exception as e:
@@ -434,7 +435,7 @@ class IPCCoupler(RBC):
                             # Single mesh in link
                             geom_idx, merged_mesh = link_data["meshes"][0]
                         else:
-                            # Multiple meshes in link - merge them
+                            # Multiple meshes in link - merge them using uipc.geometry.merge
                             meshes_to_merge = [mesh for geom_idx, mesh in link_data["meshes"]]
                             merged_mesh = merge(meshes_to_merge)
                             geom_idx = link_data["meshes"][0][0]  # Use first geom's index for metadata
@@ -459,8 +460,6 @@ class IPCCoupler(RBC):
 
                         # Process surface for contact
                         label_surface(merged_mesh)
-                        label_triangle_orient(merged_mesh)
-                        merged_mesh = flip_inward_triangles(merged_mesh)
 
                         # Create rigid object
                         rigid_obj = scene.objects().create(f"rigid_link_{i_b}_{link_idx}")
@@ -828,7 +827,7 @@ class IPCCoupler(RBC):
         for geo_slot in visitor.geometries():
             if isinstance(geo_slot, SimplicialComplexSlot):
                 geo = geo_slot.geometry()
-                if geo.dim() == 3:
+                if geo.dim() in [2, 3]:
                     try:
                         # Check if this is an ABD geometry using metadata
                         meta_attrs = geo.meta()
