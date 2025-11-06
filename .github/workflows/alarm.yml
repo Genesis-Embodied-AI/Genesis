@@ -221,12 +221,12 @@ jobs:
                   ]
                   if values_prev:
                       value_ref = statistics.fmean(values_prev)
-                      value_std = statistics.stdev(values_prev)
                       delta = (value_cur - value_ref) / value_ref * 100.0
 
                       stats_repr = f"{fmt_num(values_prev[0], is_int)}"
                       delta_repr = f"{delta:+.1f}%"
                       if len(values_prev) == MAX_VALID_REVISIONS:
+                          value_std = statistics.stdev(values_prev)
                           stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
                           if abs(delta) > METRICS_TOL[metrics]:
                               delta_repr = f"**{delta_repr}**"
