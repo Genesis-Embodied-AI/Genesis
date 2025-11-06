@@ -215,7 +215,7 @@ def get_file_morph_options(**kwargs):
 
 
 @pytest.fixture(scope="session")
-def stream_writers(backend, printer_session):
+def stream_writers(printer_session):
     report_path = Path(REPORT_FILE)
 
     # Delete old unrelated worker-specific reports
@@ -245,7 +245,11 @@ def stream_writers(backend, printer_session):
 def factory_logger(stream_writers):
     class Logger:
         def __init__(self, hparams: dict[str, Any]):
-            self.hparams = {**hparams, "dtype": "ndarray" if gs.use_ndarray else "field"}
+            self.hparams = {
+                **hparams,
+                "dtype": "ndarray" if gs.use_ndarray else "field",
+                "backend": str(gs.backend.name),
+            }
             self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(self.hparams, delimiter="-")))
 
             self.logger = None
@@ -283,7 +287,6 @@ def factory_logger(stream_writers):
                         "machine_uuid": machine_uuid,
                         "hardware": hardware_fringerprint,
                         "platform": platform_fringerprint,
-                        "backend": str(gs.backend.name),
                         "benchmark_id": self.benchmark_id,
                         **self.hparams,
                     },
@@ -329,7 +332,7 @@ def anymal_c(solver, n_envs, gjk):
                 dt=STEP_DT,
                 enable_self_collision=False,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -402,7 +405,7 @@ def batched_franka(solver, n_envs, gjk):
                 dt=STEP_DT,
                 enable_self_collision=False,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -454,7 +457,7 @@ def random(solver, n_envs, gjk):
                 dt=STEP_DT,
                 enable_self_collision=False,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -514,7 +517,7 @@ def cubes(solver, n_envs, n_cubes, enable_island, gjk):
                 dt=STEP_DT,
                 use_contact_island=enable_island,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -569,7 +572,7 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
                 box_box_detection=False,
                 enable_mujoco_compatibility=enable_mujoco_compatibility,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -621,22 +624,20 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
 
 
 @pytest.mark.parametrize(
-    "runnable, solver, gjk, n_envs",
+    "runnable, solver, gjk, n_envs, backend",
     [
-        ("anymal_c", gs.constraint_solver.CG, False, 30000),
-        ("batched_franka", gs.constraint_solver.CG, False, 30000),
-        ("anymal_c", gs.constraint_solver.Newton, False, 30000),
-        ("batched_franka", gs.constraint_solver.Newton, False, 30000),
-        ("anymal_c", gs.constraint_solver.CG, True, 30000),
-        ("batched_franka", gs.constraint_solver.CG, True, 30000),
-        ("anymal_c", gs.constraint_solver.Newton, True, 30000),
-        ("batched_franka", gs.constraint_solver.Newton, True, 30000),
-        ("random", None, None, 30000),
-        ("anymal_c", None, None, 0),
-        ("batched_franka", None, None, 0),
+        ("anymal_c", gs.constraint_solver.CG, None, 30000, gs.gpu),
+        ("anymal_c", gs.constraint_solver.Newton, None, 30000, gs.gpu),
+        ("anymal_c", None, None, 0, gs.gpu),
+        ("anymal_c", None, None, 0, gs.cpu),
+        ("batched_franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
+        ("batched_franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
+        ("batched_franka", None, None, 0, gs.gpu),
+        ("batched_franka", None, None, 0, gs.cpu),
+        ("random", None, None, 30000, gs.gpu),
     ],
 )
-def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
+def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
     with factory_logger(
         {
             "env": runnable,
@@ -651,6 +652,7 @@ def test_speed(factory_logger, request, runnable, solver, n_envs, gjk):
 
 # TODO: Skipping constraint_solver_decomp_island.py and migrate this file later.
 # Right now, island is kind of outdated, including those equality constraints.
+@pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_cubes", [10])
 @pytest.mark.parametrize("enable_island", [False])  # [False, True])
@@ -669,8 +671,7 @@ def test_cubes(factory_logger, request, n_cubes, solver, enable_island, n_envs, 
         logger.write(request.getfixturevalue("cubes"))
 
 
-# FIXME:Increasing the batch size triggers CUDA out-of-memory error (Nvidia H100)
-# FIXME:Increasing # cubes triggers CUDA illegal memory access error for all collision methods (Nvidia RTX 5900)
+@pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("n_cubes", [5])
 @pytest.mark.parametrize("enable_island", [False])
