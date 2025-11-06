@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+from enum import IntEnum
 
 import numpy as np
 import gstaichi as ti
@@ -20,6 +21,15 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.base_solver import Solver
     from genesis.engine.simulator import Simulator
+
+
+class RETURN_CODE(IntEnum):
+    """
+    Return codes for detecting potential issues during MPM simulation.
+    """
+
+    SUCCESS = 0
+    NAN = 1
 
 
 @ti.data_oriented
@@ -65,6 +75,9 @@ class MPMSolver(Solver):
         self._materials_idx = list()
         self._materials_update_F_S_Jp = list()
         self._materials_update_stress = list()
+
+        # flag
+        self.kernel_flag = ti.field(dtype=gs.ti_int, shape=())
 
         # boundary
         self.setup_boundary()
@@ -399,6 +412,7 @@ class MPMSolver(Solver):
         links_state: array_class.LinksState,
         rigid_global_info: array_class.RigidGlobalInfo,
     ):
+        self.kernel_flag[None] = RETURN_CODE.SUCCESS
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
@@ -431,6 +445,9 @@ class MPMSolver(Solver):
 
                     new_vel += weight * grid_vel
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
+
+                if ti.math.isnan(new_vel).any():
+                    self.kernel_flag[None] = ti.atomic_max(self.kernel_flag[None], RETURN_CODE.NAN)
 
                 # compute actual new_pos with new_vel
                 new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
@@ -498,6 +515,10 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
+        if self.kernel_flag[None] == RETURN_CODE.NAN:
+            gs.raise_exception(
+                "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+            )
 
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(
