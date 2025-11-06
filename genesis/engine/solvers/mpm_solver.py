@@ -23,15 +23,6 @@ if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
 
 
-class RETURN_CODE(IntEnum):
-    """
-    Return codes for detecting potential issues during MPM simulation.
-    """
-
-    SUCCESS = 0
-    NAN = 1
-
-
 @ti.data_oriented
 class MPMSolver(Solver):
     # ------------------------------------------------------------------------------------
@@ -75,9 +66,6 @@ class MPMSolver(Solver):
         self._materials_idx = list()
         self._materials_update_F_S_Jp = list()
         self._materials_update_stress = list()
-
-        # flag
-        self.kernel_flag = ti.field(dtype=gs.ti_int, shape=())
 
         # boundary
         self.setup_boundary()
@@ -411,8 +399,8 @@ class MPMSolver(Solver):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         rigid_global_info: array_class.RigidGlobalInfo,
-    ):
-        self.kernel_flag[None] = RETURN_CODE.SUCCESS
+    ) -> ti.i32:
+        is_success = True
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
@@ -447,7 +435,7 @@ class MPMSolver(Solver):
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
 
                 if ti.math.isnan(new_vel).any():
-                    self.kernel_flag[None] = ti.atomic_max(self.kernel_flag[None], RETURN_CODE.NAN)
+                    is_success = False
 
                 # compute actual new_pos with new_vel
                 new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
@@ -468,6 +456,8 @@ class MPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].Jp = self.particles[f, i_p, i_b].Jp
 
             self.particles_ng[f + 1, i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
+
+        return is_success
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -509,13 +499,13 @@ class MPMSolver(Solver):
         self.compute_F_tmp.grad(f)
 
     def substep_post_coupling(self, f):
-        self.g2p(
+        is_success = self.g2p(
             f,
             self.sim.coupler.rigid_solver.geoms_info,
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
-        if self.kernel_flag[None] == RETURN_CODE.NAN:
+        if not is_success:
             gs.raise_exception(
                 "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
             )
