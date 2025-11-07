@@ -672,12 +672,12 @@ def extract_slice(
     must_allocate = False
     is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int, np.integer)))
     if is_row_mask_tensor:
-        _row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
+        _row_mask = torch.as_tensor(row_mask, device=gs.device)
         must_allocate = _row_mask is not row_mask
         row_mask = _row_mask
     is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int, np.integer)))
     if is_col_mask_tensor:
-        _col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
+        _col_mask = torch.as_tensor(col_mask, device=gs.device)
         must_allocate = _col_mask is not col_mask
         col_mask = _col_mask
     if must_allocate:

@@ -2448,7 +2448,7 @@ def test_gravity(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_scene_saver_franka(show_viewer, tol):
+def test_scene_saver_franka(tmp_path, show_viewer, tol):
     scene1 = gs.Scene(
         show_viewer=show_viewer,
         profiling_options=gs.options.ProfilingOptions(
@@ -2473,7 +2473,7 @@ def test_scene_saver_franka(show_viewer, tol):
 
     pose_ref = franka1.get_dofs_position(dof_idx)
 
-    ckpt_path = Path(tempfile.gettempdir()) / "franka_unit.pkl"
+    ckpt_path = tmp_path / "franka_unit.pkl"
     scene1.save_checkpoint(ckpt_path)
 
     scene2 = gs.Scene(show_viewer=show_viewer)
