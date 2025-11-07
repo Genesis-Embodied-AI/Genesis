@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
-@ti.data_oriented
 class SupportField:
     def __init__(self, rigid_solver: "RigidSolver") -> None:
         self.solver = rigid_solver
