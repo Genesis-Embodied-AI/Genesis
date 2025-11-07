@@ -177,26 +177,34 @@ class Rate:
 
 
 class FPSTracker:
-    def __init__(self, n_envs, alpha=0.95):
+    def __init__(self, n_envs, alpha=0.95, minimum_interval_seconds: float | None = 0.1):
         self.last_time = None
         self.n_envs = n_envs
         self.dt_ema = None
         self.alpha = alpha
+        self.minimum_interval_seconds = minimum_interval_seconds
+        self.steps_since_last_print: int = 0
 
-    def step(self):
-        current_time = time.perf_counter()
+    def step(self, current_time: float | None = None) -> float | None:
+        if not current_time:
+            current_time = time.perf_counter()
 
         if self.last_time:
             dt = current_time - self.last_time
         else:
             self.last_time = current_time
-            return
+            return None
+
+        self.steps_since_last_print += 1
+
+        if self.minimum_interval_seconds and current_time - self.last_time < self.minimum_interval_seconds:
+            return None
 
         if self.dt_ema:
             self.dt_ema = self.alpha * self.dt_ema + (1 - self.alpha) * dt
         else:
             self.dt_ema = dt
-        fps = 1 / self.dt_ema
+        fps = 1 / self.dt_ema * self.steps_since_last_print
         if self.n_envs > 0:
             self.total_fps = fps * self.n_envs
             gs.logger.info(
@@ -206,3 +214,5 @@ class FPSTracker:
             self.total_fps = fps
             gs.logger.info(f"Running at ~<{fps:.2f}>~ FPS.")
         self.last_time = current_time
+        self.steps_since_last_print = 0
+        return self.total_fps
