@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
@@ -13,7 +14,15 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch, ti_to_numpy
+from genesis.utils.misc import (
+    ALLOCATE_TENSOR_WARNING,
+    DeprecationError,
+    ti_to_torch,
+    ti_to_numpy,
+    ti_to_python,
+    extract_slice,
+    _get_ti_metadata,
+)
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
@@ -122,6 +131,7 @@ class RigidSolver(Solver):
         self._options = options
 
         self._cur_step = -1
+        self._links_state_cache = {}
 
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
@@ -298,7 +308,7 @@ class RigidSolver(Solver):
         # Compute state in neutral configuration at rest
         qpos = ti_to_torch(self.qpos0, envs_idx, transpose=True, unsafe=True)
         if self.n_envs == 0:
-            qpos = qpos.squeeze(0)
+            qpos = qpos[0]
         self.set_qpos(qpos, envs_idx=envs_idx if self.n_envs > 0 else None)
 
         # Compute mass matrix without any implicit damping terms
@@ -315,19 +325,19 @@ class RigidSolver(Solver):
         )
 
         # Define some proxies for convenience
-        mass_mat_D_inv = self._rigid_global_info.mass_mat_D_inv.to_numpy()
-        mass_mat_L = self._rigid_global_info.mass_mat_L.to_numpy()
-        offsets = self.links_state.i_pos.to_numpy()
-        cdof_ang = self.dofs_state.cdof_ang.to_numpy()
-        cdof_vel = self.dofs_state.cdof_vel.to_numpy()
-        links_joint_start = self.links_info.joint_start.to_numpy()
-        links_joint_end = self.links_info.joint_end.to_numpy()
-        links_dof_end = self.links_info.dof_end.to_numpy()
-        links_n_dofs = self.links_info.n_dofs.to_numpy()
-        links_parent_idx = self.links_info.parent_idx.to_numpy()
-        joints_type = self.joints_info.type.to_numpy()
-        joints_dof_start = self.joints_info.dof_start.to_numpy()
-        joints_n_dofs = self.joints_info.n_dofs.to_numpy()
+        mass_mat_D_inv = ti_to_numpy(self._rigid_global_info.mass_mat_D_inv)
+        mass_mat_L = ti_to_numpy(self._rigid_global_info.mass_mat_L)
+        offsets = ti_to_numpy(self.links_state.i_pos)
+        cdof_ang = ti_to_numpy(self.dofs_state.cdof_ang)
+        cdof_vel = ti_to_numpy(self.dofs_state.cdof_vel)
+        links_joint_start = ti_to_numpy(self.links_info.joint_start)
+        links_joint_end = ti_to_numpy(self.links_info.joint_end)
+        links_dof_end = ti_to_numpy(self.links_info.dof_end)
+        links_n_dofs = ti_to_numpy(self.links_info.n_dofs)
+        links_parent_idx = ti_to_numpy(self.links_info.parent_idx)
+        joints_type = ti_to_numpy(self.joints_info.type)
+        joints_dof_start = ti_to_numpy(self.joints_info.dof_start)
+        joints_n_dofs = ti_to_numpy(self.joints_info.n_dofs)
 
         links_invweight = np.zeros((len(envs_idx), self._n_links, 2), dtype=gs.np_float)
         dofs_invweight = np.zeros((len(envs_idx), self._n_dofs), dtype=gs.np_float)
@@ -752,9 +762,12 @@ class RigidSolver(Solver):
         self.collider = Collider(self)
 
         if self.collider._collider_static_config.has_terrain:
-            links_idx = self.geoms_info.link_idx.to_numpy()[self.geoms_info.type.to_numpy() == gs.GEOM_TYPE.TERRAIN]
-            entity_idx = self.links_info.entity_idx.to_numpy()[links_idx[0]]
-            if isinstance(entity_idx, np.ndarray):
+            link_idx_ = next(
+                i for i, _type in enumerate(ti_to_numpy(self.geoms_info.type)) if _type == gs.GEOM_TYPE.TERRAIN
+            )
+            link_idx = ti_to_numpy(self.geoms_info.link_idx, link_idx_, keepdim=False)
+            entity_idx = ti_to_numpy(self.links_info.entity_idx, link_idx, keepdim=False)
+            if self._options.batch_links_info:
                 entity_idx = entity_idx[0]
             entity = self._entities[entity_idx]
 
@@ -783,9 +796,38 @@ class RigidSolver(Solver):
             else:
                 self.constraint_solver = ConstraintSolver(self)
 
+    def _get_links_data(
+        self,
+        field_name: str,
+        row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
+        col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
+        keepdim=True,
+        *,
+        to_torch=True,
+        unsafe=False,
+    ):
+        links_state_py = self._links_state_cache.setdefault((to_torch,), {})
+
+        field = getattr(self.links_state, field_name)
+        tensor = links_state_py.get(field_name)
+        if tensor is None:
+            tensor = links_state_py[field_name] = ti_to_python(field, transpose=True, to_torch=to_torch)
+
+        ti_data_meta = _get_ti_metadata(field)
+        if len(ti_data_meta.shape) < 2:
+            if row_mask is not None and col_mask is not None:
+                gs.raise_exception("Cannot specify both row and colum masks for tensor with 1D batch.")
+            batch_shape = (row_mask if col_mask is None else col_mask, None)
+        else:
+            batch_shape = (row_mask, col_mask)
+
+        return extract_slice(tensor, *batch_shape, keepdim, unsafe=unsafe)
+
     def substep(self):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
+
+        self._links_state_cache.clear()
 
         kernel_step_1(
             links_state=self.links_state,
@@ -1207,11 +1249,13 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+
             self.collider.reset(envs_idx)
             self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
                 self.constraint_solver.clear(envs_idx)
+            self._links_state_cache.clear()
             self._cur_step = -1
 
     def process_input(self, in_backward=False):
@@ -1440,6 +1484,8 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
+
+        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -1489,6 +1535,8 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
+
+        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -1559,11 +1607,13 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             qpos = qpos.unsqueeze(0)
         kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
+
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
             self.constraint_solver.clear(envs_idx)
+        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -1751,6 +1801,7 @@ class RigidSolver(Solver):
                 velocity = velocity.unsqueeze(0)
             kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
+        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -1784,11 +1835,13 @@ class RigidSolver(Solver):
             self._rigid_global_info,
             self._static_rigid_sim_config,
         )
+
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
             self.constraint_solver.clear(envs_idx)
+        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -1849,7 +1902,7 @@ class RigidSolver(Solver):
             # Always batched
             tensor = ti_to_torch(self.equalities_info.sol_params, envs_idx, eqs_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0:
-                tensor = tensor.squeeze(0)
+                tensor = tensor[0]
         elif joints_idx is not None:
             # Conditionally batched
             if not unsafe and not self._options.batch_joints_info:
@@ -1858,7 +1911,7 @@ class RigidSolver(Solver):
             # tensor = ti_to_torch(self.joints_info.sol_params, *batch_shape, transpose=True, unsafe=unsafe)
             tensor = ti_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, unsafe=unsafe)
             if self.n_envs == 0 and self._options.batch_joints_info:
-                tensor = tensor.squeeze(0)
+                tensor = tensor[0]
         else:
             # Never batched
             if not unsafe:
@@ -1883,24 +1936,25 @@ class RigidSolver(Solver):
         envs_idx=None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        to_torch: bool = True,
         unsafe: bool = False,
     ):
         ref = self._convert_ref_to_idx(ref)
         if ref == 0:
-            tensor = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+            tensor = self._get_links_data("root_COM", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
         elif ref == 1:
-            i_pos = ti_to_torch(self.links_state.i_pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-            root_COM = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+            i_pos = self._get_links_data("i_pos", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+            root_COM = self._get_links_data("root_COM", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
             tensor = i_pos + root_COM
         elif ref == 2:
-            tensor = ti_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, unsafe=unsafe)
+            tensor = self._get_links_data("pos", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
         else:
             raise gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_quat(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        tensor = ti_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+    def get_links_quat(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
+        tensor = self._get_links_data("quat", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(
         self,
@@ -1918,9 +1972,9 @@ class RigidSolver(Solver):
         kernel_get_links_vel(tensor, links_idx, envs_idx, ref, self.links_state, self._static_rigid_sim_config)
         return _tensor
 
-    def get_links_ang(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        tensor = ti_to_torch(self.links_state.cd_ang, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+    def get_links_ang(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
+        tensor = self._get_links_data("cd_ang", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None, *, unsafe=False):
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -1936,51 +1990,51 @@ class RigidSolver(Solver):
         )
         return _tensor
 
-    def get_links_acc_ang(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        tensor = ti_to_torch(self.links_state.cacc_ang, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+    def get_links_acc_ang(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
+        tensor = self._get_links_data("cacc_ang", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+        return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_root_COM(self, links_idx=None, envs_idx=None, *, unsafe=False):
+    def get_links_root_COM(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
         """
         Returns the center of mass (COM) of the entire kinematic tree to which the specified links belong.
 
         This corresponds to the global COM of each entity, assuming a single-rooted structure - that is, as long as no
         two successive links are connected by a free-floating joint (ie a joint that allows all 6 degrees of freedom).
         """
-        tensor = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        tensor = self._get_links_data("root_COM", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+        return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        tensor = ti_to_torch(self.links_state.mass_shift, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+    def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
+        tensor = self._get_links_data("mass_shift", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+        return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_COM_shift(self, links_idx=None, envs_idx=None, *, unsafe=False):
-        tensor = ti_to_torch(self.links_state.i_pos_shift, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+    def get_links_COM_shift(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
+        tensor = self._get_links_data("i_pos_shift", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_inertial_mass(self, links_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
         tensor = ti_to_torch(self.links_info.inertial_mass, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_links_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
     def get_links_invweight(self, links_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
         tensor = ti_to_torch(self.links_info.invweight, envs_idx, links_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_links_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
     def get_geoms_friction_ratio(self, geoms_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self.geoms_state.friction_ratio, envs_idx, geoms_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_geoms_pos(self, geoms_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self.geoms_state.pos, envs_idx, geoms_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_qpos(self, qs_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self.qpos, envs_idx, qs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         _tensor, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -1994,34 +2048,34 @@ class RigidSolver(Solver):
 
     def get_dofs_force(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self.dofs_state.force, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_velocity(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self.dofs_state.vel, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_position(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         tensor = ti_to_torch(self.dofs_state.pos, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_kp(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.kp, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_kv(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.kv, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_force_range(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.force_range, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         if self.n_envs == 0 and self._options.batch_dofs_info:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_limit(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
@@ -2029,38 +2083,38 @@ class RigidSolver(Solver):
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.limit, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
         if self.n_envs == 0 and self._options.batch_dofs_info:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor[..., 0], tensor[..., 1]
 
     def get_dofs_stiffness(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.stiffness, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_invweight(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.invweight, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_armature(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.armature, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_damping(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.damping, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_dofs_frictionloss(self, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if not unsafe and not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
         tensor = ti_to_torch(self.dofs_info.frictionloss, envs_idx, dofs_idx, transpose=True, unsafe=unsafe)
-        return tensor.squeeze(0) if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False, *, unsafe=False):
         tensor = ti_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, unsafe=unsafe)
@@ -2073,14 +2127,14 @@ class RigidSolver(Solver):
             else:
                 tensor = tensor[:, dofs_idx.unsqueeze(1), dofs_idx]
         if self.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
 
         if decompose:
             mass_mat_D_inv = ti_to_torch(
                 self._rigid_global_info.mass_mat_D_inv, envs_idx, dofs_idx, transpose=True, unsafe=unsafe
             )
             if self.n_envs == 0:
-                mass_mat_D_inv = mass_mat_D_inv.squeeze(0)
+                mass_mat_D_inv = mass_mat_D_inv[0]
             return tensor, mass_mat_D_inv
 
         return tensor
@@ -2120,7 +2174,7 @@ class RigidSolver(Solver):
 
             aabb = torch.stack(entity_aabbs, dim=-2)
 
-        return aabb.squeeze(0) if self.n_envs == 0 else aabb
+        return aabb[0] if self.n_envs == 0 else aabb
 
     def set_geom_friction(self, friction, geoms_idx):
         kernel_set_geom_friction(geoms_idx, friction, self.geoms_info)

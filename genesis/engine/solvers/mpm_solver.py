@@ -398,9 +398,10 @@ class MPMSolver(Solver):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         rigid_global_info: array_class.RigidGlobalInfo,
-    ):
+    ) -> ti.i32:
+        is_success = True
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if self.particles_ng[f, i_p, i_b].active:
+            if is_success and self.particles_ng[f, i_p, i_b].active:
                 base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
                 fx = self.particles[f, i_p, i_b].pos * self._inv_dx - base.cast(gs.ti_float)
                 w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1.0) ** 2, 0.5 * (fx - 0.5) ** 2]
@@ -432,17 +433,19 @@ class MPMSolver(Solver):
                     new_vel += weight * grid_vel
                     new_C += 4 * self._inv_dx * weight * grid_vel.outer_product(dpos)
 
-                # compute actual new_pos with new_vel
-                new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
+                if not ti.math.isnan(new_vel).any():
+                    # compute actual new_pos with new_vel
+                    new_pos = self.particles[f, i_p, i_b].pos + self.substep_dt * new_vel
 
-                # impose boundary for safety, in case simulation explodes and tries to access illegal cell address
-                new_pos, new_vel = self.boundary.impose_pos_vel(new_pos, new_vel)
+                    # impose boundary for safety, in case simulation explodes and tries to access illegal cell address
+                    new_pos, new_vel = self.boundary.impose_pos_vel(new_pos, new_vel)
 
-                # advect to next frame
-                self.particles[f + 1, i_p, i_b].vel = new_vel
-                self.particles[f + 1, i_p, i_b].C = new_C
-                self.particles[f + 1, i_p, i_b].pos = new_pos
-
+                    # advect to next frame
+                    self.particles[f + 1, i_p, i_b].vel = new_vel
+                    self.particles[f + 1, i_p, i_b].C = new_C
+                    self.particles[f + 1, i_p, i_b].pos = new_pos
+                else:
+                    is_success = False
             else:
                 self.particles[f + 1, i_p, i_b].vel = self.particles[f, i_p, i_b].vel
                 self.particles[f + 1, i_p, i_b].pos = self.particles[f, i_p, i_b].pos
@@ -451,6 +454,8 @@ class MPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].Jp = self.particles[f, i_p, i_b].Jp
 
             self.particles_ng[f + 1, i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
+
+        return is_success
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -492,12 +497,16 @@ class MPMSolver(Solver):
         self.compute_F_tmp.grad(f)
 
     def substep_post_coupling(self, f):
-        self.g2p(
+        is_success = self.g2p(
             f,
             self.sim.coupler.rigid_solver.geoms_info,
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
+        if not is_success:
+            gs.raise_exception(
+                "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+            )
 
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(

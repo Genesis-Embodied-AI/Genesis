@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -132,7 +134,7 @@ def test_fluid_emitter(n_envs, material_type, show_viewer):
     )
     emitter = scene.add_emitter(
         material=material_type(),
-        max_particles=1400,
+        max_particles=5000,
         surface=gs.surfaces.Glass(
             color=(0.7, 0.85, 1.0, 0.7),
         ),
