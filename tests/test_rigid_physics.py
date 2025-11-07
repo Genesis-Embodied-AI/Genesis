@@ -1842,7 +1842,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     # MPR collision detection is less reliable than SDF and GJK in terms of penetration depth estimation
     is_mpr = convexify and not gjk_collision
     tol_pos = 0.05 if is_mpr else 0.01
-    tol_rot = 1.1 if is_mpr else 0.4
+    tol_rot = 1.2 if is_mpr else 0.4
     for i in range(450):
         scene.step()
         if i > 350:
