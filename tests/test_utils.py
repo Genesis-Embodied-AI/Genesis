@@ -425,3 +425,10 @@ def test_fps_tracker():
     fps = tracker.step(current_time=10.31)
     # num envs * [num steps] / (delta time)
     assert math.isclose(fps, n_envs * 4 / 0.11)
+
+    assert not tracker.step(current_time=10.33)
+    assert not tracker.step(current_time=10.37)
+    assert not tracker.step(current_time=10.39)
+    fps = tracker.step(current_time=10.45)
+    # num envs * [num steps] / (delta time)
+    assert math.isclose(fps, n_envs * 4 / 0.14)
