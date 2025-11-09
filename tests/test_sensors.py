@@ -160,6 +160,106 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
+    """Test if the sensor will detect the correct forces being applied on a falling box."""
+    GRAVITY = -10.0
+    BIAS = (0.1, 0.2, 0.3)
+    NOISE = 0.01
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1e-2,
+            substeps=1,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    floor = scene.add_entity(morph=gs.morphs.Plane())
+
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),  # volume = 1 m^3
+            pos=(0.0, 0.0, 1.1),
+        ),
+        material=gs.materials.Rigid(rho=1.0),  # mass = 1 kg
+    )
+
+    bool_sensor_floor = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=floor.idx,
+        )
+    )
+    bool_sensor_box = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box.idx,
+        )
+    )
+    force_sensor = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box.idx,
+        )
+    )
+    force_sensor_noisy = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box.idx,
+            min_force=0.01,
+            max_force=(10.0, 20.0, -GRAVITY / 2),
+            noise=NOISE,
+            bias=BIAS,
+            random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
+            delay=0.05,
+            jitter=0.01,
+            interpolate=True,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    assert not bool_sensor_floor.read().any(), "ContactSensor for floor should not detect any contact yet."
+    assert not bool_sensor_box.read().any(), "ContactSensor for box should not detect any contact yet."
+    assert_allclose(
+        force_sensor_noisy.read_ground_truth(),
+        0.0,
+        tol=gs.EPS,
+        err_msg="noisy ContactForceSensor ground truth reading should be zero before contact.",
+    )
+    assert_allclose(
+        force_sensor.read(),
+        force_sensor_noisy.read_ground_truth(),
+        tol=gs.EPS,
+        err_msg="noisy ContactForceSensor ground truth reading should equal noise ContactForceSensor reading.",
+    )
+    assert_allclose(
+        force_sensor_noisy.read(),
+        expand_batch_dim(BIAS, n_envs),
+        tol=NOISE * 3,
+        err_msg="noisy ContactForceSensor should only read bias and small amount of noise before contact.",
+    )
+
+    for _ in range(120):
+        scene.step()
+
+    assert bool_sensor_box.read().all(), "Sensor should detect contact with the ground"
+    assert_allclose(
+        force_sensor_noisy.read_ground_truth(),
+        expand_batch_dim((0.0, 0.0, -GRAVITY), n_envs),
+        tol=tol,
+        err_msg="ContactForceSensor ground truth should be equal to -gravity (normal) force.",
+    )
+    assert_allclose(
+        force_sensor_noisy.read(),
+        expand_batch_dim((BIAS[0], BIAS[1], -GRAVITY / 2), n_envs),
+        tol=NOISE * 10,
+        err_msg="ContactForceSensor should read bias and noise and -gravity (normal) force clipped by max_force.",
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_raycaster_hits(show_viewer, n_envs):
     """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
     NUM_RAYS_XY = (3, 5)

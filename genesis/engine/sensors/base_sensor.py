@@ -305,7 +305,6 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         else:
             # per sensor field structure
             index_slice = self._idx
-        # field[envs_idx, index_slice] = self._sanitize_for_metadata_tensor(
         field[:, index_slice] = self._sanitize_for_metadata_tensor(
             input, shape=(len(envs_idx), field_size), dtype=field.dtype
         )
