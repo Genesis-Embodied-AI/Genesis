@@ -469,9 +469,9 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
             v_primal = v.arr
             v_grad = v.grad.arr if v.grad else None
             if v_grad is None:
-                launch_ctx.set_arg_ndarray((i - template_num,), v_primal)
+                launch_ctx.set_arg_ndarray(i - template_num, v_primal)
             else:
-                launch_ctx.set_arg_ndarray_with_grad((i - template_num,), v_primal, v_grad)
+                launch_ctx.set_arg_ndarray_with_grad(i - template_num, v_primal, v_grad)
             continue
 
         # ti.field
@@ -505,7 +505,7 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
             nbytes = v.element_size() * v.nelement()
             grad_ptr = int(v.grad.data_ptr()) if v.grad is not None else 0
 
-        launch_ctx.set_arg_external_array_with_shape((i - template_num,), arr_ptr, nbytes, array_shape, grad_ptr)
+        launch_ctx.set_arg_external_array_with_shape(i - template_num, arr_ptr, nbytes, array_shape, grad_ptr)
 
     try:
         prog = impl.get_runtime().prog
