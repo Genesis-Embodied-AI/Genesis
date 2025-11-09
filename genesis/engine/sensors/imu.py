@@ -32,7 +32,9 @@ if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
 
 
-def _get_skew_to_alignment_matrix(input: MaybeMatrix3x3Type, out: torch.Tensor | None = None) -> torch.Tensor:
+def _get_cross_axis_coupling_to_alignment_matrix(
+    input: MaybeMatrix3x3Type, out: torch.Tensor | None = None
+) -> torch.Tensor:
     """
     Convert the alignment input to a matrix. Modifies in place if provided, else allocate a new matrix.
     """
@@ -97,15 +99,15 @@ class IMUSensor(
         self.pos_offset: torch.Tensor
 
     @gs.assert_built
-    def set_acc_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
+    def set_acc_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
-        rot_matrix = _get_skew_to_alignment_matrix(axes_skew)
+        rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2, :, :] = rot_matrix
 
     @gs.assert_built
-    def set_gyro_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
+    def set_gyro_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
-        rot_matrix = _get_skew_to_alignment_matrix(axes_skew)
+        rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2 + 1, :, :] = rot_matrix
 
     # ================================ internal methods ================================
@@ -128,8 +130,8 @@ class IMUSensor(
             self._shared_metadata.alignment_rot_matrix,
             torch.stack(
                 [
-                    _get_skew_to_alignment_matrix(self._options.acc_axes_skew),
-                    _get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
+                    _get_cross_axis_coupling_to_alignment_matrix(self._options.acc_cross_axis_coupling),
+                    _get_cross_axis_coupling_to_alignment_matrix(self._options.gyro_cross_axis_coupling),
                 ],
             ),
             expand=(self._manager._sim._B, 2, 3, 3),
