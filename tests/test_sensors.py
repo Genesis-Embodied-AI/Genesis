@@ -57,8 +57,8 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     imu_noisy = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
-            acc_axes_skew=0.01,
-            gyro_axes_skew=(0.02, 0.03, 0.04),
+            acc_cross_axis_coupling=0.01,
+            gyro_cross_axis_coupling=(0.02, 0.03, 0.04),
             acc_noise=(0.01, 0.01, 0.01),
             gyro_noise=(0.01, 0.01, 0.01),
             acc_random_walk=(0.001, 0.001, 0.001),
@@ -141,11 +141,11 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
-    imu.set_acc_axes_skew((0.0, 1.0, 0.0))
+    imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
     scene.step()
     assert_allclose(imu.read().lin_acc, GRAVITY, tol=5e-6)
     imu.set_quat_offset((0.0, 0.0, 0.0, 1.0))
-    imu.set_acc_axes_skew((0.0, 0.0, 0.0))
+    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
 
     scene.reset()
 
