@@ -4,6 +4,7 @@ import marshal
 import math
 import os
 import pickle as pkl
+import platform
 from itertools import chain
 from functools import lru_cache
 from pathlib import Path
@@ -981,6 +982,9 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
+    if platform.machine() == "aarch64":
+        gs.raise_exception("This method is not support on Linux ARM because 'tetgen' module is crashing.")
+
     # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
     import pyvista as pv
     import tetgen

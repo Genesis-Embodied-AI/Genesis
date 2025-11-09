@@ -9,7 +9,6 @@ import threading
 from threading import Event, RLock, Semaphore, Thread
 from typing import Optional, TYPE_CHECKING
 
-import cv2
 import numpy as np
 import OpenGL
 from OpenGL.GL import *
@@ -1107,6 +1106,9 @@ class Viewer(pyglet.window.Window):
         return filename
 
     def _save_image(self):
+        # Postpone import of OpenCV at runtime to reduce hard system dependencies
+        import cv2
+
         filename = self._get_save_filename(["png", "jpg", "gif", "all"])
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)

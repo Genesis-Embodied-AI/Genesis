@@ -183,7 +183,8 @@ def get_platform():
 
 def get_device(backend: gs_backend, device_idx: Optional[int] = None):
     if backend == gs_backend.cpu:
-        device_name = cpuinfo.get_cpu_info()["brand_raw"]
+        cpu_info = cpuinfo.get_cpu_info()
+        device_name = next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw"))))
         total_mem = psutil.virtual_memory().total / 1024**3
         device = torch.device("cpu", device_idx)
     elif backend == gs_backend.cuda:
