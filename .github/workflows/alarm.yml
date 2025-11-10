@@ -70,11 +70,10 @@ jobs:
         run: |
           { python - << 'PY'; EXIT_CODE=$?; } || true
 
-          import os, sys, json, re, math
+          import os, sys, json, re, math, statistics
           import wandb
           from pathlib import Path
           import csv
-          import statistics as stats
 
           # ----- arguments -----
 
