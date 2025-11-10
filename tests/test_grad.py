@@ -326,11 +326,9 @@ def test_diff_solver(backend, monkeypatch):
         assert_allclose(dL_error, 0.0, atol=RTOL)
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(precision, show_viewer):
-    # FIXME: Wait for fix to be merged in GsTaichi: https://github.com/Genesis-Embodied-AI/gstaichi/pull/225
-    if sys.platform == "darwin" and gs.backend != gs.cpu:
-        pytest.skip(reason="GsTaichi does not support AutoDiff on non-CPU backend on Mac OS for now.")
     if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
         pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
 

@@ -39,6 +39,9 @@ jobs:
       matrix:
         GS_ENABLE_NDARRAY: ["0", "1"]
 
+    env:
+      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -75,7 +78,7 @@ jobs:
               pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
               pip install --no-input ".[dev,render,usd]"
 
-              pytest -v --backend gpu --dev --forked ./tests
+              pytest -v -rs --backend gpu --dev --forked ./tests
           EOF
       - name: Kill srun job systematically
         if: always()
