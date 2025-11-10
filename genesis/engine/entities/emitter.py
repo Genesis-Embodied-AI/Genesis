@@ -230,7 +230,7 @@ class Emitter(RBC):
 
         n_particles = len(positions)
         if n_particles > self._entity.n_particles:
-            gs.logger.warning(
+            gs.raise_exception(
                 f"Number of particles to emit ({n_particles}) at the current step is larger than the maximum number "
                 f"of particles ({self._entity.n_particles})."
             )
