@@ -63,13 +63,18 @@ jobs:
           ARTIFACTS_DIR: ${{ steps.dl.outputs.download-path }}
           PR_COMMENT_PATH: pr_comment.md
           CHECK_BODY_PATH: check_output.md
+          CSV_RUNTIME_PATH: runtime_fps.csv
+          CSV_COMPILE_PATH: compile_time.csv
+          TABLES_JSONL_PATH: benchmark_tables.jsonl
           EXIT_CODE_REGRESSION: 42
         run: |
           { python - << 'PY'; EXIT_CODE=$?; } || true
 
-          import os, sys, json, re, math, statistics
+          import os, sys, json, re, math
           import wandb
           from pathlib import Path
+          import csv
+          import statistics as stats
 
           # ----- arguments -----
 
@@ -85,6 +90,10 @@ jobs:
 
           pr_comment_path = Path(os.environ["PR_COMMENT_PATH"]).expanduser()
           check_body_path = Path(os.environ["CHECK_BODY_PATH"]).expanduser()
+
+          csv_runtime = Path(os.environ["CSV_RUNTIME_PATH"]).expanduser().resolve()
+          csv_compile = Path(os.environ["CSV_COMPILE_PATH"]).expanduser().resolve()
+          jsonl_path  = Path(os.environ["TABLES_JSONL_PATH"]).expanduser().resolve()
 
           # ---------- helpers ----------
 
@@ -204,11 +213,36 @@ jobs:
               }
 
           # ----- build TWO tables -----
+          # Parse benchmark IDs into key-value dicts
+          def parse_norm_id(nbid: str) -> dict:
+              kv = {}
+              if nbid:
+                  for token in nbid.split("-"):
+                      token = token.strip()
+                      if token and "=" in token:
+                          k, v = token.split("=", 1)
+                          kv[k.strip()] = v.strip()
+              return kv
+
+          id2kv = {bid: parse_norm_id(bid) for bid in current_bm.keys()}
+          all_keys = set()
+          for kv in id2kv.values():
+              all_keys.update(kv.keys())
+          ordered_keys = sorted(all_keys)
 
           reg_found = False
           tables = {}
+          rows_for_csv = {
+              "runtime_fps": [],
+              "compile_time": []
+          }
           for metric, alias in (("runtime_fps", "FPS"), ("compile_time", "compile")):
-              rows = []
+              rows_md = []
+
+              header_cells = ["status"] + ordered_keys + [f"current {alias}", f"baseline {alias} [last (mean ± std)]", f"Δ {alias}"]
+              header = "| " + " | ".join(header_cells) + " |"
+              align  = "|:------:|" + "|".join([":---" for _ in ordered_keys]) + "|---:|---:|---:|"
+
               for bid in sorted(current_bm.keys()):
                   value_cur = current_bm[bid][metric]
                   is_int = isinstance(value_cur, int) or value_cur.is_integer()
@@ -219,6 +253,7 @@ jobs:
                       for record in records_by_rev.values()
                       if bid in record
                   ]
+                  is_reg = False
                   if values_prev:
                       value_ref = statistics.fmean(values_prev)
                       delta = (value_cur - value_ref) / value_ref * 100.0
@@ -228,27 +263,38 @@ jobs:
                       if len(values_prev) == MAX_VALID_REVISIONS:
                           value_std = statistics.stdev(values_prev)
                           stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                          if abs(delta) > METRICS_TOL[metrics]:
+                          if abs(delta) > METRICS_TOL[metric]:
                               delta_repr = f"**{delta_repr}**"
                               picto = "🔴"
                               reg_found = True
+                              is_reg = True
                           else:
                               picto = "✅"
                       else:
                           picto = "ℹ️"
                   else:
                       picto, stats_repr, delta_repr = "ℹ️", "---", "---"
+                      value_ref, delta = None, None
 
-                  rows.append([picto, f"`{bid}`", value_repr, stats_repr, delta_repr])
+                  kv = id2kv[bid]
+                  key_cells = [kv.get(k, "-") for k in ordered_keys]
 
-              header = [
-                f"| status | benchmark ID | current {alias} | baseline {alias} [last (mean ± std)] | Δ {alias} |",
-                "|:------:|:-------------|-----------:|-------------:|------:|",
-              ]
-              tables[metric] = header + ["| " + " | ".join(r) + " |" for r in rows]
+                  rows_md.append("| " + " | ".join([picto] + key_cells + [value_repr, stats_repr, delta_repr]) + " |")
 
-          # ----- baseline commit list -----
+                  # CSV/JSONL
+                  rows_for_csv[metric].append({
+                      "metric": metric,
+                      "benchmark_id": bid,
+                      "status": "regression" if is_reg else ("not_enough_baselines" if (len(values_prev) < MAX_VALID_REVISIONS) else "ok"),
+                      **{k: kv.get(k, "-") for k in ordered_keys},
+                      "current": float(value_cur) if isinstance(value_cur,(int,float)) else None,
+                      "baseline_mean": float(value_ref) if isinstance(value_ref,(int,float)) else None,
+                      "delta_pct": float(delta) if isinstance(delta,(int,float)) else None,
+                  })
 
+              tables[metric] = [header, align] + rows_md
+
+          # ----- baseline commit list (MD) -----
           blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
           baseline_block = ["**Baselines considered:** " + f"**{len(records_by_rev)}** commits"] + blist
 
@@ -274,15 +320,52 @@ jobs:
           )
 
           # ----- COMMENT body (only if regressions) -----
-
           if reg_found:
-              comment_body = "\n".join([":warning: **Benchmark Regression Detected**", *check_body])
+              comment_body = "\n".join([
+                  ":warning: **Benchmark Regression Detected**",
+                  *baseline_block,
+                  "",
+                  f"Thresholds: {thr_repr}",
+                  "",
+                  "### Runtime FPS",
+                  *tables["runtime_fps"],
+                  "",
+                  "### Compile Time",
+                  *tables["compile_time"],
+              ])
           else:
               comment_body = ""
 
-          # Write files
-          check_body_path.write_text(check_body + "\n", encoding="utf-8")
-          pr_comment_path.write_text(comment_body + "\n", encoding="utf-8")
+          # common CSV header
+          csv_header = (
+              ["metric", "benchmark_id", "status"]
+              + ordered_keys
+              + ["current", "baseline_last", "baseline_mean", "baseline_std", "delta_pct"]
+          )
+
+          # runtime_fps.csv
+          with csv_runtime.open("w", newline="", encoding="utf-8") as f:
+              w = csv.DictWriter(f, fieldnames=csv_header)
+              w.writeheader()
+              for rec in rows_for_csv["runtime_fps"]:
+                  w.writerow(rec)
+
+          # compile_time.csv
+          with csv_compile.open("w", newline="", encoding="utf-8") as f:
+              w = csv.DictWriter(f, fieldnames=csv_header)
+              w.writeheader()
+              for rec in rows_for_csv["compile_time"]:
+                  w.writerow(rec)
+
+          # JSONL (all two metrics)
+          with jsonl_path.open("w", encoding="utf-8") as f:
+              for m in ("runtime_fps", "compile_time"):
+                  for rec in rows_for_csv[m]:
+                      f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+          # write md results
+          check_body_path.write_text(check_body+"\n", encoding="utf-8")
+          pr_comment_path.write_text(comment_body+"\n", encoding="utf-8")
 
           # Exit with 42 if regressions are found, 0 otherwise
           sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]) if reg_found else 0)
@@ -369,3 +452,14 @@ jobs:
                 text: process.env.CHECK_BODY || undefined
               }
             });
+
+      - name: Upload benchmark comparisons in CSV & JSONL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison-tables
+          path: |
+            runtime_fps.csv
+            compile_time.csv
+            benchmark_tables.jsonl
+          if-no-files-found: warn
