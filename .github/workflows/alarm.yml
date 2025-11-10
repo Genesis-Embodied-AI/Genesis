@@ -320,18 +320,7 @@ jobs:
 
           # ----- COMMENT body (only if regressions) -----
           if reg_found:
-              comment_body = "\n".join([
-                  ":warning: **Benchmark Regression Detected**",
-                  *baseline_block,
-                  "",
-                  f"Thresholds: {thr_repr}",
-                  "",
-                  "### Runtime FPS",
-                  *tables["runtime_fps"],
-                  "",
-                  "### Compile Time",
-                  *tables["compile_time"],
-              ])
+              comment_body = "\n".join([":warning: **Benchmark Regression Detected**", *check_body])
           else:
               comment_body = ""
 
