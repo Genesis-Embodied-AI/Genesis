@@ -1431,7 +1431,10 @@ class RigidEntity(Entity):
             self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]]
             # set new qpos
             rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
-            # run FK
+
+        # run FK
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
@@ -1446,18 +1449,21 @@ class RigidEntity(Entity):
                 static_rigid_sim_config,
             )
 
-        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             for i in ti.static(range(3)):
                 links_pos[i_b_, i_l_, i] = links_state.pos[links_idx[i_l_], envs_idx[i_b_]][i]
             for i in ti.static(range(4)):
                 links_quat[i_b_, i_l_, i] = links_state.quat[links_idx[i_l_], envs_idx[i_b_]][i]
 
+        # restore original qpos
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
-            # restore original qpos
             rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
-            # run FK
+
+        # run FK
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],

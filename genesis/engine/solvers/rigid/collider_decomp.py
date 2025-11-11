@@ -1561,7 +1561,7 @@ def func_narrow_phase_diff_convex_vs_convex(
     gjk_static_config: ti.template(),
 ):
     # Compute reference contacts
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_c, i_b in ti.ndrange(collider_state.contact_data.pos.shape[0], collider_state.active_buffer.shape[1]):
         if i_c < collider_state.n_contacts[i_b]:
             ref_id = collider_state.diff_contact_input.ref_id[i_b, i_c]
