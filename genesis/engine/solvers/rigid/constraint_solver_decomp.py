@@ -31,10 +31,14 @@ class ConstraintSolver:
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         self.sparse_solve = rigid_solver._options.sparse_solve
 
-        # 4 constraints per contact, 1 constraints per joint limit (upper and lower, if not inf), and 3 constraints per equality
-        self.len_constraints = (
-            5 * rigid_solver.collider._collider_info.max_contact_pairs[None]
-            + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
+        # * 4 constraints per contact
+        # * 1 constraint per joint limit (upper and lower, if not inf)
+        # * 1 constraint per dof frictionloss
+        # * up to 6 constraints per equality (weld)
+        self.len_constraints = int(
+            4 * rigid_solver.collider._collider_info.max_contact_pairs[None]
+            + (self._solver.dofs_info.frictionloss.to_numpy() > gs.EPS).sum()
+            + (~np.isinf(self._solver.dofs_info.limit.to_numpy()).any(axis=-1)).sum()
             + self._solver.n_equalities_candidate * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
