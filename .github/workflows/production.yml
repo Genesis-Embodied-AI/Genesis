@@ -19,7 +19,7 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_10"
+  GENESIS_IMAGE_VER: "1_14"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
   PY_COLORS: 1
@@ -64,7 +64,7 @@ jobs:
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
             --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
-            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -e -s << 'EOF'
               if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
@@ -127,7 +127,7 @@ jobs:
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
             --export=${SLURM_ENV_VARS} \
-            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -e -s << 'EOF'
               # sudo apt update
