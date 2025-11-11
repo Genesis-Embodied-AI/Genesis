@@ -2260,7 +2260,7 @@ class RigidEntity(Entity):
         self._solver.control_dofs_velocity(velocity, dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def control_dofs_position(self, position, velocity=None, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
+    def control_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
         """
         Set the position controller's target position for the entity's dofs. The controller is a proportional term
         plus a velocity damping term (virtual friction).
@@ -2269,9 +2269,9 @@ class RigidEntity(Entity):
         ----------
         position : array_like
             The target position to set.
-        dofs_idx_local : None | array_like, optional
+        dofs_idx_local : array_like, optional
             The indices of the dofs to control. If None, all dofs will be controlled. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
-        envs_idx : None | array_like, optional
+        envs_idx : array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)

@@ -1876,9 +1876,7 @@ class RigidSolver(Solver):
             velocity, dofs_idx, envs_idx, self.dofs_state, self.dofs_info, self._static_rigid_sim_config
         )
         if not unsafe and not has_gains:
-            raise gs.raise_exception(
-                "Please set control gains kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
-            )
+            raise gs.raise_exception("Please set control gains kv using `set_dofs_kv` prior to calling this method.")
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -3250,9 +3248,9 @@ def func_compute_mass_matrix(
                         rigid_global_info.mass_mat[i_d, i_d, i_b] += (
                             dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                         )
-                        if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
-                            dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY) or(
-                            dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
+                        if (
+                            dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
+                            or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                         ):
                             # qM += d qfrc_actuator / d qvel
                             rigid_global_info.mass_mat[i_d, i_d, i_b] += (
@@ -3327,9 +3325,9 @@ def func_compute_mass_matrix(
             for i_d, i_b in ti.ndrange(n_dofs, _B):
                 I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                 rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
-                if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
-                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY) or (
-                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
+                if (
+                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
+                    or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                 ):
                     # qM += d qfrc_actuator / d qvel
                     rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
@@ -3371,9 +3369,9 @@ def func_factor_mass(
                                 dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                             )
                             if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
-                                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY)  or (
-                                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
+                                if (
+                                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
+                                    or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                 ):
                                     rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
                                         dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
@@ -3412,9 +3410,9 @@ def func_factor_mass(
                             dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                         )
                         if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                            if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
-                                dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY)  or (
-                                dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
+                            if (
+                                dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
+                                or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                             ):
                                 rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
                                     dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
@@ -4066,9 +4064,8 @@ def func_implicit_damping(
                     rigid_global_info.mass_mat_mask[i_e, i_b] = True
                 if ti.static(static_rigid_sim_config.integrator != gs.integrator.Euler):
                     if (
-                        (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION)
-                        or (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY)
-                        or (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY)
+                        dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
+                        or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                     ) and dofs_info.kv[I_d] > gs.EPS:
                         rigid_global_info.mass_mat_mask[i_e, i_b] = True
 
@@ -5343,17 +5340,9 @@ def func_torque_and_passive_force(
                 elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION and not (
                     joint_type == gs.JOINT_TYPE.FREE and i_d >= links_info.dof_start[I_l] + 3
                 ):
-                    force = (
-                        dofs_info.kp[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b])
-                        - dofs_info.kv[I_d] * dofs_state.vel[i_d, i_b]
-                    )
-                elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY and not (
-                    joint_type == gs.JOINT_TYPE.FREE and i_d >= links_info.dof_start[I_l] + 3
-                ):
-                    force = (
-                        dofs_info.kp[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b])
-                        + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
-                    )
+                    force = dofs_info.kp[I_d] * (
+                        dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]
+                    ) + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
 
                 dofs_state.qf_applied[i_d, i_b] = ti.math.clamp(
                     force,
@@ -6673,7 +6662,7 @@ def kernel_control_dofs_velocity(
         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.VELOCITY
         dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
-        if (dofs_info.kv[I_d] > gs.EPS):
+        if dofs_info.kv[I_d] > gs.EPS:
             has_gains = True
     return has_gains
 
@@ -6696,9 +6685,11 @@ def kernel_control_dofs_position(
         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION
         dofs_state.ctrl_pos[i_d, i_b] = position[i_b_, i_d_]
+        dofs_state.ctrl_vel[i_d, i_b] = 0.0
         if (dofs_info.kp[I_d] > gs.EPS) | (dofs_info.kv[I_d] > gs.EPS):
             has_gains = True
     return has_gains
+
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_control_dofs_position_velocity(
@@ -6717,7 +6708,7 @@ def kernel_control_dofs_position_velocity(
         i_b = envs_idx[i_b_]
 
         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-        dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION_VELOCITY
+        dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION
         dofs_state.ctrl_pos[i_d, i_b] = position[i_b_, i_d_]
         dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
         if (dofs_info.kp[I_d] > gs.EPS) | (dofs_info.kv[I_d] > gs.EPS):
@@ -6801,15 +6792,9 @@ def kernel_get_dofs_control_force(
         elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY:
             force = dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
         elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION:
-            force = (
-                dofs_info.kp[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b])
-                - dofs_info.kv[I_d] * dofs_state.vel[i_d, i_b]
-            )
-        elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION_VELOCITY:
-            force = (
-                dofs_info.kp[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b])
-                + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
-            )
+            force = dofs_info.kp[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]) + dofs_info.kv[
+                I_d
+            ] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
         tensor[i_b_, i_d_] = ti.math.clamp(
             force,
             dofs_info.force_range[I_d][0],
