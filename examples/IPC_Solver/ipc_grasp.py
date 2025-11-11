@@ -46,10 +46,11 @@ def main():
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
-    scene.sim.coupler.set_ipc_link_filter(
-        entity=franka,
-        link_names=["left_finger", "right_finger"],
-    )
+    if args.ipc:
+        scene.sim.coupler.set_ipc_link_filter(
+            entity=franka,
+            link_names=["left_finger", "right_finger"],
+        )
 
     material = (
         gs.materials.FEM.Elastic(E=5.0e3, nu=0.45, rho=1000.0, model="stable_neohookean")
