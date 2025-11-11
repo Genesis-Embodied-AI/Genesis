@@ -1110,12 +1110,9 @@ def test_position_control(show_viewer):
         rigid_options=gs.options.RigidOptions(
             batch_links_info=True,
             batch_dofs_info=True,
-            enable_self_collision=False,
+            disable_constraint=True,
             integrator=gs.integrator.approximate_implicitfast,
         ),
-        # vis_options=gs.options.VisOptions(
-        #     rendered_envs_idx=(1,),
-        # ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
@@ -1124,13 +1121,14 @@ def test_position_control(show_viewer):
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
-    scene.build(n_envs=2)
+    scene.build(n_envs=2, env_spacing=(1.0, 1.0))
 
     MOTORS_POS_TARGET = torch.tensor(
         [0.6900, -0.1100, -0.7200, -2.7300, -0.1500, 2.6400, 0.8900, 0.0400, 0.0400],
         dtype=gs.tc_float,
         device=gs.device,
     )
+    MOTORS_VEL_TARGET = torch.rand_like(MOTORS_POS_TARGET)
     MOTORS_KP = torch.tensor(
         [4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0],
         dtype=gs.tc_float,
@@ -1147,10 +1145,19 @@ def test_position_control(show_viewer):
     with pytest.raises(gs.GenesisException):
         robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
     with pytest.raises(gs.GenesisException):
-        robot.control_dofs_velocity(torch.zeros_like(MOTORS_POS_TARGET), envs_idx=0)
+        robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
+    with pytest.raises(gs.GenesisException):
+        robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
+
     robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
-    robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
+    with pytest.raises(gs.GenesisException):
+        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
+
     robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
+    robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
 
     # Must update DoF armature to emulate implicit damping for force control.
     # This is equivalent to the first-order correction term involved in implicit integration scheme,
@@ -1162,93 +1169,32 @@ def test_position_control(show_viewer):
     dofs_armature[:, 1] += tensor_to_array(MOTORS_KD * scene.sim._substep_dt)
     scene.rigid_solver.dofs_info.armature.from_numpy(dofs_armature)
 
-    for i in range(1000):
+    force_range = ti_to_torch(scene.rigid_solver.dofs_info.force_range)
+    for i in range(200):
         dofs_pos = robot.get_qpos(envs_idx=1)
         dofs_vel = robot.get_dofs_velocity(envs_idx=1)
-        dofs_torque = MOTORS_KP * (MOTORS_POS_TARGET - dofs_pos) - MOTORS_KD * dofs_vel
+        dofs_torque = MOTORS_KP * (MOTORS_POS_TARGET - dofs_pos) + MOTORS_KD * (MOTORS_VEL_TARGET - dofs_vel)
+        dofs_torque.clamp_(force_range[:, 1, 0], force_range[:, 1, 1])
         robot.control_dofs_force(dofs_torque, envs_idx=1)
         scene.step()
         qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_numpy().T
         # dofs_torque = robot.get_dofs_control_force()
+        assert_allclose(qf_applied[1], dofs_torque, tol=1e-6)
         assert_allclose(qf_applied[0], qf_applied[1], tol=1e-6)
-
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_position_velocity_control(show_viewer):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            substeps=1,  # This is essential to be able to emulate native PD control
-        ),
-        rigid_options=gs.options.RigidOptions(
-            batch_links_info=True,
-            batch_dofs_info=True,
-            enable_self_collision=False,
-            integrator=gs.integrator.approximate_implicitfast,
-        ),
-        # vis_options=gs.options.VisOptions(
-        #     rendered_envs_idx=(1,),
-        # ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-        ),
-    )
-    scene.build(n_envs=2)
-
-    MOTORS_POS_TARGET = torch.tensor(
-        [0.6900, -0.1100, -0.7200, -2.7300, -0.1500, 2.6400, 0.8900, 0.0400, 0.0400],
-        dtype=gs.tc_float,
-        device=gs.device,
-    )
-    MOTORS_KP = torch.tensor(
-        [4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0],
-        dtype=gs.tc_float,
-        device=gs.device,
-    )
-    MOTORS_KD = torch.tensor(
-        [450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0],
-        dtype=gs.tc_float,
-        device=gs.device,
-    )
-
-    robot.set_dofs_kp(torch.zeros_like(MOTORS_KP), envs_idx=0)
-    robot.set_dofs_kv(torch.zeros_like(MOTORS_KD), envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_velocity(torch.zeros_like(MOTORS_POS_TARGET), envs_idx=0)
-    robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
-    robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
-    robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
-
-    # Must update DoF armature to emulate implicit damping for force control.
-    # This is equivalent to the first-order correction term involved in implicit integration scheme,
-    # in the particular case where `approximate_implicitfast` integrator is used.
-    # Note that the low-level internal API is used because invweights must NOT be updated, otherwise
-    # the test cannot pass. This is unecessary and not recommended for practical applications.
-    # robot.set_dofs_armature(robot.get_dofs_armature(envs_idx=1) + MOTORS_KD * scene.sim._substep_dt, envs_idx=1)
-    dofs_armature = scene.rigid_solver.dofs_info.armature.to_numpy()
-    dofs_armature[:, 1] += tensor_to_array(MOTORS_KD * scene.sim._substep_dt)
-    scene.rigid_solver.dofs_info.armature.from_numpy(dofs_armature)
 
     A = 0.1
     f = 1.0
+    scene.reset()
+    force_range[:, 1, 0] = float("-inf")
+    force_range[:, 1, 1] = float("+inf")
+    scene.rigid_solver.dofs_info.force_range.from_numpy(tensor_to_array(force_range))
     for i in range(1000):
         t = scene.t * scene.dt
-        pos_target = MOTORS_POS_TARGET + A * np.sin(2 * np.pi * f * t)
-        vel_target = torch.zeros_like(MOTORS_POS_TARGET) + A * 2 * np.pi * f * np.cos(2 * np.pi * f * t)
-        dofs_pos = robot.get_qpos(envs_idx=1)
-        dofs_vel = robot.get_dofs_velocity(envs_idx=1)
-        robot.control_dofs_position_velocity(pos_target, vel_target, envs_idx=0)
-        dofs_torque = MOTORS_KP * (pos_target - dofs_pos) + MOTORS_KD * (vel_target - dofs_vel)
-        robot.control_dofs_force(dofs_torque, envs_idx=1)
+        pos_target = A * np.sin(2 * np.pi * f * t)
+        vel_target = A * 2 * np.pi * f * np.cos(2 * np.pi * f * t)
+        robot.control_dofs_position_velocity(torch.full((9,), pos_target), torch.full((9,), vel_target), envs_idx=1)
         scene.step()
-        qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_numpy().T
-        # dofs_torque = robot.get_dofs_control_force()
-        assert_allclose(qf_applied[0], qf_applied[1], tol=1e-6)
+        assert_allclose(pos_target, robot.get_dofs_position(envs_idx=1), tol=1e-2)
 
 
 @pytest.mark.required

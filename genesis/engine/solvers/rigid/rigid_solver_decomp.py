@@ -1888,9 +1888,7 @@ class RigidSolver(Solver):
             position, dofs_idx, envs_idx, self.dofs_state, self.dofs_info, self._static_rigid_sim_config
         )
         if not unsafe and not has_gains:
-            raise gs.raise_exception(
-                "Please set control gains kp,kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
-            )
+            raise gs.raise_exception("Please set control gains kp using `set_dofs_kp` prior to calling this method.")
 
     def control_dofs_position_velocity(self, position, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False):
         position, dofs_idx, _ = self._sanitize_1D_io_variables(
@@ -1907,7 +1905,7 @@ class RigidSolver(Solver):
         )
         if not unsafe and not has_gains:
             raise gs.raise_exception(
-                "Please set control gains kp,kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
+                "Please set control gains kp and/or kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
             )
 
     def get_sol_params(self, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
@@ -6686,7 +6684,7 @@ def kernel_control_dofs_position(
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION
         dofs_state.ctrl_pos[i_d, i_b] = position[i_b_, i_d_]
         dofs_state.ctrl_vel[i_d, i_b] = 0.0
-        if (dofs_info.kp[I_d] > gs.EPS) | (dofs_info.kv[I_d] > gs.EPS):
+        if dofs_info.kp[I_d] > gs.EPS:
             has_gains = True
     return has_gains
 
