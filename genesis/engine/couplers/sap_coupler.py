@@ -377,14 +377,14 @@ class SAPCoupler(RBC):
             i_g = self.rigid_volume_verts_geom_idx[i_v]
             pos = geoms_state.pos[i_g, i_b]
             quat = geoms_state.quat[i_g, i_b]
-            R = gu.ti_quat_to_R(quat)
+            R = gu.ti_quat_to_R(quat, gs.EPS)
             self.rigid_volume_verts[i_b, i_v] = R @ self.rigid_volume_verts_rest[i_v] + pos
 
         for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
             i_g = self.rigid_volume_elems_geom_idx[i_e]
             pos = geoms_state.pos[i_g, i_b]
             quat = geoms_state.quat[i_g, i_b]
-            R = gu.ti_quat_to_R(quat)
+            R = gu.ti_quat_to_R(quat, gs.EPS)
             self.rigid_pressure_gradient[i_b, i_e] = R @ self.rigid_pressure_gradient_rest[i_e]
 
     @ti.kernel

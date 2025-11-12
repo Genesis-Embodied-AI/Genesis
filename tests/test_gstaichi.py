@@ -96,8 +96,8 @@ def gs_static_child(args: list[str]):
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--enable-multi-contact", action="store_true")
     parser.add_argument("--expected-num-contacts", type=int, required=True)
-    parser.add_argument("--expected-use-src-ll-cache", type=bool, required=True)
-    parser.add_argument("--expected-src-ll-cache-hit", type=bool, required=True)
+    parser.add_argument("--expected-use-src-ll-cache", type=int, required=True)
+    parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
     args = parser.parse_args(args)
 
     _initialize_genesis(backend=args.backend)
@@ -295,7 +295,7 @@ def change_scene(args: list[str]):
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--n_objs", type=int, required=True)
     parser.add_argument("--n_envs", type=int, required=True)
-    parser.add_argument("--expected-src-ll-cache-hit", type=bool, required=True)
+    parser.add_argument("--expected-src-ll-cache-hit", type=int, required=True)
     args = parser.parse_args(args)
 
     _initialize_genesis(backend=args.backend)

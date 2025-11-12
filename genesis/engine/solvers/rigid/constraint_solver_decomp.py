@@ -412,8 +412,11 @@ def add_collision_constraints(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
@@ -495,7 +498,7 @@ def add_collision_constraints(
 
                 diag = invweight + contact_data_friction * contact_data_friction * invweight
                 diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
-                diag = ti.max(diag, gs.EPS)
+                diag = ti.max(diag, EPS)
 
                 constraint_state.diag[n_con, i_b] = diag
                 constraint_state.aref[n_con, i_b] = aref
@@ -512,8 +515,11 @@ def func_equality_connect(
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
     link1_idx = equalities_info.eq_obj1id[i_e, i_b]
@@ -604,7 +610,7 @@ def func_equality_connect(
 
         imp, aref = gu.imp_aref(sol_params, -penetration, jac_qvel, pos_diff[i_3])
 
-        diag = ti.max(invweight * (1.0 - imp) / imp, gs.EPS)
+        diag = ti.max(invweight * (1.0 - imp) / imp, EPS)
 
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref
@@ -623,6 +629,8 @@ def func_equality_joint(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     n_dofs = constraint_state.jac.shape[1]
 
     sol_params = equalities_info.sol_params[i_e, i_b]
@@ -682,7 +690,7 @@ def func_equality_joint(
 
     imp, aref = gu.imp_aref(sol_params, -ti.abs(pos), jac_qvel, pos)
 
-    diag = ti.max(invweight * (1.0 - imp) / imp, gs.EPS)
+    diag = ti.max(invweight * (1.0 - imp) / imp, EPS)
 
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
@@ -719,6 +727,7 @@ def add_equality_constraints(
                     equalities_info=equalities_info,
                     constraint_state=constraint_state,
                     collider_state=collider_state,
+                    rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
 
@@ -731,6 +740,7 @@ def add_equality_constraints(
                     dofs_state=dofs_state,
                     equalities_info=equalities_info,
                     constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
             elif equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
@@ -775,6 +785,7 @@ def add_inequality_constraints(
             dofs_state=dofs_state,
             constraint_state=constraint_state,
             collider_state=collider_state,
+            rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
         )
     if ti.static(static_rigid_sim_config.enable_joint_limit):
@@ -798,8 +809,11 @@ def func_equality_weld(
     dofs_state: array_class.DofsState,
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
     # TODO: sparse mode
@@ -916,7 +930,7 @@ def func_equality_weld(
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
-        diag = ti.max(invweight[0] * (1 - imp) / imp, gs.EPS)
+        diag = ti.max(invweight[0] * (1 - imp) / imp, EPS)
 
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref
@@ -971,7 +985,7 @@ def func_equality_weld(
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
-        diag = ti.max(invweight[1] * (1.0 - imp) / imp, gs.EPS)
+        diag = ti.max(invweight[1] * (1.0 - imp) / imp, EPS)
 
         constraint_state.diag[i_con, i_b] = diag
         constraint_state.aref[i_con, i_b] = aref
@@ -988,6 +1002,8 @@ def add_joint_limit_constraints(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     _B = constraint_state.jac.shape[2]
     n_links = links_info.root_idx.shape[0]
     n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -1013,7 +1029,7 @@ def add_joint_limit_constraints(
                         jac = (pos_delta_min < pos_delta_max) * 2 - 1
                         jac_qvel = jac * dofs_state.vel[i_d, i_b]
                         imp, aref = gu.imp_aref(joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta)
-                        diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, gs.EPS)
+                        diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, EPS)
 
                         n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
                         constraint_state.diag[n_con, i_b] = diag
@@ -1044,6 +1060,8 @@ def add_frictionloss_constraints(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     _B = constraint_state.jac.shape[2]
     n_links = links_info.root_idx.shape[0]
     n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -1062,11 +1080,11 @@ def add_frictionloss_constraints(
                 for i_d in range(joints_info.dof_start[I_j], joints_info.dof_end[I_j]):
                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
 
-                    if dofs_info.frictionloss[I_d] > gs.EPS:
+                    if dofs_info.frictionloss[I_d] > EPS:
                         jac = 1.0
                         jac_qvel = jac * dofs_state.vel[i_d, i_b]
                         imp, aref = gu.imp_aref(joints_info.sol_params[I_j], 0.0, jac_qvel, 0.0)
-                        diag = ti.max(dofs_info.invweight[I_d] * (1.0 - imp) / imp, gs.EPS)
+                        diag = ti.max(dofs_info.invweight[I_d] * (1.0 - imp) / imp, EPS)
 
                         i_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
                         ti.atomic_add(constraint_state.n_constraints_frictionloss[i_b], 1)
@@ -1088,6 +1106,8 @@ def func_nt_hessian_incremental(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     n_dofs = constraint_state.nt_H.shape[0]
     rank = n_dofs
     updated = False
@@ -1117,8 +1137,8 @@ def func_nt_hessian_incremental(
                         tmp = Lkk * Lkk + constraint_state.nt_vec[k, i_b] * constraint_state.nt_vec[k, i_b] * (
                             flag_update * 2 - 1
                         )
-                        if tmp < gs.EPS:
-                            tmp = gs.EPS
+                        if tmp < EPS:
+                            tmp = EPS
                             rank = rank - 1
                         r = ti.sqrt(tmp)
                         c = r / Lkk
@@ -1156,13 +1176,13 @@ def func_nt_hessian_incremental(
 
                     rank = n_dofs
                     for k in range(n_dofs):
-                        if ti.abs(constraint_state.nt_vec[k, i_b]) > gs.EPS:
+                        if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
                             Lkk = constraint_state.nt_H[k, k, i_b]
                             tmp = Lkk * Lkk + constraint_state.nt_vec[k, i_b] * constraint_state.nt_vec[k, i_b] * (
                                 flag_update * 2 - 1
                             )
-                            if tmp < gs.EPS:
-                                tmp = gs.EPS
+                            if tmp < EPS:
+                                tmp = EPS
                                 rank = rank - 1
                             r = ti.sqrt(tmp)
                             c = r / Lkk
@@ -1199,8 +1219,11 @@ def func_nt_hessian_direct(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
+
     n_dofs = constraint_state.nt_H.shape[0]
     n_entities = entities_info.n_links.shape[0]
+
     # H = M + J'*D*J
     for i_d1 in range(n_dofs):
         for i_d2 in range(n_dofs):
@@ -1211,7 +1234,7 @@ def func_nt_hessian_direct(
             jac_n_relevant_dofs = constraint_state.jac_n_relevant_dofs[i_c, i_b]
             for i_d1_ in range(jac_n_relevant_dofs):
                 i_d1 = constraint_state.jac_relevant_dofs[i_c, i_d1_, i_b]
-                if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > gs.EPS:
+                if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
                         i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]  # i_d2 is strictly <= i_d1
                         constraint_state.nt_H[i_d1, i_d2, i_b] = (
@@ -1224,7 +1247,7 @@ def func_nt_hessian_direct(
     else:
         for i_c in range(constraint_state.n_constraints[i_b]):
             for i_d1 in range(n_dofs):
-                if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > gs.EPS:
+                if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2 in range(i_d1 + 1):
                         constraint_state.nt_H[i_d1, i_d2, i_b] = (
                             constraint_state.nt_H[i_d1, i_d2, i_b]
@@ -1246,14 +1269,17 @@ def func_nt_hessian_direct(
                 )
             # self.nt_ori_H[i_d1, i_d2, i_b] = self.nt_H[i_d1, i_d2, i_b]
 
-    func_nt_chol_factor(i_b, constraint_state)
+    func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
 
 
 @ti.func
 def func_nt_chol_factor(
     i_b,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
+    EPS = rigid_global_info.EPS[None]
+
     n_dofs = constraint_state.nt_H.shape[0]
     rank = n_dofs
     for i_d in range(n_dofs):
@@ -1261,8 +1287,8 @@ def func_nt_chol_factor(
         for j_d in range(i_d):
             tmp = tmp - (constraint_state.nt_H[i_d, j_d, i_b] * constraint_state.nt_H[i_d, j_d, i_b])
 
-        if tmp < gs.EPS:
-            tmp = gs.EPS
+        if tmp < EPS:
+            tmp = EPS
             rank = rank - 1
         constraint_state.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
 
@@ -1453,6 +1479,7 @@ def func_ls_point_fn(
     i_b,
     alpha,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
@@ -1495,7 +1522,7 @@ def func_ls_point_fn(
     deriv_0 = 2 * alpha * tmp_quad_total_2 + tmp_quad_total_1
     deriv_1 = 2 * tmp_quad_total_2
     if deriv_1 <= 0.0:
-        deriv_1 = gs.EPS
+        deriv_1 = rigid_global_info.EPS[None]
 
     constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
 
@@ -1542,7 +1569,7 @@ def func_linesearch(
     res_alpha = gs.ti_float(0.0)
     done = False
 
-    if snorm < gs.EPS:
+    if snorm < rigid_global_info.EPS[None]:
         constraint_state.ls_result[i_b] = 1
         res_alpha = 0.0
     else:
@@ -1555,16 +1582,18 @@ def func_linesearch(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_point_fn(i_b, gs.ti_float(0.0), constraint_state)
+        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_point_fn(
+            i_b, gs.ti_float(0.0), constraint_state, rigid_global_info
+        )
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
-            i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state
+            i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info
         )
 
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1
 
         if ti.abs(p1_deriv_0) < gtol:
-            if ti.abs(p1_alpha) < gs.EPS:
+            if ti.abs(p1_alpha) < rigid_global_info.EPS[None]:
                 constraint_state.ls_result[i_b] = 2
             else:
                 constraint_state.ls_result[i_b] = 0
@@ -1581,7 +1610,7 @@ def func_linesearch(
                 p2update = 1
 
                 p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
-                    i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state
+                    i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
                 )
                 if ti.abs(p1_deriv_0) < gtol:
                     ls_slope = ti.abs(p1_deriv_0) * slopescl
@@ -1610,12 +1639,12 @@ def func_linesearch(
                     )
 
                     p1_next_alpha, p1_next_cost, p1_next_deriv_0, p1_next_deriv_1 = func_ls_point_fn(
-                        i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state
+                        i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
                     )
 
                     while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
                         pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = func_ls_point_fn(
-                            i_b, (p1_alpha + p2_alpha) * 0.5, constraint_state
+                            i_b, (p1_alpha + p2_alpha) * 0.5, constraint_state, rigid_global_info
                         )
 
                         i = 0
@@ -1663,7 +1692,9 @@ def func_linesearch(
                                 p1_next_cost,
                                 p1_next_deriv_0,
                                 p1_next_deriv_1,
-                            ) = update_bracket(p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, i_b, constraint_state)
+                            ) = update_bracket(
+                                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, i_b, constraint_state, rigid_global_info
+                            )
                             (
                                 b2,
                                 p2_alpha,
@@ -1674,7 +1705,9 @@ def func_linesearch(
                                 p2_next_cost,
                                 p2_next_deriv_0,
                                 p2_next_deriv_1,
-                            ) = update_bracket(p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, i_b, constraint_state)
+                            ) = update_bracket(
+                                p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, i_b, constraint_state, rigid_global_info
+                            )
 
                             if b1 == 0 and b2 == 0:
                                 if pmid_cost < p0_cost:
@@ -1710,6 +1743,7 @@ def update_bracket(
     p_deriv_1,
     i_b,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
     flag = 0
 
@@ -1745,7 +1779,7 @@ def update_bracket(
 
     if flag > 0:
         p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = func_ls_point_fn(
-            i_b, p_alpha - p_deriv_0 / p_deriv_1, constraint_state
+            i_b, p_alpha - p_deriv_0 / p_deriv_1, constraint_state, rigid_global_info
         )
     return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1
 
@@ -1769,7 +1803,7 @@ def func_solve_body(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    if ti.abs(alpha) < gs.EPS:
+    if ti.abs(alpha) < rigid_global_info.EPS[None]:
         constraint_state.improved[i_b] = 0
     else:
         for i_d in range(n_dofs):
@@ -1841,7 +1875,9 @@ def func_solve_body(
                     )
 
                 constraint_state.cg_beta[i_b] = ti.max(
-                    0.0, constraint_state.cg_beta[i_b] / ti.max(gs.EPS, constraint_state.cg_pg_dot_pMg[i_b])
+                    0.0,
+                    constraint_state.cg_beta[i_b]
+                    / ti.max(rigid_global_info.EPS[None], constraint_state.cg_pg_dot_pMg[i_b]),
                 )
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = (
