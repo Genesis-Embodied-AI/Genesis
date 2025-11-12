@@ -59,7 +59,7 @@ def test_warn_once_with_empty_message(clear_seen_fixture):
             mock_warning.assert_called_once_with("")
 
 
-def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
+def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args):
     import gstaichi as ti
 
     if num_inputs == 1 and num_outputs == 1:
@@ -68,7 +68,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
         def kernel(ti_in: ti.template(), ti_out: ti.template()):
             ti.loop_config(serialize=False)
             for I in ti.grouped(ti.ndrange(*ti_in.shape)):
-                ti_out[I] = ti_func(ti_in[I])
+                ti_out[I] = ti_func(ti_in[I], *args)
 
     elif num_inputs == 2 and num_outputs == 1:
 
@@ -76,7 +76,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
         def kernel(ti_in_1: ti.template(), ti_in_2: ti.template(), ti_out: ti.template()):
             ti.loop_config(serialize=False)
             for I in ti.grouped(ti.ndrange(*ti_in_1.shape)):
-                ti_out[I] = ti_func(ti_in_1[I], ti_in_2[I])
+                ti_out[I] = ti_func(ti_in_1[I], ti_in_2[I], *args)
 
     elif num_inputs == 3 and num_outputs == 1:
 
@@ -84,7 +84,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
         def kernel(ti_in_1: ti.template(), ti_in_2: ti.template(), ti_in_3: ti.template(), ti_out: ti.template()):
             ti.loop_config(serialize=False)
             for I in ti.grouped(ti.ndrange(*ti_in_1.shape)):
-                ti_out[I] = ti_func(ti_in_1[I], ti_in_2[I], ti_in_3[I])
+                ti_out[I] = ti_func(ti_in_1[I], ti_in_2[I], ti_in_3[I], *args)
 
     elif num_inputs == 4 and num_outputs == 2:
 
@@ -99,7 +99,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
         ):
             ti.loop_config(serialize=False)
             for I in ti.grouped(ti.ndrange(*ti_in_1.shape)):
-                ti_out_1[I], ti_out_2[I] = ti_func(ti_in_1[I], ti_in_2[I], ti_in_3[I], ti_in_4[I])
+                ti_out_1[I], ti_out_2[I] = ti_func(ti_in_1[I], ti_in_2[I], ti_in_3[I], ti_in_4[I], *args)
 
     else:
         raise NotImplementedError(f"Taichi func with arity in={num_inputs},out={num_outputs} not supported")
@@ -112,11 +112,11 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs):
 def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
     import gstaichi as ti
 
-    for ti_func, py_func, shapes_in, shapes_out in (
+    for ti_func, py_func, shapes_in, shapes_out, *args in (
         (gu.ti_xyz_to_quat, gu.xyz_to_quat, [[3]], [[4]]),
-        (gu.ti_quat_to_R, gu.quat_to_R, [[4]], [[3, 3]]),
-        (gu.ti_quat_to_xyz, gu.quat_to_xyz, [[4]], [[3]]),
-        (gu.ti_trans_quat_to_T, gu.trans_quat_to_T, [[3], [4]], [[4, 4]]),
+        (gu.ti_quat_to_R, gu.quat_to_R, [[4]], [[3, 3]], gs.EPS),
+        (gu.ti_quat_to_xyz, gu.quat_to_xyz, [[4]], [[3]], gs.EPS),
+        (gu.ti_trans_quat_to_T, gu.trans_quat_to_T, [[3], [4]], [[4, 4]], gs.EPS),
         (gu.ti_transform_quat_by_quat, gu.transform_quat_by_quat, [[4], [4]], [[4]]),
         (gu.ti_transform_by_quat, gu.transform_by_quat, [[3], [4]], [[3]]),
         (gu.ti_inv_transform_by_quat, gu.inv_transform_by_quat, [[3], [4]], [[3]]),
@@ -155,7 +155,7 @@ def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
             tc_outs = (tc_outs,)
         tc_outs = tuple(map(tensor_to_array, tc_outs))
 
-        kernel = _ti_kernel_wrapper(ti_func, num_inputs, num_outputs)
+        kernel = _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args)
         kernel(*ti_args, *ti_outs)
 
         for np_out, tc_out, ti_out in zip(np_outs, tc_outs, ti_outs):
@@ -247,11 +247,15 @@ def test_utils_geom_taichi_inverse(batch_shape):
 def test_utils_geom_taichi_identity(batch_shape):
     import gstaichi as ti
 
-    for ti_funcs, shape_args in (
-        ((gu.ti_xyz_to_quat, gu.ti_quat_to_xyz), ([3], [4])),
-        ((gu.ti_xyz_to_quat, gu.ti_quat_to_R, gu.ti_R_to_xyz), ([3], [4], [3, 3])),
-        ((gu.ti_xyz_to_quat, gu.ti_quat_to_rotvec, gu.ti_rotvec_to_R, gu.ti_R_to_xyz), ([3], [4], [3], [3, 3])),
-        ((gu.ti_rotvec_to_quat, gu.ti_quat_to_rotvec), ([3], [4])),
+    for ti_funcs, shape_args, funcs_args in (
+        ((gu.ti_xyz_to_quat, gu.ti_quat_to_xyz), ([3], [4]), ((), (gs.EPS,))),
+        ((gu.ti_xyz_to_quat, gu.ti_quat_to_R, gu.ti_R_to_xyz), ([3], [4], [3, 3]), ((), (gs.EPS,), (gs.EPS,))),
+        (
+            (gu.ti_xyz_to_quat, gu.ti_quat_to_rotvec, gu.ti_rotvec_to_R, gu.ti_R_to_xyz),
+            ([3], [4], [3], [3, 3]),
+            ((), (gs.EPS,), (gs.EPS,), (gs.EPS,)),
+        ),
+        ((gu.ti_rotvec_to_quat, gu.ti_quat_to_rotvec), ([3], [4]), ((gs.EPS,), (gs.EPS,))),
     ):
         ti_args = []
         for shape_arg in (*shape_args, shape_args[0]):
@@ -260,9 +264,8 @@ def test_utils_geom_taichi_identity(batch_shape):
             ti_arg.from_numpy(np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float))
             ti_args.append(ti_arg)
 
-        num_funcs = len(ti_funcs)
-        for i, ti_func in enumerate(ti_funcs):
-            kernel = _ti_kernel_wrapper(ti_func, 1, 1)
+        for i, (ti_func, args) in enumerate(zip(ti_funcs, funcs_args)):
+            kernel = _ti_kernel_wrapper(ti_func, 1, 1, *args)
             kernel(*ti_args[i : (i + 2)])
 
         np.testing.assert_allclose(ti_args[0].to_numpy(), ti_args[-1].to_numpy(), atol=1e2 * gs.EPS)
@@ -287,7 +290,6 @@ def test_utils_geom_tensor_identity(batch_shape):
             np_args.append(np_arg)
             tc_args.append(tc_arg)
 
-        num_funcs = len(py_funcs)
         for i, py_func in enumerate(py_funcs):
             np_args[i + 1][:] = py_func(np_args[i])
             tc_args[i + 1][:] = py_func(tc_args[i])
