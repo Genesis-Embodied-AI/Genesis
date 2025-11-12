@@ -2156,6 +2156,33 @@ def test_terrain_generation(request, show_viewer):
     assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
 
 
+@pytest.mark.required
+def test_discrete_obstacles_terrain():
+    scene = gs.Scene()
+    terrain = scene.add_entity(
+        gs.morphs.Terrain(
+            n_subterrains=(1, 1),
+            subterrain_size=(6.0, 6.0),
+            horizontal_scale=0.5,
+            vertical_scale=0.5,
+            subterrain_types=[["discrete_obstacles_terrain"]],
+            subterrain_parameters={
+                "discrete_obstacles_terrain": {
+                    "max_height": 1.0,
+                    "platform_size": 1.0,
+                }
+            },
+        )
+    )
+    scene.build()
+    height_field = terrain.geoms[0].metadata["height_field"]
+    platform = height_field[5:7, 5:7]
+
+    assert height_field.max().item() == 2.0
+    assert height_field.min().item() == -2.0
+    assert (platform == 0.0).all()
+
+
 def test_mesh_to_heightfield(tmp_path, show_viewer):
     horizontal_scale = 2.0
     path_terrain = os.path.join(get_assets_dir(), "meshes", "terrain_45.obj")
