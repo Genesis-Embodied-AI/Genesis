@@ -10,7 +10,12 @@ from genesis.options.sensors import (
     MaybeMatrix3x3Type,
     IMU as IMUOptions,
 )
-from genesis.utils.geom import inv_transform_by_trans_quat, transform_by_quat, transform_quat_by_quat
+from genesis.utils.geom import (
+    inv_transform_by_trans_quat,
+    transform_by_quat,
+    transform_quat_by_quat,
+    inv_transform_by_quat,
+)
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
@@ -211,7 +216,9 @@ class IMUSensor(
         local_ang = inv_transform_by_trans_quat(ang, shared_metadata.offsets_pos, offset_quats)
 
         *batch_size, n_imus, _ = local_acc.shape
-        local_acc = local_acc - gravity.unsqueeze(-2).expand((*batch_size, n_imus, -1))
+        local_acc = local_acc - inv_transform_by_quat(
+            gravity.unsqueeze(-2).expand((*batch_size, n_imus, -1)), offset_quats
+        )
 
         # cache shape: (B, n_imus * 6)
         strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 2, 3))
