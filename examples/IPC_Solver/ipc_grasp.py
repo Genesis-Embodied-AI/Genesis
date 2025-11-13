@@ -47,8 +47,9 @@ def main():
     )
 
     if args.ipc:
-        scene.sim.coupler.set_ipc_link_filter(
+        scene.sim.coupler.set_link_ipc_coupling_type(
             entity=franka,
+            coupling_type="both",
             link_names=["left_finger", "right_finger"],
         )
 
