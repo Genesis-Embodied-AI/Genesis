@@ -1067,7 +1067,11 @@ def add_frictionloss_constraints(
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
     # TODO: sparse mode
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    # FIXME: The condition `if dofs_info.frictionloss[I_d] > EPS:` is not correctly evaluated on Apple Metal
+    # if `serialize=True`...
+    ti.loop_config(
+        serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and gs.backend != gs.metal)
+    )
     for i_b in range(_B):
         constraint_state.n_constraints_frictionloss[i_b] = 0
 

@@ -1754,6 +1754,10 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 @pytest.mark.required
 def test_frictionloss_advanced(show_viewer, tol):
     scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, 0.25, 0.75),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
