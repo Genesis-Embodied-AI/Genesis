@@ -47,8 +47,6 @@ class Collider:
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
         self._mpr_to_sdf_overlap_ratio = 0.4
-        # multiplier k for the maximum number of contact pairs for the broad phase
-        self._max_collision_pairs_broad_k = 20
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
@@ -119,7 +117,7 @@ class Collider:
             self._solver,
             self._solver._static_rigid_sim_config,
             n_possible_pairs,
-            self._max_collision_pairs_broad_k,
+            self._solver._options.multiplier_collision_broad_phase,
             self._collider_info,
             self._collider_static_config,
         )
@@ -250,15 +248,9 @@ class Collider:
             self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
     def _init_max_contact_pairs(self, n_possible_pairs):
-        if self._solver.max_collision_pairs < n_possible_pairs:
-            gs.logger.warning(
-                f"max_collision_pairs {self._solver.max_collision_pairs} is"
-                f" smaller than the theoretical maximal possible pairs {n_possible_pairs}, it uses less memory"
-                f" but might lead to missing some collision pairs if there are too many collision pairs"
-            )
         max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
         max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
-        max_contact_pairs_broad = max_collision_pairs * self._max_collision_pairs_broad_k
+        max_contact_pairs_broad = max_collision_pairs * self._solver._options.multiplier_collision_broad_phase
 
         self._collider_info.max_possible_pairs[None] = n_possible_pairs
         self._collider_info.max_collision_pairs[None] = max_collision_pairs
