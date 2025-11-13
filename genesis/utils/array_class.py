@@ -1731,6 +1731,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
 class DataManager:
     def __init__(self, solver):
         self.rigid_global_info = get_rigid_global_info(solver)
+
         self.dofs_info = get_dofs_info(solver)
         self.dofs_state = get_dofs_state(solver)
         self.links_info = get_links_info(solver)
@@ -1757,6 +1758,8 @@ class DataManager:
 
         self.entities_info = get_entities_info(solver)
         self.entities_state = get_entities_state(solver)
+
+        self.errno = V_SCALAR_FROM(dtype=gs.ti_int, value=0)
 
 
 DofsState = StructDofsState if gs.use_ndarray else ti.template()

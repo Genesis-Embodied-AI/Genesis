@@ -125,14 +125,6 @@ class Collider:
         # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state / info.
         self._contacts_info_cache = {}
 
-        # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
-        # condition, while 'print' is slowing down the kernel even if every called in practice...
-        self._warn_msg_max_collision_pairs = (
-            f"{colors.YELLOW}[Genesis] [00:00:00] [WARNING] Ignoring contact pair to avoid exceeding max "
-            f"({self._collider_info.max_contact_pairs[None]}). Please increase the value of RigidSolver's option "
-            f"'max_collision_pairs'.{formats.RESET}"
-        )
-
         self.reset()
 
     def _compute_collision_pair_validity(self):
@@ -318,6 +310,7 @@ class Collider:
             self._collider_state,
             self._solver.equalities_info,
             self._collider_info,
+            self._solver._errno,
         )
         func_narrow_phase_convex_vs_convex(
             self._solver.links_state,
@@ -339,6 +332,7 @@ class Collider:
             self._gjk._gjk_static_config,
             self._sdf._sdf_info,
             self._support_field._support_field_info,
+            self._solver._errno,
         )
         func_narrow_phase_convex_specializations(
             self._solver.geoms_state,
@@ -350,6 +344,7 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
+            self._solver._errno,
         )
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
@@ -364,6 +359,7 @@ class Collider:
                 self._mpr._mpr_state,
                 self._mpr._mpr_info,
                 self._support_field._support_field_info,
+                self._solver._errno,
             )
         if self._collider_static_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
@@ -380,6 +376,7 @@ class Collider:
                 self._collider_info,
                 self._collider_static_config,
                 self._sdf._sdf_info,
+                self._solver._errno,
             )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
@@ -964,6 +961,7 @@ def func_contact_mpr_terrain(
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
@@ -1097,6 +1095,7 @@ def func_contact_mpr_terrain(
                                             geoms_info,
                                             collider_state,
                                             collider_info,
+                                            errno,
                                         )
                                         n_con = n_con + 1
 
@@ -1217,6 +1216,7 @@ def func_broad_phase(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     """
     Sweep and Prune (SAP) for broad-phase collision detection.
@@ -1328,7 +1328,7 @@ def func_broad_phase(
 
                         i_p = collider_state.n_broad_pairs[i_b]
                         if i_p == collider_info.max_collision_pairs_broad[None]:
-                            # print(self._warn_msg_max_collision_pairs_broad)
+                            errno[None] = 1
                             break
                         collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
                         collider_state.broad_collision_pairs[i_p, i_b][1] = i_gb
@@ -1476,6 +1476,7 @@ def func_narrow_phase_convex_vs_convex(
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
@@ -1530,6 +1531,7 @@ def func_narrow_phase_convex_vs_convex(
                         gjk_static_config=gjk_static_config,
                         sdf_info=sdf_info,
                         support_field_info=support_field_info,
+                        errno=errno,
                     )
                 else:
                     if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
@@ -1556,6 +1558,7 @@ def func_narrow_phase_convex_vs_convex(
                             gjk_static_config=gjk_static_config,
                             sdf_info=sdf_info,
                             support_field_info=support_field_info,
+                            errno=errno,
                         )
 
 
@@ -1654,6 +1657,7 @@ def func_narrow_phase_convex_specializations(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
     _B = collider_state.active_buffer.shape[1]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -1679,6 +1683,7 @@ def func_narrow_phase_convex_specializations(
                         collider_state,
                         collider_info,
                         collider_static_config,
+                        errno,
                     )
 
             if ti.static(static_rigid_sim_config.box_box_detection):
@@ -1693,6 +1698,7 @@ def func_narrow_phase_convex_specializations(
                         collider_info,
                         rigid_global_info,
                         collider_static_config,
+                        errno,
                     )
 
 
@@ -1709,6 +1715,7 @@ def func_narrow_phase_any_vs_terrain(
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1742,6 +1749,7 @@ def func_narrow_phase_any_vs_terrain(
                         mpr_state,
                         mpr_info,
                         support_field_info,
+                        errno,
                     )
 
 
@@ -1760,6 +1768,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1817,6 +1826,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     geoms_info,
                                     collider_state,
                                     collider_info,
+                                    errno,
                                 )
 
                         if ti.static(static_rigid_sim_config.enable_multi_contact):
@@ -1916,6 +1926,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                                     geoms_info,
                                                     collider_state,
                                                     collider_info,
+                                                    errno,
                                                 )
                                                 n_con += 1
 
@@ -1947,6 +1958,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 geoms_info,
                                 collider_state,
                                 collider_info,
+                                errno,
                             )
 
 
@@ -1963,6 +1975,7 @@ def func_plane_box_contact(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
@@ -1989,6 +2002,7 @@ def func_plane_box_contact(
             geoms_info,
             collider_state,
             collider_info,
+            errno,
         )
 
         if ti.static(static_rigid_sim_config.enable_multi_contact):
@@ -2015,6 +2029,7 @@ def func_plane_box_contact(
                                 geoms_info,
                                 collider_state,
                                 collider_info,
+                                errno,
                             )
                             n_con = n_con + 1
 
@@ -2031,15 +2046,10 @@ def func_add_contact(
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     i_c = collider_state.n_contacts[i_b]
-    if i_c == collider_info.max_contact_pairs[None]:
-        # FIXME: 'ti.static_print' cannot be used as it will be printed systematically, completely ignoring guard
-        # condition, while 'print' is slowing down the kernel even if every called in practice...
-        # print(self._warn_msg_max_collision_pairs)
-        pass
-    else:
-
+    if i_c < collider_info.max_contact_pairs[None]:
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
@@ -2057,6 +2067,8 @@ def func_add_contact(
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
 
         collider_state.n_contacts[i_b] = i_c + 1
+    else:
+        errno[None] = 2
 
 
 @ti.func
@@ -2229,6 +2241,7 @@ def func_convex_convex_contact(
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
+    errno: array_class.V_ANNOTATION,
 ):
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
         if ti.static(sys.platform == "darwin"):
@@ -2244,6 +2257,7 @@ def func_convex_convex_contact(
                 collider_state=collider_state,
                 collider_info=collider_info,
                 collider_static_config=collider_static_config,
+                errno=errno,
             )
     else:
         # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
@@ -2445,6 +2459,7 @@ def func_convex_convex_contact(
                                         geoms_info,
                                         collider_state,
                                         collider_info,
+                                        errno,
                                     )
                                 break
                             else:
@@ -2469,6 +2484,7 @@ def func_convex_convex_contact(
                                                 geoms_info,
                                                 collider_state,
                                                 collider_info,
+                                                errno,
                                             )
 
                                     break
@@ -2565,6 +2581,7 @@ def func_convex_convex_contact(
                         geoms_info,
                         collider_state,
                         collider_info,
+                        errno,
                     )
                     if multi_contact:
                         # perturb geom_a around two orthogonal axes to find multiple contacts
@@ -2660,6 +2677,7 @@ def func_convex_convex_contact(
                             geoms_info,
                             collider_state,
                             collider_info,
+                            errno,
                         )
                         n_con = n_con + 1
 
@@ -2697,6 +2715,7 @@ def func_box_box_contact(
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     collider_static_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
     """
     Use Mujoco's box-box contact detection algorithm for more stable collision detection.
@@ -3029,6 +3048,7 @@ def func_box_box_contact(
                     geoms_info,
                     collider_state,
                     collider_info,
+                    errno,
                 )
 
         else:
@@ -3350,6 +3370,7 @@ def func_box_box_contact(
                         geoms_info,
                         collider_state,
                         collider_info,
+                        errno,
                     )
 
 
