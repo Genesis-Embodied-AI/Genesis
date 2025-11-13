@@ -1241,3 +1241,30 @@ class Terrain(Morph):
     @property
     def subterrain_params(self):
         return self._subterrain_parameters
+
+class USDArticulation(FileMorph):
+    """
+    Morph loaded from a USD Prim inside a USD file. 
+    
+    This morph only supports Prim with APISchema:
+    
+    - PhysicsRigidBodyAPI
+    - PhysicsArticulationRootAPI
+    
+    Parameters
+    ----------
+    file : str
+        The path to the file.
+    
+    prim_path : str, optional
+        The path to the USD prim inside the USD file. If not specified, the default prim will be used.
+    """
+    file: str
+    prim_path: str = None
+    def __init__(self, **data):
+        super().__init__(**data)
+        for USD_FORMAT in USD_FORMATS:
+            if self.is_format(USD_FORMAT):
+                break
+        else:
+            gs.raise_exception(f"Expected one of `{USD_FORMATS}` extensions for USD file: {self.file}")

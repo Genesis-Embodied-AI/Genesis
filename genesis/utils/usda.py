@@ -30,7 +30,7 @@ cs_encode = {
 }
 
 
-def get_input_attribute_value(shader, input_name, input_type=None):
+def get_input_attribute_value(shader:UsdShade.Shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
 
     if input_type != "value":
@@ -43,7 +43,7 @@ def get_input_attribute_value(shader, input_name, input_type=None):
     return None, None
 
 
-def get_shader(prim, output_name):
+def get_shader(prim:Usd.Prim, output_name):
     if prim.IsA(UsdShade.Shader):
         return UsdShade.Shader(prim)
     elif prim.IsA(UsdShade.NodeGraph):
@@ -52,7 +52,7 @@ def get_shader(prim, output_name):
         gs.raise_exception(f"Invalid shader type: {prim.GetTypeName()} at {prim.GetPath()}.")
 
 
-def parse_preview_surface(prim, output_name):
+def parse_preview_surface(prim:Usd.Prim, output_name):
     shader = get_shader(prim, output_name)
     shader_id = shader.GetShaderId()
 
@@ -163,7 +163,7 @@ def parse_preview_surface(prim, output_name):
         return primvar_name
 
 
-def parse_usd_material(material, surface):
+def parse_usd_material(material:UsdShade.Material, surface:gs.surfaces.Surface):
     surface_outputs = material.GetSurfaceOutputs()
     material_dict, uv_name = None, None
     material_surface = surface.copy()
@@ -207,7 +207,7 @@ def parse_usd_material(material, surface):
     return material_surface, uv_name, require_bake
 
 
-def replace_asset_symlinks(stage):
+def replace_asset_symlinks(stage:Usd.Stage):
     asset_paths = set()
 
     for prim in stage.TraverseAll():
@@ -260,7 +260,7 @@ def decompress_usdz(usdz_path):
     return root_path
 
 
-def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
+def parse_mesh_usd(path:str, group_by_material, scale, surface:gs.surfaces.Surface, bake_cache=True):
     if path.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
         path = decompress_usdz(path)
 
