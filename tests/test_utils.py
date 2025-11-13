@@ -412,7 +412,7 @@ def test_pyrender_vec3():
 
 def test_fps_tracker():
     n_envs = 23
-    tracker = FPSTracker(alpha=0, n_envs=n_envs)
+    tracker = FPSTracker(alpha=0.0, minimum_interval_seconds=0.1, n_envs=n_envs)
     tracker.step(current_time=10.0)
     assert not tracker.step(current_time=10.0)
     assert not tracker.step(current_time=10.0)
