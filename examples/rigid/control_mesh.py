@@ -1,7 +1,5 @@
 import argparse
 
-import numpy as np
-
 import genesis as gs
 
 
@@ -45,17 +43,13 @@ def main():
     scene.build()
 
     dofs_idx = duck.base_joint.dofs_idx
+    duck.set_dofs_kp((0.3,) * 6, dofs_idx)
+    duck.set_dofs_kv((1.0,) * 6, dofs_idx)
 
-    duck.set_dofs_kv(
-        np.array([1, 1, 1, 1, 1, 1]) * 50.0,
-        dofs_idx,
-    )
     pos = duck.get_dofs_position()
     pos[-1] = 1.0  # rotate around intrinsic z axis
-    duck.control_dofs_position(
-        pos,
-        dofs_idx,
-    )
+    duck.control_dofs_position(pos, dofs_idx)
+
     for i in range(1000):
         scene.step()
 

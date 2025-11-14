@@ -32,8 +32,8 @@ class ConstraintSolverIsland:
         self.sparse_solve: bool = True
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
-        self.len_constraints = (
-            5 * self._collider._collider_info.max_contact_pairs[None]
+        self.len_constraints = int(
+            4 * self._collider._collider_info.max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)

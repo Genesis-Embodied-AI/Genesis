@@ -183,7 +183,8 @@ def get_platform():
 
 def get_device(backend: gs_backend, device_idx: Optional[int] = None):
     if backend == gs_backend.cpu:
-        device_name = cpuinfo.get_cpu_info()["brand_raw"]
+        cpu_info = cpuinfo.get_cpu_info()
+        device_name = next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw"))))
         total_mem = psutil.virtual_memory().total / 1024**3
         device = torch.device("cpu", device_idx)
     elif backend == gs_backend.cuda:
@@ -468,9 +469,9 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
             v_primal = v.arr
             v_grad = v.grad.arr if v.grad else None
             if v_grad is None:
-                launch_ctx.set_arg_ndarray((i - template_num,), v_primal)
+                launch_ctx.set_arg_ndarray(i - template_num, v_primal)
             else:
-                launch_ctx.set_arg_ndarray_with_grad((i - template_num,), v_primal, v_grad)
+                launch_ctx.set_arg_ndarray_with_grad(i - template_num, v_primal, v_grad)
             continue
 
         # ti.field
@@ -504,7 +505,7 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
             nbytes = v.element_size() * v.nelement()
             grad_ptr = int(v.grad.data_ptr()) if v.grad is not None else 0
 
-        launch_ctx.set_arg_external_array_with_shape((i - template_num,), arr_ptr, nbytes, array_shape, grad_ptr)
+        launch_ctx.set_arg_external_array_with_shape(i - template_num, arr_ptr, nbytes, array_shape, grad_ptr)
 
     try:
         prog = impl.get_runtime().prog
@@ -672,12 +673,12 @@ def extract_slice(
     must_allocate = False
     is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int, np.integer)))
     if is_row_mask_tensor:
-        _row_mask = torch.as_tensor(row_mask, dtype=gs.tc_int, device=gs.device)
+        _row_mask = torch.as_tensor(row_mask, device=gs.device)
         must_allocate = _row_mask is not row_mask
         row_mask = _row_mask
     is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int, np.integer)))
     if is_col_mask_tensor:
-        _col_mask = torch.as_tensor(col_mask, dtype=gs.tc_int, device=gs.device)
+        _col_mask = torch.as_tensor(col_mask, device=gs.device)
         must_allocate = _col_mask is not col_mask
         col_mask = _col_mask
     if must_allocate:

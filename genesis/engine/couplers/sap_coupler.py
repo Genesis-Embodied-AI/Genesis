@@ -6,14 +6,14 @@ import numpy as np
 import gstaichi as ti
 
 import genesis as gs
-from genesis.options.solvers import SAPCouplerOptions
-from genesis.repr_base import RBC
-from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum, EQUALITY_TYPE
+from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
+from genesis.options.solvers import SAPCouplerOptions
+from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -377,14 +377,14 @@ class SAPCoupler(RBC):
             i_g = self.rigid_volume_verts_geom_idx[i_v]
             pos = geoms_state.pos[i_g, i_b]
             quat = geoms_state.quat[i_g, i_b]
-            R = gu.ti_quat_to_R(quat)
+            R = gu.ti_quat_to_R(quat, gs.EPS)
             self.rigid_volume_verts[i_b, i_v] = R @ self.rigid_volume_verts_rest[i_v] + pos
 
         for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
             i_g = self.rigid_volume_elems_geom_idx[i_e]
             pos = geoms_state.pos[i_g, i_b]
             quat = geoms_state.quat[i_g, i_b]
-            R = gu.ti_quat_to_R(quat)
+            R = gu.ti_quat_to_R(quat, gs.EPS)
             self.rigid_pressure_gradient[i_b, i_e] = R @ self.rigid_pressure_gradient_rest[i_e]
 
     @ti.kernel

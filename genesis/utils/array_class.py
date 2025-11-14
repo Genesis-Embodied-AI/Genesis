@@ -107,6 +107,7 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
     n_equalities_candidate: V_ANNOTATION
     hibernation_thresh_acc: V_ANNOTATION
     hibernation_thresh_vel: V_ANNOTATION
+    EPS: V_ANNOTATION
 
 
 def get_rigid_global_info(solver):
@@ -145,6 +146,7 @@ def get_rigid_global_info(solver):
         n_equalities_candidate=V_SCALAR_FROM(dtype=gs.ti_int, value=solver.n_equalities_candidate),
         hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._hibernation_thresh_acc),
         hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._hibernation_thresh_vel),
+        EPS=V_SCALAR_FROM(dtype=gs.ti_float, value=gs.EPS),
     )
 
 
@@ -1238,6 +1240,8 @@ class StructLinksState(metaclass=BASE_METACLASS):
     cfrc_vel: V_ANNOTATION
     cfrc_applied_ang: V_ANNOTATION
     cfrc_applied_vel: V_ANNOTATION
+    cfrc_coupling_ang: V_ANNOTATION
+    cfrc_coupling_vel: V_ANNOTATION
     contact_force: V_ANNOTATION
     hibernated: V_ANNOTATION
 
@@ -1288,6 +1292,8 @@ def get_links_state(solver):
         cfrc_vel=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_applied_ang=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_applied_vel=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        cfrc_coupling_ang=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
+        cfrc_coupling_vel=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
         contact_force=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
         hibernated=V(dtype=gs.ti_int, shape=shape),
     )

@@ -871,15 +871,18 @@ class Scene(RBC):
             - for non-batched env, we only parallelize certain loops that have big loop size
             - for batched env, we parallelize all loops
         - When using cpu, we serialize everything.
-            - This is emprically as fast as parallel loops even with big batchsize (tested up to B=10000), because invoking multiple cpu processes cannot utilize all cpu usage.
-            - In order to exploit full cpu power, users are encouraged to launch multiple processes manually, and each will use a single cpu thred.
+            - Parallelization only provides a boost for n_envs >= num_threads and ti_num_threads > 1.
+              It is always disabled by default but can be enforced by setting the env var `GS_PARA_LEVEL=2`.
+            - In order to exploit full cpu power, users are encouraged to launch multiple processes manually and set
+              env var `TI_NUM_THREADS=1`, so that each process uses a single cpu thread.
         """
         if gs.backend == gs.cpu:
-            self._para_level = gs.PARA_LEVEL.NEVER
-        elif self.n_envs == 0:
-            self._para_level = gs.PARA_LEVEL.PARTIAL
+            para_level = gs.PARA_LEVEL.NEVER
+        elif self.n_envs <= 1:
+            para_level = gs.PARA_LEVEL.PARTIAL
         else:
-            self._para_level = gs.PARA_LEVEL.ALL
+            para_level = gs.PARA_LEVEL.ALL
+        self._para_level = int(os.environ.get("GS_PARA_LEVEL", para_level))
 
     @gs.assert_built
     def reset(self, state: SimState | None = None, envs_idx=None):

@@ -182,7 +182,7 @@ class ToolEntity(Entity):
             )
             # rotate in world coordinates about itself.
             self.quat[f + 1, i_b] = ti_transform_quat_by_quat(
-                self.quat[f, i_b], ti_rotvec_to_quat(self.ang[f, i_b] * self._solver.substep_dt)
+                self.quat[f, i_b], ti_rotvec_to_quat(self.ang[f, i_b] * self._solver.substep_dt, gs.EPS)
             )
 
             self.vel[f + 1, i_b] = self.vel[f, i_b]

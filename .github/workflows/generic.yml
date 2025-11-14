@@ -31,12 +31,20 @@ jobs:
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
             GS_ENABLE_NDARRAY: "1"
+          - OS: "ubuntu-24.04-arm"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_ENABLE_NDARRAY: "1"
           - OS: "windows-2025"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
             GS_ENABLE_NDARRAY: "1"
           # CPU backend - field array
           - OS: "ubuntu-24.04"
+            PYTHON_VERSION: "3.12"
+            GS_BACKEND: "cpu"
+            GS_ENABLE_NDARRAY: "0"
+          - OS: "ubuntu-24.04-arm"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
             GS_ENABLE_NDARRAY: "0"
@@ -126,8 +134,13 @@ jobs:
           black --line-length 120 --check .
 
       - name: Install Genesis
+        shell: bash
         run: |
-          pip install -e '.[dev]'
+          PYTHON_DEPS="dev"
+          if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
+            PYTHON_DEPS="${PYTHON_DEPS},usd"
+          fi
+          pip install -e ".[${PYTHON_DEPS}]"
 
       - name: Get artifact prefix name
         id: artifact_prefix

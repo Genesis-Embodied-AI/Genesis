@@ -17,7 +17,7 @@ def kernel_build_efc_AR_b(
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         nefc = constraint_state.n_constraints[i_b]
         # zero AR

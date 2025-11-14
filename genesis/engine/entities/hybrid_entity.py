@@ -309,6 +309,22 @@ class HybridEntity(Entity):
         """
         return self._part_rigid.control_dofs_position(*args, **kwargs)
 
+    def control_dofs_position_velocity(self, *args, **kwargs):
+        """
+        Apply position control to the rigid part of the hybrid entity.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Passed directly to the rigid entity's control_dofs_position method.
+
+        Returns
+        -------
+        gs.Tensor
+            Control output for position adjustment of the rigid body's DOFs.
+        """
+        return self._part_rigid.control_dofs_position_velocity(*args, **kwargs)
+
     def control_dofs_velocity(self, *args, **kwargs):
         """
         Apply velocity control to the rigid part of the hybrid entity.
@@ -438,8 +454,8 @@ class HybridEntity(Entity):
                 acc = vel_d / dt_for_rigid_acc
                 frc_vel = mass_real * acc
                 frc_ang = (x_pos - links_state.root_COM[link_idx, i_b]).cross(frc_vel)
-                links_state.cfrc_applied_vel[link_idx, i_b] += frc_vel
-                links_state.cfrc_applied_ang[link_idx, i_b] += frc_ang
+                links_state.cfrc_coupling_vel[link_idx, i_b] += frc_vel
+                links_state.cfrc_coupling_ang[link_idx, i_b] += frc_ang
 
                 # rigid-to-soft coupling # NOTE: this may lead to unstable feedback loop
                 self._solver_soft.particles.vel[f_, i_global, i_b] += vel_d * self.material.soft_dv_coef

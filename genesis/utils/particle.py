@@ -1,5 +1,6 @@
 import os
 import pickle as pkl
+import platform
 import subprocess
 import sys
 import shutil
@@ -83,8 +84,8 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     """
     assert "pbs" in sampler
 
-    if gs.platform != "Linux":
-        gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux.")
+    if not (gs.platform == "Linux" and platform.machine() == "x86_64"):
+        gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux x86.")
 
     # compute file name via hashing for caching
     ptc_file_path = msu.get_ptc_path(mesh.vertices, mesh.faces, p_size, sampler)

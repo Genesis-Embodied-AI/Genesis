@@ -3,7 +3,6 @@ from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, Executor
 from functools import partial
 
-import cv2
 import torch
 import numpy as np
 
@@ -168,6 +167,9 @@ class FrameImageExporter:
             Executor to which I/O bounded jobs (saving to PNG) will be submitted. A local executor will be instantiated
             if none is provided.
         """
+        # Postpone import of OpenCV at runtime to reduce hard system dependencies
+        import cv2
+
         # Pack frames data for convenience
         frame_data = (rgb, depth, segmentation, normal)
 

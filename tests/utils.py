@@ -54,7 +54,7 @@ def get_hardware_fingerprint(include_gpu=True):
     # CPU info
     cpu_info = cpuinfo.get_cpu_info()
     infos = [
-        cpu_info.get("brand_raw", cpu_info.get("hardware_raw")),
+        next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw")))),
         cpu_info.get("arch"),
     ]
 
@@ -236,7 +236,7 @@ def get_hf_dataset(
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError):
+        except (HTTPError, FileNotFoundError, RuntimeError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")

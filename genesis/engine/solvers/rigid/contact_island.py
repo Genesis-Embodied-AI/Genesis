@@ -11,8 +11,6 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.collider_decomp import Collider
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
-INVALID_NEXT_HIBERNATED_ENTITY_IDX = -1
-
 
 @ti.data_oriented
 class ContactIsland:
@@ -71,7 +69,7 @@ class ContactIsland:
             self.contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island
         )
 
-        self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(INVALID_NEXT_HIBERNATED_ENTITY_IDX)
+        self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(-1)
 
     @ti.kernel
     def clear(self):
@@ -123,7 +121,7 @@ class ContactIsland:
         for i_b in range(_B):
             for i_e in range(n_entities):
                 next_entity_idx = self.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
-                if next_entity_idx != INVALID_NEXT_HIBERNATED_ENTITY_IDX and next_entity_idx != i_e:
+                if next_entity_idx != -1 and next_entity_idx != i_e:
                     any_link_a = self.solver.entities_info.link_start[i_e]
                     any_link_b = self.solver.entities_info.link_start[next_entity_idx]
                     self.add_edge(any_link_a, any_link_b, i_b)

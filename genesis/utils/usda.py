@@ -17,9 +17,9 @@ from . import mesh as mu
 try:
     from pxr import Usd, UsdGeom, UsdShade, Sdf
 except ImportError as e:
-    gs.raise_exception_from(
-        "Failed to import USD dependencies. Try installing Genesis with 'usd' optional dependencies.", e
-    )
+    raise ImportError(
+        "Failed to import USD dependencies. Try installing Genesis with 'usd' optional dependencies."
+    ) from e
 
 
 cs_encode = {

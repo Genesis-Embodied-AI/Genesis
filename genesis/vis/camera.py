@@ -4,7 +4,6 @@ import os
 import time
 from functools import cached_property
 
-import cv2
 import numpy as np
 import torch
 
@@ -475,6 +474,9 @@ class Camera(RBC):
 
         # Display images if requested and supported
         if self._GUI and self._visualizer.has_display:
+            # Postpone import of OpenCV at runtime to reduce hard system dependencies
+            import cv2
+
             title = f"Genesis - Camera {self._idx}"
             if self._debug:
                 title += " (debug)"

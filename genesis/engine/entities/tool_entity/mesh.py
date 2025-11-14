@@ -114,7 +114,7 @@ class Mesh:
         normal_vec_mesh = R_voxels_to_mesh @ normal_vec_voxels
 
         normal_vec_world = gu.ti_transform_by_quat(normal_vec_mesh, self.entity.quat[f, i_b])
-        normal_vec_world = gu.ti_normalize(normal_vec_world)
+        normal_vec_world = gu.ti_normalize(normal_vec_world, gs.EPS)
 
         return normal_vec_world
 
@@ -131,7 +131,7 @@ class Mesh:
             dec[i] -= delta
             normal_vec[i] = (self.sdf_(inc) - self.sdf_(dec)) / (2 * delta)
 
-        normal_vec = gu.ti_normalize(normal_vec)
+        normal_vec = gu.ti_normalize(normal_vec, gs.EPS)
 
         return normal_vec
 
@@ -195,7 +195,7 @@ class Mesh:
 
             sdf_voxels = self.sdf_(pos_voxels)
             normal_vec_voxels = self.normal_(pos_voxels)
-            normal_vec_voxels_ = gu.ti_normalize(normal_vec_voxels)
+            normal_vec_voxels_ = gu.ti_normalize(normal_vec_voxels, gs.EPS)
 
             vec_voxels = -sdf_voxels * normal_vec_voxels_
             R_voxels_to_mesh = self.T_mesh_to_sdf[None][:3, :3].inverse()
