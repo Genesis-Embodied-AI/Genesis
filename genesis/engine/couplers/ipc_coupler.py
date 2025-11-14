@@ -641,84 +641,101 @@ class IPCCoupler(RBC):
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
 
-    def set_ipc_link_filter(self, entity, link_names=None, link_indices=None):
+    def set_link_ipc_coupling_type(self, entity, coupling_type: str, link_names=None, link_indices=None):
         """
-        Set which links of an entity should participate in IPC simulation.
+        Set IPC coupling type for links of an entity.
 
         Parameters
         ----------
         entity : RigidEntity
-            The rigid entity to set the filter for
+            The rigid entity to configure
+        coupling_type : str
+            Type of coupling: 'both', 'ipc_only', or 'genesis_only'
+            - 'both': Two-way coupling between IPC and Genesis (default behavior)
+            - 'ipc_only': Links only simulated in IPC, transforms copied to Genesis (one-way)
+            - 'genesis_only': Links only simulated in Genesis, excluded from IPC
         link_names : list of str, optional
-            Names of links to include in IPC. If None and link_indices is None, all links participate.
+            Names of links to configure. If None and link_indices is None, applies to all links.
         link_indices : list of int, optional
-            Local indices of links to include in IPC. If None and link_names is None, all links participate.
-        """
-        if link_names is None and link_indices is None:
-            # Remove filter for this entity (all links participate)
-            if entity._idx in self._ipc_link_filters:
-                del self._ipc_link_filters[entity._idx]
-            return
+            Local indices of links to configure. If None and link_names is None, applies to all links.
 
-        link_filter = set()
-
-        if link_names is not None:
-            # Convert link names to solver-level indices
-            for name in link_names:
-                link = entity.get_link(name=name)
-                if link is not None:
-                    # Use solver-level index
-                    link_filter.add(link.idx)
-                else:
-                    gs.logger.warning(f"Link name '{name}' not found in entity")
-
-        if link_indices is not None:
-            # Convert local link indices to solver-level indices
-            for local_idx in link_indices:
-                solver_link_idx = local_idx + entity._link_start
-                link_filter.add(solver_link_idx)
-
-        # Store filter for this entity
-        self._ipc_link_filters[entity._idx] = link_filter
-
-    def set_link_only_in_ipc(self, entity):
-        """
-        Mark an entity to only exist in IPC (not simulated in Genesis).
-
-        The entity must have only a base link (single rigid body, no joints).
-
-        These links will:
-        - Not have SoftTransformConstraint in IPC (no coupling forces)
-        - Use full density in IPC (not divided by 2)
-        - Directly set Genesis transform to IPC result (one-way: IPC -> Genesis)
-        - Skip Genesis rigid body solver (if possible)
-
-        Parameters
-        ----------
-        entity : RigidEntity
-            The rigid entity that should only exist in IPC (must have only base link)
+        Notes
+        -----
+        - 'both': Links use half density in IPC, have SoftTransformConstraint, bidirectional forces
+        - 'ipc_only': Links use full density in IPC, no SoftTransformConstraint, transforms copied to Genesis
+        - 'genesis_only': Links excluded from IPC simulation entirely
         """
         entity_idx = entity._idx
 
-        # Assert that the entity only has a base link (no joints/child links)
-        n_links = entity.n_links
-        assert n_links == 1, (
-            f"IPC-only entities must have only a base link (single rigid body). "
-            f"Entity {entity_idx} has {n_links} links. "
-            f"IPC-only mode is designed for simple rigid bodies without articulated joints."
-        )
+        # Determine which links to configure
+        if link_names is None and link_indices is None:
+            # Apply to all links
+            target_links = set()
+            for local_idx in range(entity.n_links):
+                solver_link_idx = local_idx + entity._link_start
+                target_links.add(solver_link_idx)
+        else:
+            # Apply to specified links
+            target_links = set()
 
-        # Get the base link index
-        base_link_idx = entity.base_link_idx
-        link_indices = {base_link_idx}
+            if link_names is not None:
+                for name in link_names:
+                    link = entity.get_link(name=name)
+                    if link is not None:
+                        target_links.add(link.idx)
+                    else:
+                        gs.logger.warning(f"Link name '{name}' not found in entity")
 
-        # Store IPC-only links for this entity
-        self._ipc_only_links[entity_idx] = link_indices
+            if link_indices is not None:
+                for local_idx in link_indices:
+                    solver_link_idx = local_idx + entity._link_start
+                    target_links.add(solver_link_idx)
 
-        # Also add to IPC link filter to ensure these links are included in IPC
-        self._ipc_link_filters[entity_idx] = link_indices
+        # Apply coupling type
+        if coupling_type == 'both':
+            # Two-way coupling: include in IPC, not in IPC-only
+            self._ipc_link_filters[entity_idx] = target_links
 
-        gs.logger.info(f"Entity {entity_idx} marked as IPC-only (base link only: {base_link_idx})")
+            # Remove from IPC-only if present
+            if entity_idx in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] -= target_links
+                if not self._ipc_only_links[entity_idx]:
+                    del self._ipc_only_links[entity_idx]
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'both' coupling")
+
+        elif coupling_type == 'ipc_only':
+            # One-way coupling: IPC -> Genesis
+            if entity_idx not in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] = set()
+            self._ipc_only_links[entity_idx].update(target_links)
+
+            # Also add to IPC link filter
+            if entity_idx not in self._ipc_link_filters:
+                self._ipc_link_filters[entity_idx] = set()
+            self._ipc_link_filters[entity_idx].update(target_links)
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'ipc_only' coupling")
+
+        elif coupling_type == 'genesis_only':
+            # Genesis-only: remove from both filters
+            if entity_idx in self._ipc_link_filters:
+                self._ipc_link_filters[entity_idx] -= target_links
+                if not self._ipc_link_filters[entity_idx]:
+                    del self._ipc_link_filters[entity_idx]
+
+            if entity_idx in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] -= target_links
+                if not self._ipc_only_links[entity_idx]:
+                    del self._ipc_only_links[entity_idx]
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'genesis_only' (excluded from IPC)")
+
+        else:
+            raise ValueError(
+                f"Invalid coupling_type '{coupling_type}'. "
+                f"Must be 'both', 'ipc_only', or 'genesis_only'."
+            )
 
     def preprocess(self, f):
         """Preprocessing step before coupling"""
@@ -958,8 +975,6 @@ class IPCCoupler(RBC):
         """
         For IPC-only links, directly set Genesis transform to IPC result (one-way coupling).
 
-        Note: IPC-only entities must have only a base link, so we only handle base links here.
-
         Parameters
         ----------
         abd_data_by_link : dict
@@ -1008,37 +1023,48 @@ class IPCCoupler(RBC):
                         0
                     )  # (1, 4) [w, x, y, z]
 
-                    # Create base links index tensor
-                    base_links_idx = torch.tensor([link_idx], dtype=gs.tc_int, device=gs.device)
+                    # Determine if this is a base link
+                    is_base_link = (link_idx == entity.base_link_idx)
 
-                    # Set base link transform using solver methods
+                    if is_base_link:
+                        # Use base link methods for base links
+                        base_links_idx = torch.tensor([link_idx], dtype=gs.tc_int, device=gs.device)
+
+                        if is_parallelized:
+                            rigid_solver.set_base_links_pos(
+                                pos_tensor, base_links_idx, envs_idx=env_idx, relative=False, unsafe=True, skip_forward=False
+                            )
+                            rigid_solver.set_base_links_quat(
+                                quat_tensor, base_links_idx, envs_idx=env_idx, relative=False, unsafe=True, skip_forward=False
+                            )
+                        else:
+                            rigid_solver.set_base_links_pos(
+                                pos_tensor, base_links_idx, envs_idx=None, relative=False, unsafe=True, skip_forward=False
+                            )
+                            rigid_solver.set_base_links_quat(
+                                quat_tensor, base_links_idx, envs_idx=None, relative=False, unsafe=True, skip_forward=False
+                            )
+                    else:
+                        # Use regular link methods for non-base links
+                        if is_parallelized:
+                            rigid_solver.set_links_pos(
+                                pos_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True
+                            )
+                            rigid_solver.set_links_quat(
+                                quat_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True
+                            )
+                        else:
+                            rigid_solver.set_links_pos(
+                                pos_tensor, links_idx=link_idx, unsafe=True
+                            )
+                            rigid_solver.set_links_quat(
+                                quat_tensor, links_idx=link_idx, unsafe=True
+                            )
+
+                    # Zero velocities after setting transform to avoid spurious forces
                     if is_parallelized:
-                        rigid_solver.set_base_links_pos(
-                            pos_tensor,
-                            base_links_idx,
-                            envs_idx=env_idx,
-                            relative=False,
-                            unsafe=True,
-                            skip_forward=False,
-                        )
-                        rigid_solver.set_base_links_quat(
-                            quat_tensor,
-                            base_links_idx,
-                            envs_idx=env_idx,
-                            relative=False,
-                            unsafe=True,
-                            skip_forward=False,
-                        )
-                        # Zero velocities after setting transform to avoid spurious forces
                         entity.zero_all_dofs_velocity(envs_idx=env_idx, unsafe=True)
                     else:
-                        rigid_solver.set_base_links_pos(
-                            pos_tensor, base_links_idx, envs_idx=None, relative=False, unsafe=True, skip_forward=False
-                        )
-                        rigid_solver.set_base_links_quat(
-                            quat_tensor, base_links_idx, envs_idx=None, relative=False, unsafe=True, skip_forward=False
-                        )
-                        # Zero velocities after setting transform to avoid spurious forces
                         entity.zero_all_dofs_velocity(envs_idx=None, unsafe=True)
 
                 except Exception as e:

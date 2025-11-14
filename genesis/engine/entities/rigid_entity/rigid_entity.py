@@ -1431,7 +1431,10 @@ class RigidEntity(Entity):
             self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]]
             # set new qpos
             rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
-            # run FK
+
+        # run FK
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
@@ -1446,18 +1449,21 @@ class RigidEntity(Entity):
                 static_rigid_sim_config,
             )
 
-        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
             for i in ti.static(range(3)):
                 links_pos[i_b_, i_l_, i] = links_state.pos[links_idx[i_l_], envs_idx[i_b_]][i]
             for i in ti.static(range(4)):
                 links_quat[i_b_, i_l_, i] = links_state.quat[links_idx[i_l_], envs_idx[i_b_]][i]
 
+        # restore original qpos
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
-            # restore original qpos
             rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
-            # run FK
+
+        # run FK
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
@@ -2262,19 +2268,39 @@ class RigidEntity(Entity):
     @gs.assert_built
     def control_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
         """
-        Set the PD controller's target position for the entity's dofs. This is used for position control.
+        Set the position controller's target position for the entity's dofs. The controller is a proportional term
+        plus a velocity damping term (virtual friction).
 
         Parameters
         ----------
         position : array_like
             The target position to set.
+        dofs_idx_local : array_like, optional
+            The indices of the dofs to control. If None, all dofs will be controlled. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.control_dofs_position(position, dofs_idx, envs_idx, unsafe=unsafe)
+
+    @gs.assert_built
+    def control_dofs_position_velocity(self, position, velocity, dofs_idx_local=None, envs_idx=None, *, unsafe=False):
+        """
+        Set a PD controller's target position and velocity for the entity's dofs. This is used for position control.
+
+        Parameters
+        ----------
+        position : array_like
+            The target position to set.
+        velocity : array_like
+            The target velocity
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to control. If None, all dofs will be controlled. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self._solver.control_dofs_position(position, dofs_idx, envs_idx, unsafe=unsafe)
+        self._solver.control_dofs_position_velocity(position, velocity, dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
     def get_qpos(self, qs_idx_local=None, envs_idx=None, *, unsafe=False):

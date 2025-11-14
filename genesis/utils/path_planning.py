@@ -150,6 +150,7 @@ class PathPlanner(ABC):
             for i_q in range(self._entity.n_qs):
                 for i_s in range(path.shape[0]):
                     tensor[i_s, i_b, i_q] = path[i_s, i_b, i_q]
+
         ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(path.shape[1]):
             if mask[i_b]:

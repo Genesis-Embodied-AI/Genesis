@@ -193,7 +193,7 @@ def kernel_cast_rays(
         ray_start_world = ti_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
 
         ray_dir_local = ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
-        ray_direction_world = ti_normalize(ti_transform_by_quat(ray_dir_local, link_quat))
+        ray_direction_world = ti_normalize(ti_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
 
         # --- 2. BVH Traversal ---
         # FIXME: this duplicates the logic in LBVH.query() which also does traversal
@@ -269,7 +269,7 @@ def kernel_cast_rays(
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * ti_normalize(
-                    ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
+                    ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
                 )
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y

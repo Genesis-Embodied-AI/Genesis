@@ -110,8 +110,9 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             euler=(0, 0, 0),
         ),
     )
-    scene.sim.coupler.set_ipc_link_filter(
+    scene.sim.coupler.set_link_ipc_coupling_type(
         entity=entities["robot"],
+        coupling_type="both",
         link_names=["left_finger", "right_finger"],
     )
 
