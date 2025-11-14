@@ -1,5 +1,31 @@
 # Genesis Release Note
 
+## 0.3.7
+
+The performance of GsTaichi dynamic array mode has been greatly improved. Now it should be on par with fixed-size array mode (aka performance mode) for very large batch sizes, and up to 30% slower for non-batched simulations. This mode is still considered experimental and must be enabled manually by setting the env var 'GS_ENABLE_NDARRAY=1'. Just try it if you are tired of endlessly waiting for the simulation to compile!
+
+### New Features
+
+* Implement position-velocity controller. (@matthieuvigne) (#1948)
+
+### Bug Fixes
+
+* Fix missing option `diffuse_texture` to `Glass` surface. (@Kashu7100) (#1934)
+* Fix interactive viewer. (@YilingQiao) (#1931)
+* Fix external coupling forces from other solvers not affecting rigid bodies. (@SonSang) (#1941)
+* Fix silent process killing issue in MPM simulation by raising an exception. (@SonSang) (#1949)
+* Fix 'discrete_obstacles_terrain' being completely flat. (@jgillick) (#1972)
+
+### Miscellaneous
+
+* Added warning message about stable timestep for SPH solver. (@SonSang) (#1925)
+* Reduce memory usage due to diff constraint solver. (@YilingQiao) (#1930)
+* Faster non-batched simulation. (@duburcqa) (#1935)
+* Fix or silent dev warnings. (@duburcqa) (#1944)
+* Add caching to Rigid Link state getters to improve performance. (@duburcqa) (#1940, #1955)
+* Add support of Linux ARM. (@duburcqa) (#1961)
+* Add 'GS_PARA_LEVEL' env var to force kernel parallelization level. (@duburcqa) (#1968)
+
 ## 0.3.6
 
 A new experimental interface with the Incremental Potential Contact coupling solver [libuipc](https://github.com/spiriMirror/libuipc) has been introduced, mainly targeting cloth simulation.

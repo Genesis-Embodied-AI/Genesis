@@ -190,6 +190,7 @@ class LegacyCoupler(RBC):
             normal_rigid = sdf_decomp.sdf_func_normal_world(
                 geoms_state=geoms_state,
                 geoms_info=geoms_info,
+                rigid_global_info=rigid_global_info,
                 collider_static_config=collider_static_config,
                 sdf_info=sdf_info,
                 pos_world=pos_world,
@@ -241,6 +242,7 @@ class LegacyCoupler(RBC):
         normal_rigid = sdf_decomp.sdf_func_normal_world(
             geoms_state=geoms_state,
             geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
             collider_static_config=collider_static_config,
             sdf_info=sdf_info,
             pos_world=pos_world,
@@ -500,6 +502,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         sdf_info: array_class.SDFInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
         collider_static_config: ti.template(),
     ):
         for i_p, i_b in ti.ndrange(self.mpm_solver.n_particles, self.mpm_solver._B):
@@ -509,6 +512,7 @@ class LegacyCoupler(RBC):
                         sdf_normal = sdf_decomp.sdf_func_normal_world(
                             geoms_state=geoms_state,
                             geoms_info=geoms_info,
+                            rigid_global_info=rigid_global_info,
                             collider_static_config=collider_static_config,
                             sdf_info=sdf_info,
                             pos_world=self.mpm_solver.particles[f, i_p, i_b].pos,
@@ -730,6 +734,7 @@ class LegacyCoupler(RBC):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         sdf_info: array_class.SDFInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
         collider_static_config: ti.template(),
     ):
         for i_p, i_b in ti.ndrange(self.pbd_solver._n_particles, self.sph_solver._B):
@@ -753,6 +758,7 @@ class LegacyCoupler(RBC):
                             geoms_info,
                             links_state,
                             sdf_info,
+                            rigid_global_info,
                             collider_static_config,
                         )
 
@@ -856,6 +862,7 @@ class LegacyCoupler(RBC):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         sdf_info: array_class.SDFInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
         collider_static_config: ti.template(),
     ):
         """
@@ -879,6 +886,7 @@ class LegacyCoupler(RBC):
         contact_normal = sdf_decomp.sdf_func_normal_world(
             geoms_state=geoms_state,
             geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
             collider_static_config=collider_static_config,
             sdf_info=sdf_info,
             pos_world=pos_world,
@@ -926,6 +934,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.geoms_state,
                 self.rigid_solver.geoms_info,
                 self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver._rigid_global_info,
                 self.rigid_solver.collider._collider_static_config,
             )
 
@@ -963,6 +972,7 @@ class LegacyCoupler(RBC):
                 geoms_info=self.rigid_solver.geoms_info,
                 links_state=self.rigid_solver.links_state,
                 sdf_info=self.rigid_solver.sdf._sdf_info,
+                rigid_global_info=self.rigid_solver._rigid_global_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
 
