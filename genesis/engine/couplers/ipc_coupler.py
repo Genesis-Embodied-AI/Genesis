@@ -1019,7 +1019,9 @@ class IPCCoupler(RBC):
 
                     # Convert to torch tensors and add batch dimension
                     pos_tensor = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).unsqueeze(0)  # (1, 3)
-                    quat_tensor = torch.as_tensor(quat_wxyz, dtype=gs.tc_float, device=gs.device).unsqueeze(0)  # (1, 4) [w, x, y, z]
+                    quat_tensor = torch.as_tensor(quat_wxyz, dtype=gs.tc_float, device=gs.device).unsqueeze(
+                        0
+                    )  # (1, 4) [w, x, y, z]
 
                     # Determine if this is a base link
                     is_base_link = (link_idx == entity.base_link_idx)
@@ -1066,7 +1068,9 @@ class IPCCoupler(RBC):
                         entity.zero_all_dofs_velocity(envs_idx=None, unsafe=True)
 
                 except Exception as e:
-                    gs.logger.warning(f"Failed to set Genesis transform for IPC-only link {link_idx}, env {env_idx}: {e}")
+                    gs.logger.warning(
+                        f"Failed to set Genesis transform for IPC-only link {link_idx}, env {env_idx}: {e}"
+                    )
                     continue
 
     def _get_genesis_link_transform(self, link_idx, env_idx):
