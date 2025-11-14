@@ -1004,7 +1004,9 @@ class IPCCoupler(RBC):
 
                     # Convert to torch tensors and add batch dimension
                     pos_tensor = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).unsqueeze(0)  # (1, 3)
-                    quat_tensor = torch.as_tensor(quat_wxyz, dtype=gs.tc_float, device=gs.device).unsqueeze(0)  # (1, 4) [w, x, y, z]
+                    quat_tensor = torch.as_tensor(quat_wxyz, dtype=gs.tc_float, device=gs.device).unsqueeze(
+                        0
+                    )  # (1, 4) [w, x, y, z]
 
                     # Create base links index tensor
                     base_links_idx = torch.tensor([link_idx], dtype=gs.tc_int, device=gs.device)
@@ -1012,10 +1014,20 @@ class IPCCoupler(RBC):
                     # Set base link transform using solver methods
                     if is_parallelized:
                         rigid_solver.set_base_links_pos(
-                            pos_tensor, base_links_idx, envs_idx=env_idx, relative=False, unsafe=True, skip_forward=False
+                            pos_tensor,
+                            base_links_idx,
+                            envs_idx=env_idx,
+                            relative=False,
+                            unsafe=True,
+                            skip_forward=False,
                         )
                         rigid_solver.set_base_links_quat(
-                            quat_tensor, base_links_idx, envs_idx=env_idx, relative=False, unsafe=True, skip_forward=False
+                            quat_tensor,
+                            base_links_idx,
+                            envs_idx=env_idx,
+                            relative=False,
+                            unsafe=True,
+                            skip_forward=False,
                         )
                         # Zero velocities after setting transform to avoid spurious forces
                         entity.zero_all_dofs_velocity(envs_idx=env_idx, unsafe=True)
@@ -1030,7 +1042,9 @@ class IPCCoupler(RBC):
                         entity.zero_all_dofs_velocity(envs_idx=None, unsafe=True)
 
                 except Exception as e:
-                    gs.logger.warning(f"Failed to set Genesis transform for IPC-only link {link_idx}, env {env_idx}: {e}")
+                    gs.logger.warning(
+                        f"Failed to set Genesis transform for IPC-only link {link_idx}, env {env_idx}: {e}"
+                    )
                     continue
 
     def _get_genesis_link_transform(self, link_idx, env_idx):
