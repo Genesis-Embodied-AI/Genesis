@@ -74,11 +74,21 @@ def main() -> None:
                 f.flush()
                 num_results_written += 1
         spinny = "x" if disp else "+"
-        print(num_tests, "tests running, of which", len(_mem_by_test), "on gpu. Num results written: ", num_results_written, "[updating]", "       ", end="\r", flush=True)
+        print(
+            num_tests,
+            "tests running, of which",
+            len(_mem_by_test),
+            "on gpu. Num results written: ",
+            num_results_written,
+            "[updating]",
+            "       ",
+            end="\r",
+            flush=True,
+        )
         old_mem_by_test = _mem_by_test
         disp = not disp
         time.sleep(1.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
