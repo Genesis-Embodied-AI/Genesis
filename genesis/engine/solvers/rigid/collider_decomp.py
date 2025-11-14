@@ -76,6 +76,10 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
+        n_contacts_per_pair = 20 if self._solver._static_rigid_sim_config.requires_grad else 5
+        if self._solver._options.box_box_detection:
+            n_contacts_per_pair = max(n_contacts_per_pair, self._box_MAXCONPAIR)
+
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
@@ -83,7 +87,7 @@ class Collider:
                 geom.is_convex or geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms
             ),
             has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms),
-            n_contacts_per_pair=20 if self._solver._static_rigid_sim_config.requires_grad else 5,
+            n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
 
