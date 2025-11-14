@@ -68,7 +68,8 @@ def pytest_make_parametrize_id(config, val, argname):
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
     # Include test name in process title
-    setproctitle.setproctitle(f"pytest: {item.nodeid}")
+    test_name = item.nodeid.replace(" ", "")
+    setproctitle.setproctitle(f"pytest: {test_name}")
 
 
 @pytest.hookimpl(tryfirst=True)
