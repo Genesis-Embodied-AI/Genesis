@@ -5,6 +5,7 @@ import gstaichi as ti
 import torch
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.sdf_decomp as sdf_decomp
 from genesis.engine.boundaries import CubeBoundary
@@ -68,17 +69,6 @@ class MPMSolver(Solver):
         # boundary
         self.setup_boundary()
 
-    def _batch_shape(self, shape=None, first_dim=False, B=None):
-        if B is None:
-            B = self._B
-
-        if shape is None:
-            return (B,)
-        elif isinstance(shape, (list, tuple)):
-            return (B,) + shape if first_dim else shape + (B,)
-        else:
-            return (B, shape) if first_dim else (shape, B)
-
     def setup_boundary(self):
         # safety padding
         self.boundary_padding = 3 * self._dx
@@ -127,12 +117,12 @@ class MPMSolver(Solver):
 
         # construct fields
         self.particles = struct_particle_state.field(
-            shape=self._batch_shape((self._sim.substeps_local + 1, self._n_particles)),
+            shape=(self._sim.substeps_local + 1, self._n_particles, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.particles_ng = struct_particle_state_ng.field(
-            shape=self._batch_shape((self._sim.substeps_local + 1, self._n_particles)),
+            shape=(self._sim.substeps_local + 1, self._n_particles, self._B),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -140,7 +130,7 @@ class MPMSolver(Solver):
             shape=self._n_particles, needs_grad=False, layout=ti.Layout.SOA
         )
         self.particles_render = struct_particle_state_render.field(
-            shape=self._batch_shape(self._n_particles), needs_grad=False, layout=ti.Layout.SOA
+            shape=(self._n_particles, self._B), needs_grad=False, layout=ti.Layout.SOA
         )
 
     def init_grid_fields(self):
@@ -150,7 +140,7 @@ class MPMSolver(Solver):
             vel_out=gs.ti_vec3,  # output momentum/velocity
         )
         self.grid = grid_cell_state.field(
-            shape=self._batch_shape((self._sim.substeps_local + 1, *self._grid_res)),
+            shape=(self._sim.substeps_local + 1, *self._grid_res, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
@@ -160,14 +150,14 @@ class MPMSolver(Solver):
             support_idxs=ti.types.vector(self._n_vvert_supports, gs.ti_int),
             support_weights=ti.types.vector(self._n_vvert_supports, gs.ti_float),
         )
-        self.vverts_info = struct_vvert_info.field(shape=max(1, self._n_vverts), layout=ti.Layout.SOA)
+        self.vverts_info = struct_vvert_info.field(shape=(max(1, self._n_vverts),), layout=ti.Layout.SOA)
 
         struct_vvert_state_render = ti.types.struct(
             pos=gs.ti_vec3,
             active=gs.ti_bool,
         )
         self.vverts_render = struct_vvert_state_render.field(
-            shape=self._batch_shape(max(1, self._n_vverts)), layout=ti.Layout.SOA
+            shape=(max(1, self._n_vverts), self._B), layout=ti.Layout.SOA
         )
 
     def init_ckpt(self):
@@ -191,7 +181,7 @@ class MPMSolver(Solver):
 
         self._coupler = self.sim._coupler
 
-        if self.is_active():
+        if self.is_active:
             if self._enable_CPIC:
                 gs.logger.warning(
                     "Kernel compilation takes longer when running MPM solver in CPIC mode. Please be patient."
@@ -217,9 +207,19 @@ class MPMSolver(Solver):
                     "calculated based on `grid_density`). Simulation might be unstable."
                 )
 
+        # Overwrite gravity because only field is supported for now
+        if self._gravity is not None:
+            gravity = self._gravity.to_numpy()
+            self._gravity = ti.field(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity.from_numpy(gravity)
+
     # ------------------------------------------------------------------------------------
     # -------------------------------------- misc ----------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def is_active(self):
+        return self.n_particles > 0
 
     def add_entity(self, idx, material, morph, surface):
         self.add_material(material)
@@ -253,9 +253,6 @@ class MPMSolver(Solver):
             self._materials_update_F_S_Jp.append(material.update_F_S_Jp)
             self._materials_update_stress.append(material.update_stress)
         self._materials.append(material)
-
-    def is_active(self):
-        return self.n_particles > 0
 
     @ti.func
     def stencil_range(self):
@@ -295,7 +292,16 @@ class MPMSolver(Solver):
                 )
 
     @ti.kernel
-    def p2g(self, f: ti.i32):
+    def p2g(
+        self,
+        f: ti.i32,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        sdf_info: array_class.SDFInfo,
+        collider_static_config: ti.template(),
+    ):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 # A. update F (deformation gradient), S (Sigma from SVD(F), essentially represents volume) and Jp
@@ -353,18 +359,19 @@ class MPMSolver(Solver):
                         weight *= w[offset[d]][d]
 
                     sep_geom_idx = -1
-                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active()):
+                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
                         # check if particle and cell center are at different side of any thin object
                         cell_pos = (base + offset) * self._dx
 
                         for i_g in range(self.sim.rigid_solver.n_geoms):
-                            if self.sim.rigid_solver.geoms_info.needs_coup[i_g]:
+                            if geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
                                 sdf_normal_cell = sdf_decomp.sdf_func_normal_world(
-                                    geoms_state=self.sim.rigid_solver.geoms_state,
-                                    geoms_info=self.sim.rigid_solver.geoms_info,
-                                    collider_static_config=self.sim.rigid_solver.collider._collider_static_config,
-                                    sdf_info=self.sim.rigid_solver.sdf._sdf_info,
+                                    geoms_state=geoms_state,
+                                    geoms_info=geoms_info,
+                                    rigid_global_info=rigid_global_info,
+                                    collider_static_config=collider_static_config,
+                                    sdf_info=sdf_info,
                                     pos_world=cell_pos,
                                     geom_idx=i_g,
                                     batch_idx=i_b,
@@ -386,7 +393,13 @@ class MPMSolver(Solver):
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in = ti.Vector.zero(gs.ti_float, 3)
 
     @ti.kernel
-    def g2p(self, f: ti.i32):
+    def g2p(
+        self,
+        f: ti.i32,
+        geoms_info: array_class.GeomsInfo,
+        links_state: array_class.LinksState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+    ):
         for i_p, i_b in ti.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 base = ti.floor(self.particles[f, i_p, i_b].pos * self._inv_dx - 0.5).cast(gs.ti_int)
@@ -401,7 +414,7 @@ class MPMSolver(Solver):
                     for d in ti.static(range(3)):
                         weight *= w[offset[d]][d]
 
-                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active()):
+                    if ti.static(self._enable_CPIC and self.sim.rigid_solver.is_active):
                         sep_geom_idx = self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b]
                         if sep_geom_idx != -1:
                             grid_vel = self.sim.coupler._func_collide_in_rigid_geom(
@@ -412,6 +425,9 @@ class MPMSolver(Solver):
                                 1.0,
                                 sep_geom_idx,
                                 i_b,
+                                geoms_info=geoms_info,
+                                links_state=links_state,
+                                rigid_global_info=rigid_global_info,
                             )
 
                     new_vel += weight * grid_vel
@@ -427,7 +443,6 @@ class MPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].vel = new_vel
                 self.particles[f + 1, i_p, i_b].C = new_C
                 self.particles[f + 1, i_p, i_b].pos = new_pos
-
             else:
                 self.particles[f + 1, i_p, i_b].vel = self.particles[f, i_p, i_b].vel
                 self.particles[f + 1, i_p, i_b].pos = self.particles[f, i_p, i_b].pos
@@ -436,6 +451,14 @@ class MPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].Jp = self.particles[f, i_p, i_b].Jp
 
             self.particles_ng[f + 1, i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
+
+    @ti.kernel
+    def _is_state_valid(self, f: ti.i32) -> ti.i32:
+        is_success = True
+        for i_p, i_b in ti.ndrange(self._n_particles, self._B):
+            if ti.math.isnan(self.particles[f, i_p, i_b].pos).any():
+                is_success = False
+        return is_success
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -453,18 +476,48 @@ class MPMSolver(Solver):
         self.reset_grid_and_grad(f)
         self.compute_F_tmp(f)
         self.svd(f)
-        self.p2g(f)
+        self.p2g(
+            f,
+            self.sim.coupler.rigid_solver.geoms_state,
+            self.sim.coupler.rigid_solver.geoms_info,
+            self.sim.coupler.rigid_solver.links_state,
+            self.sim.coupler.rigid_solver._rigid_global_info,
+            self.sim.coupler.rigid_solver.sdf._sdf_info,
+            self.sim.coupler.rigid_solver.collider._collider_static_config,
+        )
 
     def substep_pre_coupling_grad(self, f):
-        self.p2g.grad(f)
+        self.p2g.grad(
+            f,
+            self.sim.coupler.rigid_solver.geoms_state,
+            self.sim.coupler.rigid_solver.geoms_info,
+            self.sim.coupler.rigid_solver.links_state,
+            self.sim.coupler.rigid_solver._rigid_global_info,
+            self.sim.coupler.rigid_solver.sdf._sdf_info,
+            self.sim.coupler.rigid_solver.collider._collider_static_config,
+        )
         self.svd_grad(f)
         self.compute_F_tmp.grad(f)
 
     def substep_post_coupling(self, f):
-        self.g2p(f)
+        self.g2p(
+            f,
+            self.sim.coupler.rigid_solver.geoms_info,
+            self.sim.coupler.rigid_solver.links_state,
+            self.sim.coupler.rigid_solver._rigid_global_info,
+        )
+        if not self._is_state_valid(f):
+            gs.raise_exception(
+                "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+            )
 
     def substep_post_coupling_grad(self, f):
-        self.g2p.grad(f)
+        self.g2p.grad(
+            f,
+            self.sim.coupler.rigid_solver.geoms_info,
+            self.sim.coupler.rigid_solver.links_state,
+            self.sim.coupler.rigid_solver._rigid_global_info,
+        )
 
     @ti.kernel
     def copy_frame(self, source: ti.i32, target: ti.i32):
@@ -525,7 +578,7 @@ class MPMSolver(Solver):
             entity.collect_output_grads()
 
     def add_grad_from_state(self, state):
-        if self.is_active():
+        if self.is_active:
             if state.pos.grad is not None:
                 state.pos.assert_contiguous()
                 self.add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
@@ -634,7 +687,7 @@ class MPMSolver(Solver):
                 entity.load_ckpt(ckpt_name=ckpt_name)
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
+        if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
 
     @ti.kernel
@@ -662,7 +715,7 @@ class MPMSolver(Solver):
             self.particles_ng[f, i_p, i_b].active = active[i_b, i_p]
 
     def get_state(self, f):
-        if not self.is_active():
+        if not self.is_active:
             return None
 
         state = MPMSolverState(self._scene)

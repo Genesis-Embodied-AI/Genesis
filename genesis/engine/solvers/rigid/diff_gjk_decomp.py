@@ -14,13 +14,13 @@ def func_gjk_contact(
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -54,6 +54,8 @@ def func_gjk_contact(
     Note that these terms can be computed from the non-differentiable contact data in a differentiable way. Therefore,
     we store the non-differentiable contact data along with the differentiable contact data for the backward pass.
     """
+    EPS = rigid_global_info.EPS[None]
+
     # Clear the cache to prepare for this GJK-EPA run.
     GJK.clear_cache(gjk_state, i_b)
 
@@ -89,7 +91,7 @@ def func_gjk_contact(
             # otherwise it would be more sensitive to ill-conditionning.
             axis = (2 * (i % 2) - 1) * axis_0 + (1 - 2 * ((i // 2) % 2)) * axis_1
             rotang = 1e-2 * (100 ** ((i - 1) // 4))
-            qrot = gu.ti_rotvec_to_quat(rotang * axis)
+            qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
             func_rotate_frame(i_ga, default_contact_pos, qrot, i_b, geoms_state, geoms_info)
             func_rotate_frame(i_gb, default_contact_pos, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
 
@@ -97,13 +99,13 @@ def func_gjk_contact(
             geoms_state,
             geoms_info,
             verts_info,
+            rigid_global_info,
             static_rigid_sim_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -119,7 +121,7 @@ def func_gjk_contact(
             # Construct the initial polytope from the GJK simplex
             GJK.func_safe_epa_init(
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 i_ga,
                 i_gb,
                 i_b,
@@ -127,7 +129,7 @@ def func_gjk_contact(
 
             if i == 0:
                 # In default configuration, we use the extended EPA algorithm to find multiple contact points.
-                max_epa_iter = gjk_static_config.epa_max_iterations
+                max_epa_iter = gjk_info.epa_max_iterations[None]
                 while max_epa_iter > 0:
                     i_f, num_iter = func_extended_epa(
                         geoms_state,
@@ -137,9 +139,8 @@ def func_gjk_contact(
                         collider_state,
                         collider_static_config,
                         gjk_state,
-                        gjk_static_config,
+                        gjk_info,
                         support_field_info,
-                        support_field_static_config,
                         i_ga,
                         i_gb,
                         i_b,
@@ -163,7 +164,7 @@ def func_gjk_contact(
                     # If the penetration depth is larger than the (default EPA depth + eps), we can ignore this contact
                     # because the weight of the contact point would be 0.
                     if found_default_epa and (
-                        penetration > default_penetration + gjk_static_config.diff_contact_eps_distance
+                        penetration > default_penetration + gjk_info.diff_contact_eps_distance[None]
                     ):
                         continue
 
@@ -176,9 +177,8 @@ def func_gjk_contact(
                         collider_state,
                         collider_static_config,
                         gjk_state,
-                        gjk_static_config,
+                        gjk_info,
                         support_field_info,
-                        support_field_static_config,
                         i_ga,
                         i_gb,
                         i_b,
@@ -203,6 +203,7 @@ def func_gjk_contact(
                             geoms_state,
                             geoms_info,
                             geoms_init_AABB,
+                            rigid_global_info,
                         )
 
                         found_default_epa = True
@@ -210,7 +211,7 @@ def func_gjk_contact(
                     # Break the loop if we found enough contact points for default configuration. As we can find at most
                     # 8 contact points for perturbed configurations, we can find at most max_contacts_per_pair - 8
                     # contact points for default configuration.
-                    if gjk_state.n_diff_contact_input[i_b] >= (gjk_static_config.max_contacts_per_pair - num_perturb):
+                    if gjk_state.n_diff_contact_input[i_b] >= (gjk_info.max_contacts_per_pair[None] - num_perturb):
                         break
 
                 # If we failed to find the default contact point, we do not add any contact point.
@@ -221,13 +222,13 @@ def func_gjk_contact(
                     geoms_state,
                     geoms_info,
                     verts_info,
+                    rigid_global_info,
                     static_rigid_sim_config,
                     collider_state,
                     collider_static_config,
                     gjk_state,
-                    gjk_static_config,
+                    gjk_info,
                     support_field_info,
-                    support_field_static_config,
                     i_ga,
                     i_gb,
                     i_b,
@@ -248,9 +249,8 @@ def func_gjk_contact(
                     collider_state,
                     collider_static_config,
                     gjk_state,
-                    gjk_static_config,
+                    gjk_info,
                     support_field_info,
-                    support_field_static_config,
                     i_ga,
                     i_gb,
                     i_b,
@@ -277,7 +277,7 @@ def func_gjk_contact(
         if i_c > 0:
             ref_penetration = default_penetration
         contact_pos, contact_normal, penetration, weight = func_differentiable_contact(
-            geoms_state, gjk_state.diff_contact_input, gjk_static_config, i_ga, i_gb, i_b, i_c, ref_penetration
+            geoms_state, gjk_state.diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
         )
         if i_c == 0:
             default_penetration = penetration
@@ -338,12 +338,12 @@ def func_gjk_contact(
         if insert_id == n_contacts:
             n_contacts += 1
 
-        if n_contacts >= gjk_static_config.max_contacts_per_pair:
+        if n_contacts >= gjk_info.max_contacts_per_pair[None]:
             break
 
     gjk_state.n_contacts[i_b] = n_contacts
-    gjk_state.is_col[i_b] = 1 if n_contacts > 0 else 0
-    gjk_state.multi_contact_flag[i_b] = 1
+    gjk_state.is_col[i_b] = n_contacts > 0
+    gjk_state.multi_contact_flag[i_b] = True
 
 
 @ti.func
@@ -355,9 +355,8 @@ def func_extended_epa(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -371,7 +370,7 @@ def func_extended_epa(
     objects are slightly perturbed, the farthest boundary face could change to one of the nearly-farthest boundary faces.
     Therefore, we use this function to find such nearly-farthest boundary faces for differentiability.
     """
-    tolerance = gjk_static_config.tolerance
+    tolerance = gjk_info.tolerance[None]
     nearest_i_f = gs.ti_int(-1)
 
     discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
@@ -385,7 +384,7 @@ def func_extended_epa(
         k += 1
 
         # Find the polytope face with the smallest distance to the origin
-        lower2 = gjk_static_config.FLOAT_MAX_SQ
+        lower2 = gjk_info.FLOAT_MAX_SQ[None]
         nearest_i_f = -1
 
         for i in range(gjk_state.polytope.nfaces_map[i_b]):
@@ -412,9 +411,8 @@ def func_extended_epa(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -450,7 +448,7 @@ def func_extended_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = GJK.func_epa_horizon(gjk_state, gjk_static_config, i_b, nearest_i_f)
+        horizon_flag = GJK.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -465,7 +463,7 @@ def func_extended_epa(
         # Check if the memory space is enough for attaching new faces
         nfaces = gjk_state.polytope.nfaces[i_b]
         nedges = gjk_state.polytope.horizon_nedges[i_b]
-        if nfaces + nedges >= gjk_static_config.polytope_max_faces:
+        if nfaces + nedges >= gjk_info.polytope_max_faces[None]:
             # If the polytope is full, we cannot insert new faces
             nearest_i_f = -1
             break
@@ -495,7 +493,7 @@ def func_extended_epa(
 
             attach_flag = GJK.func_safe_attach_face_to_polytope(
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 i_b,
                 wi,
                 horizon_v2,
@@ -535,7 +533,7 @@ def func_extended_epa(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = GJK.func_safe_epa_witness(gjk_state, gjk_static_config, i_ga, i_gb, i_b, nearest_i_f)
+        flag = GJK.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == GJK.RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -ti.sqrt(dist2)
@@ -561,9 +559,8 @@ def func_add_diff_contact_input(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -611,16 +608,16 @@ def func_add_diff_contact_input(
     # (a) Check if the face is degenerate.
     normal = func_plane_normal(mink1, mink2, mink3)
     normal_norm = normal.norm()
-    is_face_degenerate = normal_norm < gjk_static_config.diff_contact_min_normal_norm
+    is_face_degenerate = normal_norm < gjk_info.diff_contact_min_normal_norm[None]
 
     # (b) Check if the origin is very close to the face (which means very small penetration depth).
     proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
     origin_dist = proj_o.norm()
-    is_origin_close_to_face = origin_dist < gjk_static_config.diff_contact_min_penetration
+    is_origin_close_to_face = origin_dist < gjk_info.diff_contact_min_penetration[None]
 
     ### Orient the face normal, so that it points to the other side of the origin.
     face_center = (mink1 + mink2 + mink3) / 3.0
-    if normal_norm > gjk_static_config.FLOAT_MIN:
+    if normal_norm > gjk_info.FLOAT_MIN[None]:
         normal = normal.normalized()
     if normal.dot(face_center) < 0.0:
         normal = -normal
@@ -634,9 +631,8 @@ def func_add_diff_contact_input(
         collider_state,
         collider_static_config,
         gjk_state,
-        gjk_static_config,
+        gjk_info,
         support_field_info,
-        support_field_static_config,
         i_ga,
         i_gb,
         i_b,
@@ -667,7 +663,10 @@ def func_contact_orthogonals(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
+    EPS = rigid_global_info.EPS[None]
+
     axis_0 = ti.Vector.zero(gs.ti_float, 3)
     axis_1 = ti.Vector.zero(gs.ti_float, 3)
 
@@ -684,7 +683,7 @@ def func_contact_orthogonals(
 
     # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
     i_l = geoms_info.link_idx[i_g]
-    rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b])
+    rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b], EPS)
     axis_idx = gs.ti_int(0)
     axis_angle_max = gs.ti_float(0.0)
     for i in ti.static(range(3)):
@@ -739,7 +738,7 @@ def func_compute_minkowski_point(
 def func_differentiable_contact(
     geoms_state: array_class.GeomsState,
     diff_contact_input: array_class.DiffContactInput,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
     i_b,
@@ -750,9 +749,9 @@ def func_differentiable_contact(
     Compute the contact normal, penetration, and point for contact [i_c] from the corresponding [diff_contact_input]
     in a differentiable way. The gradients flow through the position and quaternion stored in the [geoms_state].
     """
-    eps_B = gjk_static_config.diff_contact_eps_boundary
-    eps_D = gjk_static_config.diff_contact_eps_distance
-    eps_A = gjk_static_config.diff_contact_eps_affine
+    eps_B = gjk_info.diff_contact_eps_boundary[None]
+    eps_D = gjk_info.diff_contact_eps_distance[None]
+    eps_A = gjk_info.diff_contact_eps_affine[None]
 
     # Result
     contact_pos = gs.ti_vec3(0.0, 0.0, 0.0)
@@ -797,12 +796,12 @@ def func_differentiable_contact(
     normal = func_plane_normal(mink1, mink2, mink3)
 
     # Project the origin onto the affine plane of the face: This operation is guaranteed to be numerically stable, as
-    # the normal length is guaranteed to be larger than the minimum normal norm in [gjk_static_config].
+    # the normal length is guaranteed to be larger than the minimum normal norm in [gjk_info].
     proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
 
     # Compute the affine coordinates of the origin's projection on the face: This operation is also guaranteed to be
     # numerically stable, as the normal length is guaranteed to be larger than the minimum normal norm in
-    # [gjk_static_config].
+    # [gjk_info].
     _lambda = func_triangle_affine_coords(mink1, mink2, mink3, normal, proj_o)
 
     # Point on geom 1
@@ -812,7 +811,7 @@ def func_differentiable_contact(
 
     ### Compute contact position, normal, and penetration depth. These operations are guaranteed to be numerically stable,
     ### especially the normalization of the contact normal, as the penetration depth is guaranteed to be larger than the
-    ### minimum penetration depth in [gjk_static_config].
+    ### minimum penetration depth in [gjk_info].
     contact_pos = 0.5 * (w1 + w2)
     contact_normal = (w2 - w1).normalized()
     penetration = (w2 - w1).norm()
@@ -868,7 +867,7 @@ def func_project_origin_to_plane(v1, v2, v3, normal):
     Project the origin onto the plane defined by the simplex vertices.
 
     @ normal: The face normal computed as (v2 - v1) x (v3 - v1). Its length should be guaranteed to be larger than the
-    minimum normal norm in [gjk_static_config], but we do not check it here.
+    minimum normal norm in [gjk_info], but we do not check it here.
     """
     # Since normal norm is guaranteed to be larger than sqrt(10 * EPS), [nn] is guaranteed to be larger than 10 * EPS.
     v = v1
@@ -883,7 +882,7 @@ def func_triangle_affine_coords(v1, v2, v3, normal, point):
     Compute the affine coordinates of the point with respect to the triangle.
 
     @ normal: The face normal computed as (v2 - v1) x (v3 - v1). Its length should be guaranteed to be larger than the
-    minimum normal norm in [gjk_static_config], but we do not check it here.
+    minimum normal norm in [gjk_info], but we do not check it here.
     @ point: The point on the plane that we want to compute the affine coordinates of.
     """
     # Since normal norm is guaranteed to be larger than sqrt(10 * EPS), [nn] is guaranteed to be larger than 10 * EPS.

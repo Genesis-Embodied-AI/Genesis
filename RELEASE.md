@@ -1,5 +1,86 @@
 # Genesis Release Note
 
+## 0.3.7
+
+The performance of GsTaichi dynamic array mode has been greatly improved. Now it should be on par with fixed-size array mode (aka performance mode) for very large batch sizes, and up to 30% slower for non-batched simulations. This mode is still considered experimental and must be enabled manually by setting the env var 'GS_ENABLE_NDARRAY=1'. Just try it if you are tired of endlessly waiting for the simulation to compile!
+
+### New Features
+
+* Implement position-velocity controller. (@matthieuvigne) (#1948)
+
+### Bug Fixes
+
+* Fix missing option `diffuse_texture` to `Glass` surface. (@Kashu7100) (#1934)
+* Fix interactive viewer. (@YilingQiao) (#1931)
+* Fix external coupling forces from other solvers not affecting rigid bodies. (@SonSang) (#1941)
+* Fix silent process killing issue in MPM simulation by raising an exception. (@SonSang) (#1949)
+* Fix 'discrete_obstacles_terrain' being completely flat. (@jgillick) (#1972)
+
+### Miscellaneous
+
+* Added warning message about stable timestep for SPH solver. (@SonSang) (#1925)
+* Reduce memory usage due to diff constraint solver. (@YilingQiao) (#1930)
+* Faster non-batched simulation. (@duburcqa) (#1935)
+* Fix or silent dev warnings. (@duburcqa) (#1944)
+* Add caching to Rigid Link state getters to improve performance. (@duburcqa) (#1940, #1955)
+* Add support of Linux ARM. (@duburcqa) (#1961)
+* Add 'GS_PARA_LEVEL' env var to force kernel parallelization level. (@duburcqa) (#1968)
+
+## 0.3.6
+
+A new experimental interface with the Incremental Potential Contact coupling solver [libuipc](https://github.com/spiriMirror/libuipc) has been introduced, mainly targeting cloth simulation.
+
+### New Features
+
+* Add Rigid ‘get_dofs_frictionloss’ public API method. (@ax-anoop) (#1904)
+* Add IPC (Incremental Potential Contact) coupling system. (@Roushelfy) (#1859)
+
+### Bug Fixes
+
+* Fix missing dependencies in Docker (@schlagercollin) (#1896)
+* Fix sensor recorder Matplotlib plotter on Linux and Windows. (@duburcqa) (#1894)
+* Fix particle emitter failure if batch size = num emit particles. (@duburcqa) (#1901)
+* Fix MJCF handling of visual groups. (@duburcqa) (#1902)
+
+### Miscellaneous
+
+* Disable GsTaichi dynamic arrays by default (again!) (@duburcqa) (#1915)
+* Reset control during reset. (@YilingQiao) (#1920)
+
+## 0.3.5
+
+Minor release mainly aiming at polishing existing features and addressing some major performance regression that was introduced end of august. GsTaichi dynamic array type and fast cache are now enabled by default on Linux and Windows (opt-in on MacOS via env variable 'GS_ENABLE_NDARRAY'), which should help avoiding recompilation in most cases.
+
+### New Features
+
+* Make convex decomposition cache scale-invariant. (@SonSang) (#1810)
+* Add parsing of joint friction and damping for URDF files. (@duburcqa) (#1833)
+* Differentiable constraint solver (@SonSang) (#1733)
+* Add support of GsTaichi dynamic array type and fast cache mode. (@YilingQiao, @duburcqa) (#1868, #1873, #1875, #1880)
+
+### Bug Fixes
+
+* Fix hybrid entity with rigid. (@duburcqa) (#1819)
+* Reduce general memory usage. (@hughperkins) (#1828)
+* Improve reliability and performance of plotters. (@duburcqa) (#1836)
+* Fix loading MJCF file with includes. (@YilingQiao, @duburcqa) (#1838, #1840)
+* Fix DepthCamera sensor. (@Milotrince) (#1842)
+* Fix and refactor named terrain. (@duburcqa) (#1845)
+* Raise exception in case of invalid set entity pos/quat. (@duburcqa) (#1847, #1869)
+* Fix gltf Loading for URDF. (@ACMLCZH) (#1857)
+* Fix friction loss causing nan on Apple GPU. (@duburcqa) (#1860)
+* Fixed minor bug in differentiable contact detection. (@SonSang) (#1864)
+* Fix race condition during concurrent viewer refresh and draw_debug_*. (@duburcqa) (#1883, #1884)
+* Enable GPU and fix dt in some example scripts. (@schlagercollin) (#1890)
+
+### Miscellaneous
+
+* Reduce memory usage of Raycaster sensor. (@Milotrince) (#1850)
+* Add 'get_particles_pos' helper method to SPHEntity. (@YilingQiao) (#1871)
+* Enabling gstaichi fast cache by default. (@hughperkins) (#1885)
+* Refactor Rigid simulation data management. (@duburcqa) (#1888)
+* Do not silent errors during build. (@duburcqa) (#1889)
+
 ## 0.3.4
 
 This minor release mainly introduces first-class sensor support (IMU, Contact Sensor, LiDAR, Depth camera and more), incl. recording and plotting facilities. The rigid-rigid hydroelastic contact model has also been added. As usual, a fair share of bugs have been fixed, with unit test coverage gradually improving.

@@ -6,6 +6,7 @@ import gstaichi as ti
 import torch
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.entities.fem_entity import FEMEntity
 from genesis.engine.states.solvers import FEMSolverState
@@ -55,38 +56,13 @@ class FEMSolver(Solver):
         # lazy initialization
         self._constraints_initialized = False
 
-    def _batch_shape(self, shape=None, first_dim=False, B=None):
-        if B is None:
-            B = self._B
-
-        if shape is None:
-            return (B,)
-        elif isinstance(shape, (list, tuple)):
-            return (B,) + shape if first_dim else shape + (B,)
-        else:
-            return (B, shape) if first_dim else (shape, B)
-
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self._floor_height)
 
     def init_batch_fields(self):
-        self.batch_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self._batch_shape(),
-            needs_grad=False,
-        )
-
-        self.batch_pcg_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self._batch_shape(),
-            needs_grad=False,
-        )
-
-        self.batch_linesearch_active = ti.field(
-            dtype=gs.ti_bool,
-            shape=self._batch_shape(),
-            needs_grad=False,
-        )
+        self.batch_active = ti.field(dtype=gs.ti_bool, shape=(self._B,), needs_grad=False)
+        self.batch_pcg_active = ti.field(dtype=gs.ti_bool, shape=(self._B,), needs_grad=False)
+        self.batch_linesearch_active = ti.field(dtype=gs.ti_bool, shape=(self._B,), needs_grad=False)
 
         pcg_state = ti.types.struct(
             rTr=gs.ti_float,
@@ -97,12 +73,7 @@ class FEMSolver(Solver):
             alpha=gs.ti_float,
             beta=gs.ti_float,
         )
-
-        self.pcg_state = pcg_state.field(
-            shape=self._batch_shape(),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
-        )
+        self.pcg_state = pcg_state.field(shape=(self._B,), needs_grad=False, layout=ti.Layout.SOA)
 
         linesearch_state = ti.types.struct(
             prev_energy=gs.ti_float,
@@ -110,12 +81,7 @@ class FEMSolver(Solver):
             step_size=gs.ti_float,
             m=gs.ti_float,
         )
-
-        self.linesearch_state = linesearch_state.field(
-            shape=self._batch_shape(),
-            needs_grad=False,
-            layout=ti.Layout.SOA,
-        )
+        self.linesearch_state = linesearch_state.field(shape=(self._B,), needs_grad=False, layout=ti.Layout.SOA)
 
     def init_element_fields(self):
         # element state in vertices
@@ -184,17 +150,17 @@ class FEMSolver(Solver):
 
         # construct field
         self.elements_v = element_state_v.field(
-            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_vertices)),
+            shape=(self.sim.substeps_local + 1, self.n_vertices, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.elements_el = element_state_el.field(
-            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_elements)),
+            shape=(self.sim.substeps_local + 1, self.n_elements, self._B),
             needs_grad=True,
             layout=ti.Layout.SOA,
         )
         self.elements_el_ng = element_state_el_ng.field(
-            shape=self._batch_shape((self.sim.substeps_local + 1, self.n_elements)),
+            shape=(self.sim.substeps_local + 1, self.n_elements, self._B),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -205,17 +171,15 @@ class FEMSolver(Solver):
         )
 
         self.elements_el_energy = element_state_el_energy.field(
-            shape=self._batch_shape((self.n_elements), first_dim=True),
+            shape=(self._B, self.n_elements),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
 
-        self.elements_el_hessian = ti.field(
-            shape=self._batch_shape((3, 3, self.n_elements), first_dim=True), dtype=gs.ti_mat3
-        )
+        self.elements_el_hessian = ti.field(shape=(self._B, 3, 3, self.n_elements), dtype=gs.ti_mat3)
 
         self.elements_v_energy = element_state_v_energy.field(
-            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            shape=(self._B, self.n_vertices),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -227,13 +191,13 @@ class FEMSolver(Solver):
         )
 
         self.pcg_state_v = pcg_state_v.field(
-            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            shape=(self._B, self.n_vertices),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
 
         self.linesearch_state_v = linesearch_state_v.field(
-            shape=self._batch_shape((self.n_vertices), first_dim=True),
+            shape=(self._B, self.n_vertices),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -266,7 +230,7 @@ class FEMSolver(Solver):
         )
 
         self.surface_render_v = surface_state_render_v.field(
-            shape=self._batch_shape((n_vertices_max)),
+            shape=(n_vertices_max, self._B),
             needs_grad=False,
             layout=ti.Layout.SOA,
         )
@@ -343,16 +307,13 @@ class FEMSolver(Solver):
             target_pos=gs.ti_vec3,  # target position for the constraint
             is_soft_constraint=gs.ti_bool,  # use spring for soft constraints
             stiffness=gs.ti_float,  # spring stiffness
-            damping=gs.ti_float,  # spring damping
             link_idx=gs.ti_int,  # index of the rigid link (-1 if not linked)
             link_offset_pos=gs.ti_vec3,  # offset position of link
             link_init_quat=gs.ti_vec4,  # offset rotation of link
         )
 
         self.vertex_constraints = vertex_constraint_info.field(
-            shape=self._batch_shape((self.n_vertices)),
-            needs_grad=False,
-            layout=ti.Layout.AOS,
+            shape=(self.n_vertices, self._B), needs_grad=False, layout=ti.Layout.AOS
         )
 
         self.vertex_constraints.is_constrained.fill(False)
@@ -367,6 +328,7 @@ class FEMSolver(Solver):
 
     def build(self):
         super().build()
+
         self.n_envs = self.sim.n_envs
         self._B = self.sim._B
         self.tet_wrong_order = ti.field(dtype=gs.ti_bool, shape=(), needs_grad=False)
@@ -400,8 +362,18 @@ class FEMSolver(Solver):
                     "Please check the input mesh or the FEM solver implementation."
                 )
 
-        if self._enable_vertex_constraints and not self._constraints_initialized:
+        if self.n_vertices_max > 0 and self._enable_vertex_constraints and not self._constraints_initialized:
             self.init_constraints()
+
+        # Overwrite gravity because only field is supported for now
+        if self._gravity is not None:
+            gravity = self._gravity.to_numpy()
+            self._gravity = ti.field(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity.from_numpy(gravity)
+
+    @property
+    def is_active(self):
+        return self.n_elements_max > 0
 
     def add_entity(self, idx, material, morph, surface):
         # add material's update methods if not matching any existing material
@@ -434,9 +406,6 @@ class FEMSolver(Solver):
 
         self._entities.append(entity)
         return entity
-
-    def is_active(self):
-        return self.n_elements_max > 0
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- simulation -------------------------------------
@@ -989,8 +958,13 @@ class FEMSolver(Solver):
             entity.process_input_grad()
 
     def substep_pre_coupling(self, f):
-        if self.is_active():
-            if self._use_implicit_solver:
+        if self.is_active:
+            # Skip FEM solver step if using IPCCoupler (IPC handles FEM simulation)
+            from genesis.engine.couplers import IPCCoupler
+
+            if isinstance(self.sim._coupler, IPCCoupler):
+                pass  # IPC coupler handles FEM simulation
+            elif self._use_implicit_solver:
                 self.precompute_material_data(f)
                 self.init_pos_and_inertia(f)
                 self.batch_solve(f)
@@ -1003,7 +977,7 @@ class FEMSolver(Solver):
                     self.apply_soft_constraints(f)
 
     def substep_pre_coupling_grad(self, f):
-        if self.is_active():
+        if self.is_active:
             if self._use_implicit_solver:
                 gs.raise_exception("Gradient computation is not supported for implicit solver.")
             self.apply_uniform_force.grad(f)
@@ -1011,13 +985,13 @@ class FEMSolver(Solver):
             self.init_pos_and_vel.grad(f)
 
     def substep_post_coupling(self, f):
-        if self.is_active():
+        if self.is_active:
             self.compute_pos(f)
             if self._constraints_initialized and not self._use_implicit_solver:
                 self.apply_hard_constraints(f)
 
     def substep_post_coupling_grad(self, f):
-        if self.is_active():
+        if self.is_active:
             self.compute_pos.grad(f)
 
     @ti.kernel
@@ -1062,7 +1036,7 @@ class FEMSolver(Solver):
             entity.collect_output_grads()
 
     def add_grad_from_state(self, state):
-        if self.is_active():
+        if self.is_active:
             if state.pos.grad is not None:
                 state.pos.assert_contiguous()
                 self._kernel_add_grad_from_pos(self._sim.cur_substep_local, state.pos.grad)
@@ -1072,24 +1046,15 @@ class FEMSolver(Solver):
                 self._kernel_add_grad_from_vel(self._sim.cur_substep_local, state.vel.grad)
 
     def save_ckpt(self, ckpt_name):
-        if self.is_active():
+        if self.is_active:
             if not ckpt_name in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
-                self._ckpt[ckpt_name]["pos"] = torch.zeros(
-                    self._batch_shape((self.n_vertices, 3), first_dim=True), dtype=gs.tc_float
-                )
-                self._ckpt[ckpt_name]["vel"] = torch.zeros(
-                    self._batch_shape((self.n_vertices, 3), first_dim=True), dtype=gs.tc_float
-                )
-                self._ckpt[ckpt_name]["active"] = torch.zeros(
-                    self._batch_shape((self.n_elements,), first_dim=True), dtype=gs.tc_int
-                )
+                self._ckpt[ckpt_name]["pos"] = torch.zeros((self._B, self.n_vertices, 3), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["vel"] = torch.zeros((self._B, self.n_vertices, 3), dtype=gs.tc_float)
+                self._ckpt[ckpt_name]["active"] = torch.zeros((self._B, self.n_elements), dtype=gs.tc_int)
 
             self._kernel_get_state(
-                0,
-                self._ckpt[ckpt_name]["pos"],
-                self._ckpt[ckpt_name]["vel"],
-                self._ckpt[ckpt_name]["active"],
+                0, self._ckpt[ckpt_name]["pos"], self._ckpt[ckpt_name]["vel"], self._ckpt[ckpt_name]["active"]
             )
 
             self.copy_frame(self.sim.substeps_local, 0)
@@ -1116,11 +1081,11 @@ class FEMSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active():
+        if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 
     def get_state(self, f):
-        if self.is_active():
+        if self.is_active:
             state = FEMSolverState(self._scene)
             self._kernel_get_state(f, state.pos, state.vel, state.active)
         else:
@@ -1141,7 +1106,7 @@ class FEMSolver(Solver):
         Returns:
             torch.Tensor : shape (B, n_vertices, 3) where B is batch size
         """
-        if not self.is_active():
+        if not self.is_active:
             return None
 
         return ti_to_torch(self.elements_v_energy.force)
@@ -1225,6 +1190,44 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
             self.surface[i_global].tri2el = tri2el[i_s] + el_start
+            self.surface[i_global].active = True
+
+    @ti.kernel
+    def _kernel_add_cloth_for_rendering(
+        self,
+        f: ti.i32,
+        n_surfaces: ti.i32,
+        v_start: ti.i32,
+        s_start: ti.i32,
+        verts: ti.types.ndarray(),
+        tri2v: ti.types.ndarray(),
+    ):
+        """
+        Add cloth vertices and surfaces for rendering only (no physics computation).
+        Cloth is simulated by IPC, but needs to be in FEM solver's rendering pipeline.
+        """
+        # Add vertices for rendering
+        n_verts_local = verts.shape[0]
+        for i_v, i_b in ti.ndrange(n_verts_local, self._B):
+            i_global = i_v + v_start
+            for j in ti.static(range(3)):
+                self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
+            self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        # Initialize vertex info (mass will be managed by IPC, set to dummy value)
+        for i_v in range(n_verts_local):
+            i_global = i_v + v_start
+            self.elements_v_info[i_global].mass = 1.0  # Dummy value, not used for cloth
+            self.elements_v_info[i_global].mass_over_dt2 = 0.0
+            self.elements_v_info[i_global].friction_mu = 0.0
+
+        # Add surface triangles for rendering
+        for i_s in range(n_surfaces):
+            i_global = i_s + s_start
+            for j in ti.static(range(3)):
+                self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
+            # For cloth, tri2el points to itself (no tetrahedral element)
+            self.surface[i_global].tri2el = i_global
             self.surface[i_global].active = True
 
     @ti.kernel
@@ -1458,15 +1461,14 @@ class FEMSolver(Solver):
     @ti.kernel
     def _kernel_update_linked_vertex_constraints(
         self,
-        links_pos: ti.template(),  # matrix field
-        links_quat: ti.template(),  # matrix field
+        links_state: array_class.LinksState,
     ):
         for i_v, i_b in ti.ndrange(self.n_vertices, self._B):
             vc = self.vertex_constraints[i_v, i_b]
             if vc.is_constrained and vc.link_idx >= 0:
                 i_l = vc.link_idx
-                pos = links_pos[i_l, i_b]
-                quat = links_quat[i_l, i_b]
+                pos = links_state.pos[i_l, i_b]
+                quat = links_state.quat[i_l, i_b]
 
                 offset_pos = vc.link_offset_pos
                 offset_quat = ti_transform_quat_by_quat(vc.link_init_quat, quat)

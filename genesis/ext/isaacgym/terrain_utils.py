@@ -179,7 +179,7 @@ def discrete_obstacles_terrain(terrain, max_height, min_size, max_size, num_rect
 
     start_x, end_x = (terrain.width - platform_size) // 2, (terrain.width + platform_size) // 2
     start_y, end_y = (terrain.length - platform_size) // 2, (terrain.length + platform_size) // 2
-    terrain.height_field_raw[:] = 0.0
+    terrain.height_field_raw[start_x:end_x, start_y:end_y] = 0
 
     return terrain
 

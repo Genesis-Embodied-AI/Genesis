@@ -174,10 +174,6 @@ class RigidLink(RBC):
         if self._is_fixed:
             self._invweight = np.zeros((2,), dtype=gs.np_float)
 
-        import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver_decomp
-
-        self.rsd = rigid_solver_decomp
-
     def _compose_init_mesh(self):
         if len(self._geoms) == 0 and len(self._vgeoms) == 0:
             return None
@@ -310,9 +306,7 @@ class RigidLink(RBC):
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         else:
-            tensor = torch.empty(
-                self._solver._batch_shape((self.n_verts, 3), True), dtype=gs.tc_float, device=gs.device
-            )
+            tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
@@ -323,7 +317,7 @@ class RigidLink(RBC):
         """
         Get the vertices of the link's visualization body (concatenation of all `link.vgeoms`) in the world frame.
         """
-        tensor = torch.empty(self._solver._batch_shape((self.n_vverts, 3), True), dtype=gs.tc_float, device=gs.device)
+        tensor = torch.empty((self._solver._B, self.n_vverts, 3), dtype=gs.tc_float, device=gs.device)
         self._kernel_get_vverts(tensor)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
@@ -356,6 +350,8 @@ class RigidLink(RBC):
         """
         Set the mass of the link.
         """
+        from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_adjust_link_inertia
+
         if self.is_fixed:
             gs.logger.warning(f"Updating the mass of a link that is fixed wrt world has no effect, skipping.")
             return
@@ -369,12 +365,11 @@ class RigidLink(RBC):
             self._invweight /= ratio
         self._inertial_i *= ratio
 
-        self.rsd.kernel_adjust_link_inertia(
+        kernel_adjust_link_inertia(
             link_idx=self.idx,
             ratio=ratio,
             links_info=self._solver.links_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
-            static_rigid_sim_cache_key=self._solver._static_rigid_sim_cache_key,
         )
 
     @gs.assert_built

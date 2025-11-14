@@ -41,9 +41,7 @@ class DroneEntity(RigidEntity):
     def _build(self):
         super()._build()
 
-        self._propellers_revs = torch.zeros(
-            self._solver._batch_shape(self._n_propellers), dtype=gs.tc_float, device=gs.device
-        )
+        self._propellers_revs = torch.zeros((self._n_propellers, self.solver._B), dtype=gs.tc_float, device=gs.device)
         self._prev_prop_t = None
 
     def set_propellels_rpm(self, propellels_rpm):

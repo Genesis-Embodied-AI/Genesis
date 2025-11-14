@@ -3,6 +3,7 @@ import ctypes
 import gc
 import os
 import re
+import subprocess
 import sys
 from enum import Enum
 from io import BytesIO
@@ -86,33 +87,54 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             raise ValueError("Running benchmarks on CPU is not supported.")
         config.option.backend = "gpu"
 
-        # Make sure that the number of workers is not too large
-        if isinstance(config.option.numprocesses, int):
-            max_workers = max(pytest_xdist_auto_num_workers(config), 1)
-            if config.option.numprocesses > max_workers:
-                raise ValueError(
-                    f"The number of workers for running benchmarks cannot exceed '{max_workers}' on this machine."
-                )
-
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
     if show_viewer:
         config.option.numprocesses = 0
+
+    # Force disabling reruns if debugger is enabled
+    is_pdb_enabled = config.getoption("--pdb")
+    if is_pdb_enabled:
+        config.option.reruns = 0
 
     # Force headless rendering if available and the interactive viewer is disabled.
     # FIXME: It breaks rendering on some platform...
     # if not show_viewer and has_egl:
     #     pyglet.options["headless"] = True
 
-    # Disable low-level parallelization if distributed framework is enabled.
-    # FIXME: It should be set to `max(int(physical_core_count / num_workers), 1)`, but 'num_workers' may be unknown.
-    if not is_benchmarks and config.option.numprocesses != 0:
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-        os.environ["NUMEXPR_NUM_THREADS"] = "1"
-        os.environ["NUMBA_NUM_THREADS"] = "1"
+    # Make sure that the number of workers is not too large if specified
+    if isinstance(config.option.numprocesses, int):
+        max_workers = max(pytest_xdist_auto_num_workers(config), 1)
+        if config.option.numprocesses > max_workers:
+            raise ValueError(f"The number of workers cannot exceed '{max_workers}' on this machine.")
+
+    # Properly configure Taichi std out stream right away to avoid significant performance penalty (~10%)
+    # Note that this variable must be set in the main thread BEFORE spawning the distributed workers, otherwise
+    # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
+    # relying on this mechanism is fragile.
+    os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
+
+    # Enforce special environment variable before importing test modules if distributed framework is enabled
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id and worker_id.startswith("gw"):
+        # Enforce GPU affinity
+        worker_num = int(worker_id[2:])
+        gpu_indices = _get_gpu_indices()
+        gpu_index = gpu_indices[worker_num % len(gpu_indices)]
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+
+        # Limit CPU threading
+        physical_core_count = psutil.cpu_count(logical=config.option.logical)
+        num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+        num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
+        os.environ["TI_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["OMP_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["OPENBLAS_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["MKL_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["VECLIB_MAXIMUM_THREADS"] = num_cpu_per_worker
+        os.environ["NUMEXPR_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["NUMBA_NUM_THREADS"] = num_cpu_per_worker
 
 
 def _get_gpu_indices():
@@ -131,6 +153,26 @@ def _get_gpu_indices():
             return tuple(sorted(nvidia_gpu_indices))
 
     return (0,)
+
+
+def _torch_get_gpu_idx(device):
+    if sys.platform == "darwin":
+        return 0
+
+    if sys.platform == "linux":
+        import torch
+
+        device_property = torch.cuda.get_device_properties(device)
+        device_uuid = str(device_property.uuid)
+
+        nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
+        for device_path in os.listdir(nvidia_gpu_interface_path):
+            with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
+                device_info = f.read()
+            if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
+                return int(re.search(r"Device Minor:\s+(\d+)", device_info).group(1))
+
+    return -1
 
 
 def _get_egl_index(gpu_index):
@@ -177,22 +219,61 @@ def _get_egl_index(gpu_index):
 
 
 def pytest_xdist_auto_num_workers(config):
-    import genesis as gs
-
     # Get available memory (RAM & VRAM) and number of cores
     physical_core_count = psutil.cpu_count(logical=config.option.logical)
-    _, _, ram_memory, _ = gs.utils.get_device(gs.cpu)
-    _, _, vram_memory, backend = gs.utils.get_device(gs.gpu)
-    num_gpus = len(_get_gpu_indices())
-    vram_memory *= num_gpus
-    if backend == gs.cpu:
-        # Ignore VRAM if no GPU is available
-        vram_memory = float("inf")
+    ram_memory = psutil.virtual_memory().total / 1024**3
+    if sys.platform == "darwin":
+        # On Apple ARM, cpu and gpu are part of the same physical device with unified memory
+        num_gpus = 1
+        vram_memory = ram_memory
+    else:
+        # Cannot rely on 'torch' because this would force loading devices before configuring CUDA device visibility
+        devices_vram_memory = None
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+                text=True,
+            )
+            devices_vram_memory = tuple(int(e.strip()) for e in result.stdout.splitlines())
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            try:
+                result = subprocess.run(
+                    ["rocm-smi", "--showmeminfo", "vram", "-d", "0-255"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                    text=True,
+                )
+                devices_vram_memory = tuple(int(m.group(1)) for m in re.finditer(r"VRAM Total:\s+(\d+)\s*MiB", out))
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                pass
+        if devices_vram_memory is not None:
+            assert len(set(devices_vram_memory)) == 1, "Heterogeonous Nvidia GPU devices not supported."
+            num_gpus = len(devices_vram_memory)
+            vram_memory = sum(devices_vram_memory) / 1024
+        else:
+            # FIXME: There is easy way for Intel ARC device. Ignore device visibilty issue for now...
+            import torch
+
+            if torch.xpu.is_available():
+                num_gpus = torch.xpu.device_count()
+                vram_memory = 0.0
+                for device_idx in range(num_gpus):
+                    device = torch.device("xpu", device_idx)
+                    device_property = torch.cuda.get_device_properties(device)
+                    vram_memory += device_property.total_memory / 1024**3
+            else:
+                # Ignore VRAM if no GPU is available
+                num_gpus = 0
+                vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
     # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
     # does not completely release memory between each test.
-    if sys.platform in "darwin":
+    if sys.platform == "darwin":
         ram_memory_per_worker = vram_memory_per_worker = 3.0
     elif config.option.forked:
         ram_memory_per_worker = 5.5
@@ -202,33 +283,31 @@ def pytest_xdist_auto_num_workers(config):
         vram_memory_per_worker = 2.5
     num_workers = min(
         physical_core_count,
-        max(int(ram_memory / ram_memory_per_worker), 1),
-        max(int(vram_memory / vram_memory_per_worker), 1),
+        max(ram_memory / ram_memory_per_worker, 1),
+        max(vram_memory / vram_memory_per_worker, 1),
     )
 
     # Special treatment for benchmarks
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
     if is_benchmarks:
-        num_cpu_per_gpu = 4
+        num_cpu_per_gpu = 8
         num_workers = min(
             num_workers,
             num_gpus,
-            max(int(physical_core_count / num_cpu_per_gpu), 1),
+            max(physical_core_count / num_cpu_per_gpu, 1),
         )
 
-    return num_workers
+    return int(num_workers)
 
 
 def pytest_runtest_setup(item):
-    # Enforce GPU affinity if distributed framework is enabled
+    # Match CUDA device with EGL device.
+    # Note that this must be done here instead of 'pytest_cmdline_main', otherwise it will segfault when using
+    # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
-        worker_num = int(worker_id[2:])
-        gpu_indices = _get_gpu_indices()
-        gpu_index = gpu_indices[worker_num % len(gpu_indices)]
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+        gpu_index = int(os.environ["CUDA_VISIBLE_DEVICES"])
         try:
             os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
         except Exception:
@@ -378,8 +457,21 @@ def taichi_offline_cache(request):
     return taichi_offline_cache
 
 
+@pytest.fixture
+def performance_mode(request):
+    performance_mode = None
+    for mark in request.node.iter_markers("performance_mode"):
+        if mark.args:
+            if performance_mode is not None:
+                pytest.fail("'performance_mode' can only be specified once.")
+            (performance_mode,) = mark.args
+    if performance_mode is None:
+        performance_mode = False
+    return performance_mode
+
+
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_cache):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, taichi_offline_cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -392,6 +484,12 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
 
     if not taichi_offline_cache:
         monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+        # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
+        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache"))
+        monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
+
+    # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
+    monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
 
     try:
         # Skip if requested backend is not available
@@ -400,33 +498,38 @@ def initialize_genesis(request, monkeypatch, backend, precision, taichi_offline_
         except gs.GenesisException:
             pytest.skip(f"Backend '{backend}' not available on this machine")
 
-        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
-        if os.environ.get("GS_USE_NDARRAY") == "1":
-            for mark in request.node.iter_markers("field_only"):
-                if not mark.args or mark.args[0]:
-                    pytest.skip("This test does not support GsTaichi ndarray mode. Skipping...")
-            if sys.platform == "darwin" and backend != gs.cpu:
+        # Skip test if not supported by this machine
+        if sys.platform == "darwin" and backend != gs.cpu:
+            if os.environ.get("TI_ENABLE_METAL", "1") != "0" and precision == "64":
+                pytest.skip("Apple Metal GPU does not support 64bits precision.")
+            if os.environ.get("GS_ENABLE_NDARRAY") == "1":
                 pytest.skip(
-                    "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only "
+                    "Using GsTaichi dynamic array type is not supported on Apple Metal GPU because this backend only "
                     "supports up to 31 kernel parameters, which is not enough for most solvers."
                 )
 
-        gs.init(backend=backend, precision=precision, debug=debug, seed=0, logging_level=logging_level)
+        gs.init(
+            backend=backend,
+            precision=precision,
+            debug=debug,
+            seed=0,
+            logging_level=logging_level,
+            performance_mode=performance_mode,
+        )
         gc.collect()
 
-        if gs.backend != gs.cpu:
-            device_index = gs.device.index
-            if device_index is not None and device_index not in _get_gpu_indices():
+        if gs.backend != gs.cpu and gs.device.index is not None:
+            if _torch_get_gpu_idx(gs.device) not in _get_gpu_indices():
                 raise RuntimeError("Wrong CUDA GPU device.")
-
-        import gstaichi as ti
-
-        ti_config = ti.lang.impl.current_cfg()
-        if ti_config.arch == ti.metal and precision == "64":
-            pytest.skip("Apple Metal GPU does not support 64bits precision.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip("No GPU available on this machine")
+
+        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+        if gs.use_ndarray:
+            for mark in request.node.iter_markers("field_only"):
+                if not mark.args or mark.args[0]:
+                    pytest.skip("This test does not support GsTaichi dynamic array mode. Skipping...")
 
         yield
     finally:

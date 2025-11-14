@@ -7,11 +7,12 @@ import numpy.typing as npt
 import trimesh
 
 import genesis as gs
-from genesis.options.surfaces import Surface
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
+from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
+from genesis.utils.misc import redirect_libc_stderr
 
 
 class Mesh(RBC):
@@ -125,7 +126,8 @@ class Mesh(RBC):
 
         if not is_cached_loaded:
             # Importing pymeshlab is very slow and not used very often. Let's delay import.
-            import pymeshlab
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                import pymeshlab
 
             gs.logger.info("Remeshing for tetrahedralization...")
             ms = pymeshlab.MeshSet()
@@ -153,18 +155,7 @@ class Mesh(RBC):
         """
         Tetrahedralize the mesh.
         """
-        # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
-        import pyvista as pv
-        import tetgen
-
-        pv_obj = pv.PolyData(
-            self.verts, np.concatenate([np.full((self.faces.shape[0], 1), self.faces.shape[1]), self.faces], axis=1)
-        )
-        tet = tetgen.TetGen(pv_obj)
-        switches = mu.make_tetgen_switches(tet_cfg)
-        verts, elems = tet.tetrahedralize(switches=switches)
-        # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
-        return verts, elems
+        return mu.tetrahedralize_mesh(self._mesh, tet_cfg)
 
     def particlize(
         self,
@@ -343,10 +334,21 @@ class Mesh(RBC):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
+                if not morph.parse_glb_with_zup:
+                    gs.logger.warning(
+                        "GLTF is using y-up while Genesis uses z-up. Please set parse_glb_with_zup=True"
+                        " in morph options if you find the mesh is 90-degree rotated. We will set parse_glb_with_zup=True"
+                        " and rotate glb mesh by default later and gradually enforce this option."
+                    )
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                    if morph.parse_glb_with_zup:
+                        for mesh in meshes:
+                            mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
                 else:
-                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                    meshes = gltf_utils.parse_mesh_glb(
+                        morph.file, morph.group_by_material, morph.scale, surface, morph.parse_glb_with_zup
+                    )
             elif morph.is_format(gs.options.morphs.USD_FORMATS):
                 import genesis.utils.usda as usda_utils
 
@@ -395,7 +397,7 @@ class Mesh(RBC):
 
     def apply_transform(self, T):
         """
-        Apply a 4x4 transformation matrix to the mesh.
+        Apply a 4x4 transformation matrix (translation on the right column) to the mesh.
         """
         self._mesh.apply_transform(T)
 

@@ -9,7 +9,6 @@ import threading
 from threading import Event, RLock, Semaphore, Thread
 from typing import Optional, TYPE_CHECKING
 
-import cv2
 import numpy as np
 import OpenGL
 from OpenGL.GL import *
@@ -231,6 +230,7 @@ class Viewer(pyglet.window.Window):
         self._offscreen_result = None
 
         self._video_saver = None
+        self._video_recorder = None
 
         self._default_render_flags = {
             "flip_wireframe": False,
@@ -568,13 +568,13 @@ class Viewer(pyglet.window.Window):
             a file dialog will be opened to ask the user where
             to save the video file.
         """
-        self.video_recorder.close()
+        self._video_recorder.close()
         if filename is None:
             filename = self._get_save_filename(["mp4"])
         if filename is None:
-            os.remove(self.video_recorder.filename)
+            os.remove(self._video_recorder.filename)
         else:
-            shutil.move(self.video_recorder.filename, filename)
+            shutil.move(self._video_recorder.filename, filename)
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
@@ -612,6 +612,11 @@ class Viewer(pyglet.window.Window):
             except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
                 pass
         self._renderer = None
+
+        # Delete video recorder
+        if self.viewer_flags["record"]:
+            self._video_recorder.close()
+            os.remove(self._video_recorder.filename)
 
         # Force clean-up of OpenGL context data
         try:
@@ -729,9 +734,6 @@ class Viewer(pyglet.window.Window):
         self._render()
 
         self.viewer_interaction.on_draw()
-
-        if not self._initialized_event.is_set():
-            self._initialized_event.set()
 
         if self._display_instr:
             self._renderer.render_texts(
@@ -949,7 +951,7 @@ class Viewer(pyglet.window.Window):
                 # Importing moviepy is very slow and not used very often. Let's delay import.
                 from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
 
-                self.video_recorder = FFMPEG_VideoWriter(
+                self._video_recorder = FFMPEG_VideoWriter(
                     filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
                     fps=self.viewer_flags["refresh_rate"],
                     size=self.viewport_size,
@@ -1104,6 +1106,9 @@ class Viewer(pyglet.window.Window):
         return filename
 
     def _save_image(self):
+        # Postpone import of OpenCV at runtime to reduce hard system dependencies
+        import cv2
+
         filename = self._get_save_filename(["png", "jpg", "gif", "all"])
         if filename is not None:
             self.viewer_flags["save_directory"] = os.path.dirname(filename)
@@ -1114,7 +1119,7 @@ class Viewer(pyglet.window.Window):
         """Save another frame for the GIF."""
         data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
         if not np.all(data == 0.0):
-            self.video_recorder.write_frame(data)
+            self._video_recorder.write_frame(data)
 
     def _rotate(self):
         """Animate the scene by rotating the camera."""
@@ -1308,15 +1313,21 @@ class Viewer(pyglet.window.Window):
                     else:
                         raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
 
-        pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
+        if self._run_in_thread:
+            pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
+        else:
+            # Run as fast as possible if not running in thread
+            pyglet.clock.schedule(Viewer._time_event, self)
+
+        # Update window title
         self.switch_to()
         self.set_caption(self.viewer_flags["window_title"])
 
-        # Run the entire rendering pipeline once, to make sure that everything is fine.
+        # Run the entire rendering pipeline once, to make sure that everything is fine
         try:
             self.refresh()
         except (OpenGL.error.Error, RuntimeError) as e:
-            # Invalid OpenGL context and crossing threading boundaries. Closing before anything else.
+            # Invalid OpenGL context and crossing threading boundaries. Closing before anything else
             self.on_close()
 
             if self._run_in_thread:
@@ -1331,6 +1342,10 @@ class Viewer(pyglet.window.Window):
         if not pyglet.options["headless"]:
             self.set_visible(True)
         self.activate()
+
+        # The viewer can be considered as fully initialized at this point
+        if not self._initialized_event.is_set():
+            self._initialized_event.set()
 
         if auto_refresh:
             while self._is_active:
@@ -1360,10 +1375,11 @@ class Viewer(pyglet.window.Window):
         if viewer_thread != threading.current_thread():
             raise RuntimeError("'Viewer.refresh' can only be called from the thread that started the viewer.")
 
-        time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
-        while self._offscreen_event.wait(time_next_frame - time.time()):
-            self._event_loop_step_offscreen()
-            self._offscreen_event.clear()
+        if self._run_in_thread:
+            time_next_frame = time.time() + 1.0 / self.viewer_flags["refresh_rate"]
+            while self._offscreen_event.wait(time_next_frame - time.time()):
+                self._event_loop_step_offscreen()
+                self._offscreen_event.clear()
 
         pyglet.clock.tick()
 

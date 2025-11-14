@@ -3,11 +3,11 @@ import numpy as np
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.entities.base_entity import Entity
 from genesis.options.morphs import Morph
 from genesis.options.solvers import (
     AvatarOptions,
     BaseCouplerOptions,
+    IPCCouplerOptions,
     LegacyCouplerOptions,
     SAPCouplerOptions,
     FEMOptions,
@@ -20,10 +20,8 @@ from genesis.options.solvers import (
     ToolOptions,
 )
 from genesis.repr_base import RBC
-from genesis.sensors import SensorManager
 
 from .entities import HybridEntity
-from .solvers.base_solver import Solver
 from .solvers import (
     AvatarSolver,
     FEMSolver,
@@ -34,12 +32,16 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
-from .couplers import LegacyCoupler, SAPCoupler
+from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
+from .sensors import SensorManager
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
+    from genesis.engine.entities.base_entity import Entity
+
+    from .solvers.base_solver import Solver
 
 
 @ti.data_oriented
@@ -121,7 +123,7 @@ class Simulator(RBC):
         self.fem_solver = FEMSolver(self.scene, self, self.fem_options)
         self.sf_solver = SFSolver(self.scene, self, self.sf_options)
 
-        self._solvers: list[Solver] = gs.List(
+        self._solvers: list["Solver"] = gs.List(
             [
                 self.tool_solver,
                 self.rigid_solver,
@@ -134,23 +136,25 @@ class Simulator(RBC):
             ]
         )
 
-        self._active_solvers: list[Solver] = gs.List()
+        self._active_solvers: list["Solver"] = gs.List()
 
         # coupler
         if isinstance(self.coupler_options, SAPCouplerOptions):
             self._coupler = SAPCoupler(self, self.coupler_options)
         elif isinstance(self.coupler_options, LegacyCouplerOptions):
             self._coupler = LegacyCoupler(self, self.coupler_options)
+        elif isinstance(self.coupler_options, IPCCouplerOptions):
+            self._coupler = IPCCoupler(self, self.coupler_options)
         else:
             gs.raise_exception(
-                f"Coupler options {self.coupler_options} not supported. Please use SAPCouplerOptions or LegacyCouplerOptions."
+                f"Coupler options {self.coupler_options} not supported. Please use SAPCouplerOptions, LegacyCouplerOptions, or IPCCouplerOptions."
             )
 
         # states
         self._queried_states = QueriedStates()
 
         # entities
-        self._entities: list[Entity] = gs.List()
+        self._entities: list["Entity"] = gs.List()
 
         # sensors
         self._sensor_manager = SensorManager(self)
@@ -198,16 +202,17 @@ class Simulator(RBC):
         self._para_level = self.scene._para_level
 
         # solvers
-        self._rigid_only = self.rigid_solver.is_active() and not isinstance(self._coupler, SAPCoupler)
+        # IPCCoupler needs full substep flow for pre/post coupling phases
+        self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler))
         for solver in self._solvers:
             solver.build()
-            if solver.is_active():
+            if solver.is_active:
                 self._active_solvers.append(solver)
                 if not isinstance(solver, RigidSolver):
                     self._rigid_only = False
         self._coupler.build()
 
-        if self.n_envs > 0 and self.sf_solver.is_active():
+        if self.n_envs > 0 and self.sf_solver.is_active:
             gs.raise_exception("Batching is not supported for SF solver as of now.")
 
         # hybrid
@@ -222,7 +227,7 @@ class Simulator(RBC):
             if solver.n_entities > 0:
                 solver.set_state(0, solver_state, envs_idx)
 
-        self.coupler.reset(envs_idx=envs_idx)
+        self._coupler.reset(envs_idx=envs_idx)
 
         # TODO: keeping as is for now
         self.reset_grad()
@@ -280,7 +285,7 @@ class Simulator(RBC):
                 if self.cur_substep_local == 0 and not in_backward:
                     self.save_ckpt()
 
-        if self.rigid_solver.is_active():
+        if self.rigid_solver.is_active:
             self.rigid_solver.clear_external_force()
 
         self._sensor_manager.step()
@@ -413,7 +418,7 @@ class Simulator(RBC):
 
     def set_gravity(self, gravity, envs_idx=None):
         for solver in self._solvers:
-            if solver.is_active():
+            if solver.is_active:
                 solver.set_gravity(gravity, envs_idx)
 
     # ------------------------------------------------------------------------------------

@@ -5,7 +5,6 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, T
 
@@ -14,9 +13,16 @@ import torch
 from PIL import Image
 
 import genesis as gs
+from genesis.options.recorders import (
+    BasePlotterOptions,
+    LinePlotterMixinOptions,
+    PyQtLinePlot as PyQtLinePlotterOptions,
+    MPLLinePlot as MPLLinePlotterOptions,
+    MPLImagePlot as MPLImagePlotterOptions,
+)
 from genesis.utils import has_display, tensor_to_array
 
-from .base_recorder import Recorder, RecorderOptions
+from .base_recorder import Recorder
 from .recorder_manager import RecorderManager, register_recording
 
 IS_PYQTGRAPH_AVAILABLE = False
@@ -48,31 +54,9 @@ def _data_to_array(data: Sequence) -> np.ndarray:
     return np.atleast_1d(data)
 
 
-class BasePlotterOptions(RecorderOptions):
-    """
-    Base class for plot visualization.
-
-    Parameters
-    ----------
-    title: str
-        The title of the plot.
-    window_size: tuple[int, int]
-        The size of the window in pixels.
-    save_to_filename: str | None
-        If provided, the animation will be saved to a file with the given filename.
-    show_window: bool | None
-        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
-    """
-
-    title: str = ""
-    window_size: tuple[int, int] = (800, 600)
-    save_to_filename: str | None = None
-    show_window: bool | None = None
-
-
 class BasePlotter(Recorder):
 
-    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+    def __init__(self, manager: "RecorderManager", options: BasePlotterOptions, data_func: Callable[[], T]):
         if options.show_window is None:
             options.show_window = has_display()
 
@@ -132,34 +116,6 @@ class BasePlotter(Recorder):
             The RGB image as a numpy array.
         """
         raise NotImplementedError(f"[{type(self).__name__}] get_image_array() is not implemented.")
-
-
-@dataclass
-class LinePlotterMixinOptions:
-    """
-    Mixin class for live line plot visualization of scalar data.
-
-    The recorded data_func should return scalar data (single scalar, a tuple of scalars, or a dict with string keys and
-    scalar or tuple of scalars as values).
-
-    Parameters
-    ----------
-    labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
-    x_label: str, optional
-        Label for the horizontal axis.
-    y_label: str, optional
-        Label for the vertical axis.
-    history_length: int
-        The maximum number of previous data to store.
-    """
-
-    labels: tuple[str, ...] | dict[str, tuple[str, ...]] | None = None
-    x_label: str = ""
-    y_label: str = ""
-    history_length: int = 100
 
 
 class LinePlotHelper:
@@ -278,7 +234,7 @@ class BasePyQtPlotter(BasePlotter):
     Base class for PyQt based plotters.
     """
 
-    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+    def __init__(self, manager: "RecorderManager", options: BasePlotterOptions, data_func: Callable[[], T]):
         super().__init__(manager, options, data_func)
         if threading.current_thread() is not threading.main_thread():
             gs.raise_exception("Impossible to run PyQtPlotter in background thread.")
@@ -336,38 +292,6 @@ class BasePyQtPlotter(BasePlotter):
         # pyqtgraph provides imageToArray but it always outputs (b,g,r,a) format
         # https://pyqtgraph.readthedocs.io/en/latest/api_reference/functions.html#pyqtgraph.functions.imageToArray
         return pg.imageToArray(qimage, copy=True, transpose=True)
-
-
-class PyQtLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
-    """
-    Live line plot visualization of data using PyQtGraph.
-
-    The recorded data_func should return scalar data (single scalar, a tuple of scalars, or a dict with string keys and
-    scalar or tuple of scalars as values).
-
-    Parameters
-    ----------
-    title: str
-        The title of the plot.
-    window_size: tuple[int, int]
-        The size of the window in pixels.
-    save_to_filename: str | None
-        If provided, the animation will be saved to a file with the given filename.
-    show_window: bool | None
-        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
-    labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
-    x_label: str, optional
-        Label for the horizontal axis.
-    y_label: str, optional
-        Label for the vertical axis.
-    history_length: int
-        The maximum number of previous data to store.
-    """
-
-    pass
 
 
 @register_recording(PyQtLinePlotterOptions)
@@ -429,7 +353,7 @@ class BaseMPLPlotter(BasePlotter):
     Base class for matplotlib based plotters.
     """
 
-    def __init__(self, manager: "RecorderManager", options: RecorderOptions, data_func: Callable[[], T]):
+    def __init__(self, manager: "RecorderManager", options: BasePlotterOptions, data_func: Callable[[], T]):
         super().__init__(manager, options, data_func)
         if threading.current_thread() is not threading.main_thread():
             gs.raise_exception("Impossible to run MPLPlotter in background thread.")
@@ -520,40 +444,10 @@ class BaseMPLPlotter(BasePlotter):
             return False
         if self._is_built:
             assert self.fig is not None
-            return isinstance(self.fig.canvas, FigureCanvasAgg)
+            # All Agg-based backends derives from the surfaceless Agg backend, so 'isinstance' cannot be used to
+            # discriminate the latter from others.
+            return type(self.fig.canvas) is FigureCanvasAgg
         return not self._options.show_window
-
-
-class MPLLinePlotterOptions(BasePlotterOptions, LinePlotterMixinOptions):
-    """
-    Live line plot visualization of data using matplotlib.
-
-    The recorded data_func should return scalar data (single scalar, a tuple of scalars, or a dict with string keys and
-    scalar or tuple of scalars as values).
-
-    Parameters
-    ----------
-    title: str
-        The title of the plot.
-    window_size: tuple[int, int]
-        The size of the window in pixels.
-    save_to_filename: str | None
-        If provided, the animation will be saved to a file with the given filename.
-    show_window: bool | None
-        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
-    labels: tuple[str] | dict[str, tuple[str]] | None
-        The labels for the plot. The length of the labels should match the length of the data.
-        If a dict is provided, the data should also be a dict of tuples of strings that match the length of the data.
-        The keys will be used as subplot titles and the values will be used as labels within each subplot.
-    x_label: str, optional
-        Label for the horizontal axis.
-    y_label: str, optional
-        Label for the vertical axis.
-    history_length: int
-        The maximum number of previous data to store.
-    """
-
-    pass
 
 
 @register_recording(MPLLinePlotterOptions)
@@ -687,27 +581,6 @@ class MPLLinePlotter(BaseMPLPlotter):
         self.lines.clear()
         self.caches_bbox.clear()
         self.cache_xmax = -1
-
-
-class MPLImagePlotterOptions(BasePlotterOptions):
-    """
-    Live visualization of image data using matplotlib.
-
-    The image data should be an array-like object with shape (H, W), (H, W, 1), (H, W, 3), or (H, W, 4).
-
-    Parameters
-    ----------
-    title: str
-        The title of the plot.
-    window_size: tuple[int, int]
-        The size of the window in pixels.
-    save_to_filename: str | None
-        If provided, the animation will be saved to a file with the given filename.
-    show_window: bool | None
-        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
-    """
-
-    pass
 
 
 @register_recording(MPLImagePlotterOptions)

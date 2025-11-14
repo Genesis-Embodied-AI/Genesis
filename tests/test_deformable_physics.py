@@ -1,4 +1,6 @@
 import math
+import platform
+
 import numpy as np
 import pytest
 import torch
@@ -8,12 +10,8 @@ import genesis as gs
 from .utils import assert_allclose
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
-
-
-@pytest.mark.required
+# This test cannot be flagged as required because it takes 500s + 250s to run on CPU.
+# @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
 def test_muscle(n_envs, muscle_material, show_viewer):
@@ -106,6 +104,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
     scene = gs.Scene(
@@ -191,9 +190,27 @@ def test_deformable_parallel(show_viewer):
     )
     scene.build(n_envs=2)
 
+    init_mpm_cube_pos = mpm_cube.get_particles_pos()
+    init_cloth_pos = cloth.get_particles_pos()
+    init_water_pos = water.get_particles_pos()
+
     scene.get_state()
     for i in range(1500):
         scene.step()
+
+    final_mpm_cube_pos = mpm_cube.get_particles_pos()
+    final_cloth_pos = cloth.get_particles_pos()
+    final_water_pos = water.get_particles_pos()
+
+    # check if the positions are changed
+    assert (init_mpm_cube_pos - final_mpm_cube_pos).abs().sum() > 0.1
+    assert (init_cloth_pos - final_cloth_pos).abs().sum() > 0.1
+    assert (init_water_pos - final_water_pos).abs().sum() > 0.1
+
+    # check if the particles are above the ground
+    assert final_mpm_cube_pos[..., 2].min() > -1e-5
+    assert final_cloth_pos[..., 2].min() > -1e-5
+    assert final_water_pos[..., 2].min() > -1e-5
 
     assert_allclose(cloth.get_particles_vel(), 0.0, atol=1e-5)
     assert_allclose(mpm_cube.get_particles_vel(), 0.0, atol=1e-4)
@@ -201,7 +218,6 @@ def test_deformable_parallel(show_viewer):
     assert_allclose(water.get_particles_vel(), 0.0, atol=5e-2)
 
 
-@pytest.mark.required
 def test_sf_solver(show_viewer):
     import gstaichi as ti
 
@@ -304,6 +320,6 @@ def test_sf_solver(show_viewer):
         )
         for orbit_init_degree in np.linspace(0, 360, 3, endpoint=False)
     ]
-    scene.sim.solvers[-1].set_jets(jet)
+    scene.sim.sf_solver.set_jets(jet)
     scene.build()
     scene.step()

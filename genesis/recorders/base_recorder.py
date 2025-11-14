@@ -4,43 +4,13 @@ import time
 from typing import TYPE_CHECKING, Callable, Generic, TypeVar
 
 import genesis as gs
-from genesis.options import Options
+from genesis.options.recorders import RecorderOptions
 
 if TYPE_CHECKING:
     from .recorder_manager import RecorderManager
 
+
 T = TypeVar("T")
-
-
-class RecorderOptions(Options):
-    """
-    Options for recording simulation data by automatically sampling data from a data source, e.g. a sensor.
-
-    Parameters
-    ----------
-    hz: float, optional
-        The frequency at which to sample data, in Hz (samples per second).
-        If None, the data will be sampled every step.
-    buffer_size: int, optional
-        Applicable when run_in_thread is True. The size of the data queue buffer.
-        Defaults to 0, which means infinite size.
-    buffer_full_wait_time: float, optional
-        Applicable when run_in_thread is True. The time to wait for buffer space to become available when the
-        buffer is full. Defaults to 0.1 seconds.
-    """
-
-    hz: float | None = None
-    buffer_size: int = 0
-    buffer_full_wait_time: float = 0.1
-
-    def model_post_init(self, context):
-        """Validate the recorder options values before the recorder is added to the scene."""
-        if self.hz is not None and self.hz < gs.EPS:
-            gs.raise_exception(f"[{type(self).__name__}] recording hz should be greater than 0.")
-        if self.buffer_size < 0:
-            gs.raise_exception(f"[{type(self).__name__}] buffer size should be 0 (infinite size) or greater.")
-        if self.buffer_full_wait_time < gs.EPS:
-            gs.raise_exception(f"[{type(self).__name__}] buffer full wait time should be greater than 0.")
 
 
 class Recorder(Generic[T]):

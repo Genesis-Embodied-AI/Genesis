@@ -1,26 +1,25 @@
+from typing import TYPE_CHECKING
 
-from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
-from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+import torch
 
 from .ray import Plane, Ray, RayHit
 from .vec3 import Pose, Quat, Vec3, Color
 
-from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+
 
 MOUSE_SPRING_POSITION_CORRECTION_FACTOR = 1.0
 MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR = 1.0
 
-def _ensure_torch_imported() -> None:
-    global torch
-    import torch
 
 class MouseSpring:
     def __init__(self) -> None:
-        self.held_link: RigidLink | None = None
+        self.held_link: "RigidLink | None" = None
         self.held_point_in_local: Vec3 | None = None
         self.prev_control_point: Vec3 | None = None
 
-    def attach(self, picked_link: RigidLink, control_point: Vec3) -> None:
+    def attach(self, picked_link: "RigidLink", control_point: Vec3) -> None:
         # for now, we just pick the first geometry
         self.held_link = picked_link
         pose: Pose = Pose.from_link(self.held_link)
@@ -31,17 +30,15 @@ class MouseSpring:
         self.held_link = None
 
     def apply_force(self, control_point: Vec3, delta_time: float) -> None:
-        _ensure_torch_imported()
-
         # note when threaded: apply_force is called before attach!
         # note2: that was before we added a lock to ViewerInteraction; this migth be fixed now
         if not self.held_link:
             return
-        
+
         self.prev_control_point = control_point
 
         # do simple force on COM only:
-        link: RigidLink = self.held_link
+        link: "RigidLink" = self.held_link
         lin_vel: Vec3 = Vec3.from_tensor(link.get_vel())
         ang_vel: Vec3 = Vec3.from_tensor(link.get_ang())
         link_pose: Pose = Pose.from_link(link)

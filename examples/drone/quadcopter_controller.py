@@ -1,7 +1,12 @@
+from typing import TYPE_CHECKING
+
 import torch
 import numpy as np
-from genesis.engine.entities.drone_entity import DroneEntity
+
 from genesis.utils.geom import quat_to_xyz
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.drone_entity import DroneEntity
 
 
 class PIDController:
@@ -21,7 +26,7 @@ class PIDController:
 
 
 class DronePIDController:
-    def __init__(self, drone: DroneEntity, dt, base_rpm, pid_params):
+    def __init__(self, drone: "DroneEntity", dt, base_rpm, pid_params):
         self.__pid_pos_x = PIDController(kp=pid_params[0][0], ki=pid_params[0][1], kd=pid_params[0][2])
         self.__pid_pos_y = PIDController(kp=pid_params[1][0], ki=pid_params[1][1], kd=pid_params[1][2])
         self.__pid_pos_z = PIDController(kp=pid_params[2][0], ki=pid_params[2][1], kd=pid_params[2][2])

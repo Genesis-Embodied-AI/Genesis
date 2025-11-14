@@ -1,4 +1,5 @@
 import math
+import platform
 
 import igl
 import numpy as np
@@ -11,12 +12,8 @@ from genesis.utils.misc import tensor_to_array
 from .utils import assert_allclose, get_hf_dataset
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
-
-
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
     """
     Test tetrahedralization of a FEM entity with a small maxvolume value that introduces
@@ -128,6 +125,7 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_maxvolume(box_obj_path, show_viewer):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
@@ -162,6 +160,7 @@ def test_maxvolume(box_obj_path, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("precision", ["64"])
 @pytest.mark.parametrize(
     "coupler_type, material_model",
@@ -260,7 +259,9 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         assert_allclose(-state.pos[..., 2].min(), penetration_depth_ref, tol=tol)
 
 
-@pytest.mark.required
+# This test cannot be flagged as required because it takes 250s to run on CPU.
+# @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("precision", ["64"])
 def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
     SPHERE_RADIUS = 0.1
@@ -327,6 +328,7 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.xfail(raises=AssertionError, reason="Constraint dynamics inconsistent with analytical formula")
 @pytest.mark.parametrize("precision", ["64"])
 def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
@@ -392,6 +394,7 @@ def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("use_implicit_solver", [False, True])
 @pytest.mark.parametrize("precision", ["64"])
 def test_hard_constraint(use_implicit_solver, show_viewer):
@@ -466,7 +469,6 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
 
         # Update the viewer if requested
         if show_viewer:
-            # FIXME: Non-persistent markers are apparently broken...
             if it % max(int(1e-3 / (MOTION_SPEED * DT)), 1) == 0:
                 scene.visualizer.context.draw_debug_spheres(
                     poss=target_poss, radius=0.005, color=(1, 0, 1, 0.8), persistent=True
@@ -486,7 +488,9 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
     assert_allclose(com_pos_z_f - com_pos_z_0, com_pos_delta, tol=0.05)
 
 
-@pytest.mark.required
+# This test cannot be flagged as required because it takes 400s to run on CPU.
+# @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("precision", ["64"])
 def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
     DT = 0.01
@@ -591,7 +595,6 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
 
         # Update the viewer if requested
         if show_viewer:
-            # FIXME: Non-persistent markers are apparently broken...
             if it % max(int(1e-3 / (MOTION_SPEED * DT)), 1) == 0:
                 scene.visualizer.context.draw_debug_spheres(
                     poss=target_poss, radius=0.005, color=(1, 0, 1, 0.8), persistent=True

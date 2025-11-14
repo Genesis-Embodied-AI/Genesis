@@ -15,31 +15,36 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_HUB_DOWNLOAD_TIMEOUT: 60
+  GENESIS_IMAGE_VER: "1_14"
+  TIMEOUT_MINUTES: 60
+  FORCE_COLOR: 1
+  PY_COLORS: 1
+  MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
+  OMNI_KIT_ACCEPT_EULA: "yes"
+  OMNI_KIT_ALLOW_ROOT: "1"
+
 jobs:
-  linux-gpu:
+  unit-tests:
+    name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+
     runs-on: [self-hosted, coreweave, genesis-world]
 
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        GS_ENABLE_NDARRAY: ["0", "1"]
+
     env:
-      # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
-      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_HUB_DOWNLOAD_TIMEOUT: 60
-      GENESIS_IMAGE_VER: "1_5"
-      TIMEOUT_MINUTES: 180
-      FORCE_COLOR: 1
-      PY_COLORS: 1
-      MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
-      OMNI_KIT_ACCEPT_EULA: "yes"
-      OMNI_KIT_ALLOW_ROOT: "1"
+      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
-          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
-          fetch-depth: 0
-
       - name: Run unit tests
         if: github.event_name == 'pull_request'
         run: |
@@ -58,8 +63,8 @@ jobs:
           "${HOME}/.cache":/root/.cache,\
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
-            --export=NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN,BASH_ENV=/root/.bashrc \
-            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
+            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -e -s << 'EOF'
               if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
@@ -73,14 +78,43 @@ jobs:
               pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
               pip install --no-input ".[dev,render,usd]"
 
-              pytest -v --backend gpu --dev --forked ./tests
+              pytest -v -rs --backend gpu --dev --forked ./tests
           EOF
+      - name: Kill srun job systematically
+        if: always()
+        run: |
+          if [ -n "${SLURM_JOB_NAME}" ] ; then
+            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+          fi
+
+  benchmarks:
+    name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+
+    needs: unit-tests
+    runs-on: [self-hosted, coreweave, genesis-world]
+
+    strategy:
+      matrix:
+        GS_ENABLE_NDARRAY: ["0", "1"]
+
+    env:
+      # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
+      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
+          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
+          fetch-depth: 0
       - name: Run benchmarks
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,HF_TOKEN,BASH_ENV=/root/.bashrc"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
@@ -93,7 +127,7 @@ jobs:
           "${{ github.workspace }}":/root/workspace \
             --no-container-mount-home --container-workdir=/root/workspace \
             --export=${SLURM_ENV_VARS} \
-            --partition=hpc-mid --exclusive --nodes=1 --time="${TIMEOUT_MINUTES}" \
+            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash -e -s << 'EOF'
               # sudo apt update
@@ -116,13 +150,11 @@ jobs:
           if [ -n "${SLURM_JOB_NAME}" ] ; then
             scancel --user=${USER} --name="${SLURM_JOB_NAME}"
           fi
-
       - name: Display benchmark stats
         run: |
           cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-
       - name: Upload benchmark stats as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: speed-test-results
+          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
           path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"

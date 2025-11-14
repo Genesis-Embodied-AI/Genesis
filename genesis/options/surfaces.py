@@ -358,6 +358,7 @@ class Glass(Surface):
 
     thickness_texture: Optional[Texture] = None
     specular_texture: Optional[Texture] = None
+    diffuse_texture: Optional[Texture] = None
     transmission_texture: Optional[Texture] = None
 
     def __init__(self, **data):

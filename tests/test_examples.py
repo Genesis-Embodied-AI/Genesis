@@ -26,15 +26,18 @@ IGNORE_SCRIPT_NAMES = {
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit
     "single_franka_batch_render.py",  # FIXME: segfault on exit
     "cut_dragon.py",  # FIXME: Only supported on Linux
+    "ipc_arm_cloth.py",  # TODO: wait for IPC's wheel to be released
+    "ipc_cloth.py",  # TODO: wait for IPC's wheel to be released
+    "ipc_grasp.py",  # TODO: wait for IPC's wheel to be released
+    "ipc_twist_cloth_band.py",  # TODO: wait for IPC's wheel to be released
+    "genesis_ipc_motion_test.py",  # TODO: wait for IPC's wheel to be released
 }
 
 TIMEOUT = 400.0
 
 
-# Only enable this suite when explicitly requested (e.g., in the dedicated CI workflow)
 pytestmark = [
     pytest.mark.examples,
-    pytest.mark.taichi_offline_cache(False),
 ]
 
 

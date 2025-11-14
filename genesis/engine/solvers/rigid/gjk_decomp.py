@@ -1,10 +1,12 @@
+import math
 from enum import IntEnum
+
 import gstaichi as ti
+
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
-from dataclasses import dataclass
 
 
 class RETURN_CODE(IntEnum):
@@ -43,14 +45,7 @@ class EPA_POLY_INIT_RETURN_CODE(IntEnum):
     P4_FALLBACK3 = 9
 
 
-@ti.data_oriented
 class GJK:
-    @ti.data_oriented
-    class GJKStaticConfig:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-
     def __init__(self, rigid_solver):
         # Initialize static configuration.
         # MuJoCo's multi-contact detection algorithm is disabled by default, because it is often less stable than the
@@ -59,6 +54,7 @@ class GJK:
         enable_mujoco_multi_contact = False
         gjk_max_iterations = 50
         epa_max_iterations = 50
+        # 6 * epa_max_iterations is the maximum number of faces in the polytope.
         polytope_max_faces = 6 * epa_max_iterations
 
         if rigid_solver._static_rigid_sim_config.requires_grad:
@@ -77,75 +73,47 @@ class GJK:
             max_contacts_per_pair = 1
             max_contact_polygon_verts = 1
 
-        self._gjk_static_config = GJK.GJKStaticConfig(
+        self._gjk_static_config = array_class.StructGJKStaticConfig(
+            enable_mujoco_multi_contact=enable_mujoco_multi_contact,
+        )
+
+        # Initialize GJK info
+        self._gjk_info = array_class.get_gjk_info(
             max_contacts_per_pair=max_contacts_per_pair,
             max_contact_polygon_verts=max_contact_polygon_verts,
-            # Maximum number of iterations for GJK and EPA algorithms
             gjk_max_iterations=gjk_max_iterations,
             epa_max_iterations=epa_max_iterations,
-            # When using larger minimum values (e.g. gs.EPS), unstability could occur for some examples (e.g. box pyramid).
-            # Also, since different backends could have different precisions (e.g. computing vector norm), we use a very
-            # small value, so that there is no discrepancy between backends.
-            FLOAT_MIN=gs.np_float(1e-15),
-            FLOAT_MIN_SQ=gs.np_float(1e-15) ** 2,
-            FLOAT_MAX=gs.np_float(1e15),
-            FLOAT_MAX_SQ=gs.np_float(1e15) ** 2,
-            # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
-            tolerance=gs.np_float(1e-6),
-            # If the distance between two objects is smaller than this value, we consider them colliding.
-            collision_eps=gs.np_float(1e-6),
-            # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
-            # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
-            # coplanarity) than this threshold. This value has been experimentally determined based on the examples that
-            # we currently have (e.g. pyramid, tower, ...), but it could be further tuned based on the future examples.
-            simplex_max_degeneracy_sq=gs.np_float(1e-5) ** 2,
-            # 6 * epa_max_iterations is the maximum number of faces in the polytope.
+            # When using larger minimum values (e.g. gs.EPS), unstability could occur for some examples (e.g. box
+            # pyramid). Also, since different backends could have different precisions (e.g. computing vector norm),
+            # we use a very small value, so that there is no discrepancy between backends.
+            FLOAT_MIN=1e-15,
+            FLOAT_MAX=1e15,
+            tolerance=1e-6,
+            collision_eps=1e-6,
+            # This value has been experimentally determined based on the examples that we currently have (e.g. pyramid,
+            # tower, ...), but it could be further tuned based on the future examples.
+            simplex_max_degeneracy_sq=1e-5**2,
             polytope_max_faces=polytope_max_faces,
-            # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
-            # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
-            # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
-            # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
-            # we consider the projection invalid, because it means numerical errors are too large. This value has been
-            # experimentally determined based on the examples that we currently have (e.g. pyramid, tower, ...). We observed
-            # the error usually reaches around 5e-4, so we set the threshold to 1e-5 to be safe. However, this value could
-            # be further tuned based on the future examples.
-            polytope_max_reprojection_error=gs.np_float(1e-5),
-            # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
-            # However, we keep the code here for compatibility with MuJoCo and for possible future use.
-            enable_mujoco_multi_contact=enable_mujoco_multi_contact,
-            # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
-            # tolerance to be considered as a valid parallel contact. The values are cosine and sine of 1.6e-3,
-            # respectively, and brought from MuJoCo's implementation. Also keep them for compatibility with MuJoCo.
-            # Increasing this value could be useful for detecting contact manifolds even when the normals are not
-            # perfectly aligned, but we observed that it leads to more false positives and thus not a perfect solution
-            # for the multi-contact detection.
-            contact_face_tol=gs.np_float(0.99999872),
-            contact_edge_tol=gs.np_float(0.00159999931),
-            # Epsilon values for differentiable contact. [eps_boundary] denotes the maximum distance between the face
-            # and the support point in the direction of the face normal. If this distance is 0, the face is on the
-            # boundary of the Minkowski difference. For [eps_distance], the distance between the origin and the face
-            # should not exceed this eps value plus the default EPA depth. For [eps_affine], the affine coordinates
-            # of the origin's projection onto the face should not violate [0, 1] range by this eps value.
+            # This value has been experimentally determined based on the examples that we currently have (e.g. pyramid,
+            # tower, ...). We observed the error usually reaches around 5e-4, so we set the threshold to 1e-5 to be
+            # safe. However, this value could be further tuned based on the future examples.
+            polytope_max_reprojection_error=1e-5,
+            # The values are matching MuJoCo for compatibility. Increasing this value could be useful for detecting
+            # contact manifolds even when the normals are not perfectly aligned, but we observed that it leads to more
+            # false positives and thus not a perfect solution for the multi-contact detection.
+            contact_face_tol=math.cos(1.6e-3),
+            contact_edge_tol=math.sin(1.6e-3),
             # FIXME: Adjust these values based on the case study.
-            diff_contact_eps_boundary=gs.np_float(1e-2),
-            diff_contact_eps_distance=gs.np_float(1e-2),
-            diff_contact_eps_affine=gs.np_float(1e-2),
-            # The minimum norm of the normal to be considered as a valid normal in the differentiable formulation.
+            diff_contact_eps_boundary=1e-2,
+            diff_contact_eps_distance=1e-2,
+            diff_contact_eps_affine=1e-2,
             # We apply sqrt to the 10 * EPS value because we often use the square of the normal norm as the denominator.
-            diff_contact_min_normal_norm=gs.np_float((gs.EPS * 10.0) ** 0.5),
-            # The minimum penetration depth to be considered as a valid contact in the differentiable formulation.
-            # The contact with penetration depth smaller than this value is ignored in the differentiable formulation.
-            # This should be large enough to be safe from numerical errors, because in the backward pass, the computed
-            # penetration depth could be different from the forward pass due to the numerical errors. If this value is
-            # too small, the non-zero penetration depth could be falsely computed to 0 in the backward pass and thus
-            # produce nan values for the contact normal.
-            diff_contact_min_penetration=gs.np_float(gs.EPS * 100.0),
+            diff_contact_min_normal_norm=math.sqrt(gs.EPS * 10.0),
+            diff_contact_min_penetration=gs.EPS * 100.0,
         )
 
         # Initialize GJK state.
-        self._gjk_state = array_class.get_gjk_state(
-            rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_static_config
-        )
+        self._gjk_state = array_class.get_gjk_state(rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info)
 
     def reset(self):
         pass
@@ -181,7 +149,7 @@ def clear_cache(gjk_state: array_class.GJKState, i_b):
     """
     gjk_state.support_mesh_prev_vertex_id[i_b, 0] = -1
     gjk_state.support_mesh_prev_vertex_id[i_b, 1] = -1
-    gjk_state.multi_contact_flag[i_b] = 0
+    gjk_state.multi_contact_flag[i_b] = False
     gjk_state.last_searched_simplex_vertex_id[i_b] = 0
 
 
@@ -191,13 +159,14 @@ def func_gjk_contact(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
     gjk_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -237,9 +206,8 @@ def func_gjk_contact(
                 collider_state,
                 collider_static_config,
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 support_field_info,
-                support_field_static_config,
                 i_ga,
                 i_gb,
                 i_b,
@@ -251,7 +219,7 @@ def func_gjk_contact(
                 # collision epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and
                 # the capsule to get the actual distance. If the distance is smaller than the collision epsilon, it
                 # means a deep penetration, which requires the default GJK handling.
-                if distance > gjk_static_config.collision_eps:
+                if distance > gjk_info.collision_eps[None]:
                     radius_a, radius_b = 0.0, 0.0
                     if is_sphere_swept_geom_a:
                         radius_a = geoms_info.data[i_ga][0]
@@ -260,7 +228,7 @@ def func_gjk_contact(
 
                     wa = gjk_state.witness.point_obj1[i_b, 0]
                     wb = gjk_state.witness.point_obj2[i_b, 0]
-                    n = func_safe_normalize(gjk_static_config, wb - wa)
+                    n = func_safe_normalize(gjk_info, wb - wa)
 
                     gjk_state.distance[i_b] = distance - (radius_a + radius_b)
                     gjk_state.witness.point_obj1[i_b, 0] = wa + (radius_a * n)
@@ -273,7 +241,7 @@ def func_gjk_contact(
 
             distance = gjk_state.distance[i_b]
             nsimplex = gjk_state.nsimplex[i_b]
-            collided = distance < gjk_static_config.collision_eps
+            collided = distance < gjk_info.collision_eps[None]
 
             # To run EPA, we need following conditions:
             # 1. We did not find min. distance with shrink_sphere flag
@@ -298,19 +266,19 @@ def func_gjk_contact(
                         geoms_state,
                         geoms_info,
                         verts_info,
+                        rigid_global_info,
                         static_rigid_sim_config,
                         collider_state,
                         collider_static_config,
                         gjk_state,
-                        gjk_static_config,
+                        gjk_info,
                         support_field_info,
-                        support_field_static_config,
                         i_ga,
                         i_gb,
                         i_b,
                     )
                 elif nsimplex == 4:
-                    polytope_flag = func_epa_init_polytope_4d(gjk_state, gjk_static_config, i_ga, i_gb, i_b)
+                    polytope_flag = func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
                 # Polytope 3D could be used as a fallback for 2D and 4D cases, but it is not necessary
                 if (
@@ -326,9 +294,8 @@ def func_gjk_contact(
                         collider_state,
                         collider_static_config,
                         gjk_state,
-                        gjk_static_config,
+                        gjk_info,
                         support_field_info,
-                        support_field_static_config,
                         i_ga,
                         i_gb,
                         i_b,
@@ -344,9 +311,8 @@ def func_gjk_contact(
                         collider_state,
                         collider_static_config,
                         gjk_state,
-                        gjk_static_config,
+                        gjk_info,
                         support_field_info,
-                        support_field_static_config,
                         i_ga,
                         i_gb,
                         i_b,
@@ -364,25 +330,25 @@ def func_gjk_contact(
                                 verts_info,
                                 faces_info,
                                 gjk_state,
-                                gjk_static_config,
+                                gjk_info,
                                 i_ga,
                                 i_gb,
                                 i_b,
                                 i_f,
                             )
-                            gjk_state.multi_contact_flag[i_b] = 1
+                            gjk_state.multi_contact_flag[i_b] = True
     else:
         gjk_flag = func_safe_gjk(
             geoms_state,
             geoms_info,
             verts_info,
+            rigid_global_info,
             static_rigid_sim_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -395,20 +361,20 @@ def func_gjk_contact(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            func_safe_epa_init(gjk_state, gjk_static_config, i_ga, i_gb, i_b)
+            func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             # Run EPA from the polytope
             func_safe_epa(
                 geoms_state,
                 geoms_info,
                 verts_info,
+                rigid_global_info,
                 static_rigid_sim_config,
                 collider_state,
                 collider_static_config,
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 support_field_info,
-                support_field_static_config,
                 i_ga,
                 i_gb,
                 i_b,
@@ -427,7 +393,7 @@ def func_gjk_contact(
 
             normal = w2 - w1
             normal_len = normal.norm()
-            if normal_len < gjk_static_config.FLOAT_MIN:
+            if normal_len < gjk_info.FLOAT_MIN[None]:
                 continue
 
             normal = normal / normal_len
@@ -452,9 +418,8 @@ def func_gjk(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -514,7 +479,7 @@ def func_gjk(
     approx_witness_point_obj1 = geoms_state.pos[i_ga, i_b]
     approx_witness_point_obj2 = geoms_state.pos[i_gb, i_b]
     support_vector = approx_witness_point_obj1 - approx_witness_point_obj2
-    if support_vector.dot(support_vector) < gjk_static_config.FLOAT_MIN_SQ:
+    if support_vector.dot(support_vector) < gjk_info.FLOAT_MIN_SQ[None]:
         support_vector = gs.ti_vec3(1.0, 0.0, 0.0)
 
     # Epsilon for convergence check.
@@ -522,12 +487,12 @@ def func_gjk(
     if not func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
         # If the objects are smooth, finite convergence is not guaranteed, so we need to set some epsilon
         # to determine convergence.
-        epsilon = 0.5 * (gjk_static_config.tolerance**2)
+        epsilon = 0.5 * (gjk_info.tolerance[None] ** 2)
 
-    for i in range(gjk_static_config.gjk_max_iterations):
+    for i in range(gjk_info.gjk_max_iterations[None]):
         # Compute the current support points
         support_vector_norm = support_vector.norm()
-        if support_vector_norm < gjk_static_config.FLOAT_MIN:
+        if support_vector_norm < gjk_info.FLOAT_MIN[None]:
             # If the support vector is too small, it means that origin is located in the Minkowski difference
             # with high probability, so we can stop.
             break
@@ -551,9 +516,8 @@ def func_gjk(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -582,7 +546,7 @@ def func_gjk(
             if is_separated:
                 nsimplex = 0
                 nx = 0
-                dist = gjk_static_config.FLOAT_MAX
+                dist = gjk_info.FLOAT_MAX[None]
                 early_stop = True
                 break
 
@@ -596,9 +560,8 @@ def func_gjk(
                 collider_state=collider_state,
                 collider_static_config=collider_static_config,
                 gjk_state=gjk_state,
-                gjk_static_config=gjk_static_config,
+                gjk_info=gjk_info,
                 support_field_info=support_field_info,
-                support_field_static_config=support_field_static_config,
                 i_ga=i_ga,
                 i_gb=i_gb,
                 i_b=i_b,
@@ -606,7 +569,7 @@ def func_gjk(
             if intersect_code == GJK_RETURN_CODE.SEPARATED:
                 # No intersection, objects are separated
                 nx = 0
-                dist = gjk_static_config.FLOAT_MAX
+                dist = gjk_info.FLOAT_MAX[None]
                 nsimplex = 0
                 early_stop = True
                 break
@@ -622,7 +585,7 @@ def func_gjk(
                 backup_gjk = False
 
         # Compute the barycentric coordinates of the closest point to the origin in the simplex
-        _lambda = func_gjk_subdistance(gjk_state, gjk_static_config, i_b, n + 1)
+        _lambda = func_gjk_subdistance(gjk_state, gjk_info, i_b, n + 1)
 
         # Remove vertices from the simplex with zero barycentric coordinates
         n = 0
@@ -640,13 +603,13 @@ def func_gjk(
         if n < 1:
             nsimplex = 0
             nx = 0
-            dist = gjk_static_config.FLOAT_MAX
+            dist = gjk_info.FLOAT_MAX[None]
             early_stop = True
             break
 
         # Get the next support vector
         next_support_vector = func_simplex_vertex_linear_comb(gjk_state, i_b, 2, 0, 1, 2, 3, _lambda, n)
-        if func_is_equal_vec(next_support_vector, support_vector, gjk_static_config.FLOAT_MIN):
+        if func_is_equal_vec(next_support_vector, support_vector, gjk_info.FLOAT_MIN[None]):
             # If the next support vector is equal to the previous one, we converged to the minimum distance
             break
 
@@ -690,9 +653,8 @@ def func_gjk_intersect(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -715,7 +677,7 @@ def func_gjk_intersect(
     si = ti.Vector([0, 1, 2, 3], dt=gs.ti_int)
 
     flag = GJK_RETURN_CODE.NUM_ERROR
-    for i in range(gjk_static_config.gjk_max_iterations):
+    for i in range(gjk_info.gjk_max_iterations[None]):
         # Compute normal and signed distance of the triangle faces of the simplex with respect to the origin.
         # These normals are supposed to point outwards from the simplex.
         # If the origin is inside the plane, [sdist] will be positive.
@@ -729,12 +691,12 @@ def func_gjk_intersect(
             elif j == 3:
                 s0, s1, s2 = si[0], si[1], si[2]
 
-            n, s = func_gjk_triangle_info(gjk_state, gjk_static_config, i_b, s0, s1, s2)
+            n, s = func_gjk_triangle_info(gjk_state, gjk_info, i_b, s0, s1, s2)
 
             gjk_state.simplex_buffer_intersect.normal[i_b, j] = n
             gjk_state.simplex_buffer_intersect.sdist[i_b, j] = s
 
-            if ti.abs(s) > gjk_static_config.FLOAT_MIN:
+            if ti.abs(s) > gjk_info.FLOAT_MIN[None]:
                 is_sdist_all_zero = False
 
         # If the origin is strictly on any affine hull of the faces, convergence will fail, so ignore this case
@@ -782,9 +744,8 @@ def func_gjk_intersect(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -813,7 +774,7 @@ def func_gjk_intersect(
 @ti.func
 def func_gjk_triangle_info(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     i_va,
     i_vb,
@@ -830,12 +791,12 @@ def func_gjk_triangle_info(
     normal_length = normal.norm()
 
     sdist = 0.0
-    if (normal_length > gjk_static_config.FLOAT_MIN) and (normal_length < gjk_static_config.FLOAT_MAX):
+    if (normal_length > gjk_info.FLOAT_MIN[None]) and (normal_length < gjk_info.FLOAT_MAX[None]):
         normal = normal * (1.0 / normal_length)
         sdist = normal.dot(vertex_1)
     else:
         # If the normal length is unstable, return max distance.
-        sdist = gjk_static_config.FLOAT_MAX
+        sdist = gjk_info.FLOAT_MAX[None]
 
     return normal, sdist
 
@@ -843,7 +804,7 @@ def func_gjk_triangle_info(
 @ti.func
 def func_gjk_subdistance(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     n,
 ):
@@ -860,7 +821,7 @@ def func_gjk_subdistance(
     # Whether or not the subdistance was computed successfully for the n-simplex.
     flag = RETURN_CODE.SUCCESS
 
-    dmin = gjk_static_config.FLOAT_MAX
+    dmin = gjk_info.FLOAT_MAX[None]
 
     if n == 4:
         _lambda, flag3d = func_gjk_subdistance_3d(gjk_state, i_b, 0, 1, 2, 3)
@@ -875,7 +836,7 @@ def func_gjk_subdistance(
 
         for i in range(num_iter):
             k_1, k_2, k_3 = i, (i + 1) % 4, (i + 2) % 4
-            _lambda2d, flag2d = func_gjk_subdistance_2d(gjk_state, gjk_static_config, i_b, k_1, k_2, k_3)
+            _lambda2d, flag2d = func_gjk_subdistance_2d(gjk_state, gjk_info, i_b, k_1, k_2, k_3)
 
             if failed_3d:
                 if flag2d == RETURN_CODE.SUCCESS:
@@ -976,7 +937,7 @@ def func_gjk_subdistance_3d(
 @ti.func
 def func_gjk_subdistance_2d(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     i_s1,
     i_s2,
@@ -990,7 +951,7 @@ def func_gjk_subdistance_2d(
 
     # Project origin onto affine hull of the simplex (triangle)
     proj_orig, proj_flag = func_project_origin_to_plane(
-        gjk_static_config,
+        gjk_info,
         gjk_state.simplex_vertex.mink[i_b, i_s1],
         gjk_state.simplex_vertex.mink[i_b, i_s2],
         gjk_state.simplex_vertex.mink[i_b, i_s3],
@@ -1117,9 +1078,8 @@ def func_epa(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -1131,10 +1091,10 @@ def func_epa(
     MuJoCo's original implementation:
     https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L1331
     """
-    upper = gjk_static_config.FLOAT_MAX
-    upper2 = gjk_static_config.FLOAT_MAX_SQ
+    upper = gjk_info.FLOAT_MAX[None]
+    upper2 = gjk_info.FLOAT_MAX_SQ[None]
     lower = 0.0
-    tolerance = gjk_static_config.tolerance
+    tolerance = gjk_info.tolerance[None]
 
     # Index of the nearest face
     nearest_i_f = -1
@@ -1143,14 +1103,14 @@ def func_epa(
     discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = gjk_static_config.FLOAT_MIN
+        tolerance = gjk_info.FLOAT_MIN[None]
 
-    k_max = gjk_static_config.epa_max_iterations
+    k_max = gjk_info.epa_max_iterations[None]
     for k in range(k_max):
         prev_nearest_i_f = nearest_i_f
 
         # Find the polytope face with the smallest distance to the origin
-        lower2 = gjk_static_config.FLOAT_MAX_SQ
+        lower2 = gjk_info.FLOAT_MAX_SQ[None]
 
         for i in range(gjk_state.polytope.nfaces_map[i_b]):
             i_f = gjk_state.polytope_faces_map[i_b, i]
@@ -1165,7 +1125,7 @@ def func_epa(
             nearest_i_f = prev_nearest_i_f
             break
 
-        if lower2 <= gjk_static_config.FLOAT_MIN_SQ:
+        if lower2 <= gjk_info.FLOAT_MIN_SQ[None]:
             # Invalid lower bound (0), stop the algorithm (origin is on the affine hull of face)
             break
 
@@ -1180,9 +1140,8 @@ def func_epa(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -1218,7 +1177,7 @@ def func_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = func_epa_horizon(gjk_state, gjk_static_config, i_b, nearest_i_f)
+        horizon_flag = func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -1233,7 +1192,7 @@ def func_epa(
         # Check if the memory space is enough for attaching new faces
         nfaces = gjk_state.polytope.nfaces[i_b]
         nedges = gjk_state.polytope.horizon_nedges[i_b]
-        if nfaces + nedges >= gjk_static_config.polytope_max_faces:
+        if nfaces + nedges >= gjk_info.polytope_max_faces[None]:
             # If the polytope is full, we cannot insert new faces
             break
 
@@ -1261,7 +1220,7 @@ def func_epa(
 
             dist2 = func_attach_face_to_polytope(
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 i_b,
                 wi,
                 horizon_v2,
@@ -1349,7 +1308,7 @@ def func_epa_witness(
 @ti.func
 def func_epa_horizon(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     nearest_i_f,
 ):
@@ -1382,7 +1341,7 @@ def func_epa_horizon(
         # Check visibility of the face. Two requirements for the face to be visible:
         # 1. The face normal should point towards the vertex w
         # 2. The vertex w should be on the other side of the face to the origin
-        is_visible = gjk_state.polytope_faces.normal[i_b, i_f].dot(w - v) > gjk_static_config.FLOAT_MIN
+        is_visible = gjk_state.polytope_faces.normal[i_b, i_f].dot(w - v) > gjk_info.FLOAT_MIN[None]
 
         # The first face is always considered visible.
         if is_visible or is_first:
@@ -1512,13 +1471,13 @@ def func_epa_init_polytope_2d(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -1549,7 +1508,7 @@ def func_epa_init_polytope_2d(
 
     # Cross product with the found axis, then rotate it by 120 degrees around the axis [diff] to get three more
     # points spaced 120 degrees apart
-    rotmat = gu.ti_rotvec_to_R(diff * ti.math.radians(120.0))
+    rotmat = gu.ti_rotvec_to_R(diff * ti.math.radians(120.0), rigid_global_info.EPS[None])
     e = gs.ti_vec3(0.0, 0.0, 0.0)
     e[min_i] = 1.0
 
@@ -1588,9 +1547,8 @@ def func_epa_init_polytope_2d(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -1630,8 +1588,8 @@ def func_epa_init_polytope_2d(
             i_a1, i_a2, i_a3 = 4, 2, 3
 
         if (
-            func_attach_face_to_polytope(gjk_state, gjk_static_config, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
-            < gjk_static_config.FLOAT_MIN_SQ
+            func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
+            < gjk_info.FLOAT_MIN_SQ[None]
         ):
             func_replace_simplex_3(gjk_state, i_b, i_v1, i_v2, i_v3)
             flag = EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
@@ -1661,9 +1619,8 @@ def func_epa_init_polytope_3d(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -1686,7 +1643,7 @@ def func_epa_init_polytope_3d(
     # Get normal; if it is zero, we cannot proceed
     n = (v2 - v1).cross(v3 - v1)
     n_norm = n.norm()
-    if n_norm < gjk_static_config.FLOAT_MIN:
+    if n_norm < gjk_info.FLOAT_MIN[None]:
         flag = EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
     n_neg = -n
 
@@ -1718,9 +1675,8 @@ def func_epa_init_polytope_3d(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -1734,7 +1690,7 @@ def func_epa_init_polytope_3d(
     # If so, we do not proceed anymore.
     for i in range(2):
         v = v4 if i == 0 else v5
-        if func_point_triangle_intersection(gjk_static_config, v, v1, v2, v3):
+        if func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
             flag = EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
             break
 
@@ -1751,7 +1707,7 @@ def func_epa_init_polytope_3d(
         # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but
         # there is penetration depth.
         if (
-            gjk_state.simplex.dist[i_b] > 10 * gjk_static_config.FLOAT_MIN
+            gjk_state.simplex.dist[i_b] > 10 * gjk_info.FLOAT_MIN[None]
             and (not tets_has_origin[0])
             and (not tets_has_origin[1])
         ):
@@ -1779,10 +1735,8 @@ def func_epa_init_polytope_3d(
                     i_v1, i_v2, i_v3 = vi[4], vi[2], vi[1]
                     i_a1, i_a2, i_a3 = 4, 2, 3
 
-                dist2 = func_attach_face_to_polytope(
-                    gjk_state, gjk_static_config, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3
-                )
-                if dist2 < gjk_static_config.FLOAT_MIN_SQ:
+                dist2 = func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
+                if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
                     flag = EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
                     break
 
@@ -1799,7 +1753,7 @@ def func_epa_init_polytope_3d(
 @ti.func
 def func_epa_init_polytope_4d(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
     i_b,
@@ -1845,9 +1799,9 @@ def func_epa_init_polytope_4d(
             v1, v2, v3 = vi[3], vi[2], vi[1]
             a1, a2, a3 = 2, 0, 1
 
-        dist2 = func_attach_face_to_polytope(gjk_state, gjk_static_config, i_b, v1, v2, v3, a1, a2, a3)
+        dist2 = func_attach_face_to_polytope(gjk_state, gjk_info, i_b, v1, v2, v3, a1, a2, a3)
 
-        if dist2 < gjk_static_config.FLOAT_MIN_SQ:
+        if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
             func_replace_simplex_3(gjk_state, i_b, v1, v2, v3)
             flag = EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3
             break
@@ -1884,9 +1838,8 @@ def func_epa_support(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -1902,7 +1855,7 @@ def func_epa_support(
         Vector from [ga] (obj1) to [gb] (obj2).
     """
     d = gs.ti_vec3(1, 0, 0)
-    if dir_norm > gjk_static_config.FLOAT_MIN:
+    if dir_norm > gjk_info.FLOAT_MIN[None]:
         d = dir / dir_norm
 
     # Insert the support points into the polytope
@@ -1917,9 +1870,8 @@ def func_epa_support(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -1934,7 +1886,7 @@ def func_epa_support(
 @ti.func
 def func_attach_face_to_polytope(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     i_v1,
     i_v2,
@@ -1966,7 +1918,7 @@ def func_attach_face_to_polytope(
 
     # Compute the squared distance of the face to the origin
     gjk_state.polytope_faces.normal[i_b, n], ret = func_project_origin_to_plane(
-        gjk_static_config,
+        gjk_info,
         gjk_state.polytope_verts.mink[i_b, i_v3],
         gjk_state.polytope_verts.mink[i_b, i_v2],
         gjk_state.polytope_verts.mink[i_b, i_v1],
@@ -2050,7 +2002,7 @@ def func_ray_triangle_intersection(
 
 @ti.func
 def func_point_triangle_intersection(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     point,
     tri_v1,
     tri_v2,
@@ -2068,7 +2020,7 @@ def func_point_triangle_intersection(
         # Check if the point predicted by the affine coordinates is equal to the point itself
         pred = tri_v1 * _lambda[0] + tri_v2 * _lambda[1] + tri_v3 * _lambda[2]
         diff = pred - point
-        is_inside = diff.norm_sqr() < gjk_static_config.FLOAT_MIN_SQ
+        is_inside = diff.norm_sqr() < gjk_info.FLOAT_MIN_SQ[None]
 
     return is_inside
 
@@ -2191,7 +2143,7 @@ def func_multi_contact(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
     i_b,
@@ -2257,7 +2209,7 @@ def func_multi_contact(
         nnorms = 0
         if geom_type == gs.GEOM_TYPE.BOX:
             nnorms = func_potential_box_normals(
-                geoms_state, geoms_info, gjk_state, gjk_static_config, i_g, i_b, nface, v1i, v2i, v3i, t_dir
+                geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1i, v2i, v3i, t_dir
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
             nnorms = func_potential_mesh_normals(
@@ -2266,7 +2218,7 @@ def func_multi_contact(
                 verts_info,
                 faces_info,
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 i_g,
                 i_b,
                 nface,
@@ -2286,7 +2238,7 @@ def func_multi_contact(
                 nnorms2 = nnorms
 
     # Determine if any two face normals match
-    aligned_faces_idx, aligned_faces_flag = func_find_aligned_faces(gjk_state, gjk_static_config, i_b, nnorms1, nnorms2)
+    aligned_faces_idx, aligned_faces_flag = func_find_aligned_faces(gjk_state, gjk_info, i_b, nnorms1, nnorms2)
     no_multiple_contacts = False
     edgecon1, edgecon2 = False, False
 
@@ -2309,7 +2261,7 @@ def func_multi_contact(
             nnorms = 0
             if geom_type == gs.GEOM_TYPE.BOX:
                 nnorms = func_potential_box_edge_normals(
-                    geoms_state, geoms_info, gjk_state, gjk_static_config, i_g, i_b, nface, v1, v2, v1i, v2i
+                    geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1, v2, v1i, v2i
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
                 nnorms = func_potential_mesh_edge_normals(
@@ -2318,7 +2270,7 @@ def func_multi_contact(
                     verts_info,
                     faces_info,
                     gjk_state,
-                    gjk_static_config,
+                    gjk_info,
                     i_g,
                     i_b,
                     nface,
@@ -2347,7 +2299,7 @@ def func_multi_contact(
             if not is_edge_face:
                 nedges, nfaces = nfaces, nedges
             aligned_faces_idx, aligned_edge_face_flag = func_find_aligned_edge_face(
-                gjk_state, gjk_static_config, i_b, nedges, nfaces, is_edge_face
+                gjk_state, gjk_info, i_b, nedges, nfaces, is_edge_face
             )
 
             if aligned_edge_face_flag == RETURN_CODE.FAIL:
@@ -2418,7 +2370,7 @@ def func_multi_contact(
             normal = gjk_state.contact_faces[i_b, i].normal1
 
         # Clip polygon
-        func_clip_polygon(gjk_state, gjk_static_config, i_b, nface1, nface2, edgecon1, edgecon2, normal, approx_dir)
+        func_clip_polygon(gjk_state, gjk_info, i_b, nface1, nface2, edgecon1, edgecon2, normal, approx_dir)
 
 
 @ti.func
@@ -2464,7 +2416,7 @@ def func_potential_box_normals(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_g,
     i_b,
     dim,
@@ -2572,7 +2524,7 @@ def func_potential_box_normals(
     if is_degenerate_simplex:
         n_normals = (
             1
-            if func_box_normal_from_collision_normal(geoms_state, gjk_state, gjk_static_config, i_g, i_b, dir)
+            if func_box_normal_from_collision_normal(geoms_state, gjk_state, gjk_info, i_g, i_b, dir)
             == RETURN_CODE.SUCCESS
             else 0
         )
@@ -2589,7 +2541,7 @@ def func_cmp_bit(
     shift,
 ):
     """
-    Compare one bit of v1 and v2 that sits at position `shift` (shift = 0 for the LSB, 1 for the next bit, …).
+    Compare one bit of v1 and v2 that sits at position `shift` (shift = 0 for the LSB, 1 for the next bit, ...).
 
     Returns:
     -------
@@ -2624,7 +2576,7 @@ def func_cmp_bit(
 def func_box_normal_from_collision_normal(
     geoms_state: array_class.GeomsState,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_g,
     i_b,
     dir,
@@ -2647,7 +2599,7 @@ def func_box_normal_from_collision_normal(
     flag = RETURN_CODE.FAIL
     for i in range(6):
         n = gs.ti_vec3(normals[3 * i + 0], normals[3 * i + 1], normals[3 * i + 2])
-        if local_dir.dot(n) > gjk_static_config.contact_face_tol:
+        if local_dir.dot(n) > gjk_info.contact_face_tol[None]:
             flag = RETURN_CODE.SUCCESS
             gjk_state.contact_normals[i_b, 0].normal = n
             gjk_state.contact_normals[i_b, 0].id = i
@@ -2663,7 +2615,7 @@ def func_potential_mesh_normals(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_g,
     i_b,
     dim,
@@ -2728,7 +2680,7 @@ def func_potential_mesh_normals(
                 if n_normals == 2:
                     break
             else:
-                if n_normals == gjk_static_config.max_contact_polygon_verts:
+                if n_normals == gjk_info.max_contact_polygon_verts[None]:
                     break
 
     return n_normals
@@ -2737,7 +2689,7 @@ def func_potential_mesh_normals(
 @ti.func
 def func_find_aligned_faces(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     nv,
     nw,
@@ -2751,7 +2703,7 @@ def func_find_aligned_faces(
     for i, j in ti.ndrange(nv, nw):
         ni = gjk_state.contact_faces[i_b, i].normal1
         nj = gjk_state.contact_faces[i_b, j].normal2
-        if ni.dot(nj) < -gjk_static_config.contact_face_tol:
+        if ni.dot(nj) < -gjk_info.contact_face_tol[None]:
             res[0] = i
             res[1] = j
             flag = RETURN_CODE.SUCCESS
@@ -2765,7 +2717,7 @@ def func_potential_box_edge_normals(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_g,
     i_b,
     dim,
@@ -2798,7 +2750,7 @@ def func_potential_box_edge_normals(
     if dim == 2:
         # If the nearest face is an edge
         gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_static_config, v2 - v1)
+        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_info, v2 - v1)
 
         n_normals = 1
     elif dim == 1:
@@ -2814,7 +2766,7 @@ def func_potential_box_edge_normals(
             elif i == 2:
                 bv = gs.ti_vec3(x, y, -z)
             ev = gu.ti_transform_by_trans_quat(bv, g_pos, g_quat)
-            r = func_safe_normalize(gjk_static_config, ev - v1)
+            r = func_safe_normalize(gjk_info, ev - v1)
 
             gjk_state.contact_normals[i_b, i].endverts = ev
             gjk_state.contact_normals[i_b, i].normal = r
@@ -2831,7 +2783,7 @@ def func_potential_mesh_edge_normals(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_g,
     i_b,
     dim,
@@ -2859,7 +2811,7 @@ def func_potential_mesh_edge_normals(
     if dim == 2:
         # If the nearest face is an edge
         gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_static_config, v2 - v1)
+        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_info, v2 - v1)
 
         n_normals = 1
 
@@ -2887,13 +2839,13 @@ def func_potential_mesh_edge_normals(
                 # Compute the edge normal
                 v2_pos = verts_info.init_pos[t_v2i]
                 v2_pos = gu.ti_transform_by_trans_quat(v2_pos, g_pos, g_quat)
-                t_res = func_safe_normalize(gjk_static_config, v2_pos - v1)
+                t_res = func_safe_normalize(gjk_info, v2_pos - v1)
 
                 gjk_state.contact_normals[i_b, n_normals].normal = t_res
                 gjk_state.contact_normals[i_b, n_normals].endverts = v2_pos
 
                 n_normals += 1
-                if n_normals == gjk_static_config.max_contact_polygon_verts:
+                if n_normals == gjk_info.max_contact_polygon_verts[None]:
                     break
 
     return n_normals
@@ -2901,7 +2853,7 @@ def func_potential_mesh_edge_normals(
 
 @ti.func
 def func_safe_normalize(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     v,
 ):
     """
@@ -2909,7 +2861,7 @@ def func_safe_normalize(
     """
     norm = v.norm()
 
-    if norm < gjk_static_config.FLOAT_MIN:
+    if norm < gjk_info.FLOAT_MIN[None]:
         # If the vector is too small, set it to a default value
         v[0] = 1.0
         v[1] = 0.0
@@ -2924,7 +2876,7 @@ def func_safe_normalize(
 @ti.func
 def func_find_aligned_edge_face(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     nedge,
     nface,
@@ -2947,7 +2899,7 @@ def func_find_aligned_edge_face(
             # The second normal is the face normal
             nj = gjk_state.contact_faces[i_b, j].normal1
 
-        if ti.abs(ni.dot(nj)) < gjk_static_config.contact_edge_tol:
+        if ti.abs(ni.dot(nj)) < gjk_info.contact_edge_tol[None]:
             res[0] = i
             res[1] = j
             flag = RETURN_CODE.SUCCESS
@@ -3052,7 +3004,7 @@ def func_mesh_face(
 @ti.func
 def func_clip_polygon(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     nface1,
     nface2,
@@ -3092,7 +3044,7 @@ def func_clip_polygon(
             res = (v2 - v1).cross(normal)
 
             # Reorient normal if needed
-            inside_v3 = func_halfspace(gjk_static_config, v1, res, v3)
+            inside_v3 = func_halfspace(gjk_info, v1, res, v3)
             if not inside_v3:
                 res = -res
 
@@ -3131,8 +3083,8 @@ def func_clip_polygon(
                 Q = gjk_state.contact_clipped_polygons[i_b, pi, (i + 1) % nclipped[pi]]
 
                 # Determine if P and Q are inside or outside the half-plane
-                inside_P = func_halfspace(gjk_static_config, a, n, P)
-                inside_Q = func_halfspace(gjk_static_config, a, n, Q)
+                inside_P = func_halfspace(gjk_info, a, n, P)
+                inside_Q = func_halfspace(gjk_info, a, n, Q)
 
                 # PQ entirely outside the clipping edge, skip
                 if not inside_P and not inside_Q:
@@ -3145,7 +3097,7 @@ def func_clip_polygon(
                     continue
 
                 # PQ intersects the half-plane, add the intersection point
-                t, ip = func_plane_intersect(gjk_static_config, n, d, P, Q)
+                t, ip = func_plane_intersect(gjk_info, n, d, P, Q)
                 if t >= 0 and t <= 1:
                     gjk_state.contact_clipped_polygons[i_b, ci, nclipped[ci]] = ip
                     nclipped[ci] += 1
@@ -3164,7 +3116,7 @@ def func_clip_polygon(
         nclipped_polygon = nclipped[pi]
 
         if nclipped_polygon >= 1:
-            if gjk_static_config.max_contacts_per_pair < 5 and nclipped_polygon > 4:
+            if gjk_info.max_contacts_per_pair[None] < 5 and nclipped_polygon > 4:
                 # Approximate the clipped polygon with a convex quadrilateral
                 gjk_state.n_witness[i_b] = 4
                 rect = func_approximate_polygon_with_quad(gjk_state, i_b, pi, nclipped_polygon)
@@ -3175,12 +3127,12 @@ def func_clip_polygon(
                     gjk_state.witness[i_b, i].point_obj1 = witness1
                     gjk_state.witness[i_b, i].point_obj2 = witness2
 
-            elif nclipped_polygon > gjk_static_config.max_contacts_per_pair:
+            elif nclipped_polygon > gjk_info.max_contacts_per_pair[None]:
                 # If the number of contacts exceeds the limit,
                 # only use the first [max_contacts_per_pair] contacts.
-                gjk_state.n_witness[i_b] = gjk_static_config.max_contacts_per_pair
+                gjk_state.n_witness[i_b] = gjk_info.max_contacts_per_pair[None]
 
-                for i in range(gjk_static_config.max_contacts_per_pair):
+                for i in range(gjk_info.max_contacts_per_pair[None]):
                     witness2 = gjk_state.contact_clipped_polygons[i_b, pi, i]
                     witness1 = witness2 - approx_dir
                     gjk_state.witness[i_b, i].point_obj1 = witness1
@@ -3197,7 +3149,7 @@ def func_clip_polygon(
                     # Find if there were any duplicate contacts similar to [polygon_vert]
                     for j in range(n_witness):
                         prev_witness = gjk_state.witness[i_b, j].point_obj2
-                        skip = func_is_equal_vec(polygon_vert, prev_witness, gjk_static_config.FLOAT_MIN)
+                        skip = func_is_equal_vec(polygon_vert, prev_witness, gjk_info.FLOAT_MIN[None])
                         if skip:
                             break
 
@@ -3211,7 +3163,7 @@ def func_clip_polygon(
 
 @ti.func
 def func_halfspace(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     a,
     n,
     p,
@@ -3219,12 +3171,12 @@ def func_halfspace(
     """
     Check if the point [p] is inside the half-space defined by the plane with normal [n] and point [a].
     """
-    return (p - a).dot(n) > -gjk_static_config.FLOAT_MIN
+    return (p - a).dot(n) > -gjk_info.FLOAT_MIN[None]
 
 
 @ti.func
 def func_plane_intersect(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     pn,
     pd,
     v1,
@@ -3241,12 +3193,12 @@ def func_plane_intersect(
     t: float
         The parameter t that defines the intersection point on the line segment.
     """
-    t = gjk_static_config.FLOAT_MAX
+    t = gjk_info.FLOAT_MAX[None]
     ip = gs.ti_vec3(0, 0, 0)
 
     dir = v2 - v1
     normal_dot = pn.dot(dir)
-    if ti.abs(normal_dot) > gjk_static_config.FLOAT_MIN:
+    if ti.abs(normal_dot) > gjk_info.FLOAT_MIN[None]:
         t = (pd - pn.dot(v1)) / normal_dot
         if t >= 0 and t <= 1:
             ip = v1 + t * dir
@@ -3387,9 +3339,8 @@ def func_support(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -3422,9 +3373,8 @@ def func_support(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             d,
             i_g,
             i_b,
@@ -3454,7 +3404,7 @@ def func_support(
 
 @ti.func
 def func_project_origin_to_plane(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     v1,
     v2,
     v3,
@@ -3489,7 +3439,7 @@ def func_project_origin_to_plane(
             # Zero normal, cannot project.
             flag = RETURN_CODE.FAIL
             break
-        elif nn > gjk_static_config.FLOAT_MIN:
+        elif nn > gjk_info.FLOAT_MIN[None]:
             point = n * (nv / nn)
             flag = RETURN_CODE.SUCCESS
             break
@@ -3497,7 +3447,7 @@ def func_project_origin_to_plane(
         # Last fallback if no valid normal was found
         if i == 2:
             # If the normal is still unreliable, cannot project.
-            if nn < gjk_static_config.FLOAT_MIN:
+            if nn < gjk_info.FLOAT_MIN[None]:
                 flag = RETURN_CODE.FAIL
             else:
                 point = n * (nv / nn)
@@ -3600,7 +3550,7 @@ def support_mesh(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     direction,
     i_g,
     i_b,
@@ -3614,7 +3564,7 @@ def support_mesh(
     d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_quat))
 
     # Exhaustively search for the vertex with maximum dot product
-    fmax = -gjk_static_config.FLOAT_MAX
+    fmax = -gjk_info.FLOAT_MAX[None]
     imax = 0
 
     vert_start = geoms_info.vert_start[i_g]
@@ -3652,9 +3602,8 @@ def support_driver(
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     direction,
     i_g,
     i_b,
@@ -3682,15 +3631,12 @@ def support_driver(
             v, vid = support_field._func_support_prism(collider_state, direction, i_g, i_b)
     elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
-        v, vid = support_mesh(
-            geoms_state, geoms_info, verts_info, gjk_state, gjk_static_config, direction, i_g, i_b, i_o
-        )
+        v, vid = support_mesh(geoms_state, geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, i_b, i_o)
     else:
         v, v_, vid = support_field._func_support_world(
             geoms_state,
             geoms_info,
             support_field_info,
-            support_field_static_config,
             direction,
             i_g,
             i_b,
@@ -3703,13 +3649,13 @@ def func_safe_gjk(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -3751,13 +3697,13 @@ def func_safe_gjk(
             geoms_state,
             geoms_info,
             verts_info,
+            rigid_global_info,
             static_rigid_sim_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -3765,7 +3711,7 @@ def func_safe_gjk(
         )
 
         # Check if the new vertex would make a valid simplex.
-        valid = func_is_new_simplex_vertex_valid(gjk_state, gjk_static_config, i_b, id1, id2, minkowski)
+        valid = func_is_new_simplex_vertex_valid(gjk_state, gjk_info, i_b, id1, id2, minkowski)
 
         # If this is not a valid vertex, fall back to a brute-force routine to find a valid vertex.
         if not valid:
@@ -3773,13 +3719,13 @@ def func_safe_gjk(
                 geoms_state,
                 geoms_info,
                 verts_info,
+                rigid_global_info,
                 static_rigid_sim_config,
                 collider_state,
                 collider_static_config,
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 support_field_info,
-                support_field_static_config,
                 i_ga,
                 i_gb,
                 i_b,
@@ -3802,7 +3748,7 @@ def func_safe_gjk(
         # Simplex index
         si = ti.Vector([0, 1, 2, 3], dt=gs.ti_int)
 
-        for i in range(gjk_static_config.gjk_max_iterations):
+        for i in range(gjk_info.gjk_max_iterations[None]):
             # Compute normal and signed distance of the triangle faces of the simplex with respect to the origin.
             # These normals are supposed to point outwards from the simplex. If the origin is inside the plane,
             # [sdist] will be positive.
@@ -3852,13 +3798,13 @@ def func_safe_gjk(
                 geoms_state,
                 geoms_info,
                 verts_info,
+                rigid_global_info,
                 static_rigid_sim_config,
                 collider_state,
                 collider_static_config,
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 support_field_info,
-                support_field_static_config,
                 i_ga,
                 i_gb,
                 i_b,
@@ -3871,7 +3817,7 @@ def func_safe_gjk(
                 gjk_flag = GJK_RETURN_CODE.SEPARATED
                 break
 
-            degenerate = func_is_new_simplex_vertex_degenerate(gjk_state, gjk_static_config, i_b, minkowski)
+            degenerate = func_is_new_simplex_vertex_degenerate(gjk_state, gjk_info, i_b, minkowski)
             if degenerate:
                 # If the new vertex is degenerate, we cannot proceed with GJK.
                 gjk_flag = GJK_RETURN_CODE.NUM_ERROR
@@ -3896,7 +3842,7 @@ def func_safe_gjk(
         gjk_state.distance[i_b] = 0.0
     else:
         gjk_flag = GJK_RETURN_CODE.SEPARATED
-        gjk_state.distance[i_b] = gjk_static_config.FLOAT_MAX
+        gjk_state.distance[i_b] = gjk_info.FLOAT_MAX[None]
 
     return gjk_flag
 
@@ -3904,7 +3850,7 @@ def func_safe_gjk(
 @ti.func
 def func_is_new_simplex_vertex_valid(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     id1,
     id2,
@@ -3918,7 +3864,7 @@ def func_is_new_simplex_vertex_valid(
     2) The simplex should not be degenerate after insertion.
     """
     return (not func_is_new_simplex_vertex_duplicate(gjk_state, i_b, id1, id2)) and (
-        not func_is_new_simplex_vertex_degenerate(gjk_state, gjk_static_config, i_b, mink)
+        not func_is_new_simplex_vertex_degenerate(gjk_state, gjk_info, i_b, mink)
     )
 
 
@@ -3947,7 +3893,7 @@ def func_is_new_simplex_vertex_duplicate(
 @ti.func
 def func_is_new_simplex_vertex_degenerate(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     mink,
 ):
@@ -3959,7 +3905,7 @@ def func_is_new_simplex_vertex_degenerate(
     # Check if the new vertex is not very close to the existing vertices
     nverts = gjk_state.simplex.nverts[i_b]
     for i in range(nverts):
-        if (gjk_state.simplex_vertex.mink[i_b, i] - mink).norm_sqr() < (gjk_static_config.simplex_max_degeneracy_sq):
+        if (gjk_state.simplex_vertex.mink[i_b, i] - mink).norm_sqr() < (gjk_info.simplex_max_degeneracy_sq[None]):
             is_degenerate = True
             break
 
@@ -3968,7 +3914,7 @@ def func_is_new_simplex_vertex_degenerate(
         if nverts == 2:
             # Becomes a triangle if valid, check if the three vertices are not collinear
             is_degenerate = func_is_colinear(
-                gjk_static_config,
+                gjk_info,
                 gjk_state.simplex_vertex.mink[i_b, 0],
                 gjk_state.simplex_vertex.mink[i_b, 1],
                 mink,
@@ -3976,7 +3922,7 @@ def func_is_new_simplex_vertex_degenerate(
         elif nverts == 3:
             # Becomes a tetrahedron if valid, check if the four vertices are not coplanar
             is_degenerate = func_is_coplanar(
-                gjk_static_config,
+                gjk_info,
                 gjk_state.simplex_vertex.mink[i_b, 0],
                 gjk_state.simplex_vertex.mink[i_b, 1],
                 gjk_state.simplex_vertex.mink[i_b, 2],
@@ -3988,7 +3934,7 @@ def func_is_new_simplex_vertex_degenerate(
 
 @ti.func
 def func_is_colinear(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     v1,
     v2,
     v3,
@@ -4001,12 +3947,12 @@ def func_is_colinear(
     e1 = v2 - v1
     e2 = v3 - v1
     normal = e1.cross(e2)
-    return normal.norm_sqr() < (gjk_static_config.simplex_max_degeneracy_sq) * e1.norm_sqr() * e2.norm_sqr()
+    return normal.norm_sqr() < (gjk_info.simplex_max_degeneracy_sq[None]) * e1.norm_sqr() * e2.norm_sqr()
 
 
 @ti.func
 def func_is_coplanar(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     v1,
     v2,
     v3,
@@ -4021,7 +3967,7 @@ def func_is_coplanar(
     e2 = (v3 - v1).normalized()
     normal = e1.cross(e2)
     diff = v4 - v1
-    return (normal.dot(diff) ** 2) < (gjk_static_config.simplex_max_degeneracy_sq) * normal.norm_sqr() * diff.norm_sqr()
+    return (normal.dot(diff) ** 2) < (gjk_info.simplex_max_degeneracy_sq[None]) * normal.norm_sqr() * diff.norm_sqr()
 
 
 @ti.func
@@ -4029,13 +3975,13 @@ def func_search_valid_simplex_vertex(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -4079,7 +4025,7 @@ def func_search_valid_simplex_vertex(
             minkowski = obj1 - obj2
 
             # Check if the new vertex is valid
-            if func_is_new_simplex_vertex_valid(gjk_state, gjk_static_config, i_b, id1, id2, minkowski):
+            if func_is_new_simplex_vertex_valid(gjk_state, gjk_info, i_b, id1, id2, minkowski):
                 flag = RETURN_CODE.SUCCESS
                 # Update buffer
                 gjk_state.last_searched_simplex_vertex_id[i_b] = (m + 1) % num_cases
@@ -4100,13 +4046,13 @@ def func_search_valid_simplex_vertex(
                     geoms_state,
                     geoms_info,
                     verts_info,
+                    rigid_global_info,
                     static_rigid_sim_config,
                     collider_state,
                     collider_static_config,
                     gjk_state,
-                    gjk_static_config,
+                    gjk_info,
                     support_field_info,
-                    support_field_static_config,
                     i_ga,
                     i_gb,
                     i_b,
@@ -4114,7 +4060,7 @@ def func_search_valid_simplex_vertex(
                 )
 
                 # Check if the new vertex is valid
-                if func_is_new_simplex_vertex_valid(gjk_state, gjk_static_config, i_b, id1, id2, minkowski):
+                if func_is_new_simplex_vertex_valid(gjk_state, gjk_info, i_b, id1, id2, minkowski):
                     flag = RETURN_CODE.SUCCESS
                     break
 
@@ -4214,13 +4160,13 @@ def func_safe_gjk_support(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -4238,6 +4184,8 @@ def func_safe_gjk_support(
     dir: gs.ti_vec3
         The unit direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
     """
+    EPS = rigid_global_info.EPS[None]
+
     obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
     obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
     local_obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
@@ -4250,9 +4198,9 @@ def func_safe_gjk_support(
         n_dir = dir
         if i > 0:
             j = i - 1
-            n_dir[0] += -(1.0 - 2.0 * (j & 1)) * gs.EPS
-            n_dir[1] += -(1.0 - 2.0 * (j & 2)) * gs.EPS
-            n_dir[2] += -(1.0 - 2.0 * (j & 4)) * gs.EPS
+            n_dir[0] += -(1.0 - 2.0 * (j & 1)) * EPS
+            n_dir[1] += -(1.0 - 2.0 * (j & 2)) * EPS
+            n_dir[2] += -(1.0 - 2.0 * (j & 4)) * EPS
 
         # First order normalization based on Taylor series is accurate enough
         n_dir *= 2.0 - n_dir.dot(dir)
@@ -4261,7 +4209,6 @@ def func_safe_gjk_support(
             geoms_state,
             geoms_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -4285,9 +4232,8 @@ def func_safe_gjk_support(
                 collider_state,
                 collider_static_config,
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 support_field_info,
-                support_field_static_config,
                 d,
                 i_g,
                 i_b,
@@ -4319,7 +4265,7 @@ def func_safe_gjk_support(
             break
 
         # Check if the updated simplex would be a degenerate simplex.
-        if func_is_new_simplex_vertex_valid(gjk_state, gjk_static_config, i_b, id1, id2, mink):
+        if func_is_new_simplex_vertex_valid(gjk_state, gjk_info, i_b, id1, id2, mink):
             break
 
     return obj1, obj2, local_obj1, local_obj2, id1, id2, mink
@@ -4330,7 +4276,6 @@ def count_support_driver(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     d,
     i_g,
     i_b,
@@ -4347,7 +4292,6 @@ def count_support_driver(
             geoms_state,
             geoms_info,
             support_field_info,
-            support_field_static_config,
             d,
             i_g,
             i_b,
@@ -4360,7 +4304,6 @@ def func_count_support(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -4375,7 +4318,6 @@ def func_count_support(
             geoms_state,
             geoms_info,
             support_field_info,
-            support_field_static_config,
             dir if i == 0 else -dir,
             i_ga if i == 0 else i_gb,
             i_b,
@@ -4389,13 +4331,13 @@ def func_safe_epa(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
-    support_field_static_config: ti.template(),
     i_ga,
     i_gb,
     i_b,
@@ -4410,10 +4352,11 @@ def func_safe_epa(
     3) In determining the normal direction of a polytope face, we use origin and the polytope vertices altogether
     to get a more stable normal direction, rather than just the origin.
     """
-    upper = gjk_static_config.FLOAT_MAX
-    upper2 = gjk_static_config.FLOAT_MAX_SQ
+    upper = gjk_info.FLOAT_MAX[None]
+    upper2 = gjk_info.FLOAT_MAX_SQ[None]
     lower = gs.ti_float(0.0)
-    tolerance = gjk_static_config.tolerance
+    tolerance = gjk_info.tolerance[None]
+    EPS = rigid_global_info.EPS[None]
 
     # Index of the nearest face
     nearest_i_f = gs.ti_int(-1)
@@ -4422,14 +4365,14 @@ def func_safe_epa(
     discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = gs.EPS
+        tolerance = rigid_global_info.EPS[None]
 
-    k_max = gjk_static_config.epa_max_iterations
+    k_max = gjk_info.epa_max_iterations[None]
     for k in range(k_max):
         prev_nearest_i_f = nearest_i_f
 
         # Find the polytope face with the smallest distance to the origin
-        lower2 = gjk_static_config.FLOAT_MAX_SQ
+        lower2 = gjk_info.FLOAT_MAX_SQ[None]
 
         for i in range(gjk_state.polytope.nfaces_map[i_b]):
             i_f = gjk_state.polytope_faces_map[i_b, i]
@@ -4455,9 +4398,8 @@ def func_safe_epa(
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_static_config,
+            gjk_info,
             support_field_info,
-            support_field_static_config,
             i_ga,
             i_gb,
             i_b,
@@ -4494,7 +4436,7 @@ def func_safe_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = func_epa_horizon(gjk_state, gjk_static_config, i_b, nearest_i_f)
+        horizon_flag = func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -4509,7 +4451,7 @@ def func_safe_epa(
         # Check if the memory space is enough for attaching new faces
         nfaces = gjk_state.polytope.nfaces[i_b]
         nedges = gjk_state.polytope.horizon_nedges[i_b]
-        if nfaces + nedges >= gjk_static_config.polytope_max_faces:
+        if nfaces + nedges >= gjk_info.polytope_max_faces[None]:
             # If the polytope is full, we cannot insert new faces
             break
 
@@ -4539,7 +4481,7 @@ def func_safe_epa(
 
             attach_flag = func_safe_attach_face_to_polytope(
                 gjk_state,
-                gjk_static_config,
+                gjk_info,
                 i_b,
                 wi,
                 horizon_v2,
@@ -4553,7 +4495,7 @@ def func_safe_epa(
                 break
 
             dist2 = gjk_state.polytope_faces.dist2[i_b, gjk_state.polytope.nfaces[i_b] - 1]
-            if (dist2 >= lower2 - gs.EPS) and (dist2 <= upper2 + gs.EPS):
+            if (dist2 >= lower2 - EPS) and (dist2 <= upper2 + EPS):
                 # Store face in the map
                 nfaces_map = gjk_state.polytope.nfaces_map[i_b]
                 gjk_state.polytope_faces_map[i_b, nfaces_map] = i_f0
@@ -4573,7 +4515,7 @@ def func_safe_epa(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = func_safe_epa_witness(gjk_state, gjk_static_config, i_ga, i_gb, i_b, nearest_i_f)
+        flag = func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -ti.sqrt(dist2)
@@ -4592,7 +4534,7 @@ def func_safe_epa(
 @ti.func
 def func_safe_epa_witness(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
     i_b,
@@ -4612,7 +4554,7 @@ def func_safe_epa_witness(
     face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
 
     # Project origin onto the face plane to get the barycentric coordinates
-    proj_o, _ = func_project_origin_to_plane(gjk_static_config, face_v1, face_v2, face_v3)
+    proj_o, _ = func_project_origin_to_plane(gjk_info, face_v1, face_v2, face_v3)
     _lambda = func_triangle_affine_coords(proj_o, face_v1, face_v2, face_v3)
 
     # Check validity of affine coordinates through reprojection
@@ -4625,10 +4567,10 @@ def func_safe_epa_witness(
 
     # Take into account the face magnitude, as the error is relative to the face size.
     max_edge_len_inv = ti.rsqrt(
-        max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), gjk_static_config.FLOAT_MIN_SQ)
+        max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), gjk_info.FLOAT_MIN_SQ[None])
     )
     rel_reprojection_error = reprojection_error * max_edge_len_inv
-    if rel_reprojection_error > gjk_static_config.polytope_max_reprojection_error:
+    if rel_reprojection_error > gjk_info.polytope_max_reprojection_error[None]:
         flag = RETURN_CODE.FAIL
 
     if flag == RETURN_CODE.SUCCESS:
@@ -4653,7 +4595,7 @@ def func_safe_epa_witness(
 @ti.func
 def func_safe_epa_init(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
     i_b,
@@ -4694,7 +4636,7 @@ def func_safe_epa_init(
             v1, v2, v3 = vi[3], vi[2], vi[1]
             a1, a2, a3 = 2, 0, 1
 
-        func_safe_attach_face_to_polytope(gjk_state, gjk_static_config, i_b, v1, v2, v3, a1, a2, a3)
+        func_safe_attach_face_to_polytope(gjk_state, gjk_info, i_b, v1, v2, v3, a1, a2, a3)
 
     # Initialize face map
     for i in ti.static(range(4)):
@@ -4706,7 +4648,7 @@ def func_safe_epa_init(
 @ti.func
 def func_safe_attach_face_to_polytope(
     gjk_state: array_class.GJKState,
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     i_b,
     i_v1,
     i_v2,
@@ -4735,7 +4677,7 @@ def func_safe_attach_face_to_polytope(
 
     # Compute the normal of the plane
     normal, flag = func_plane_normal(
-        gjk_static_config,
+        gjk_info,
         gjk_state.polytope_verts.mink[i_b, i_v3],
         gjk_state.polytope_verts.mink[i_b, i_v2],
         gjk_state.polytope_verts.mink[i_b, i_v1],
@@ -4770,7 +4712,7 @@ def func_safe_attach_face_to_polytope(
         # between the face normal and the vertices of the polytope face. This is safer than selecting one of the
         # vertices, because the face normal could be unstable, which ends up in significantly different dot product
         # values for different vertices.
-        min_dist2 = gjk_static_config.FLOAT_MAX
+        min_dist2 = gjk_info.FLOAT_MAX[None]
         for i in ti.static(range(3)):
             i_v = i_v1
             if i == 1:
@@ -4790,7 +4732,7 @@ def func_safe_attach_face_to_polytope(
 
 @ti.func
 def func_plane_normal(
-    gjk_static_config: ti.template(),
+    gjk_info: array_class.GJKInfo,
     v1,
     v2,
     v3,
@@ -4822,7 +4764,7 @@ def func_plane_normal(
                 # Zero normal, cannot project.
                 flag = RETURN_CODE.FAIL
                 finished = True
-            elif nn > gjk_static_config.FLOAT_MIN:
+            elif nn > gjk_info.FLOAT_MIN[None]:
                 normal = n.normalized()
                 flag = RETURN_CODE.SUCCESS
                 finished = True

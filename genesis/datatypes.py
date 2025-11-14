@@ -1,8 +1,12 @@
+import logging
 import os
 
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.styles import colors, formats, styless
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class List(list, RBC):
@@ -84,7 +88,8 @@ class List(list, RBC):
         else:
             common_length = self.common_length()
 
-            if len(self) < 15 or gs._verbose:
+            is_verbose = getattr(gs, "logger", LOGGER).level <= logging.DEBUG
+            if len(self) < 15 or is_verbose:
                 repr_str += "\n"
                 for element in self:
                     repr_str += (
@@ -117,7 +122,7 @@ class List(list, RBC):
             header_len = len(first_line)
             line_len = max(min_len, header_len - len(header) - 2)
             try:
-                columns, lines = os.get_terminal_size()
+                columns, _lines = os.get_terminal_size()
                 line_len = min(line_len, columns - len(header) - 2)
             except OSError:
                 pass

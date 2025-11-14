@@ -38,14 +38,14 @@ def ti_xyz_to_quat(xyz):
 
 
 @ti.func
-def ti_R_to_xyz(R):
+def ti_R_to_xyz(R, eps):
     """
     Convert a rotation matrix into intrinsic x-y-z Euler angles.
     """
     xyz = ti.Vector.zero(gs.ti_float, 3)
 
     cy = ti.sqrt(R[2, 2] ** 2 + R[1, 2] ** 2)
-    if cy > gs.EPS:
+    if cy > eps:
         xyz[0] = -ti.atan2(R[1, 2], R[2, 2])
         xyz[1] = -ti.atan2(-R[0, 2], cy)
         xyz[2] = -ti.atan2(R[0, 1], R[0, 0])
@@ -57,11 +57,11 @@ def ti_R_to_xyz(R):
 
 
 @ti.func
-def ti_rotvec_to_R(rotvec):
+def ti_rotvec_to_R(rotvec, eps):
     R = ti.Matrix.identity(gs.ti_float, 3)
 
     angle = rotvec.norm()
-    if angle > gs.EPS:
+    if angle > eps:
         c = ti.cos(angle)
         s = ti.sqrt(1.0 - c**2)
         t = 1.0 - c
@@ -80,11 +80,11 @@ def ti_rotvec_to_R(rotvec):
 
 
 @ti.func
-def ti_rotvec_to_quat(rotvec):
+def ti_rotvec_to_quat(rotvec, eps):
     quat = ti.Vector.zero(gs.ti_float, 4)
 
     theta = rotvec.norm()
-    if theta > gs.EPS:
+    if theta > eps:
         theta_half = 0.5 * theta
         c, s = ti.cos(theta_half), ti.sin(theta_half)
 
@@ -102,14 +102,14 @@ def ti_rotvec_to_quat(rotvec):
 
 
 @ti.func
-def ti_quat_to_R(quat):
+def ti_quat_to_R(quat, eps):
     """
     Converts quaternion to 3x3 rotation matrix.
     """
     R = ti.Matrix.identity(gs.ti_float, 3)
 
     d = quat.norm_sqr()
-    if d > gs.EPS:
+    if d > eps:
         s = 2.0 / d
         w, x, y, z = quat
         xs, ys, zs = x * s, y * s, z * s
@@ -130,7 +130,7 @@ def ti_quat_to_R(quat):
 
 
 @ti.func
-def ti_quat_to_xyz(quat):
+def ti_quat_to_xyz(quat, eps):
     """
     Convert a quaternion into intrinsic x-y-z Euler angles.
     """
@@ -139,7 +139,7 @@ def ti_quat_to_xyz(quat):
     yaw = gs.ti_float(0.0)
 
     quat_norm_sqr = quat.norm_sqr()
-    if quat_norm_sqr > gs.EPS:
+    if quat_norm_sqr > eps:
         s = 2.0 / quat_norm_sqr
         q_w, q_x, q_y, q_z = quat
         q_xs, q_ys, q_zs = q_x * s, q_y * s, q_z * s
@@ -152,7 +152,7 @@ def ti_quat_to_xyz(quat):
         cosp = ti.sqrt(cosycosp**2 + sinycosp**2)
 
         pitch = ti.atan2(q_xz + q_wy, cosp)
-        if cosp > gs.EPS:
+        if cosp > eps:
             roll = ti.atan2(q_wx - q_yz, 1.0 - (q_xx + q_yy))
             yaw = ti.atan2(sinycosp, cosycosp)
         else:
@@ -162,12 +162,12 @@ def ti_quat_to_xyz(quat):
 
 
 @ti.func
-def ti_quat_to_rotvec(quat):
+def ti_quat_to_rotvec(quat, eps):
     q_w, q_x, q_y, q_z = quat
     rotvec = ti.Vector([q_x, q_y, q_z], dt=gs.ti_float)
 
     s2 = rotvec.norm()
-    if s2 > gs.EPS:
+    if s2 > eps:
         angle = 2.0 * ti.atan2(s2, ti.abs(q_w))
         inv_sinc = angle / s2
         rotvec = (-1.0 if q_w < 0.0 else 1.0) * inv_sinc * rotvec
@@ -176,9 +176,9 @@ def ti_quat_to_rotvec(quat):
 
 
 @ti.func
-def ti_trans_quat_to_T(trans, quat):
+def ti_trans_quat_to_T(trans, quat, eps):
     T = ti.Matrix.identity(gs.ti_float, 4)
-    T[:3, :3] = ti_quat_to_R(quat)
+    T[:3, :3] = ti_quat_to_R(quat, eps)
     T[:3, 3] = trans
     return T
 
@@ -286,7 +286,7 @@ def ti_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
 
 
 @ti.func
-def ti_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat):
+def ti_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat, eps):
     x, y, z = trans.x, trans.y, trans.z
     xx, xy, xz, yy, yz, zz = x * x, x * y, x * z, y * y, y * z, z * z
     hhT = ti.Matrix(
@@ -297,7 +297,7 @@ def ti_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat):
         ]
     )
 
-    R = ti_quat_to_R(quat)
+    R = ti_quat_to_R(quat, eps)
     i = R @ i_inertial @ R.transpose() + hhT * i_mass
     trans = trans * i_mass
 
@@ -305,8 +305,8 @@ def ti_transform_inertia_by_trans_quat(i_inertial, i_mass, trans, quat):
 
 
 @ti.func
-def ti_normalize(v):
-    return v / (v.norm(gs.EPS))
+def ti_normalize(v, eps):
+    return v / (v.norm(eps))
 
 
 @ti.func
@@ -1076,6 +1076,13 @@ def inv_transform_by_trans_quat(pos, trans, quat):
 def transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
     new_pos = t_trans + transform_by_quat(pos, t_quat)
     new_quat = transform_quat_by_quat(quat, t_quat)
+    return new_pos, new_quat
+
+
+def inv_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
+    t_quat_inv = inv_quat(quat)
+    new_pos = transform_by_quat(pos - t_trans, t_quat_inv)
+    new_quat = transform_quat_by_quat(quat, t_quat_inv)
     return new_pos, new_quat
 
 
