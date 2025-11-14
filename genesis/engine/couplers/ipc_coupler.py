@@ -692,7 +692,7 @@ class IPCCoupler(RBC):
                     target_links.add(solver_link_idx)
 
         # Apply coupling type
-        if coupling_type == 'both':
+        if coupling_type == "both":
             # Two-way coupling: include in IPC, not in IPC-only
             self._ipc_link_filters[entity_idx] = target_links
 
@@ -704,7 +704,7 @@ class IPCCoupler(RBC):
 
             gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'both' coupling")
 
-        elif coupling_type == 'ipc_only':
+        elif coupling_type == "ipc_only":
             # One-way coupling: IPC -> Genesis
             if entity_idx not in self._ipc_only_links:
                 self._ipc_only_links[entity_idx] = set()
@@ -717,7 +717,7 @@ class IPCCoupler(RBC):
 
             gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'ipc_only' coupling")
 
-        elif coupling_type == 'genesis_only':
+        elif coupling_type == "genesis_only":
             # Genesis-only: remove from both filters
             if entity_idx in self._ipc_link_filters:
                 self._ipc_link_filters[entity_idx] -= target_links
@@ -729,12 +729,13 @@ class IPCCoupler(RBC):
                 if not self._ipc_only_links[entity_idx]:
                     del self._ipc_only_links[entity_idx]
 
-            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'genesis_only' (excluded from IPC)")
+            gs.logger.info(
+                f"Entity {entity_idx}: {len(target_links)} link(s) set to 'genesis_only' (excluded from IPC)"
+            )
 
         else:
             raise ValueError(
-                f"Invalid coupling_type '{coupling_type}'. "
-                f"Must be 'both', 'ipc_only', or 'genesis_only'."
+                f"Invalid coupling_type '{coupling_type}'. " f"Must be 'both', 'ipc_only', or 'genesis_only'."
             )
 
     def preprocess(self, f):
@@ -1024,7 +1025,7 @@ class IPCCoupler(RBC):
                     )  # (1, 4) [w, x, y, z]
 
                     # Determine if this is a base link
-                    is_base_link = (link_idx == entity.base_link_idx)
+                    is_base_link = link_idx == entity.base_link_idx
 
                     if is_base_link:
                         # Use base link methods for base links
@@ -1032,34 +1033,46 @@ class IPCCoupler(RBC):
 
                         if is_parallelized:
                             rigid_solver.set_base_links_pos(
-                                pos_tensor, base_links_idx, envs_idx=env_idx, relative=False, unsafe=True, skip_forward=False
+                                pos_tensor,
+                                base_links_idx,
+                                envs_idx=env_idx,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
                             )
                             rigid_solver.set_base_links_quat(
-                                quat_tensor, base_links_idx, envs_idx=env_idx, relative=False, unsafe=True, skip_forward=False
+                                quat_tensor,
+                                base_links_idx,
+                                envs_idx=env_idx,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
                             )
                         else:
                             rigid_solver.set_base_links_pos(
-                                pos_tensor, base_links_idx, envs_idx=None, relative=False, unsafe=True, skip_forward=False
+                                pos_tensor,
+                                base_links_idx,
+                                envs_idx=None,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
                             )
                             rigid_solver.set_base_links_quat(
-                                quat_tensor, base_links_idx, envs_idx=None, relative=False, unsafe=True, skip_forward=False
+                                quat_tensor,
+                                base_links_idx,
+                                envs_idx=None,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
                             )
                     else:
                         # Use regular link methods for non-base links
                         if is_parallelized:
-                            rigid_solver.set_links_pos(
-                                pos_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True
-                            )
-                            rigid_solver.set_links_quat(
-                                quat_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True
-                            )
+                            rigid_solver.set_links_pos(pos_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True)
+                            rigid_solver.set_links_quat(quat_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True)
                         else:
-                            rigid_solver.set_links_pos(
-                                pos_tensor, links_idx=link_idx, unsafe=True
-                            )
-                            rigid_solver.set_links_quat(
-                                quat_tensor, links_idx=link_idx, unsafe=True
-                            )
+                            rigid_solver.set_links_pos(pos_tensor, links_idx=link_idx, unsafe=True)
+                            rigid_solver.set_links_quat(quat_tensor, links_idx=link_idx, unsafe=True)
 
                     # Zero velocities after setting transform to avoid spurious forces
                     if is_parallelized:
