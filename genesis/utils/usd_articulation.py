@@ -147,13 +147,34 @@ class UsdArticulationParser:
         return trimesh.Trimesh(vertices=points, faces=faces)
     
     @staticmethod
-    def usd_transform_to_np(usd_xform:UsdGeom.Xformable) -> np.ndarray:
+    def usd_global_transform_to_np(prim:Usd.Prim) -> np.ndarray:
         """
         Convert a USD transform to a 4x4 numpy transformation matrix.
         """
+        imageable = UsdGeom.Imageable(prim)
+        if not imageable:
+            return np.eye(4)
         # USD's transform is left-multiplied, while we use right-multiplied convention in genesis.
-        local_transform = usd_xform.GetLocalTransformation().GetTranspose()
-        return np.array(local_transform)
+        t = imageable.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetTranspose()
+        return np.array(t)
+    
+    @staticmethod
+    def usd_compute_related_transform(prim:Usd.Prim, ref_prim:Usd.Prim) -> np.ndarray:
+        """
+        Compute the transformation matrix from the related_prim to the prim.
+        """
+        prim_world_transform = UsdArticulationParser.usd_global_transform_to_np(prim)
+        ref_prim_to_world = UsdArticulationParser.usd_global_transform_to_np(ref_prim)
+        world_to_ref_prim = np.linalg.inv(ref_prim_to_world)
+        prim_to_ref_prim_transform = world_to_ref_prim @ prim_world_transform
+        return prim_to_ref_prim_transform
+
+    @staticmethod
+    def usd_quat_to_np(usd_quat:Gf.Quatf) -> np.ndarray:
+        """
+        Convert a USD Gf.Quatf to a numpy array.
+        """
+        return np.array([usd_quat.GetReal(), *usd_quat.GetImaginary()])
 
 def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> None:
     """
@@ -180,11 +201,11 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
     
     link_name_to_idx = dict()
     for idx, link in enumerate(robot.links):
-        link_name = link.GetName()
+        link_name = link.GetPath()
         link_name_to_idx[link_name] = idx
     
     n_links = len(robot.links)
-    assert n_links == len(robot.joints) + 1
+    n_joints = len(robot.joints)
     
     l_infos = [dict() for _ in range(n_links)]
     links_j_infos = [[] for _ in range(n_links)]
@@ -196,7 +217,7 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
         # No parent by default. It will be overwritten latter on if appropriate.
         l_info["parent_idx"] = -1
         
-        # Neutral pose by default. It will be overwritten latter on if necessary.
+        # placeholder for pos and quat, will be updated when parsing joints
         l_info["pos"] = gu.zero_pos()
         l_info["quat"] = gu.identity_quat()
         
@@ -235,7 +256,7 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
             mesh.set_color([1.0, 0.7, 0.3, 1.0])  # set a default color for visualization
             g_info = {"mesh" if geom_is_col else "vmesh": mesh}
             
-            trans_mat = UsdArticulationParser.usd_transform_to_np(usd_mesh)
+            trans_mat = UsdArticulationParser.usd_compute_related_transform(usd_mesh, link)
             g_info["type"] = geom_type
             g_info["data"] = geom_data
             g_info["pos"] = trans_mat[:3, 3]
@@ -250,12 +271,20 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
     #########################  non-base joints and links #########################
     for joint in robot.joints:
         # Get the child link for this joint
+        body0_targets = joint.GetBody0Rel().GetTargets()
+        parent_link = None
+        
+        if body0_targets and len(body0_targets) > 0:
+            parent_link_path = body0_targets[0]
+            parent_link = stage.GetPrimAtPath(parent_link_path)
+        
         body1_targets = joint.GetBody1Rel().GetTargets()
         if not body1_targets:
             gs.raise_exception(
                 f"Joint {joint.GetPath()} has no body1 target."
             )
         child_link_path = body1_targets[0]
+        child_link = stage.GetPrimAtPath(child_link_path)
         
         # Find the child link index
         idx = link_name_to_idx.get(child_link_path)
@@ -265,14 +294,22 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
             )
         
         l_info = l_infos[idx]
+        if parent_link:
+            trans_mat = UsdArticulationParser.usd_compute_related_transform(child_link, parent_link)
+        else:
+            trans_mat = UsdArticulationParser.usd_global_transform_to_np(child_link)
+        l_info["pos"] = trans_mat[:3, 3]
+        l_info["quat"] = gu.R_to_quat(trans_mat[:3, :3])
+        
         j_info = dict()
         links_j_infos[idx].append(j_info)
         
         # Get joint name and basic properties
         joint_prim = joint.GetPrim()
         j_info["name"] = joint_prim.GetPath()
-        j_info["pos"] = joint.GetLocalPos0Attr().Get() if joint.GetLocalPos0Attr() else gu.zero_pos()
-        j_info["quat"] # ?
+        j_info["pos"] = np.array(joint.GetLocalPos1Attr().Get(), dtype=np.float64) if joint.GetLocalPos1Attr() else gu.zero_pos()
+        j_info["quat"] = gu.identity_quat()
+        # j_info["quat"] = gu.identity_quat()
         
         # Get parent link
         body0_targets = joint.GetBody0Rel().GetTargets()
@@ -299,7 +336,7 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
             
             # Get joint axis
             axis_attr = revolute_joint.GetAxisAttr()
-            axis_str = np.array(axis_attr.Get()) if axis_attr else np.array([1.0, 0.0, 0.0])
+            axis_str = axis_attr.Get() if axis_attr else "X"
             if axis_str == "X":
                 axis = np.array([1.0, 0.0, 0.0])
             elif axis_str == "Y":
@@ -310,6 +347,10 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
                 gs.raise_exception(
                     f"Unsupported joint axis {axis_str} in USD revolute joint {joint_prim.GetPath()}."
                 )
+            
+            quat=UsdArticulationParser.usd_quat_to_np(joint.GetLocalRot0Attr().Get()) if joint.GetLocalRot0Attr() else gu.identity_quat()
+            R_joint = gu.quat_to_R(quat)
+            axis = R_joint @ axis
             
             j_info["dofs_motion_ang"] = np.array([axis])
             j_info["dofs_motion_vel"] = np.zeros((1, 3))
