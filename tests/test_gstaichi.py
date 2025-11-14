@@ -179,8 +179,9 @@ def test_static(
             cmd_line += ["--enable-multi-contact"]
         env_changes = {}
         env_changes["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
-        env_changes["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         env_changes["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
+        env_changes["TI_OFFLINE_CACHE"] = "1"
+        env_changes["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         env = dict(os.environ)
         env.update(env_changes)
 
@@ -258,6 +259,7 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
         env = dict(os.environ)
         env["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
         env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
+        env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         # notes:
         # - if we use pure, we won't get as far as fe-ll-cache
@@ -344,12 +346,13 @@ def change_scene(args: list[str]):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
-@pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
+# Note that, on GPU, PARA_LEVEL is changing between batched and non-batched simulation
 @pytest.mark.parametrize(
-    "list_n_objs_n_envs",
+    "test_backend, list_n_objs_n_envs",
     [
-        [(1, 1), (2, 2), (3, 3)],
-        # [(3, 0), (1, 1), (2, 2)],  # FIXME: This does not work with gpu, needs to investigate (cache key changes).
+        ("gpu", [(1, 0), (2, 1)]),
+        ("gpu", [(2, 2), (3, 3)]),
+        ("cpu", [(1, 0), (2, 1), (2, 2), (3, 3)]),
     ],
 )
 @pytest.mark.parametrize("enable_pure", [True])
@@ -375,6 +378,7 @@ def test_ndarray_no_compile(
         env = dict(os.environ)
         env["GS_ENABLE_FASTCACHE"] = "1" if enable_pure else "0"
         env["GS_ENABLE_NDARRAY"] = "1"
+        env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
 
