@@ -232,15 +232,14 @@ def get_constraint_state(constraint_solver, solver):
 
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
+    jac_relevant_dofs_shape = (len_constraints_, solver.n_dofs_, _B)
+    jac_n_relevant_dofs_shape = (len_constraints_, _B)
 
     return StructConstraintState(
         n_constraints=V(dtype=gs.ti_int, shape=(_B,)),
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
-        jac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
         diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        jac_relevant_dofs=V(dtype=gs.ti_int, shape=(len_constraints_, solver.n_dofs_, _B)),
-        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=(len_constraints_, _B)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
         improved=V(dtype=gs.ti_int, shape=(_B,)),
@@ -293,6 +292,10 @@ def get_constraint_state(constraint_solver, solver):
         bw_Ju=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_y=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_w=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        # /!\ Moving allocation of these tensors at the end improves runtime speed by ~5-10%  /!\
+        jac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
+        jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
+        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
     )
 
 
