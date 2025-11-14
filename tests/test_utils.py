@@ -362,7 +362,7 @@ def test_pyrender_vec3():
     # repr and tensor conversion
     t = a.as_tensor()
     assert isinstance(t, torch.Tensor)
-    assert_allclose(t.cpu().numpy(), a.v, tol=gs.EPS)
+    assert_allclose(t, a.v, tol=gs.EPS)
 
     # --- Quat tests ---
     q = Quat.from_wxyz(1.0, 0.0, 0.0, 0.0)  # identity
@@ -407,7 +407,7 @@ def test_pyrender_vec3():
     # tensor conversion
     tq = qz.as_tensor()
     assert isinstance(tq, torch.Tensor)
-    assert_allclose(tq.cpu().numpy(), qz.v, tol=gs.EPS)
+    assert_allclose(tq, qz.v, tol=gs.EPS)
 
 
 def test_fps_tracker():
