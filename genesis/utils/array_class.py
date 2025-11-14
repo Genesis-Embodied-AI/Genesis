@@ -232,8 +232,8 @@ def get_constraint_state(constraint_solver, solver):
 
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
-    jac_relevant_dofs_shape = (len_constraints_, solver.n_dofs_, _B)
-    jac_n_relevant_dofs_shape = (len_constraints_, _B)
+    jac_relevant_dofs_shape = maybe_shape((len_constraints_, solver.n_dofs_, _B), constraint_solver.sparse_solve)
+    jac_n_relevant_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
 
     return StructConstraintState(
         n_constraints=V(dtype=gs.ti_int, shape=(_B,)),
@@ -513,6 +513,19 @@ def get_collider_state(
     max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
     requires_grad = static_rigid_sim_config.requires_grad
 
+    box_depth_shape = maybe_shape(
+        (collider_static_config.n_contacts_per_pair, _B), static_rigid_sim_config.box_box_detection
+    )
+    box_points_shape = maybe_shape(
+        (collider_static_config.n_contacts_per_pair, _B), static_rigid_sim_config.box_box_detection
+    )
+    box_pts_shape = maybe_shape((6, _B), static_rigid_sim_config.box_box_detection)
+    box_lines_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
+    box_linesu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
+    box_axi_shape = maybe_shape((3, _B), static_rigid_sim_config.box_box_detection)
+    box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
+    box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
+
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
@@ -521,14 +534,14 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         active_buffer_awake=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         active_buffer_hib=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
-        box_depth=V(dtype=gs.ti_float, shape=(collider_static_config.n_contacts_per_pair, _B)),
-        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_static_config.n_contacts_per_pair, _B)),
-        box_pts=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
-        box_lines=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
-        box_linesu=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
-        box_axi=V_VEC(3, dtype=gs.ti_float, shape=(3, _B)),
-        box_ppts2=V(dtype=gs.ti_float, shape=(4, 2, _B)),
-        box_pu=V_VEC(3, dtype=gs.ti_float, shape=(4, _B)),
+        box_depth=V(dtype=gs.ti_float, shape=box_depth_shape),
+        box_points=V_VEC(3, dtype=gs.ti_float, shape=box_points_shape),
+        box_pts=V_VEC(3, dtype=gs.ti_float, shape=box_pts_shape),
+        box_lines=V_VEC(6, dtype=gs.ti_float, shape=box_lines_shape),
+        box_linesu=V_VEC(6, dtype=gs.ti_float, shape=box_linesu_shape),
+        box_axi=V_VEC(3, dtype=gs.ti_float, shape=box_axi_shape),
+        box_ppts2=V(dtype=gs.ti_float, shape=box_ppts2_shape),
+        box_pu=V_VEC(3, dtype=gs.ti_float, shape=box_pu_shape),
         xyz_max_min=V(dtype=gs.ti_float, shape=(6, _B)),
         prism=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
         n_contacts=V(dtype=gs.ti_int, shape=(_B,)),
