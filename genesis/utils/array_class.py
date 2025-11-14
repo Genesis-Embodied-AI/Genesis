@@ -232,15 +232,14 @@ def get_constraint_state(constraint_solver, solver):
 
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
+    jac_relevant_dofs_shape = (len_constraints_, solver.n_dofs_, _B)
+    jac_n_relevant_dofs_shape = (len_constraints_, _B)
 
     return StructConstraintState(
         n_constraints=V(dtype=gs.ti_int, shape=(_B,)),
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
-        jac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
         diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        jac_relevant_dofs=V(dtype=gs.ti_int, shape=(len_constraints_, solver.n_dofs_, _B)),
-        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=(len_constraints_, _B)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
         improved=V(dtype=gs.ti_int, shape=(_B,)),
@@ -293,6 +292,10 @@ def get_constraint_state(constraint_solver, solver):
         bw_Ju=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_y=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_w=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        # /!\ Moving allocation of these tensors at the end improves runtime speed by ~5-10%  /!\
+        jac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
+        jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
+        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
     )
 
 
@@ -518,8 +521,8 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         active_buffer_awake=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         active_buffer_hib=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
-        box_depth=V(dtype=gs.ti_float, shape=(collider_info.box_MAXCONPAIR[None], _B)),
-        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_info.box_MAXCONPAIR[None], _B)),
+        box_depth=V(dtype=gs.ti_float, shape=(collider_static_config.n_contacts_per_pair, _B)),
+        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_static_config.n_contacts_per_pair, _B)),
         box_pts=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
         box_lines=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
         box_linesu=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
@@ -555,8 +558,6 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     mc_perturbation: V_ANNOTATION
     mc_tolerance: V_ANNOTATION
     mpr_to_sdf_overlap_ratio: V_ANNOTATION
-    # maximum number of contact points for box-box collision detection
-    box_MAXCONPAIR: V_ANNOTATION
     # differentiable contact tolerance
     diff_pos_tolerance: V_ANNOTATION
     diff_normal_tolerance: V_ANNOTATION
@@ -586,7 +587,6 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         mc_perturbation=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_tolerance"]),
         mpr_to_sdf_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_sdf_overlap_ratio"]),
-        box_MAXCONPAIR=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["box_MAXCONPAIR"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_normal_tolerance"]),
     )
@@ -1731,6 +1731,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
 class DataManager:
     def __init__(self, solver):
         self.rigid_global_info = get_rigid_global_info(solver)
+
         self.dofs_info = get_dofs_info(solver)
         self.dofs_state = get_dofs_state(solver)
         self.links_info = get_links_info(solver)
@@ -1757,6 +1758,8 @@ class DataManager:
 
         self.entities_info = get_entities_info(solver)
         self.entities_state = get_entities_state(solver)
+
+        self.errno = V_SCALAR_FROM(dtype=gs.ti_int, value=0)
 
 
 DofsState = StructDofsState if gs.use_ndarray else ti.template()
