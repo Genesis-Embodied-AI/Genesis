@@ -521,8 +521,8 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         active_buffer_awake=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         active_buffer_hib=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
-        box_depth=V(dtype=gs.ti_float, shape=(collider_info.box_MAXCONPAIR[None], _B)),
-        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_info.box_MAXCONPAIR[None], _B)),
+        box_depth=V(dtype=gs.ti_float, shape=(collider_static_config.n_contacts_per_pair, _B)),
+        box_points=V_VEC(3, dtype=gs.ti_float, shape=(collider_static_config.n_contacts_per_pair, _B)),
         box_pts=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
         box_lines=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
         box_linesu=V_VEC(6, dtype=gs.ti_float, shape=(4, _B)),
@@ -558,8 +558,6 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     mc_perturbation: V_ANNOTATION
     mc_tolerance: V_ANNOTATION
     mpr_to_sdf_overlap_ratio: V_ANNOTATION
-    # maximum number of contact points for box-box collision detection
-    box_MAXCONPAIR: V_ANNOTATION
     # differentiable contact tolerance
     diff_pos_tolerance: V_ANNOTATION
     diff_normal_tolerance: V_ANNOTATION
@@ -589,7 +587,6 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         mc_perturbation=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_tolerance"]),
         mpr_to_sdf_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_sdf_overlap_ratio"]),
-        box_MAXCONPAIR=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["box_MAXCONPAIR"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_normal_tolerance"]),
     )

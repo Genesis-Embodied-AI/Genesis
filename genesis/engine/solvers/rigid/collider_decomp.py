@@ -106,7 +106,6 @@ class Collider:
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
             mpr_to_sdf_overlap_ratio=self._mpr_to_sdf_overlap_ratio,
-            box_MAXCONPAIR=self._box_MAXCONPAIR,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
         )
@@ -3036,25 +3035,37 @@ def func_box_box_contact(
                 dt=gs.ti_float,
             )
             normal_0 = tmp2
-            for i in range(n):
-                dist = collider_state.box_points[i, i_b][2]
-                collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
-                tmp2 = r @ collider_state.box_points[i, i_b]
-                contact_pos = tmp2 + p
-                func_add_contact(
-                    i_ga,
-                    i_gb,
-                    -normal_0,
-                    contact_pos,
-                    -dist,
-                    i_b,
-                    geoms_state,
-                    geoms_info,
-                    collider_state,
-                    collider_info,
-                    errno,
-                )
 
+            n_added = 0
+            n_start = collider_state.n_contacts[i_b]
+            for i in range(n):
+                if n_added < ti.static(collider_static_config.n_contacts_per_pair):
+                    dist = collider_state.box_points[i, i_b][2]
+                    collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
+                    contact_pos = p + r @ collider_state.box_points[i, i_b]
+
+                    # Filter out redundant contact points
+                    is_valid = True
+                    for j_ in range(n_added):
+                        j = n_start + j_
+                        if (ti.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
+                            is_valid = False
+
+                    if is_valid:
+                        func_add_contact(
+                            i_ga,
+                            i_gb,
+                            -normal_0,
+                            contact_pos,
+                            -dist,
+                            i_b,
+                            geoms_state,
+                            geoms_info,
+                            collider_state,
+                            collider_info,
+                            errno,
+                        )
+                        n_added = n_added + 1
         else:
             code = code - 12
 
@@ -3232,33 +3243,32 @@ def func_box_box_contact(
                         if ti.abs(b) > EPS:
                             for _j in ti.static(range(2)):
                                 j = 2 * _j - 1
-                                if n < collider_info.box_MAXCONPAIR[None]:
-                                    l = s[q] * j
-                                    c1 = (l - a) / b
-                                    if 0 <= c1 and c1 <= 1:
-                                        c2 = c + d * c1
-                                        if (ti.abs(c2) <= s[1 - q]) and (
-                                            (
-                                                collider_state.box_linesu[i, i_b][2]
-                                                + collider_state.box_linesu[i, i_b][5] * c1
-                                            )
-                                            * innorm
-                                            <= margin
-                                        ):
-                                            collider_state.box_points[n, i_b] = (
-                                                collider_state.box_linesu[i, i_b][0:3] * 0.5
-                                                + c1 * 0.5 * collider_state.box_linesu[i, i_b][3:6]
-                                            )
-                                            collider_state.box_points[n, i_b][q] = (
-                                                collider_state.box_points[n, i_b][q] + 0.5 * l
-                                            )
-                                            collider_state.box_points[n, i_b][1 - q] = (
-                                                collider_state.box_points[n, i_b][1 - q] + 0.5 * c2
-                                            )
-                                            collider_state.box_depth[n, i_b] = (
-                                                collider_state.box_points[n, i_b][2] * innorm * 2
-                                            )
-                                            n = n + 1
+                                l = s[q] * j
+                                c1 = (l - a) / b
+                                if 0 <= c1 and c1 <= 1:
+                                    c2 = c + d * c1
+                                    if (ti.abs(c2) <= s[1 - q]) and (
+                                        (
+                                            collider_state.box_linesu[i, i_b][2]
+                                            + collider_state.box_linesu[i, i_b][5] * c1
+                                        )
+                                        * innorm
+                                        <= margin
+                                    ):
+                                        collider_state.box_points[n, i_b] = (
+                                            collider_state.box_linesu[i, i_b][0:3] * 0.5
+                                            + c1 * 0.5 * collider_state.box_linesu[i, i_b][3:6]
+                                        )
+                                        collider_state.box_points[n, i_b][q] = (
+                                            collider_state.box_points[n, i_b][q] + 0.5 * l
+                                        )
+                                        collider_state.box_points[n, i_b][1 - q] = (
+                                            collider_state.box_points[n, i_b][1 - q] + 0.5 * c2
+                                        )
+                                        collider_state.box_depth[n, i_b] = (
+                                            collider_state.box_points[n, i_b][2] * innorm * 2
+                                        )
+                                        n = n + 1
 
                 nl = n
                 a = collider_state.box_pts[1, i_b][0]
@@ -3268,114 +3278,121 @@ def func_box_box_contact(
                 c1 = a * d - b * c
 
                 for i in range(4):
-                    if n < collider_info.box_MAXCONPAIR[None]:
-                        llx = lx if (i // 2) else -lx
-                        lly = ly if (i % 2) else -ly
+                    llx = lx if (i // 2) else -lx
+                    lly = ly if (i % 2) else -ly
 
-                        x = llx - collider_state.box_pts[0, i_b][0]
-                        y = lly - collider_state.box_pts[0, i_b][1]
+                    x = llx - collider_state.box_pts[0, i_b][0]
+                    y = lly - collider_state.box_pts[0, i_b][1]
 
-                        u = (x * d - y * b) / c1
-                        v = (y * a - x * c) / c1
+                    u = (x * d - y * b) / c1
+                    v = (y * a - x * c) / c1
 
-                        if nl == 0:
-                            if (u < 0 or u > 1) and (v < 0 or v > 1):
-                                continue
-                        elif u < 0 or u > 1 or v < 0 or v > 1:
+                    if nl == 0:
+                        if (u < 0 or u > 1) and (v < 0 or v > 1):
                             continue
+                    elif u < 0 or u > 1 or v < 0 or v > 1:
+                        continue
 
-                        u = ti.math.clamp(u, 0, 1)
-                        v = ti.math.clamp(v, 0, 1)
-                        tmp1 = (
-                            collider_state.box_pu[0, i_b] * (1 - u - v)
-                            + collider_state.box_pu[1, i_b] * u
-                            + collider_state.box_pu[2, i_b] * v
-                        )
-                        collider_state.box_points[n, i_b][0] = llx
-                        collider_state.box_points[n, i_b][1] = lly
-                        collider_state.box_points[n, i_b][2] = 0
+                    u = ti.math.clamp(u, 0, 1)
+                    v = ti.math.clamp(v, 0, 1)
+                    tmp1 = (
+                        collider_state.box_pu[0, i_b] * (1 - u - v)
+                        + collider_state.box_pu[1, i_b] * u
+                        + collider_state.box_pu[2, i_b] * v
+                    )
+                    collider_state.box_points[n, i_b][0] = llx
+                    collider_state.box_points[n, i_b][1] = lly
+                    collider_state.box_points[n, i_b][2] = 0
 
-                        tmp2 = collider_state.box_points[n, i_b] - tmp1
+                    tmp2 = collider_state.box_points[n, i_b] - tmp1
 
-                        c2 = tmp2.dot(tmp2)
+                    c2 = tmp2.dot(tmp2)
 
-                        if not (tmp1[2] > 0 and c2 > margin2):
-                            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + tmp1
-                            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] * 0.5
+                    if not (tmp1[2] > 0 and c2 > margin2):
+                        collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + tmp1
+                        collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] * 0.5
 
-                            collider_state.box_depth[n, i_b] = ti.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
-                            n = n + 1
+                        collider_state.box_depth[n, i_b] = ti.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
+                        n = n + 1
 
                 nf = n
 
                 for i in range(4):
-                    if n < collider_info.box_MAXCONPAIR[None]:
-                        x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
+                    x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
 
-                        if nl == 0:
-                            if (nf != 0) and (x < -lx or x > lx) and (y < -ly or y > ly):
-                                continue
-                        elif x < -lx or x > lx or y < -ly or y > ly:
+                    if nl == 0:
+                        if (nf != 0) and (x < -lx or x > lx) and (y < -ly or y > ly):
                             continue
+                    elif x < -lx or x > lx or y < -ly or y > ly:
+                        continue
 
-                        c1 = 0
-                        for j in ti.static(range(2)):
-                            if collider_state.box_ppts2[i, j, i_b] < -s[j]:
-                                c1 = c1 + (collider_state.box_ppts2[i, j, i_b] + s[j]) ** 2
-                            elif collider_state.box_ppts2[i, j, i_b] > s[j]:
-                                c1 = c1 + (collider_state.box_ppts2[i, j, i_b] - s[j]) ** 2
+                    c1 = 0
+                    for j in ti.static(range(2)):
+                        if collider_state.box_ppts2[i, j, i_b] < -s[j]:
+                            c1 = c1 + (collider_state.box_ppts2[i, j, i_b] + s[j]) ** 2
+                        elif collider_state.box_ppts2[i, j, i_b] > s[j]:
+                            c1 = c1 + (collider_state.box_ppts2[i, j, i_b] - s[j]) ** 2
 
-                        c1 = c1 + (collider_state.box_pu[i, i_b][2] * innorm) ** 2
+                    c1 = c1 + (collider_state.box_pu[i, i_b][2] * innorm) ** 2
 
-                        if collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
-                            continue
+                    if collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
+                        continue
 
-                        tmp1 = ti.Vector(
-                            [
-                                collider_state.box_ppts2[i, 0, i_b] * 0.5,
-                                collider_state.box_ppts2[i, 1, i_b] * 0.5,
-                                0,
-                            ],
-                            dt=gs.ti_float,
-                        )
+                    tmp1 = ti.Vector(
+                        [
+                            collider_state.box_ppts2[i, 0, i_b] * 0.5,
+                            collider_state.box_ppts2[i, 1, i_b] * 0.5,
+                            0,
+                        ],
+                        dt=gs.ti_float,
+                    )
 
-                        for j in ti.static(range(2)):
-                            if collider_state.box_ppts2[i, j, i_b] < -s[j]:
-                                tmp1[j] = -s[j] * 0.5
-                            elif collider_state.box_ppts2[i, j, i_b] > s[j]:
-                                tmp1[j] = s[j] * 0.5
+                    for j in ti.static(range(2)):
+                        if collider_state.box_ppts2[i, j, i_b] < -s[j]:
+                            tmp1[j] = -s[j] * 0.5
+                        elif collider_state.box_ppts2[i, j, i_b] > s[j]:
+                            tmp1[j] = s[j] * 0.5
 
-                        tmp1 = tmp1 + collider_state.box_pu[i, i_b] * 0.5
-                        collider_state.box_points[n, i_b] = tmp1
+                    tmp1 = tmp1 + collider_state.box_pu[i, i_b] * 0.5
+                    collider_state.box_points[n, i_b] = tmp1
 
-                        collider_state.box_depth[n, i_b] = ti.sqrt(c1) * (
-                            -1 if collider_state.box_pu[i, i_b][2] < 0 else 1
-                        )
-                        n = n + 1
+                    collider_state.box_depth[n, i_b] = ti.sqrt(c1) * (-1 if collider_state.box_pu[i, i_b][2] < 0 else 1)
+                    n = n + 1
 
                 r = mat1 @ rotmore.transpose()
 
-                tmp1 = r @ rnorm
-                normal_0 = tmp1 * (-1 if in_ else 1)
+                normal_0 = (-1 if in_ else 1) * (r @ rnorm)
 
+                n_added = 0
+                n_start = collider_state.n_contacts[i_b]
                 for i in range(n):
-                    dist = collider_state.box_depth[i, i_b]
-                    collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
-                    tmp2 = r @ collider_state.box_points[i, i_b]
-                    contact_pos = tmp2 + pos1
-                    func_add_contact(
-                        i_ga,
-                        i_gb,
-                        -normal_0,
-                        contact_pos,
-                        -dist,
-                        i_b,
-                        geoms_state,
-                        geoms_info,
-                        collider_state,
-                        collider_info,
-                        errno,
-                    )
+                    if n_added < ti.static(collider_static_config.n_contacts_per_pair):
+                        dist = collider_state.box_depth[i, i_b]
+                        collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
+                        contact_pos = pos1 + (r @ collider_state.box_points[i, i_b])
+
+                        # Filter out redundant contact points
+                        is_valid = True
+                        for j_ in range(n_added):
+                            j = n_start + j_
+                            if (ti.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
+                                is_valid = False
+
+                        if is_valid:
+                            func_add_contact(
+                                i_ga,
+                                i_gb,
+                                -normal_0,
+                                contact_pos,
+                                -dist,
+                                i_b,
+                                geoms_state,
+                                geoms_info,
+                                collider_state,
+                                collider_info,
+                                errno,
+                            )
+                            n_added = n_added + 1
 
 
 @ti.kernel
