@@ -139,8 +139,12 @@ jobs:
               source /root/.venv/bin/activate
               pip install --no-input ".[dev,render]"
 
+              python tests/monitor_test_mem.py --out-csv-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" &
+
               pytest --print -x -m "benchmarks" ./tests
               cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+
+              kill $(ps -ef | grep monitor_test_mem | grep -v grep | awk '{print $2}')
 
               # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
