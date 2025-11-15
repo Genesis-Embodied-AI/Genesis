@@ -621,6 +621,7 @@ def guess_geoms_center(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     mpr_info: array_class.MPRInfo,
     i_ga,
@@ -654,6 +655,7 @@ def guess_geoms_center(
     # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
     # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
     # signed distance is computed once again until to find a valid point. This procedure should be cheap.
+    EPS = rigid_global_info.EPS[None]
 
     g_pos_a = geoms_state.pos[i_ga, i_b]
     g_pos_b = geoms_state.pos[i_gb, i_b]
@@ -681,7 +683,7 @@ def guess_geoms_center(
                 offset = delta.dot(normal_ws) * normal_ws - delta
                 offset_norm = offset.norm()
 
-                if offset_norm > gs.EPS:
+                if offset_norm > EPS:
                     # Compute the size of the bounding boxes along the target offset direction.
                     # First, move the direction in local box frame
                     dir_offset = offset / offset_norm
@@ -779,6 +781,7 @@ def func_mpr_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
@@ -795,6 +798,7 @@ def func_mpr_contact(
         geoms_state,
         geoms_info,
         geoms_init_AABB,
+        rigid_global_info,
         static_rigid_sim_config,
         mpr_info,
         i_ga,

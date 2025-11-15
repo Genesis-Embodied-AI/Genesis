@@ -2362,6 +2362,7 @@ def func_convex_convex_contact(
                                     geoms_state,
                                     geoms_info,
                                     geoms_init_AABB,
+                                    rigid_global_info,
                                     static_rigid_sim_config,
                                     collider_state,
                                     collider_info,
