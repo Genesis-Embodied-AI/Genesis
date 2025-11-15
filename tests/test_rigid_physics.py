@@ -909,7 +909,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 650 if dynamics else 150
+    num_steps = 700 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
@@ -2309,16 +2309,15 @@ def test_jacobian(gs_sim, tol):
 
 
 @pytest.mark.required
-def test_urdf_parsing(show_viewer, tol):
+@pytest.mark.parametrize("gjk_collision", [True, False])
+def test_urdf_parsing(show_viewer, tol, gjk_collision):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
     DOOR_JOINT_DAMPING = 1.5
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            # Must use GJK to make collision detection independent from the center of each geometry.
-            # Note that it is also the case for MPR+SDF most of the time due to warm-start.
-            use_gjk_collision=True,
+            use_gjk_collision=gjk_collision,
         ),
         show_viewer=show_viewer,
         show_FPS=False,

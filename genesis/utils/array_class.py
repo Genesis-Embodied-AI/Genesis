@@ -398,12 +398,14 @@ def get_sort_buffer(solver):
 
 @DATA_ORIENTED
 class StructContactCache(metaclass=BASE_METACLASS):
+    i_va_ws: V_ANNOTATION
     normal: V_ANNOTATION
 
 
 def get_contact_cache(solver):
     _B = solver._B
     return StructContactCache(
+        i_va_ws=V(dtype=gs.ti_int, shape=(solver.n_geoms_, solver.n_geoms_, _B)),
         normal=V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, solver.n_geoms_, _B)),
     )
 
