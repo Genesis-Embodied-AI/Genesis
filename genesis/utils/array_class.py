@@ -359,26 +359,23 @@ class StructDiffContactInput(metaclass=BASE_METACLASS):
     ref_penetration: V_ANNOTATION
 
 
-def get_diff_contact_input(solver, max_contacts_per_pair):
+def get_diff_contact_input(solver, max_contacts_per_pair, is_active):
     _B = solver._B
-
-    requires_grad = solver._requires_grad
+    shape = maybe_shape((_B, max_contacts_per_pair), is_active and solver._requires_grad)
     return StructDiffContactInput(
-        geom_a=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        geom_b=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos1_a=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos1_b=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos1_c=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos2_a=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos2_b=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        local_pos2_c=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        w_local_pos1=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        w_local_pos2=V_VEC(3, dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        ref_id=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        valid=V(dtype=gs.ti_int, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
-        ref_penetration=V(
-            dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad), needs_grad=True
-        ),
+        geom_a=V(dtype=gs.ti_int, shape=shape),
+        geom_b=V(dtype=gs.ti_int, shape=shape),
+        local_pos1_a=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_pos1_b=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_pos1_c=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_pos2_a=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_pos2_b=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_pos2_c=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        w_local_pos1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        w_local_pos2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        ref_id=V(dtype=gs.ti_int, shape=shape),
+        valid=V(dtype=gs.ti_int, shape=shape),
+        ref_penetration=V(dtype=gs.ti_float, shape=shape, needs_grad=True),
     )
 
 
@@ -548,7 +545,7 @@ def get_collider_state(
         n_contacts_hibernated=V(dtype=gs.ti_int, shape=(_B,)),
         first_time=V(dtype=gs.ti_int, shape=(_B,)),
         contact_cache=get_contact_cache(solver),
-        diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1)),
+        diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
     )
 
 
@@ -676,32 +673,32 @@ class StructMDVertex(metaclass=BASE_METACLASS):
     mink: V_ANNOTATION
 
 
-def get_gjk_simplex_vertex(solver):
+def get_gjk_simplex_vertex(solver, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, 4), is_active)
     return StructMDVertex(
-        obj1=V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
-        obj2=V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
-        local_obj1=V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
-        local_obj2=V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
-        id1=V(dtype=gs.ti_int, shape=(_B, 4)),
-        id2=V(dtype=gs.ti_int, shape=(_B, 4)),
-        mink=V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
+        obj1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        obj2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_obj1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_obj2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        id1=V(dtype=gs.ti_int, shape=shape),
+        id2=V(dtype=gs.ti_int, shape=shape),
+        mink=V_VEC(3, dtype=gs.ti_float, shape=shape),
     )
 
 
-def get_epa_polytope_vertex(solver, gjk_info):
+def get_epa_polytope_vertex(solver, gjk_info, is_active):
     _B = solver._B
     max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
-
+    shape = maybe_shape((_B, max_num_polytope_verts), is_active)
     return StructMDVertex(
-        obj1=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
-        obj2=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
-        local_obj1=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
-        local_obj2=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
-        id1=V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
-        id2=V(dtype=gs.ti_int, shape=(_B, max_num_polytope_verts)),
-        mink=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_num_polytope_verts)),
+        obj1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        obj2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_obj1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        local_obj2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        id1=V(dtype=gs.ti_int, shape=shape),
+        id2=V(dtype=gs.ti_int, shape=shape),
+        mink=V_VEC(3, dtype=gs.ti_float, shape=shape),
     )
 
 
@@ -711,12 +708,12 @@ class StructGJKSimplex(metaclass=BASE_METACLASS):
     dist: V_ANNOTATION
 
 
-def get_gjk_simplex(solver):
+def get_gjk_simplex(solver, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B,), is_active)
     return StructGJKSimplex(
-        nverts=V(dtype=gs.ti_int, shape=(_B,)),
-        dist=V(dtype=gs.ti_float, shape=(_B,)),
+        nverts=V(dtype=gs.ti_int, shape=shape),
+        dist=V(dtype=gs.ti_float, shape=shape),
     )
 
 
@@ -726,12 +723,12 @@ class StructGJKSimplexBuffer(metaclass=BASE_METACLASS):
     sdist: V_ANNOTATION
 
 
-def get_gjk_simplex_buffer(solver):
+def get_gjk_simplex_buffer(solver, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, 4), is_active)
     return StructGJKSimplexBuffer(
-        normal=V_VEC(3, dtype=gs.ti_float, shape=(_B, 4)),
-        sdist=V(dtype=gs.ti_float, shape=(_B, 4)),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        sdist=V(dtype=gs.ti_float, shape=shape),
     )
 
 
@@ -744,15 +741,15 @@ class StructEPAPolytope(metaclass=BASE_METACLASS):
     horizon_w: V_ANNOTATION
 
 
-def get_epa_polytope(solver):
+def get_epa_polytope(solver, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B,), is_active)
     return StructEPAPolytope(
-        nverts=V(dtype=gs.ti_int, shape=(_B,)),
-        nfaces=V(dtype=gs.ti_int, shape=(_B,)),
-        nfaces_map=V(dtype=gs.ti_int, shape=(_B,)),
-        horizon_nedges=V(dtype=gs.ti_int, shape=(_B,)),
-        horizon_w=V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
+        nverts=V(dtype=gs.ti_int, shape=shape),
+        nfaces=V(dtype=gs.ti_int, shape=shape),
+        nfaces_map=V(dtype=gs.ti_int, shape=shape),
+        horizon_nedges=V(dtype=gs.ti_int, shape=shape),
+        horizon_w=V_VEC(3, dtype=gs.ti_float, shape=shape),
     )
 
 
@@ -766,16 +763,16 @@ class StructEPAPolytopeFace(metaclass=BASE_METACLASS):
     visited: V_ANNOTATION
 
 
-def get_epa_polytope_face(solver, polytope_max_faces):
+def get_epa_polytope_face(solver, polytope_max_faces, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, polytope_max_faces), is_active)
     return StructEPAPolytopeFace(
-        verts_idx=V_VEC(3, dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
-        adj_idx=V_VEC(3, dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
-        normal=V_VEC(3, dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
-        dist2=V(dtype=gs.ti_float, shape=(_B, polytope_max_faces)),
-        map_idx=V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
-        visited=V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
+        verts_idx=V_VEC(3, dtype=gs.ti_int, shape=shape),
+        adj_idx=V_VEC(3, dtype=gs.ti_int, shape=shape),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        dist2=V(dtype=gs.ti_float, shape=shape),
+        map_idx=V(dtype=gs.ti_int, shape=shape),
+        visited=V(dtype=gs.ti_int, shape=shape),
     )
 
 
@@ -785,12 +782,12 @@ class StructEPAPolytopeHorizonData(metaclass=BASE_METACLASS):
     edge_idx: V_ANNOTATION
 
 
-def get_epa_polytope_horizon_data(solver, polytope_max_horizons):
+def get_epa_polytope_horizon_data(solver, polytope_max_horizons, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, polytope_max_horizons), is_active)
     return StructEPAPolytopeHorizonData(
-        face_idx=V(dtype=gs.ti_int, shape=(_B, polytope_max_horizons)),
-        edge_idx=V(dtype=gs.ti_int, shape=(_B, polytope_max_horizons)),
+        face_idx=V(dtype=gs.ti_int, shape=shape),
+        edge_idx=V(dtype=gs.ti_int, shape=shape),
     )
 
 
@@ -805,17 +802,17 @@ class StructContactFace(metaclass=BASE_METACLASS):
     id2: V_ANNOTATION
 
 
-def get_contact_face(solver, max_contact_polygon_verts):
+def get_contact_face(solver, max_contact_polygon_verts, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactFace(
-        vert1=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        vert2=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        endverts=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        normal1=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        normal2=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        id1=V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
-        id2=V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
+        vert1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        vert2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        endverts=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        normal1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        normal2=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        id1=V(dtype=gs.ti_int, shape=shape),
+        id2=V(dtype=gs.ti_int, shape=shape),
     )
 
 
@@ -826,13 +823,13 @@ class StructContactNormal(metaclass=BASE_METACLASS):
     id: V_ANNOTATION
 
 
-def get_contact_normal(solver, max_contact_polygon_verts):
+def get_contact_normal(solver, max_contact_polygon_verts, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactNormal(
-        endverts=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        normal=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        id=V(dtype=gs.ti_int, shape=(_B, max_contact_polygon_verts)),
+        endverts=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        id=V(dtype=gs.ti_int, shape=shape),
     )
 
 
@@ -842,12 +839,12 @@ class StructContactHalfspace(metaclass=BASE_METACLASS):
     dist: V_ANNOTATION
 
 
-def get_contact_halfspace(solver, max_contact_polygon_verts):
+def get_contact_halfspace(solver, max_contact_polygon_verts, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactHalfspace(
-        normal=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
-        dist=V(dtype=gs.ti_float, shape=(_B, max_contact_polygon_verts)),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        dist=V(dtype=gs.ti_float, shape=shape),
     )
 
 
@@ -857,12 +854,12 @@ class StructWitness(metaclass=BASE_METACLASS):
     point_obj2: V_ANNOTATION
 
 
-def get_witness(solver, max_contacts_per_pair):
+def get_witness(solver, max_contacts_per_pair, is_active):
     _B = solver._B
-
+    shape = maybe_shape((_B, max_contacts_per_pair), is_active)
     return StructWitness(
-        point_obj1=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
-        point_obj2=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
+        point_obj1=V_VEC(3, dtype=gs.ti_float, shape=shape),
+        point_obj2=V_VEC(3, dtype=gs.ti_float, shape=shape),
     )
 
 
@@ -901,7 +898,7 @@ class StructGJKState(metaclass=BASE_METACLASS):
     diff_penetration: V_ANNOTATION
 
 
-def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
+def get_gjk_state(solver, static_rigid_sim_config, gjk_info, is_active):
     _B = solver._B
     enable_mujoco_compatibility = static_rigid_sim_config.enable_mujoco_compatibility
     polytope_max_faces = gjk_info.polytope_max_faces[None]
@@ -913,28 +910,28 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
     return StructGJKState(
         # GJK simplex
         support_mesh_prev_vertex_id=V(dtype=gs.ti_int, shape=(_B, 2)),
-        simplex_vertex=get_gjk_simplex_vertex(solver),
-        simplex_buffer=get_gjk_simplex_buffer(solver),
-        simplex=get_gjk_simplex(solver),
+        simplex_vertex=get_gjk_simplex_vertex(solver, is_active),
+        simplex_buffer=get_gjk_simplex_buffer(solver, is_active),
+        simplex=get_gjk_simplex(solver, is_active),
         last_searched_simplex_vertex_id=V(dtype=gs.ti_int, shape=(_B,)),
-        simplex_vertex_intersect=get_gjk_simplex_vertex(solver),
-        simplex_buffer_intersect=get_gjk_simplex_buffer(solver),
+        simplex_vertex_intersect=get_gjk_simplex_vertex(solver, is_active),
+        simplex_buffer_intersect=get_gjk_simplex_buffer(solver, is_active),
         nsimplex=V(dtype=gs.ti_int, shape=(_B,)),
         # EPA polytope
-        polytope=get_epa_polytope(solver),
-        polytope_verts=get_epa_polytope_vertex(solver, gjk_info),
-        polytope_faces=get_epa_polytope_face(solver, polytope_max_faces),
+        polytope=get_epa_polytope(solver, is_active),
+        polytope_verts=get_epa_polytope_vertex(solver, gjk_info, is_active),
+        polytope_faces=get_epa_polytope_face(solver, polytope_max_faces, is_active),
         polytope_faces_map=V(dtype=gs.ti_int, shape=(_B, polytope_max_faces)),
-        polytope_horizon_data=get_epa_polytope_horizon_data(solver, 6 + gjk_info.epa_max_iterations[None]),
-        polytope_horizon_stack=get_epa_polytope_horizon_data(solver, polytope_max_faces * 3),
+        polytope_horizon_data=get_epa_polytope_horizon_data(solver, 6 + gjk_info.epa_max_iterations[None], is_active),
+        polytope_horizon_stack=get_epa_polytope_horizon_data(solver, polytope_max_faces * 3, is_active),
         # Multi-contact detection (MuJoCo compatibility)
-        contact_faces=get_contact_face(solver, max_contact_polygon_verts),
-        contact_normals=get_contact_normal(solver, max_contact_polygon_verts),
-        contact_halfspaces=get_contact_halfspace(solver, max_contact_polygon_verts),
+        contact_faces=get_contact_face(solver, max_contact_polygon_verts, is_active),
+        contact_normals=get_contact_normal(solver, max_contact_polygon_verts, is_active),
+        contact_halfspaces=get_contact_halfspace(solver, max_contact_polygon_verts, is_active),
         contact_clipped_polygons=V_VEC(3, dtype=gs.ti_float, shape=(_B, 2, max_contact_polygon_verts)),
         multi_contact_flag=V(dtype=gs.ti_bool, shape=(_B,)),
         # Final results
-        witness=get_witness(solver, max_contacts_per_pair),
+        witness=get_witness(solver, max_contacts_per_pair, is_active),
         n_witness=V(dtype=gs.ti_int, shape=(_B,)),
         n_contacts=V(dtype=gs.ti_int, shape=(_B,)),
         contact_pos=V_VEC(3, dtype=gs.ti_float, shape=(_B, max_contacts_per_pair)),
@@ -942,7 +939,7 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info):
         is_col=V(dtype=gs.ti_bool, shape=(_B,)),
         penetration=V(dtype=gs.ti_float, shape=(_B,)),
         distance=V(dtype=gs.ti_float, shape=(_B,)),
-        diff_contact_input=get_diff_contact_input(solver, max(max_contacts_per_pair, 1)),
+        diff_contact_input=get_diff_contact_input(solver, max(max_contacts_per_pair, 1), is_active),
         n_diff_contact_input=V(dtype=gs.ti_int, shape=(_B,)),
         diff_penetration=V(dtype=gs.ti_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
     )

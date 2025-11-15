@@ -51,13 +51,16 @@ class Collider:
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
 
-        self._init_static_config()
-        self._init_collision_fields()
-
         # FIXME: MPR is necessary because it is used for terrain collision detection
         self._mpr = MPR(rigid_solver)
-        self._gjk = GJK(rigid_solver)
         self._sdf = SDF(rigid_solver)
+        is_gjk_active = (
+            self._solver._options.use_gjk_collision and sum(geom.is_convex for geom in self._solver.geoms) > 1
+        )
+        self._gjk = GJK(rigid_solver, is_active=is_gjk_active)
+
+        self._init_static_config()
+        self._init_collision_fields()
 
         # Support field used for mpr and gjk. Rather than having separate support fields for each algorithm, keep only
         # one copy here to save memory and maintain cleaner code.
@@ -65,7 +68,7 @@ class Collider:
 
     def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
-        if self._solver._options.use_gjk_collision:
+        if self._solver._options.use_gjk_collision and self._gjk._is_active:
             if self._solver._enable_mujoco_compatibility:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MJ_GJK
             else:
@@ -77,7 +80,10 @@ class Collider:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
         n_contacts_per_pair = 20 if self._solver._static_rigid_sim_config.requires_grad else 5
-        if self._solver._options.box_box_detection:
+        if (
+            self._solver._options.box_box_detection
+            and sum(geom.type == gs.GEOM_TYPE.BOX for geom in self._solver.geoms) > 1
+        ):
             n_contacts_per_pair = max(n_contacts_per_pair, self._box_MAXCONPAIR)
 
         # Initialize the static config, which stores every data that are compile-time constants.
