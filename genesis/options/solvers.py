@@ -363,7 +363,7 @@ class RigidOptions(Options):
     enable_self_collision: bool = True
     enable_adjacent_collision: bool = False
     disable_constraint: bool = False
-    max_collision_pairs: int = 300
+    max_collision_pairs: int = 200
     multiplier_collision_broad_phase: int = 8
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
@@ -385,7 +385,7 @@ class RigidOptions(Options):
     contact_resolve_time: Optional[float] = None
     constraint_timeconst: float = 0.01
     use_contact_island: bool = False
-    box_box_detection: Optional[bool] = None
+    box_box_detection: bool = False
 
     # hibernation threshold
     use_hibernation: bool = False

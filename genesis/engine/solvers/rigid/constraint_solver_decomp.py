@@ -401,8 +401,9 @@ def constraint_solver_kernel_reset(
             constraint_state.qacc_ws[i_d, i_b] = 0
             for i_c in range(len_constraints):
                 constraint_state.jac[i_c, i_d, i_b] = 0
-        for i_c in range(len_constraints):
-            constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+        if ti.static(static_rigid_sim_config.sparse_solve):
+            for i_c in range(len_constraints):
+                constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
 @ti.func
@@ -980,8 +981,9 @@ def func_equality_weld(
                 jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state.vel[i_d, i_b]
             )
 
-    for i_con in range(n_con, n_con + 3):
-        constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
+    if ti.static(static_rigid_sim_config.sparse_solve):
+        for i_con in range(n_con, n_con + 3):
+            constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
