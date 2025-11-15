@@ -863,6 +863,7 @@ def test_box_box_dynamics(gs_sim):
         assert_allclose(qpos[8], 0.6, atol=2e-3)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
     [
@@ -1350,7 +1351,6 @@ def test_stickman(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
-@pytest.mark.field_only
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_multilink_inverse_kinematics(show_viewer):
     TOL = 1e-5
