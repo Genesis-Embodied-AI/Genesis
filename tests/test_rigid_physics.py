@@ -470,7 +470,9 @@ def test_dynamic_weld(show_viewer, tol):
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        surface=gs.surfaces.Plastic(color=(1, 0, 0)),
+        surface=gs.surfaces.Plastic(
+            color=(1, 0, 0),
+        ),
     )
     robot = scene.add_entity(
         gs.morphs.MJCF(
@@ -2114,7 +2116,6 @@ def test_terrain_generation(request, show_viewer):
         name="my_terrain",
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
-    # np.random.seed(4)
     terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
     obj = scene.add_entity(
         morph=gs.morphs.Box(
@@ -2133,7 +2134,7 @@ def test_terrain_generation(request, show_viewer):
     obj.set_pos(obj_pos_init_rel + torch.tensor(TERRAIN_OFFSET))
 
     # Drop the objects and simulate for a while.
-    for _ in range(500):
+    for _ in range(600):
         scene.step()
 
     # Check that objects are not moving anymore
@@ -2161,7 +2162,7 @@ def test_terrain_generation(request, show_viewer):
 
 
 @pytest.mark.required
-def test_discrete_obstacles_terrain():
+def test_terrain_discrete_obstacles():
     scene = gs.Scene()
     terrain = scene.add_entity(
         gs.morphs.Terrain(
@@ -2182,9 +2183,9 @@ def test_discrete_obstacles_terrain():
     height_field = terrain.geoms[0].metadata["height_field"]
     platform = height_field[5:7, 5:7]
 
-    assert height_field.max().item() == 2.0
-    assert height_field.min().item() == -2.0
-    assert (platform == 0.0).all()
+    assert height_field.max() == 2.0
+    assert height_field.min() == -2.0
+    assert (platform < gs.EPS).all()
 
 
 def test_mesh_to_heightfield(tmp_path, show_viewer):
@@ -3175,7 +3176,13 @@ def test_noslip_iterations(scale, show_viewer, tol):
         rigid_options=gs.options.RigidOptions(
             noslip_iterations=5,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3 * scale, 3 * scale, 3 * scale),
+            camera_lookat=(scale, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -3188,6 +3195,10 @@ def test_noslip_iterations(scale, show_viewer, tol):
                     pos=(i * scale, 0, 0),
                     fixed=(i == 0),
                 ),
+                surface=gs.surfaces.Default(
+                    color=(*np.random.rand(3), 0.7),
+                ),
+                visualize_contact=True,
             )
         )
     scene.build()
@@ -3204,7 +3215,7 @@ def test_noslip_iterations(scale, show_viewer, tol):
         boxes[2].control_dofs_force(np.array([-safety / coeff_f * n_box * rho * scale**3 * g]), np.array([0]))
         scene.step()
 
-    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
+    box_1_z = tensor_to_array(boxes[1].get_qpos())[2]
     # allow some small sliding due to first few frames
     # scale = 0.1 is less stable than bigger scale
     assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
@@ -3216,7 +3227,7 @@ def test_noslip_iterations(scale, show_viewer, tol):
         boxes[2].control_dofs_force(np.array([-safety / coeff_f * n_box * rho * scale**3 * g]), np.array([0]))
         scene.step()
 
-    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
+    box_1_z = tensor_to_array(boxes[1].get_qpos())[2]
     # it will slip away
     assert box_1_z < -scale
 

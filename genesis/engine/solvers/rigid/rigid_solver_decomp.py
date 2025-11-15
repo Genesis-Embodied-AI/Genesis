@@ -327,6 +327,7 @@ class RigidSolver(Solver):
         # FIXME: AvatarSolver should not inherite from RigidSolver.
         if type(self) is RigidSolver or self.is_active:
             self.data_manager = array_class.DataManager(self)
+            self._errno = self.data_manager.errno
 
             self._rigid_global_info = self.data_manager.rigid_global_info
             self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
@@ -982,6 +983,21 @@ class RigidSolver(Solver):
                     is_backward=False,
                 )
 
+    def check_errno(self):
+        match kernel_get_errno(self._errno):
+            case 1:
+                max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
+                gs.raise_exception(
+                    f"Exceeding max number of broad phase candidate contact pairs ({max_contact_pairs}). Please increase "
+                    f"the value of RigidSolver's option 'multiplier_collision_broad_phase'."
+                )
+            case 2:
+                max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
+                gs.raise_exception(
+                    f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
+                    "RigidSolver's option 'max_collision_pairs'."
+                )
+
     def _kernel_detect_collision(self):
         self.collider.clear()
         self.collider.detection()
@@ -1581,6 +1597,7 @@ class RigidSolver(Solver):
                 is_backward=False,
             )
 
+            self._errno[None] = 0
             self.collider.reset(envs_idx)
             self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
@@ -2055,6 +2072,7 @@ class RigidSolver(Solver):
             qpos = qpos.unsqueeze(0)
         kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
+        self._errno[None] = 0
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
@@ -2298,6 +2316,7 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
+        self._errno[None] = 0
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
@@ -8253,3 +8272,8 @@ def kernel_set_geoms_friction(
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_g_ in ti.ndrange(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_get_errno(errno: array_class.V_ANNOTATION) -> ti.i32:
+    return errno[None]

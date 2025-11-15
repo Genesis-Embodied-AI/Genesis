@@ -177,13 +177,17 @@ class Rate:
 
 
 class FPSTracker:
-    def __init__(self, n_envs, alpha=0.95, minimum_interval_seconds: float | None = 0.1):
+    def __init__(
+        self, n_envs, alpha=0.95, minimum_interval_seconds: float | None = 0.05, outlier_threshold: float = 1.5
+    ):
         self.last_time = None
         self.n_envs = n_envs
         self.dt_ema = None
         self.alpha = alpha
         self.minimum_interval_seconds = minimum_interval_seconds
+        self.outlier_threshold = outlier_threshold
         self.steps_since_last_print: int = 0
+        self.total_fps = 0.0
 
     def step(self, current_time: float | None = None) -> float | None:
         if not current_time:
@@ -197,13 +201,21 @@ class FPSTracker:
 
         self.steps_since_last_print += 1
 
+        # Skip if update is too soon
         if self.minimum_interval_seconds and current_time - self.last_time < self.minimum_interval_seconds:
             return None
 
+        # Outlier rejection
+        if self.dt_ema is not None:
+            if dt > self.dt_ema * self.outlier_threshold or dt * self.outlier_threshold < self.dt_ema:
+                self.dt_ema = dt
+
+        # EMA update
         if self.dt_ema:
             self.dt_ema = self.alpha * self.dt_ema + (1 - self.alpha) * dt
         else:
             self.dt_ema = dt
+
         fps = 1 / self.dt_ema * self.steps_since_last_print
         if self.n_envs > 0:
             self.total_fps = fps * self.n_envs
