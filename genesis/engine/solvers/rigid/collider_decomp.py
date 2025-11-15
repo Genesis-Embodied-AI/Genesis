@@ -1174,36 +1174,35 @@ def func_collision_clear(
     collider_state: array_class.ColliderState,
     static_rigid_sim_config: ti.template(),
 ):
-    if ti.static(static_rigid_sim_config.enable_collision):
-        _B = collider_state.n_contacts.shape[0]
-        if ti.static(static_rigid_sim_config.use_hibernation):
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(_B):
-                collider_state.n_contacts_hibernated[i_b] = 0
+    _B = collider_state.n_contacts.shape[0]
+    if ti.static(static_rigid_sim_config.use_hibernation):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            collider_state.n_contacts_hibernated[i_b] = 0
 
-                # Advect hibernated contacts
-                for i_c in range(collider_state.n_contacts[i_b]):
-                    i_la = collider_state.contact_data[i_c, i_b].link_a
-                    i_lb = collider_state.contact_data[i_c, i_b].link_b
-                    I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
-                    I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
+            # Advect hibernated contacts
+            for i_c in range(collider_state.n_contacts[i_b]):
+                i_la = collider_state.contact_data[i_c, i_b].link_a
+                i_lb = collider_state.contact_data[i_c, i_b].link_b
+                I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
+                I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-                    # Pair of hibernated-fixed links -> hibernated contact
-                    # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
-                    # once a new collision is detected
-                    if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                        links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
-                    ):
-                        i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
-                        if i_c != i_c_hibernated:
-                            collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
-                        collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
+                # Pair of hibernated-fixed links -> hibernated contact
+                # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
+                # once a new collision is detected
+                if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                    links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+                ):
+                    i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
+                    if i_c != i_c_hibernated:
+                        collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
+                    collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
-                collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-        else:
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(_B):
-                collider_state.n_contacts[i_b] = 0
+            collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
+    else:
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            collider_state.n_contacts[i_b] = 0
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
