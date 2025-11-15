@@ -1615,15 +1615,17 @@ class RigidSolver(Solver):
             entity.process_input_grad()
 
     def save_ckpt(self, ckpt_name):
-        if ckpt_name not in self._ckpt:
-            self._ckpt[ckpt_name] = dict()
+        # Save ckpt only if we need gradients, because this operation is costly
+        if self._requires_grad:
+            if ckpt_name not in self._ckpt:
+                self._ckpt[ckpt_name] = dict()
 
-        self._ckpt[ckpt_name]["qpos"] = self._rigid_adjoint_cache.qpos.to_numpy()
-        self._ckpt[ckpt_name]["dofs_vel"] = self._rigid_adjoint_cache.dofs_vel.to_numpy()
-        self._ckpt[ckpt_name]["dofs_acc"] = self._rigid_adjoint_cache.dofs_acc.to_numpy()
+            self._ckpt[ckpt_name]["qpos"] = self._rigid_adjoint_cache.qpos.to_numpy()
+            self._ckpt[ckpt_name]["dofs_vel"] = self._rigid_adjoint_cache.dofs_vel.to_numpy()
+            self._ckpt[ckpt_name]["dofs_acc"] = self._rigid_adjoint_cache.dofs_acc.to_numpy()
 
-        for entity in self._entities:
-            entity.save_ckpt(ckpt_name)
+            for entity in self._entities:
+                entity.save_ckpt(ckpt_name)
 
     def load_ckpt(self, ckpt_name):
         # Set first frame
