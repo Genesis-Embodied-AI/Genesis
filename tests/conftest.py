@@ -9,6 +9,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import setproctitle
 import psutil
 import pyglet
 import pytest
@@ -64,7 +65,14 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-@pytest.hookimpl
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # Include test name in process title
+    test_name = item.nodeid.replace(" ", "")
+    setproctitle.setproctitle(f"pytest: {test_name}")
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     # Force disabling forked for non-linux systems
     if not sys.platform.startswith("linux"):
