@@ -877,8 +877,8 @@ class RigidSolver(Solver):
             case 1:
                 max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
                 gs.raise_exception(
-                    f"Exceeding max number of broad phase candidate contact pairs ({max_contact_pairs}). Please increase "
-                    f"the value of RigidSolver's option 'multiplier_collision_broad_phase'."
+                    f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
+                    f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
                 )
             case 2:
                 max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
