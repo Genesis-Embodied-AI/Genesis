@@ -623,11 +623,12 @@ def box_pyramid(solver, n_envs, n_cubes, enable_island, gjk, enable_mujoco_compa
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
+        ("anymal_c", None, True, 30000, gs.gpu),
         ("anymal_c", gs.constraint_solver.CG, None, 30000, gs.gpu),
         ("anymal_c", gs.constraint_solver.Newton, None, 30000, gs.gpu),
         ("anymal_c", None, None, 0, gs.gpu),
         ("anymal_c", None, None, 0, gs.cpu),
-        ("batched_franka", None, False, 30000, gs.gpu),
+        ("batched_franka", None, True, 30000, gs.gpu),
         ("batched_franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
         ("batched_franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
         ("batched_franka", None, None, 0, gs.gpu),
