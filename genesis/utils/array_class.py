@@ -219,14 +219,13 @@ def get_constraint_state(constraint_solver, solver):
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
         gs.raise_exception(
-            f"Jacobian shape {jac_shape} is too large for int32. Consider reducing the number of constraints or the "
-            "number of degrees of freedom."
+            f"Jacobian shape (n_constraints={jac_shape[0]}, n_dofs={jac_shape[1]}, n_envs={jac_shape[2]}) is too large."
         )
 
     if solver._options.noslip_iterations > 0:
         if len_constraints_**2 * _B > 2e9:
             gs.logger.warning(
-                f"efc_AR shape {len_constraints_}x{len_constraints_}x{_B} is very large. Consider manually set a "
+                f"efc_AR shape ({len_constraints_}, {len_constraints_}, {_B}) is very large. Consider manually set a "
                 "smaller 'max_collision_pairs' in RigidOptions to reduce the size of reserved memory. "
             )
 
