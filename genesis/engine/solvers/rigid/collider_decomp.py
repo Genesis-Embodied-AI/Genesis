@@ -2370,9 +2370,10 @@ def func_convex_convex_contact(
                         for i_mpr in range(2):
                             if i_mpr == 1:
                                 # Try without warm-start if no contact was detected using it.
-                                # When penetration depth is very shallow, MPR may wrongly classify two geometries as not in
-                                # contact while they actually are. This helps to improve contact persistence without increasing
-                                # much the overall computational cost since the fallback should not be triggered very often.
+                                # When penetration depth is very shallow, MPR may wrongly classify two geometries as not
+                                # in contact while they actually are. This helps to improve contact persistence without
+                                # increasing much the overall computational cost since the fallback should not be
+                                # triggered very often.
                                 is_mpr_guess_direction_available = (ti.abs(normal_ws) > EPS).any()
                                 if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
                                     normal_ws = ti.Vector.zero(gs.ti_float, 3)
@@ -2401,16 +2402,17 @@ def func_convex_convex_contact(
                         # Fallback on SDF if collision is detected by MPR but no collision direction was cached and the
                         # initial penetration is already quite large, because the contact information provided by MPR
                         # may be unreliable in such a case.
-                        if is_col and penetration > tolerance:
-                            # MPR cannot handle collision detection for fully enclosed geometries. Falling back to SDF.
-                            # Note that SDF does not take into account to direction of interest. As such, it cannot be
-                            # used reliably for anything else than the point of deepest penetration.
-                            prefer_sdf = (
-                                collider_info.mc_tolerance[None] * penetration
-                                >= collider_info.mpr_to_sdf_overlap_ratio[None] * tolerance
-                            )
-                            if prefer_sdf or not is_mpr_guess_direction_available:
-                                try_sdf = True
+                        if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                            if is_col and penetration > tolerance:
+                                # MPR cannot handle collision detection for fully enclosed geometries. Falling back to
+                                # SDF. Note that SDF does not take into account to direction of interest. As such, it
+                                # cannot be used reliably for anything else than the point of deepest penetration.
+                                prefer_sdf = (
+                                    collider_info.mc_tolerance[None] * penetration
+                                    >= collider_info.mpr_to_sdf_overlap_ratio[None] * tolerance
+                                )
+                                if prefer_sdf or not is_mpr_guess_direction_available:
+                                    try_sdf = True
 
                     ### GJK, MJ_GJK
                     elif ti.static(
@@ -2608,7 +2610,7 @@ def func_convex_convex_contact(
                         errno,
                     )
                     if multi_contact:
-                        # perturb geom_a around two orthogonal axes to find multiple contacts
+                        # Perturb geom_a around two orthogonal axes to find multiple contacts
                         axis_0, axis_1 = func_contact_orthogonals(
                             i_ga,
                             i_gb,

@@ -31,7 +31,7 @@ def main():
     # create pyramid of boxes
     box_size = 0.25
     box_spacing = (1.0 - 1e-3 + 0.1 * (args.pile_type == "static")) * box_size
-    box_pos_offset = (0 - 0.5, 1, 0.0) + 0.5 * np.array([box_size, box_size, box_size])
+    box_pos_offset = (-0.5, 1, 0.0) + 0.5 * np.array([box_size, box_size, box_size])
     boxes = {}
     for i in range(args.num_cubes):
         for j in range(args.num_cubes - i):

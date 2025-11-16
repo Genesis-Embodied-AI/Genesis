@@ -109,25 +109,31 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
 def get_rigid_global_info(solver):
     _B = solver._B
 
+    mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
+    if math.prod(mass_mat_shape) > np.iinfo(np.int32).max:
+        gs.raise_exception(
+            f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+        )
+
     return StructRigidGlobalInfo(
+        envs_offset=V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
+        gravity=V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
+        meaninertia=V(dtype=gs.ti_float, shape=(_B,)),
         n_awake_dofs=V(dtype=gs.ti_int, shape=(_B,)),
-        awake_dofs=V(dtype=gs.ti_int, shape=(solver.n_dofs_, _B)),
         n_awake_entities=V(dtype=gs.ti_int, shape=(_B,)),
-        awake_entities=V(dtype=gs.ti_int, shape=(solver.n_entities_, _B)),
         n_awake_links=V(dtype=gs.ti_int, shape=(_B,)),
+        awake_dofs=V(dtype=gs.ti_int, shape=(solver.n_dofs_, _B)),
+        awake_entities=V(dtype=gs.ti_int, shape=(solver.n_entities_, _B)),
         awake_links=V(dtype=gs.ti_int, shape=(solver.n_links_, _B)),
         qpos0=V(dtype=gs.ti_float, shape=(solver.n_qs_, _B)),
         qpos=V(dtype=gs.ti_float, shape=(solver.n_qs_, _B)),
         links_T=V_MAT(n=4, m=4, dtype=gs.ti_float, shape=(solver.n_links_,)),
-        envs_offset=V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
         geoms_init_AABB=V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
-        mass_mat=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
-        mass_mat_L=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
         mass_mat_D_inv=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         mass_mat_mask=V(dtype=gs.ti_bool, shape=(solver.n_entities_, _B)),
-        meaninertia=V(dtype=gs.ti_float, shape=(_B,)),
         mass_parent_mask=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
-        gravity=V_VEC(3, dtype=gs.ti_float, shape=(_B,)),
+        mass_mat=V(dtype=gs.ti_float, shape=mass_mat_shape),
+        mass_mat_L=V(dtype=gs.ti_float, shape=mass_mat_shape),
         substep_dt=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._substep_dt),
         iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._options.iterations),
         tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._options.tolerance),
@@ -239,7 +245,7 @@ def get_constraint_state(constraint_solver, solver):
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
-        improved=V(dtype=gs.ti_int, shape=(_B,)),
+        improved=V(dtype=gs.ti_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.ti_float, shape=(_B,)),
         gauss=V(dtype=gs.ti_float, shape=(_B,)),
         cost=V(dtype=gs.ti_float, shape=(_B,)),
