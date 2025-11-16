@@ -402,6 +402,16 @@ jobs:
           echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
+      - name: Upload benchmark comparisons in CSV
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison-tables
+          path: |
+            runtime_fps.csv
+            compile_time.csv
+          if-no-files-found: warn
+
       - name: Add PR comment
         if: ${{ env.SCRIPT_OUTPUT != '' }}
         uses: actions/github-script@v8
@@ -429,15 +439,21 @@ jobs:
             });
 
       - name: Publish PR check
-        if: always()
         uses: actions/github-script@v8
         env:
           CHECK_NAME: Benchmark Comparison
-          CHECK_BODY: ${{ env.CHECK_OUTPUT }}
+          CHECK_OUTPUT: ${{ env.CHECK_OUTPUT }}
           CONCLUSION: ${{ env.CONCLUSION }}
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
         with:
           script: |
+            const artifactUrl = process.env.ARTIFACT_URL || '';
+            let body = process.env.CHECK_OUTPUT || '';
+            if (body && artifactUrl) {
+              body += `\n\n**Artifact:** [Download raw data](${artifactUrl})`;
+            }
+
             const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
               ? '🔴 Regressions detected. See tables below.'
               : '✅ No regressions detected. See tables below.';
@@ -451,16 +467,6 @@ jobs:
               output: {
                 title: process.env.CHECK_NAME,
                 summary,
-                text: process.env.CHECK_BODY || undefined
+                text: body || undefined
               }
             });
-
-      - name: Upload benchmark comparisons in CSV & JSONL
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-comparison-tables
-          path: |
-            runtime_fps.csv
-            compile_time.csv
-          if-no-files-found: warn
