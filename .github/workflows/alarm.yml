@@ -55,7 +55,7 @@ jobs:
 
           # --- Parameters ---
           MAX_VALID_REVISIONS: 5
-          MAX_FETCH_REVISIONS: 100
+          MAX_FETCH_REVISIONS: 50
           RUNTIME_REGRESSION_TOLERANCE_PCT: 10
           COMPILE_REGRESSION_TOLERANCE_PCT: 10
 
@@ -65,7 +65,6 @@ jobs:
           CHECK_BODY_PATH: check_output.md
           CSV_RUNTIME_PATH: runtime_fps.csv
           CSV_COMPILE_PATH: compile_time.csv
-          TABLES_JSONL_PATH: benchmark_tables.jsonl
           EXIT_CODE_REGRESSION: 42
         run: |
           { python - << 'PY'; EXIT_CODE=$?; } || true
@@ -90,9 +89,10 @@ jobs:
           pr_comment_path = Path(os.environ["PR_COMMENT_PATH"]).expanduser()
           check_body_path = Path(os.environ["CHECK_BODY_PATH"]).expanduser()
 
-          csv_runtime = Path(os.environ["CSV_RUNTIME_PATH"]).expanduser().resolve()
-          csv_compile = Path(os.environ["CSV_COMPILE_PATH"]).expanduser().resolve()
-          jsonl_path  = Path(os.environ["TABLES_JSONL_PATH"]).expanduser().resolve()
+          csv_files = {
+            "runtime_fps": Path(os.environ["CSV_RUNTIME_PATH"]).expanduser().resolve(),
+            "compile_time": Path(os.environ["CSV_COMPILE_PATH"]).expanduser().resolve(),
+          }
 
           # ---------- helpers ----------
 
@@ -104,6 +104,16 @@ jobs:
           def normalize_benchmark_id(bid: str) -> str:
               kv = dict(map(str.strip, token.split("=", 1)) for token in bid.split("-"))
               return _normalize_kv_id(kv)
+
+          def parse_norm_id(nbid: str) -> dict:
+              kv = {}
+              if nbid:
+                  for token in nbid.split("-"):
+                      token = token.strip()
+                      if token and "=" in token:
+                          k, v = token.split("=", 1)
+                          kv[k.strip()] = v.strip()
+              return kv
 
           def artifacts_parse_csv_summary(current_txt_path):
               out = {}
@@ -147,23 +157,18 @@ jobs:
           api = wandb.Api()
           runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
 
-          is_complete = False
+          revs = set()
           records_by_rev = {}
           for i, run in enumerate(runs_iter):
               # Abort if still not complete after checking enough runs.
               # This would happen if a new benchmark has been added, and not enough past data is available yet.
-              if i == MAX_FETCH_REVISIONS:
+              if len(revs) == MAX_FETCH_REVISIONS:
                   break
 
               # Early return if enough complete records have been collected
               records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
-              is_complete = sum(records_is_complete) == MAX_VALID_REVISIONS
-              if is_complete:
+              if sum(records_is_complete) == MAX_VALID_REVISIONS:
                   break
-
-              # Skip runs did not finish for some reason
-              if run.state != "finished":
-                  continue
 
               # Load config and summary, with support of legacy runs
               config, summary = run.config, run.summary
@@ -175,11 +180,16 @@ jobs:
               # Extract revision commit and branch
               try:
                   rev, branch = config["revision"].split("@", 1)
+                  revs.add(rev)
               except ValueError:
                   # Ignore this run if the revision has been corrupted for some unknown reason
                   continue
               # Ignore runs associated with a commit that is not part of the official repository
               if not branch.startswith('Genesis-Embodied-AI/'):
+                  continue
+
+              # Skip runs did not finish for some reason
+              if run.state != "finished":
                   continue
 
               # Do not store new records if the desired number of revision is already reached
@@ -212,84 +222,78 @@ jobs:
               }
 
           # ----- build TWO tables -----
-          # Parse benchmark IDs into key-value dicts
-          def parse_norm_id(nbid: str) -> dict:
-              kv = {}
-              if nbid:
-                  for token in nbid.split("-"):
-                      token = token.strip()
-                      if token and "=" in token:
-                          k, v = token.split("=", 1)
-                          kv[k.strip()] = v.strip()
-              return kv
 
+          # Parse benchmark IDs into key-value dicts
           id2kv = {bid: parse_norm_id(bid) for bid in current_bm.keys()}
-          all_keys = set()
-          for kv in id2kv.values():
-              all_keys.update(kv.keys())
-          ordered_keys = sorted(all_keys)
+          params_name = sorted(set(kv.keys() for kv in id2kv.values()))
 
           reg_found = False
           tables = {}
-          rows_for_csv = {
-              "runtime_fps": [],
-              "compile_time": []
-          }
+          rows_for_csv = {"runtime_fps": [], "compile_time": []}
+          info = {}
           for metric, alias in (("runtime_fps", "FPS"), ("compile_time", "compile")):
               rows_md = []
 
-              header_cells = ["status"] + ordered_keys + [f"current {alias}", f"baseline {alias} [last (mean ± std)]", f"Δ {alias}"]
+              header_cells = ["status"] + params_name + [f"current {alias}", f"baseline {alias} [last (mean ± std)]", f"Δ {alias}"]
               header = "| " + " | ".join(header_cells) + " |"
-              align  = "|:------:|" + "|".join([":---" for _ in ordered_keys]) + "|---:|---:|---:|"
+              align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
 
               for bid in sorted(current_bm.keys()):
                   value_cur = current_bm[bid][metric]
                   is_int = isinstance(value_cur, int) or value_cur.is_integer()
                   value_repr = fmt_num(value_cur, is_int)
 
+                  info = {
+                      **{k: kv.get(k, "-") for k in params_name},
+                      "current": value_cur,
+                      "baseline_last": None,
+                      "baseline_min": None,
+                      "baseline_max": None,
+                  }
+
                   values_prev = [
                       record[bid][metric]
                       for record in records_by_rev.values()
                       if bid in record
                   ]
-                  is_reg = False
                   if values_prev:
+                      value_last = values_prev[0]
                       value_ref = statistics.fmean(values_prev)
-                      delta = (value_cur - value_ref) / value_ref * 100.0
+                      delta = (value_cur - value_last) / value_last * 100.0
 
-                      stats_repr = f"{fmt_num(values_prev[0], is_int)}"
+                      info["baseline_last"] = int(value_last) if is_int else float(value_last)
+
+                      stats_repr = f"{fmt_num(value_last, is_int)}"
                       delta_repr = f"{delta:+.1f}%"
                       if len(values_prev) == MAX_VALID_REVISIONS:
+                          info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
+                          info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
+                          info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
+
                           value_std = statistics.stdev(values_prev)
                           stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
                           if abs(delta) > METRICS_TOL[metric]:
+                              info["status"] = "alert"
+
                               delta_repr = f"**{delta_repr}**"
                               picto = "🔴"
                               reg_found = True
-                              is_reg = True
                           else:
+                              info["status"] = "ok"
+
                               picto = "✅"
                       else:
+                          info["status"] = "n/a"
+
                           picto = "ℹ️"
                   else:
                       picto, stats_repr, delta_repr = "ℹ️", "---", "---"
-                      value_ref, delta = None, None
 
                   kv = id2kv[bid]
-                  key_cells = [kv.get(k, "-") for k in ordered_keys]
+                  key_cells = [kv.get(k, "-") for k in params_name]
 
                   rows_md.append("| " + " | ".join([picto] + key_cells + [value_repr, stats_repr, delta_repr]) + " |")
-
-                  # CSV/JSONL
-                  rows_for_csv[metric].append({
-                      "metric": metric,
-                      "benchmark_id": bid,
-                      "status": "regression" if is_reg else ("not_enough_baselines" if (len(values_prev) < MAX_VALID_REVISIONS) else "ok"),
-                      **{k: kv.get(k, "-") for k in ordered_keys},
-                      "current": float(value_cur) if isinstance(value_cur,(int,float)) else None,
-                      "baseline_mean": float(value_ref) if isinstance(value_ref,(int,float)) else None,
-                      "delta_pct": float(delta) if isinstance(delta,(int,float)) else None,
-                  })
+                  rows_for_csv[metric].append(info)
 
               tables[metric] = [header, align] + rows_md
 
@@ -319,41 +323,23 @@ jobs:
           )
 
           # ----- COMMENT body (only if regressions) -----
+
           if reg_found:
               comment_body = "\n".join([":warning: **Benchmark Regression Detected**", *check_body])
           else:
               comment_body = ""
 
-          # common CSV header
-          csv_header = (
-              ["metric", "benchmark_id", "status"]
-              + ordered_keys
-              + ["current", "baseline_last", "baseline_mean", "baseline_std", "delta_pct"]
-          )
-
-          # runtime_fps.csv
-          with csv_runtime.open("w", newline="", encoding="utf-8") as f:
-              w = csv.DictWriter(f, fieldnames=csv_header)
-              w.writeheader()
-              for rec in rows_for_csv["runtime_fps"]:
-                  w.writerow(rec)
-
-          # compile_time.csv
-          with csv_compile.open("w", newline="", encoding="utf-8") as f:
-              w = csv.DictWriter(f, fieldnames=csv_header)
-              w.writeheader()
-              for rec in rows_for_csv["compile_time"]:
-                  w.writerow(rec)
-
-          # JSONL (all two metrics)
-          with jsonl_path.open("w", encoding="utf-8") as f:
-              for m in ("runtime_fps", "compile_time"):
-                  for rec in rows_for_csv[m]:
-                      f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+          # CSV file
+          for metric in ("runtime_fps", "compile_time"):
+            with csv_files[metric].open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=info.keys())
+                w.writeheader()
+                for rec in rows_for_csv[metric]:
+                    w.writerow(rec)
 
           # write md results
-          check_body_path.write_text(check_body+"\n", encoding="utf-8")
-          pr_comment_path.write_text(comment_body+"\n", encoding="utf-8")
+          check_body_path.write_text(check_body + "\n", encoding="utf-8")
+          pr_comment_path.write_text(comment_body + "\n", encoding="utf-8")
 
           # Exit with 42 if regressions are found, 0 otherwise
           sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]) if reg_found else 0)
@@ -449,5 +435,4 @@ jobs:
           path: |
             runtime_fps.csv
             compile_time.csv
-            benchmark_tables.jsonl
           if-no-files-found: warn
