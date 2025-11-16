@@ -83,8 +83,12 @@ def ti_rotvec_to_R(rotvec, eps):
 def ti_rotvec_to_quat(rotvec, eps):
     quat = ti.Vector.zero(gs.ti_float, 4)
 
-    theta = rotvec.norm()
-    if theta > eps:
+    # We need to use [norm_sqr] instead of [norm] to avoid nan gradients in the backward pass. Even when theta = 0,
+    # the gradient of [norm] operation is computed and used (note that the gradient becomes NaN when theta = 0). This
+    # is seemd to be a bug in Taichi autodiff @TODO: change back after the bug is fixed.
+    thetasq = rotvec.norm_sqr()
+    if thetasq > (eps**2):
+        theta = ti.sqrt(thetasq)
         theta_half = 0.5 * theta
         c, s = ti.cos(theta_half), ti.sin(theta_half)
 
