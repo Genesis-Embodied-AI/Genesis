@@ -410,11 +410,11 @@ def mpr_find_penetration(
             # Let's consider the portal as an infinite plane rather than a face triangle. This makes sense because
             # the projection of the origin must be strictly included into the portal triangle for it to correspond
             # to the true penetration depth.
-            # For reference about this propery, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
+            # For reference about this property, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
             # https://modiasim.github.io/Modia3D.jl/resources/documentation/CollisionHandling_Neumayr_Otter_2017.pdf
             #
             # In theory, the center should have been shifted until to end up with the one and only portal satisfying
-            # this condition. However, a native implementation of this process must be avoided because it would be
+            # this condition. However, a naive implementation of this process must be avoided because it would be
             # very costly. In practice, assuming the portal is infinite provides a decent approximation of the true
             # penetration depth (it is actually a lower-bound estimate according to Theorem 4.3) and normal without
             # requiring any additional computations.
@@ -559,7 +559,7 @@ def mpr_discover_portal(
 
                 # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
                 # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
-                # Since this deadlock happens very rarely, a simple fix is to abord computation after a few trials.
+                # Since this deadlock happens very rarely, a simple fix is to abort computation after a few trials.
                 num_trials = gs.ti_int(0)
                 while mpr_state.simplex_size[i_b] < 4:
                     v, v1, v2 = compute_support(

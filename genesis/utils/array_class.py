@@ -217,67 +217,69 @@ def get_constraint_state(constraint_solver, solver):
     len_constraints_ = constraint_solver.len_constraints_
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    if math.prod(jac_shape) > np.iinfo(np.int32).max:
-        gs.raise_exception(
-            f"Jacobian shape {jac_shape} is too large for int32. Consider reducing the number of constraints or the "
-            "number of degrees of freedom."
-        )
-
-    if solver._options.noslip_iterations > 0:
-        if len_constraints_**2 * _B > 2e9:
-            gs.logger.warning(
-                f"efc_AR shape {len_constraints_}x{len_constraints_}x{_B} is very large. Consider manually set a "
-                "smaller 'max_collision_pairs' in RigidOptions to reduce the size of reserved memory. "
-            )
-
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
     jac_relevant_dofs_shape = maybe_shape((len_constraints_, solver.n_dofs_, _B), constraint_solver.sparse_solve)
     jac_n_relevant_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
 
+    if math.prod(jac_shape) > np.iinfo(np.int32).max:
+        gs.raise_exception(
+            f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+        )
+    if math.prod(efc_AR_shape) > np.iinfo(np.int32).max:
+        gs.logger.warning(
+            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={solver.n_dofs_}, n_envs={_B}) is too "
+            "large. Consider manually setting a smaller 'max_collision_pairs' in RigidOptions to reduce the size of "
+            "reserved memory. "
+        )
+
+    # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
     return StructConstraintState(
         n_constraints=V(dtype=gs.ti_int, shape=(_B,)),
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
-        diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
         improved=V(dtype=gs.ti_int, shape=(_B,)),
-        Jaref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        search=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        efc_frictionloss=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        efc_b=V(dtype=gs.ti_float, shape=efc_b_shape),
-        efc_AR=V(dtype=gs.ti_float, shape=efc_AR_shape),
-        active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
-        prev_active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
-        qfrc_constraint=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        qacc=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        qacc_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        qacc_prev=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         cost_ws=V(dtype=gs.ti_float, shape=(_B,)),
         gauss=V(dtype=gs.ti_float, shape=(_B,)),
         cost=V(dtype=gs.ti_float, shape=(_B,)),
         prev_cost=V(dtype=gs.ti_float, shape=(_B,)),
         gtol=V(dtype=gs.ti_float, shape=(_B,)),
-        mv=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
-        quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
-        candidates=V(dtype=gs.ti_float, shape=(12, _B)),
         ls_it=V(dtype=gs.ti_float, shape=(_B,)),
         ls_result=V(dtype=gs.ti_int, shape=(_B,)),
-        cg_prev_grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        cg_prev_Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
-        nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
+        quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
+        candidates=V(dtype=gs.ti_float, shape=(12, _B)),
+        Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        search=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        qfrc_constraint=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        qacc=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        qacc_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        qacc_prev=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        mv=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        cg_prev_grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        cg_prev_Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
+        nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
+        efc_b=V(dtype=gs.ti_float, shape=efc_b_shape),
+        efc_AR=V(dtype=gs.ti_float, shape=efc_AR_shape),
+        active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
+        prev_active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
+        diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        Jaref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        efc_frictionloss=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
+        jac=V(dtype=gs.ti_float, shape=jac_shape),
+        jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
+        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
         # Backward gradients
         dL_dqacc=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
@@ -292,10 +294,6 @@ def get_constraint_state(constraint_solver, solver):
         bw_Ju=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_y=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_w=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
-        # /!\ Moving allocation of these tensors at the end improves runtime speed by ~5-10%  /!\
-        jac=V(dtype=gs.ti_float, shape=(len_constraints_, solver.n_dofs_, _B)),
-        jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
-        jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
     )
 
 
@@ -527,10 +525,8 @@ def get_collider_state(
 
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
-        contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         active_buffer=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         n_broad_pairs=V(dtype=gs.ti_int, shape=(_B,)),
-        broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         active_buffer_awake=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         active_buffer_hib=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         box_depth=V(dtype=gs.ti_float, shape=box_depth_shape),
@@ -547,6 +543,8 @@ def get_collider_state(
         n_contacts_hibernated=V(dtype=gs.ti_int, shape=(_B,)),
         first_time=V(dtype=gs.ti_int, shape=(_B,)),
         contact_cache=get_contact_cache(solver),
+        broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
+        contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
     )
 

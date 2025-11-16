@@ -44,6 +44,9 @@ if TYPE_CHECKING:
     from .solvers.base_solver import Solver
 
 
+RATE_CHECK_ERRNO = 10
+
+
 @ti.data_oriented
 class Simulator(RBC):
     """
@@ -287,7 +290,7 @@ class Simulator(RBC):
 
         if self.rigid_solver.is_active:
             self.rigid_solver.clear_external_force()
-            if self._cur_substep_global % 10 == 0:
+            if self._cur_substep_global % RATE_CHECK_ERRNO == 0:
                 self.rigid_solver.check_errno()
 
         self._sensor_manager.step()
