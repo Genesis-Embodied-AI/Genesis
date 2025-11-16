@@ -1756,8 +1756,8 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 def test_frictionloss_advanced(show_viewer, tol):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.0, 0.25, 0.75),
-            camera_lookat=(0.0, 0.0, 0.0),
+            camera_pos=(1.4, 0.7, 1.4),
+            camera_lookat=(0.6, 0.0, 0.0),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -1768,21 +1768,25 @@ def test_frictionloss_advanced(show_viewer, tol):
         morph=gs.morphs.MJCF(
             file=f"{asset_path}/SO101/so101_new_calib.xml",
         ),
+        # vis_mode="collision",
     )
     box = scene.add_entity(
         gs.morphs.Box(
+            pos=(0.1, 0.0, 0.6),
             size=(0.025, 0.025, 0.025),
         ),
     )
     scene.build()
 
     scene.reset()
-    box.set_pos(torch.tensor((0.1, 0.0, 1.0), dtype=gs.tc_float, device=gs.device))
-    for _ in range(200):
+    for _ in range(230):
         scene.step()
 
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
-    # assert_allclose(robot.get_AABB()[2], 0.0, tol=1e-3)
+    assert_allclose(robot.get_AABB()[0, 2], 0.0, tol=2e-4)
+    box_pos = box.get_pos()
+    assert box_pos[0] > 0.6
+    assert_allclose(box_pos[1:], 0.0, tol=0.02)
     assert_allclose(box.get_dofs_velocity(), 0.0, tol=tol)
 
 
@@ -3112,8 +3116,8 @@ def test_contype_conaffinity(show_viewer, tol):
         scene.step()
 
     assert_allclose(box1.get_pos(), (0.0, 0.0, 0.25), atol=5e-4)
-    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=1e-3)
-    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-4)
+    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=2e-3)
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=2e-3)
     assert_allclose(scene.rigid_solver.get_links_acc(slice(box4.link_start, box4.link_end)), GRAVITY, atol=tol)
 
 

@@ -349,7 +349,8 @@ class RigidOptions(Options):
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     use_gjk_collision: bool, optional
-        Whether to use GJK for collision detection instead of MPR. Defaults to True.
+        Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
+        `sim_options.requires_grad`.
 
     Warning
     -------
@@ -400,7 +401,7 @@ class RigidOptions(Options):
     enable_mujoco_compatibility: bool = False
 
     # GJK collision detection
-    use_gjk_collision: bool = True
+    use_gjk_collision: Optional[bool] = None
 
     def __init__(self, **data):
         super().__init__(**data)
