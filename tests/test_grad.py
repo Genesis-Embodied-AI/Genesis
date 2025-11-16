@@ -140,7 +140,6 @@ def test_diff_contact(backend):
 # stable way.
 @pytest.mark.required
 @pytest.mark.precision("64")
-@pytest.mark.parametrize("backend", [gs.cpu])
 def test_diff_solver(backend, monkeypatch):
     from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1

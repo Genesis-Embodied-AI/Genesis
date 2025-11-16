@@ -214,6 +214,7 @@ def init(
     if ti_num_cpu_threads is not None:
         taichi_kwargs.update(
             cpu_max_num_threads=int(ti_num_cpu_threads),
+            num_compile_threads=int(ti_num_cpu_threads),
         )
 
     if seed is not None:
