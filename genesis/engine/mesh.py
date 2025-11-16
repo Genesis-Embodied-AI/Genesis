@@ -334,20 +334,18 @@ class Mesh(RBC):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
-                if not morph.parse_glb_with_zup:
+                if morph.parse_glb_with_trimesh:
+                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                else:
+                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                if morph.parse_glb_with_zup:
+                    for mesh in meshes:
+                        mesh.convert_to_zup()
+                else:
                     gs.logger.warning(
                         "GLTF is using y-up while Genesis uses z-up. Please set parse_glb_with_zup=True"
                         " in morph options if you find the mesh is 90-degree rotated. We will set parse_glb_with_zup=True"
                         " and rotate glb mesh by default later and gradually enforce this option."
-                    )
-                if morph.parse_glb_with_trimesh:
-                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
-                    if morph.parse_glb_with_zup:
-                        for mesh in meshes:
-                            mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
-                else:
-                    meshes = gltf_utils.parse_mesh_glb(
-                        morph.file, morph.group_by_material, morph.scale, surface, morph.parse_glb_with_zup
                     )
             elif morph.is_format(gs.options.morphs.USD_FORMATS):
                 import genesis.utils.usda as usda_utils
@@ -376,7 +374,7 @@ class Mesh(RBC):
             else:
                 gs.raise_exception()
 
-            metadata = {"mesh_path": morph.file} if isinstance(morph, gs.options.morphs.FileMorph) else {}
+            metadata = {}
             return cls.from_trimesh(tmesh, surface=surface, metadata=metadata)
 
     def set_color(self, color):
@@ -394,6 +392,12 @@ class Mesh(RBC):
         Update the trimesh obj's visual attributes using its surface and uvs.
         """
         self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self.surface, self.uvs, len(self.verts))
+
+    def convert_to_zup(self):
+        """
+        Convert the mesh to z-up.
+        """
+        self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
 
     def apply_transform(self, T):
         """

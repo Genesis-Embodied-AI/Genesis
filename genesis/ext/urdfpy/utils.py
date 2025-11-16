@@ -245,24 +245,14 @@ def load_meshes(filename):
     meshes = trimesh.load(filename, process=False)
 
     if isinstance(meshes, trimesh.Scene):
-        T = np.array([
-            [ 1.,  0.,  0.,  0.],
-            [ 0.,  0., -1.,  0.],
-            [ 0.,  1.,  0.,  0.],
-            [ 0.,  0.,  0.,  1.]], dtype=np.float32,
-        )
         # FIXME: Scene.dump() has bug that uses copy without include_cache=True,
         #  it will lose the vertex normals.
         results = []
-        is_glb = filename.endswith((".gltf", ".glb"))
         for node_name in meshes.graph.nodes_geometry:
             transform, geometry_name = meshes.graph[node_name]
             current = meshes.geometry[geometry_name].copy(include_cache=True)
             if isinstance(current, trimesh.Trimesh):
-                if is_glb:
-                    current.apply_transform(T @ transform)
-                else:
-                    current.apply_transform(transform)
+                current.apply_transform(transform)
                 current.metadata["name"] = geometry_name
                 current.metadata["node"] = node_name
                 results.append(current)

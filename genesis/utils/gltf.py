@@ -290,7 +290,7 @@ def parse_glb_tree(glb, node_index):
     return mesh_list
 
 
-def parse_mesh_glb(path, group_by_material, scale, surface, convert_zup=False):
+def parse_mesh_glb(path, group_by_material, scale, surface):
     glb = pygltflib.GLTF2().load(path)
     assert glb is not None
     glb.convert_images(pygltflib.ImageFormat.DATAURI)
@@ -383,8 +383,6 @@ def parse_mesh_glb(path, group_by_material, scale, surface, convert_zup=False):
                     if primitive.attributes.TEXCOORD_1:
                         uvs = get_glb_data_from_accessor(glb, primitive.attributes.TEXCOORD_1).astype(np.float32)
 
-            if convert_zup:
-                mesh_transform @= mu.Y_UP_TRANSFORM
             points, normals = mu.apply_transform(mesh_transform, points, normals)
             if normals is None:
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
