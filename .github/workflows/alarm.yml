@@ -225,7 +225,7 @@ jobs:
 
           # Parse benchmark IDs into key-value dicts
           id2kv = {bid: parse_norm_id(bid) for bid in current_bm.keys()}
-          params_name = sorted(set(kv.keys() for kv in id2kv.values()))
+          params_name = sorted(set(e for kv in id2kv.values() for e in kv.keys()))
 
           reg_found = False
           tables = {}
