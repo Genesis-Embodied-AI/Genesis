@@ -881,7 +881,6 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=box_box_detection,
-            max_collision_pairs=1000,
             use_gjk_collision=gjk_collision,
         ),
         viewer_options=gs.options.ViewerOptions(

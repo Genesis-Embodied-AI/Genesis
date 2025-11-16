@@ -363,7 +363,7 @@ class RigidOptions(Options):
     enable_self_collision: bool = True
     enable_adjacent_collision: bool = False
     disable_constraint: bool = False
-    max_collision_pairs: int = 200
+    max_collision_pairs: int = 150
     multiplier_collision_broad_phase: int = 8
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
