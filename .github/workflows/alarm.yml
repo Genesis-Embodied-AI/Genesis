@@ -26,7 +26,7 @@ jobs:
 
       - name: Install deps
         run: |
-          python -m pip install --quiet --upgrade wandb
+          python -m pip install --quiet --upgrade wandb frozendict
 
       - name: Download artifacts from triggering run
         id: dl
@@ -71,6 +71,7 @@ jobs:
 
           import os, sys, json, re, math, statistics
           import wandb
+          from frozendict import frozendict
           from pathlib import Path
           import csv
 
@@ -98,22 +99,43 @@ jobs:
 
           METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
 
-          def _normalize_kv_id(kv: dict) -> str:
-              return "-".join(f"{k}={v}" for k, v in sorted(kv.items()))
-
-          def normalize_benchmark_id(bid: str) -> str:
-              kv = dict(map(str.strip, token.split("=", 1)) for token in bid.split("-"))
-              return _normalize_kv_id(kv)
-
-          def parse_norm_id(nbid: str) -> dict:
+          def parse_benchmark_id(bid: str) -> dict:
               kv = {}
-              if nbid:
-                  for token in nbid.split("-"):
+              if bid:
+                  for token in bid.split("-"):
                       token = token.strip()
                       if token and "=" in token:
                           k, v = token.split("=", 1)
                           kv[k.strip()] = v.strip()
               return kv
+
+          def normalize_benchmark_id(bid: str) -> frozendict[str, str]:
+              return frozendict(parse_benchmark_id(bid))
+
+          def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
+              """
+              Merge a list of tuples into a single tuple of keys that:
+              - Preserves the relative order of keys within each tuple
+              - Gives precedence to later tuples when conflicts arise
+              """
+              merged = list(bids[-1])
+              merged_set = set(merged)
+              for tup in bids[:-1]:
+                  for key in tup:
+                      if key not in merged_set:
+                          merged.append(key)
+                          merged_set.add(key)
+              return tuple(merged)
+
+          def sort_key(d):
+              key_list = []
+              for col in params_name:
+                  if col in d:
+                      val = d[col]
+                      key_list.append((0, val))
+                  else:
+                      key_list.append((1, None))
+              return key_list
 
           def artifacts_parse_csv_summary(current_txt_path):
               out = {}
@@ -125,8 +147,8 @@ jobs:
                           record[k] = float(kv.pop(k))
                       except (ValueError, TypeError, KeyError):
                           pass
-                  bid = _normalize_kv_id(kv)
-                  out[bid] = record
+                  nbid = frozendict(kv)
+                  out[nbid] = record
               return out
 
           def fmt_num(v, is_int: bool):
@@ -143,7 +165,7 @@ jobs:
           current_bm = {}
           for csv_path in current_csv_paths:
               current_bm |= artifacts_parse_csv_summary(csv_path)
-          bids_set = set(current_bm.keys())
+          bids_set = frozenset(current_bm.keys())
           assert bids_set
 
           # ----- W&B baselines -----
@@ -199,7 +221,6 @@ jobs:
               # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
               # Note that the rigid body benchmark suite is the only one being supported for now.
               sid, bid = config["benchmark_id"].split("-", 1)
-              nbid = normalize_benchmark_id(bid)
               if sid != "rigid_body":
                   continue
 
@@ -217,15 +238,15 @@ jobs:
                   continue
 
               # Store all the records into a dict
+              nbid = normalize_benchmark_id(bid)
               records_by_rev.setdefault(rev, {})[nbid] = {
                   metric: summary[metric] for metric in METRIC_KEYS
               }
 
           # ----- build TWO tables -----
 
-          # Parse benchmark IDs into key-value dicts
-          params_map_by_bid = {bid: parse_norm_id(bid) for bid in current_bm.keys()}
-          params_name = sorted(set(e for kv in params_map_by_bid.values() for e in kv.keys()))
+          # Parse benchmark IDs into key-value dicts while preserving order
+          params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_bm.keys()))
 
           reg_found = False
           tables = {}
@@ -244,13 +265,12 @@ jobs:
               header = "| " + " | ".join(header_cells) + " |"
               align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
 
-              for bid in sorted(current_bm.keys()):
+              for bid in sorted(current_bm.keys(), key=sort_key):
                   value_cur = current_bm[bid][metric]
                   is_int = isinstance(value_cur, int) or value_cur.is_integer()
                   value_repr = fmt_num(value_cur, is_int)
 
-                  params_map = params_map_by_bid[bid]
-                  params_repr = [params_map.get(k, "-") for k in params_name]
+                  params_repr = [bid.get(k, "-") for k in params_name]
                   info = {
                       **dict(zip(params_name, params_repr)),
                       "current": value_cur,
@@ -382,6 +402,16 @@ jobs:
           echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
+      - name: Upload benchmark comparisons in CSV
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison-tables
+          path: |
+            runtime_fps.csv
+            compile_time.csv
+          if-no-files-found: warn
+
       - name: Add PR comment
         if: ${{ env.SCRIPT_OUTPUT != '' }}
         uses: actions/github-script@v8
@@ -409,15 +439,21 @@ jobs:
             });
 
       - name: Publish PR check
-        if: always()
         uses: actions/github-script@v8
         env:
           CHECK_NAME: Benchmark Comparison
-          CHECK_BODY: ${{ env.CHECK_OUTPUT }}
+          CHECK_OUTPUT: ${{ env.CHECK_OUTPUT }}
           CONCLUSION: ${{ env.CONCLUSION }}
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
         with:
           script: |
+            const artifactUrl = process.env.ARTIFACT_URL || '';
+            let body = process.env.CHECK_OUTPUT || '';
+            if (body && artifactUrl) {
+              body += `\n\n**Artifact:** [Download raw data](${artifactUrl})`;
+            }
+
             const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
               ? '🔴 Regressions detected. See tables below.'
               : '✅ No regressions detected. See tables below.';
@@ -431,16 +467,6 @@ jobs:
               output: {
                 title: process.env.CHECK_NAME,
                 summary,
-                text: process.env.CHECK_BODY || undefined
+                text: body || undefined
               }
             });
-
-      - name: Upload benchmark comparisons in CSV & JSONL
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-comparison-tables
-          path: |
-            runtime_fps.csv
-            compile_time.csv
-          if-no-files-found: warn
