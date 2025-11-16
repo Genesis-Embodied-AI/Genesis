@@ -234,7 +234,13 @@ jobs:
           for metric, alias in (("runtime_fps", "FPS"), ("compile_time", "compile")):
               rows_md = []
 
-              header_cells = ["status"] + params_name + [f"current {alias}", f"baseline {alias} [last (mean ± std)]", f"Δ {alias}"]
+              header_cells = (
+                  "status",
+                  *params_name,
+                  f"current {alias}",
+                  f"baseline {alias} [last (mean ± std)] (*1)",
+                  f"Δ {alias} (*2)"
+              )
               header = "| " + " | ".join(header_cells) + " |"
               align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
 
@@ -319,6 +325,9 @@ jobs:
                   "",
                   "### Compile Time",
                   *tables["compile_time"],
+                  "",
+                  f"- (*1) last: last commit on main, mean/std: stats over revs {MAX_VALID_REVISIONS} commits if available.",
+                  f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
               ]
           )
 
