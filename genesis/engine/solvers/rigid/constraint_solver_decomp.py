@@ -560,9 +560,10 @@ def func_equality_connect(
     for i_3 in range(3):
         n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
         ti.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
+        con_n_relevant_dofs = 0
 
         if ti.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(collider_state.jac_n_relevant_dofs[n_con, i_b]):
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
         else:
@@ -1231,9 +1232,8 @@ def func_nt_hessian_direct(
     n_entities = entities_info.n_links.shape[0]
 
     # H = M + J'*D*J
-    for i_d1 in range(n_dofs):
-        for i_d2 in range(n_dofs):
-            constraint_state.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
+    for i_d1, i_d2 in ti.ndrange(n_dofs, n_dofs):
+        constraint_state.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
 
     if ti.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1251,17 +1251,16 @@ def func_nt_hessian_direct(
                             * constraint_state.active[i_c, i_b]
                         )
     else:
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            for i_d1 in range(n_dofs):
-                if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
-                    for i_d2 in range(i_d1 + 1):
-                        constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                            constraint_state.nt_H[i_d1, i_d2, i_b]
-                            + constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.jac[i_c, i_d1, i_b]
-                            * constraint_state.efc_D[i_c, i_b]
-                            * constraint_state.active[i_c, i_b]
-                        )
+        for i_d1, i_c in ti.ndrange(n_dofs, constraint_state.n_constraints[i_b]):
+            if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
+                for i_d2 in range(i_d1 + 1):
+                    constraint_state.nt_H[i_d1, i_d2, i_b] = (
+                        constraint_state.nt_H[i_d1, i_d2, i_b]
+                        + constraint_state.jac[i_c, i_d2, i_b]
+                        * constraint_state.jac[i_c, i_d1, i_b]
+                        * constraint_state.efc_D[i_c, i_b]
+                        * constraint_state.active[i_c, i_b]
+                    )
 
     for i_d1 in range(n_dofs):
         for i_d2 in range(i_d1 + 1, n_dofs):
@@ -1404,6 +1403,7 @@ def func_solve(
 ):
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # this safeguard seems not necessary in normal execution
@@ -1419,8 +1419,10 @@ def func_solve(
                     constraint_state=constraint_state,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
-                if constraint_state.improved[i_b] < 1:
+                if not constraint_state.improved[i_b]:
                     break
+        else:
+            constraint_state.improved[i_b] = False
 
 
 @ti.func
@@ -1540,7 +1542,7 @@ def func_no_linesearch(i_b, constraint_state: array_class.ConstraintState):
     func_ls_init(i_b)
     n_dofs = constraint_state.search.shape[0]
 
-    constraint_state.improved[i_b] = 1
+    constraint_state.improved[i_b] = True
     for i_d in range(n_dofs):
         constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b]
         constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b]
@@ -1810,7 +1812,7 @@ def func_solve_body(
     )
 
     if ti.abs(alpha) < rigid_global_info.EPS[None]:
-        constraint_state.improved[i_b] = 0
+        constraint_state.improved[i_b] = False
     else:
         for i_d in range(n_dofs):
             constraint_state.qacc[i_d, i_b] = (
@@ -1861,9 +1863,9 @@ def func_solve_body(
             gradient += constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
         gradient = ti.sqrt(gradient)
         if gradient < tol_scaled or improvement < tol_scaled:
-            constraint_state.improved[i_b] = 0
+            constraint_state.improved[i_b] = False
         else:
-            constraint_state.improved[i_b] = 1
+            constraint_state.improved[i_b] = True
 
             if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
                 for i_d in range(n_dofs):

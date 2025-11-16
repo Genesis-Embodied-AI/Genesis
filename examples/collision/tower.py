@@ -1,6 +1,6 @@
-import numpy as np
-import genesis as gs
 import argparse
+
+import genesis as gs
 
 
 def main():
@@ -34,11 +34,11 @@ def main():
     num_stacks = 50
     for i in range(num_stacks):
         if i % 2 == 0:  # horizontal stack
-            box_size = np.array([box_width, box_length, box_height])
+            box_size = (box_width, box_length, box_height)
             box_pos_0 = (-0.4 * box_length, 0, i * (box_height - 1e-3) + 0.5 * box_height)
             box_pos_1 = (+0.4 * box_length, 0, i * (box_height - 1e-3) + 0.5 * box_height)
         else:  # vertical stack
-            box_size = np.array([box_length, box_width, box_height])
+            box_size = (box_length, box_width, box_height)
             box_pos_0 = (0, -0.4 * box_length, i * (box_height - 1e-3) + 0.5 * box_height)
             box_pos_1 = (0, +0.4 * box_length, i * (box_height - 1e-3) + 0.5 * box_height)
         for box_pos in (box_pos_0, box_pos_1):
@@ -68,8 +68,7 @@ def main():
             ),
         )
     elif object_type == "cylinder":
-        cylinder_radius = 2.0
-        cylinder_height = 1.0
+        cylinder_radius, cylinder_height = 2.0, 1.0
         scene.add_entity(
             morph=gs.morphs.Cylinder(
                 radius=cylinder_radius,
