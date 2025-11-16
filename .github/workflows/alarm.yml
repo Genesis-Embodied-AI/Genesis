@@ -55,7 +55,7 @@ jobs:
 
           # --- Parameters ---
           MAX_VALID_REVISIONS: 5
-          MAX_FETCH_REVISIONS: 50
+          MAX_FETCH_REVISIONS: 40
           RUNTIME_REGRESSION_TOLERANCE_PCT: 10
           COMPILE_REGRESSION_TOLERANCE_PCT: 10
 
@@ -224,8 +224,8 @@ jobs:
           # ----- build TWO tables -----
 
           # Parse benchmark IDs into key-value dicts
-          id2kv = {bid: parse_norm_id(bid) for bid in current_bm.keys()}
-          params_name = sorted(set(e for kv in id2kv.values() for e in kv.keys()))
+          params_map_by_bid = {bid: parse_norm_id(bid) for bid in current_bm.keys()}
+          params_name = sorted(set(e for kv in params_map_by_bid.values() for e in kv.keys()))
 
           reg_found = False
           tables = {}
@@ -249,8 +249,10 @@ jobs:
                   is_int = isinstance(value_cur, int) or value_cur.is_integer()
                   value_repr = fmt_num(value_cur, is_int)
 
+                  params_map = params_map_by_bid[bid]
+                  params_repr = [params_map.get(k, "-") for k in params_name]
                   info = {
-                      **{k: kv.get(k, "-") for k in params_name},
+                      **dict(zip(params_name, params_repr)),
                       "current": value_cur,
                       "baseline_last": None,
                       "baseline_min": None,
@@ -295,10 +297,7 @@ jobs:
                   else:
                       picto, stats_repr, delta_repr = "ℹ️", "---", "---"
 
-                  kv = id2kv[bid]
-                  key_cells = [kv.get(k, "-") for k in params_name]
-
-                  rows_md.append("| " + " | ".join([picto] + key_cells + [value_repr, stats_repr, delta_repr]) + " |")
+                  rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
                   rows_for_csv[metric].append(info)
 
               tables[metric] = [header, align] + rows_md
