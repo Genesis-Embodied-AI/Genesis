@@ -416,7 +416,8 @@ jobs:
             const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
               ? '🔴 Regressions detected. See tables below.'
               : '✅ No regressions detected. See tables below.';
-            await github.rest.checks.create({
+
+            const check = await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               head_sha: context.payload.workflow_run.head_sha,
