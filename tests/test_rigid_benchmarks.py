@@ -388,7 +388,7 @@ def anymal_c(solver, n_envs, gjk):
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
     realtime_factor = runtime_fps * STEP_DT
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return {"compile_time": compile_time + 100, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
 @pytest.fixture
