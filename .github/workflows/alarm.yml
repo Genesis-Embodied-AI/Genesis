@@ -26,7 +26,7 @@ jobs:
 
       - name: Install deps
         run: |
-          python -m pip install --quiet --upgrade wandb
+          python -m pip install --quiet --upgrade wandb frozendict
 
       - name: Download artifacts from triggering run
         id: dl
@@ -55,21 +55,24 @@ jobs:
 
           # --- Parameters ---
           MAX_VALID_REVISIONS: 5
-          MAX_FETCH_REVISIONS: 100
+          MAX_FETCH_REVISIONS: 40
           RUNTIME_REGRESSION_TOLERANCE_PCT: 10
           COMPILE_REGRESSION_TOLERANCE_PCT: 10
 
           # Input/Output paths
           ARTIFACTS_DIR: ${{ steps.dl.outputs.download-path }}
-          PR_COMMENT_PATH: pr_comment.md
           CHECK_BODY_PATH: check_output.md
+          CSV_RUNTIME_PATH: runtime_fps.csv
+          CSV_COMPILE_PATH: compile_time.csv
           EXIT_CODE_REGRESSION: 42
         run: |
           { python - << 'PY'; EXIT_CODE=$?; } || true
 
           import os, sys, json, re, math, statistics
           import wandb
+          from frozendict import frozendict
           from pathlib import Path
+          import csv
 
           # ----- arguments -----
 
@@ -82,20 +85,54 @@ jobs:
           }
 
           artifacts_dir = Path(os.environ["ARTIFACTS_DIR"]).expanduser().resolve()
-
-          pr_comment_path = Path(os.environ["PR_COMMENT_PATH"]).expanduser()
           check_body_path = Path(os.environ["CHECK_BODY_PATH"]).expanduser()
+
+          csv_files = {
+            "runtime_fps": Path(os.environ["CSV_RUNTIME_PATH"]).expanduser().resolve(),
+            "compile_time": Path(os.environ["CSV_COMPILE_PATH"]).expanduser().resolve(),
+          }
 
           # ---------- helpers ----------
 
           METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
 
-          def _normalize_kv_id(kv: dict) -> str:
-              return "-".join(f"{k}={v}" for k, v in sorted(kv.items()))
+          def parse_benchmark_id(bid: str) -> dict:
+              kv = {}
+              if bid:
+                  for token in bid.split("-"):
+                      token = token.strip()
+                      if token and "=" in token:
+                          k, v = token.split("=", 1)
+                          kv[k.strip()] = v.strip()
+              return kv
 
-          def normalize_benchmark_id(bid: str) -> str:
-              kv = dict(map(str.strip, token.split("=", 1)) for token in bid.split("-"))
-              return _normalize_kv_id(kv)
+          def normalize_benchmark_id(bid: str) -> frozendict[str, str]:
+              return frozendict(parse_benchmark_id(bid))
+
+          def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
+              """
+              Merge a list of tuples into a single tuple of keys that:
+              - Preserves the relative order of keys within each tuple
+              - Gives precedence to later tuples when conflicts arise
+              """
+              merged = list(bids[-1])
+              merged_set = set(merged)
+              for tup in bids[:-1]:
+                  for key in tup:
+                      if key not in merged_set:
+                          merged.append(key)
+                          merged_set.add(key)
+              return tuple(merged)
+
+          def sort_key(d):
+              key_list = []
+              for col in params_name:
+                  if col in d:
+                      val = d[col]
+                      key_list.append((0, val))
+                  else:
+                      key_list.append((1, None))
+              return key_list
 
           def artifacts_parse_csv_summary(current_txt_path):
               out = {}
@@ -107,8 +144,8 @@ jobs:
                           record[k] = float(kv.pop(k))
                       except (ValueError, TypeError, KeyError):
                           pass
-                  bid = _normalize_kv_id(kv)
-                  out[bid] = record
+                  nbid = frozendict(kv)
+                  out[nbid] = record
               return out
 
           def fmt_num(v, is_int: bool):
@@ -118,14 +155,13 @@ jobs:
 
           current_csv_paths = list(artifacts_dir.rglob("speed_test*.txt"))
           if not current_csv_paths:
-              pr_comment_path.touch()
               check_body_path.touch()
               sys.exit(0)
 
           current_bm = {}
           for csv_path in current_csv_paths:
               current_bm |= artifacts_parse_csv_summary(csv_path)
-          bids_set = set(current_bm.keys())
+          bids_set = frozenset(current_bm.keys())
           assert bids_set
 
           # ----- W&B baselines -----
@@ -139,23 +175,18 @@ jobs:
           api = wandb.Api()
           runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
 
-          is_complete = False
+          revs = set()
           records_by_rev = {}
           for i, run in enumerate(runs_iter):
               # Abort if still not complete after checking enough runs.
               # This would happen if a new benchmark has been added, and not enough past data is available yet.
-              if i == MAX_FETCH_REVISIONS:
+              if len(revs) == MAX_FETCH_REVISIONS:
                   break
 
               # Early return if enough complete records have been collected
               records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
-              is_complete = sum(records_is_complete) == MAX_VALID_REVISIONS
-              if is_complete:
+              if sum(records_is_complete) == MAX_VALID_REVISIONS:
                   break
-
-              # Skip runs did not finish for some reason
-              if run.state != "finished":
-                  continue
 
               # Load config and summary, with support of legacy runs
               config, summary = run.config, run.summary
@@ -167,11 +198,16 @@ jobs:
               # Extract revision commit and branch
               try:
                   rev, branch = config["revision"].split("@", 1)
+                  revs.add(rev)
               except ValueError:
                   # Ignore this run if the revision has been corrupted for some unknown reason
                   continue
               # Ignore runs associated with a commit that is not part of the official repository
               if not branch.startswith('Genesis-Embodied-AI/'):
+                  continue
+
+              # Skip runs did not finish for some reason
+              if run.state != "finished":
                   continue
 
               # Do not store new records if the desired number of revision is already reached
@@ -181,7 +217,6 @@ jobs:
               # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
               # Note that the rigid body benchmark suite is the only one being supported for now.
               sid, bid = config["benchmark_id"].split("-", 1)
-              nbid = normalize_benchmark_id(bid)
               if sid != "rigid_body":
                   continue
 
@@ -199,20 +234,46 @@ jobs:
                   continue
 
               # Store all the records into a dict
+              nbid = normalize_benchmark_id(bid)
               records_by_rev.setdefault(rev, {})[nbid] = {
                   metric: summary[metric] for metric in METRIC_KEYS
               }
 
           # ----- build TWO tables -----
 
+          # Parse benchmark IDs into key-value dicts while preserving order
+          params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_bm.keys()))
+
           reg_found = False
           tables = {}
+          rows_for_csv = {"runtime_fps": [], "compile_time": []}
+          info = {}
           for metric, alias in (("runtime_fps", "FPS"), ("compile_time", "compile")):
-              rows = []
-              for bid in sorted(current_bm.keys()):
+              rows_md = []
+
+              header_cells = (
+                  "status",
+                  *params_name,
+                  f"current {alias}",
+                  f"baseline {alias} [last (mean ± std)] (*1)",
+                  f"Δ {alias} (*2)"
+              )
+              header = "| " + " | ".join(header_cells) + " |"
+              align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
+
+              for bid in sorted(current_bm.keys(), key=sort_key):
                   value_cur = current_bm[bid][metric]
                   is_int = isinstance(value_cur, int) or value_cur.is_integer()
                   value_repr = fmt_num(value_cur, is_int)
+
+                  params_repr = [bid.get(k, "-") for k in params_name]
+                  info = {
+                      **dict(zip(params_name, params_repr)),
+                      "current": value_cur,
+                      "baseline_last": None,
+                      "baseline_min": None,
+                      "baseline_max": None,
+                  }
 
                   values_prev = [
                       record[bid][metric]
@@ -220,35 +281,44 @@ jobs:
                       if bid in record
                   ]
                   if values_prev:
+                      value_last = values_prev[0]
                       value_ref = statistics.fmean(values_prev)
-                      delta = (value_cur - value_ref) / value_ref * 100.0
+                      delta = (value_cur - value_last) / value_last * 100.0
 
-                      stats_repr = f"{fmt_num(values_prev[0], is_int)}"
+                      info["baseline_last"] = int(value_last) if is_int else float(value_last)
+
+                      stats_repr = f"{fmt_num(value_last, is_int)}"
                       delta_repr = f"{delta:+.1f}%"
                       if len(values_prev) == MAX_VALID_REVISIONS:
+                          info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
+                          info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
+                          info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
+
                           value_std = statistics.stdev(values_prev)
                           stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                          if abs(delta) > METRICS_TOL[metrics]:
+                          if abs(delta) > METRICS_TOL[metric]:
+                              info["status"] = "alert"
+
                               delta_repr = f"**{delta_repr}**"
                               picto = "🔴"
                               reg_found = True
                           else:
+                              info["status"] = "ok"
+
                               picto = "✅"
                       else:
+                          info["status"] = "n/a"
+
                           picto = "ℹ️"
                   else:
                       picto, stats_repr, delta_repr = "ℹ️", "---", "---"
 
-                  rows.append([picto, f"`{bid}`", value_repr, stats_repr, delta_repr])
+                  rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
+                  rows_for_csv[metric].append(info)
 
-              header = [
-                f"| status | benchmark ID | current {alias} | baseline {alias} [last (mean ± std)] | Δ {alias} |",
-                "|:------:|:-------------|-----------:|-------------:|------:|",
-              ]
-              tables[metric] = header + ["| " + " | ".join(r) + " |" for r in rows]
+              tables[metric] = [header, align] + rows_md
 
-          # ----- baseline commit list -----
-
+          # ----- baseline commit list (MD) -----
           blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
           baseline_block = ["**Baselines considered:** " + f"**{len(records_by_rev)}** commits"] + blist
 
@@ -270,6 +340,9 @@ jobs:
                   "",
                   "### Compile Time",
                   *tables["compile_time"],
+                  "",
+                  f"- (*1) last: last commit on main, mean/std: stats over revs {MAX_VALID_REVISIONS} commits if available.",
+                  f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
               ]
           )
 
@@ -280,9 +353,16 @@ jobs:
           else:
               comment_body = ""
 
-          # Write files
+          # CSV file
+          for metric in ("runtime_fps", "compile_time"):
+            with csv_files[metric].open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=info.keys())
+                w.writeheader()
+                for rec in rows_for_csv[metric]:
+                    w.writerow(rec)
+
+          # write md results
           check_body_path.write_text(check_body + "\n", encoding="utf-8")
-          pr_comment_path.write_text(comment_body + "\n", encoding="utf-8")
 
           # Exit with 42 if regressions are found, 0 otherwise
           sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]) if reg_found else 0)
@@ -302,26 +382,61 @@ jobs:
             echo "CHECK_OUTPUT=" >> "$GITHUB_ENV"
           fi
 
-          # Only set SCRIPT_OUTPUT when we actually want to comment
-          if [ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && [ -s "$PR_COMMENT_PATH" ]; then
-            {
-              echo 'SCRIPT_OUTPUT<<__EOF__'
-              cat "$PR_COMMENT_PATH"
-              echo '__EOF__'
-            } >> "$GITHUB_ENV"
-          else
-            echo "SCRIPT_OUTPUT=" >> "$GITHUB_ENV"
-          fi
-
           # Export status
           echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
-      - name: Add PR comment
-        if: ${{ env.SCRIPT_OUTPUT != '' }}
+      - name: Upload benchmark comparisons in CSV
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison-tables
+          path: |
+            runtime_fps.csv
+            compile_time.csv
+          if-no-files-found: warn
+
+      - name: Publish PR check
+        id: publish_check
         uses: actions/github-script@v8
         env:
-          COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
+          CHECK_NAME: Benchmark Comparison
+          CHECK_OUTPUT: ${{ env.CHECK_OUTPUT }}
+          CONCLUSION: ${{ env.CONCLUSION }}
+          HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        with:
+          script: |
+            const artifactUrl = process.env.ARTIFACT_URL || '';
+            let body = process.env.CHECK_OUTPUT || '';
+            if (body && artifactUrl) {
+              body += `\n\n**Artifact:** [Download raw data](${artifactUrl})`;
+            }
+
+            const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
+              ? '🔴 Regressions detected. See tables below.'
+              : '✅ No regressions detected. See tables below.';
+
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: context.payload.workflow_run.head_sha,
+              name: process.env.CHECK_NAME,
+              status: 'completed',
+              conclusion: process.env.CONCLUSION,
+              output: {
+                title: process.env.CHECK_NAME,
+                summary,
+                text: body || undefined
+              }
+            });
+            core.setOutput("check-url", check.data.html_url);
+
+      - name: Add PR comment
+        if: ${{ env.HAS_REGRESSIONS == '1' }}
+        uses: actions/github-script@v8
+        env:
+          REPORT_URL: ${{ steps.publish_check.outputs.check-url }}
         with:
           script: |
             // Getting PR number when using 'workflow_run' is tricky. For reference, see:
@@ -336,36 +451,13 @@ jobs:
               core.info('No associated PR; skipping comment.');
               return;
             }
+
+            const comment = `:warning: **Benchmark Regression Detected**
+            ➡️  **[Open Benchmark Comparison Report](${process.env.REPORT_URL})**`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: data[0].number,
-              body: process.env.COMMENT_BODY
-            });
-
-      - name: Publish PR check
-        if: always()
-        uses: actions/github-script@v8
-        env:
-          CHECK_NAME: Benchmark Comparison
-          CHECK_BODY: ${{ env.CHECK_OUTPUT }}
-          CONCLUSION: ${{ env.CONCLUSION }}
-          HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
-        with:
-          script: |
-            const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
-              ? '🔴 Regressions detected. See tables below.'
-              : '✅ No regressions detected. See tables below.';
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head_sha: context.payload.workflow_run.head_sha,
-              name: process.env.CHECK_NAME,
-              status: 'completed',
-              conclusion: process.env.CONCLUSION,
-              output: {
-                title: process.env.CHECK_NAME,
-                summary,
-                text: process.env.CHECK_BODY || undefined
-              }
+              body: comment
             });

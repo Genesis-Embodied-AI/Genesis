@@ -185,7 +185,7 @@ def test_static(
         env = dict(os.environ)
         env.update(env_changes)
 
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
         if proc.returncode == RET_SKIP:
             pytest.skip(proc.stderr)
         elif proc.returncode != RET_SUCCESS:
@@ -277,7 +277,7 @@ def test_num_envs(use_ndarray: bool, enable_pure: bool, test_backend: str, tmp_p
             cmd_line += ["--expected-use-src-ll-cache"]
         if expected_src_ll_cache_hit:
             cmd_line += ["--expected-src-ll-cache-hit"]
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
         if proc.returncode == RET_SKIP:
             pytest.skip(proc.stderr)
         elif proc.returncode != RET_SUCCESS:
@@ -380,7 +380,7 @@ def test_ndarray_no_compile(
         env["GS_ENABLE_NDARRAY"] = "1"
         env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
-        proc = subprocess.run(cmd_line, capture_output=True, text=True, env=env, cwd=MODULE_ROOT_DIR)
+        proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
 
         # Display error message only in case of failure
         if proc.returncode == RET_SKIP:
