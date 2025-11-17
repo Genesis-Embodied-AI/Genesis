@@ -2,6 +2,7 @@ from collections import defaultdict
 import csv
 import subprocess
 import time
+import os
 import argparse
 
 
@@ -44,6 +45,7 @@ def get_test_name_by_pid() -> dict[int, str]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-csv-filepath", type=str, required=True)
+    parser.add_argument("--die-with-parent", action="store_true")
     args = parser.parse_args()
 
     max_mem_by_test = defaultdict(int)
@@ -54,7 +56,7 @@ def main() -> None:
     old_mem_by_test = {}
     num_results_written = 0
     disp = False
-    while True:
+    while not args.die_with_parent or os.getppid() != 1:
         mem_by_pid = get_cuda_usage()
         test_by_psid = get_test_name_by_pid()
         num_tests = len(test_by_psid)
@@ -88,6 +90,7 @@ def main() -> None:
         old_mem_by_test = _mem_by_test
         disp = not disp
         time.sleep(1.0)
+    print("Test monitor exiting")
 
 
 if __name__ == "__main__":

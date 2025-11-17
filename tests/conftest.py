@@ -72,11 +72,32 @@ def pytest_runtest_setup(item):
     setproctitle.setproctitle(f"pytest: {test_name}")
 
 
+def validate_mem_option() -> None:
+    try:
+        assert sys.platform.startswith("linux")
+        nvidia_out = subprocess.check_output(["nvidia-smi"]).decode("utf-8")
+    except Exception as e:
+        print("--mem not supported on this platform", e)
+        raise e
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     # Force disabling forked for non-linux systems
     if not sys.platform.startswith("linux"):
         config.option.forked = False
+
+    if config.getoption("--mem-monitoring-filepath"):
+        validate_mem_option()
+        subprocess.Popen(
+            [
+                sys.executable,
+                "tests/monitor_test_mem.py",
+                "--die-with-parent",
+                "--out-csv-filepath",
+                config.getoption("--mem-monitoring-filepath"),
+            ]
+        )
 
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
@@ -316,6 +337,12 @@ def pytest_runtest_setup(item):
 
 
 def pytest_addoption(parser):
+    parser.addoption(
+        "--mem-monitoring-filepath",
+        action="store",
+        default=None,
+        help="Run memory monitoring, and store results to mem_monitoring_filepath. CUDA on linux ONLY.",
+    )
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
