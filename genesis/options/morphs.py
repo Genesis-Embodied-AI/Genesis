@@ -166,6 +166,9 @@ class Primitive(Morph):
         Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     contype : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
         conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
@@ -176,6 +179,7 @@ class Primitive(Morph):
 
     # Rigid specific
     fixed: bool = False
+    batch_fixed_verts: bool = True
     contype: int = 0xFFFF
     conaffinity: int = 0xFFFF
 
@@ -215,6 +219,9 @@ class Box(Primitive, TetGenMixin):
         **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     contype : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
         conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
@@ -297,6 +304,9 @@ class Cylinder(Primitive, TetGenMixin):
         **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     contype : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
         conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
@@ -359,6 +369,9 @@ class Sphere(Primitive, TetGenMixin):
         **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     contype : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
         conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
@@ -422,6 +435,9 @@ class Plane(Primitive):
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to false. **This is only used for RigidEntity.**
     contype : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
         conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
@@ -435,6 +451,7 @@ class Plane(Primitive):
     """
 
     fixed: bool = True
+    batch_fixed_verts: bool = False
     normal: tuple = (0, 0, 1)
     plane_size: tuple = (1e3, 1e3)
     tile_size: tuple = (1, 1)
@@ -510,6 +527,9 @@ class FileMorph(Morph):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
@@ -526,6 +546,7 @@ class FileMorph(Morph):
     decompose_robot_error_threshold: float = float("inf")
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
+    batch_fixed_verts: bool = False
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -646,6 +667,9 @@ class Mesh(FileMorph, TetGenMixin):
         Whether to use zup to load glb files. Defaults to False.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to false. **This is only used for RigidEntity.**
     contype : int, optional
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the contype of one geom and the
         conaffinity of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
@@ -779,6 +803,9 @@ class MJCF(FileMorph):
         `visualization` and `collision` cannot both be False.
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
@@ -882,6 +909,9 @@ class URDF(FileMorph):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False.
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     prioritize_urdf_material : bool, optional
         Sometimes a geom in a urdf file will be assigned a color, and the geom asset file also contains its own visual
         material. This parameter controls whether to prioritize the URDF-defined material over the asset's own material.
@@ -1103,8 +1133,12 @@ class Terrain(Morph):
         This parameter is deprecated.
     subterrain_parameters : dictionary, optional
         Lets users pick their own subterrain parameters.
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to false. **This is only used for RigidEntity.**
     """
 
+    batch_fixed_verts: bool = False
     randomize: bool = False  # whether to randomize the terrain
     n_subterrains: Tuple[int, int] = (3, 3)  # number of subterrains in x and y directions
     subterrain_size: Tuple[float, float] = (12.0, 12.0)  # meter
