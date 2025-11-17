@@ -65,6 +65,7 @@ jobs:
           CSV_RUNTIME_PATH: runtime_fps.csv
           CSV_COMPILE_PATH: compile_time.csv
           EXIT_CODE_REGRESSION: 42
+          EXIT_CODE_ALERT: 43
         run: |
           { python - << 'PY'; EXIT_CODE=$?; } || true
 
@@ -244,11 +245,11 @@ jobs:
           # Parse benchmark IDs into key-value dicts while preserving order
           params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_bm.keys()))
 
-          reg_found = False
+          reg_found, alert_found = False, False
           tables = {}
           rows_for_csv = {"runtime_fps": [], "compile_time": []}
           info = {}
-          for metric, alias in (("runtime_fps", "FPS"), ("compile_time", "compile")):
+          for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
               rows_md = []
 
               header_cells = (
@@ -296,12 +297,18 @@ jobs:
 
                           value_std = statistics.stdev(values_prev)
                           stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                          if abs(delta) > METRICS_TOL[metric]:
-                              info["status"] = "alert"
+                          if sign * delta < - METRICS_TOL[metric]:
+                              info["status"] = "regression"
 
                               delta_repr = f"**{delta_repr}**"
                               picto = "🔴"
                               reg_found = True
+                          elif sign * delta > METRICS_TOL[metric]:
+                              info["status"] = "alert"
+
+                              delta_repr = f"**{delta_repr}**"
+                              picto = "⚠️"
+                              alert_found = True
                           else:
                               info["status"] = "ok"
 
@@ -364,8 +371,14 @@ jobs:
           # write md results
           check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
-          # Exit with 42 if regressions are found, 0 otherwise
-          sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]) if reg_found else 0)
+          # Exit with error code
+          if reg_found:
+              exit_code = int(os.environ["EXIT_CODE_REGRESSION"])
+          elif alert_found:
+              exit_code = int(os.environ["EXIT_CODE_ALERT"])
+          else:
+              exit_code = 0
+          sys.exit(exit_code)
           PY
 
           # Enable command trace to ease debugging
@@ -385,6 +398,7 @@ jobs:
           # Export status
           echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+          echo "HAS_ALERTS=$([ "$EXIT_CODE" = "$EXIT_CODE_ALERT" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
       - name: Upload benchmark comparisons in CSV
         id: upload
@@ -404,6 +418,7 @@ jobs:
           CHECK_OUTPUT: ${{ env.CHECK_OUTPUT }}
           CONCLUSION: ${{ env.CONCLUSION }}
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
+          HAS_ALERTS: ${{ env.HAS_ALERTS }}
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
         with:
           script: |
@@ -413,9 +428,14 @@ jobs:
               body += `\n\n**Artifact:** [Download raw data](${artifactUrl})`;
             }
 
-            const summary = (process.env.HAS_REGRESSIONS || '0') === '1'
-              ? '🔴 Regressions detected. See tables below.'
-              : '✅ No regressions detected. See tables below.';
+            let summary;
+            if ((process.env.HAS_REGRESSIONS || '0') === '1') {
+              summary = '🔴 Regressions detected. See tables below.';
+            } else if ((process.env.HAS_ALERTS || '0') === '1') {
+              summary = '⚠️ Large deviation detected. See tables below.';
+            } else {
+              summary = '✅ No regressions detected. See tables below.';
+            }
 
             const check = await github.rest.checks.create({
               owner: context.repo.owner,
@@ -433,9 +453,10 @@ jobs:
             core.setOutput("check-url", check.data.html_url);
 
       - name: Add PR comment
-        if: ${{ env.HAS_REGRESSIONS == '1' }}
+        if: ${{ env.HAS_REGRESSIONS == '1' || env.HAS_ALERTS == '1' }}
         uses: actions/github-script@v8
         env:
+          HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
           REPORT_URL: ${{ steps.publish_check.outputs.check-url }}
         with:
           script: |
@@ -452,8 +473,10 @@ jobs:
               return;
             }
 
-            const comment = `:warning: **Benchmark Regression Detected**
-            ➡️  **[Open Benchmark Comparison Report](${process.env.REPORT_URL})**`;
+            const title = (process.env.HAS_REGRESSIONS || '0') === '1'
+              ? 'Benchmark Regression Detected' : 'Abnormal Benchmark Result Detected';
+            const comment = `:warning: **${title}**
+            ➡️  **[Report](${process.env.REPORT_URL})**`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
