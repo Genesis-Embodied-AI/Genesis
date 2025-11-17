@@ -142,8 +142,6 @@ jobs:
               pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" --print -x -m "benchmarks" ./tests
               cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
-              kill $(ps -ef | grep monitor_test_mem | grep -v grep | awk '{print $2}')
-
               # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
       - name: Kill srun job systematically
