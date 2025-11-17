@@ -396,7 +396,6 @@ jobs:
           fi
 
           # Export status
-          echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
           echo "HAS_ALERTS=$([ "$EXIT_CODE" = "$EXIT_CODE_ALERT" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
 
@@ -416,7 +415,6 @@ jobs:
         env:
           CHECK_NAME: Benchmark Comparison
           CHECK_OUTPUT: ${{ env.CHECK_OUTPUT }}
-          CONCLUSION: ${{ env.CONCLUSION }}
           HAS_REGRESSIONS: ${{ env.HAS_REGRESSIONS }}
           HAS_ALERTS: ${{ env.HAS_ALERTS }}
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
@@ -429,8 +427,10 @@ jobs:
             }
 
             let summary;
+            let conclusion = 'success';
             if ((process.env.HAS_REGRESSIONS || '0') === '1') {
               summary = '🔴 Regressions detected. See tables below.';
+              conclusion = 'failure';
             } else if ((process.env.HAS_ALERTS || '0') === '1') {
               summary = '⚠️ Large deviation detected. See tables below.';
             } else {
@@ -443,7 +443,7 @@ jobs:
               head_sha: context.payload.workflow_run.head_sha,
               name: process.env.CHECK_NAME,
               status: 'completed',
-              conclusion: process.env.CONCLUSION,
+              conclusion: conclusion,
               output: {
                 title: process.env.CHECK_NAME,
                 summary,
