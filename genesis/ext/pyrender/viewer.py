@@ -4,10 +4,10 @@ import copy
 import os
 import shutil
 import sys
-import time
 import threading
+import time
 from threading import Event, RLock, Semaphore, Thread
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import OpenGL
@@ -43,12 +43,11 @@ from .constants import (
     RenderFlags,
     TextAlign,
 )
-from .interaction.viewer_interaction import ViewerInteraction
-from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
+from .interaction import EVENT_HANDLE_STATE, EVENT_HANDLED, VIEWER_PLUGIN_MAP, ViewerPluginBase
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
-from .shader_program import ShaderProgram, ShaderProgramCache
+from .shader_program import ShaderProgram
 from .trackball import Trackball
 
 if TYPE_CHECKING:
@@ -204,7 +203,7 @@ class Viewer(pyglet.window.Window):
         shadow=False,
         plane_reflection=False,
         env_separate_rigid=False,
-        enable_interaction=False,
+        viewer_plugin=None,
         **kwargs,
     ):
         #######################################################################
@@ -374,14 +373,22 @@ class Viewer(pyglet.window.Window):
         self.scene.main_camera_node = self._camera_node
         self._reset_view()
 
-        # Setup mouse interaction
+        # Setup viewer plugin
 
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
-        self.viewer_interaction = (
-            ViewerInteraction(self._camera_node, context.scene, viewport_size, camera.yfov)
-            if enable_interaction
-            else ViewerInteractionBase()
+        if viewer_plugin is not None:
+            plugin_cls = VIEWER_PLUGIN_MAP.get(type(viewer_plugin))
+            if plugin_cls is None:
+                gs.raise_exception(
+                    f"Viewer plugin type {type(viewer_plugin).__name__} is not registered. "
+                    f"Available plugins: {list(VIEWER_PLUGIN_MAP.keys())}"
+                )
+        else:
+            plugin_cls = ViewerPluginBase
+
+        self.viewer_interaction = plugin_cls(
+            viewer_plugin, self._camera_node, context.scene, viewport_size
         )
 
         #######################################################################
@@ -405,7 +412,7 @@ class Viewer(pyglet.window.Window):
             self._initialized_event.wait()
             if not self._is_active:
                 if self._exception:
-                    raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from self._exception
+                    raise RuntimeError("Unable to initialize an OpenGL 3+ context.") from self._exception
                 raise OpenGL.error.Error("Invalid OpenGL context.")
         else:
             if self.auto_start:
@@ -584,6 +591,8 @@ class Viewer(pyglet.window.Window):
 
         # Do not consider the viewer as active anymore
         self._is_active = False
+
+        self.viewer_interaction.on_close()
 
         # Remove our camera and restore the prior one
         try:
@@ -1087,8 +1096,7 @@ class Viewer(pyglet.window.Window):
 
         try:
             # Importing tkinter is very slow and not used very often. Let's delay import.
-            from tkinter import Tk
-            from tkinter import filedialog
+            from tkinter import Tk, filedialog
 
             if root is None:
                 root = Tk()
@@ -1230,7 +1238,8 @@ class Viewer(pyglet.window.Window):
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
         try:
-            import pyglet.window.xlib, pyglet.display.xlib
+            import pyglet.display.xlib
+            import pyglet.window.xlib
             xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
             xlib_exceptions = ()
@@ -1301,7 +1310,7 @@ class Viewer(pyglet.window.Window):
                         self._exception = e
                         return
                     else:
-                        raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
+                        raise RuntimeError("Unable to initialize an OpenGL 3+ context.") from e
                 pyglet.window.xlib._have_utf8 = False
                 confs.insert(0, conf)
             except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException) as e:
@@ -1311,7 +1320,7 @@ class Viewer(pyglet.window.Window):
                         self._exception = e
                         return
                     else:
-                        raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
+                        raise RuntimeError("Unable to initialize an OpenGL 3+ context.") from e
 
         if self._run_in_thread:
             pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)
