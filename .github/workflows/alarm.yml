@@ -61,7 +61,6 @@ jobs:
 
           # Input/Output paths
           ARTIFACTS_DIR: ${{ steps.dl.outputs.download-path }}
-          PR_COMMENT_PATH: pr_comment.md
           CHECK_BODY_PATH: check_output.md
           CSV_RUNTIME_PATH: runtime_fps.csv
           CSV_COMPILE_PATH: compile_time.csv
@@ -86,8 +85,6 @@ jobs:
           }
 
           artifacts_dir = Path(os.environ["ARTIFACTS_DIR"]).expanduser().resolve()
-
-          pr_comment_path = Path(os.environ["PR_COMMENT_PATH"]).expanduser()
           check_body_path = Path(os.environ["CHECK_BODY_PATH"]).expanduser()
 
           csv_files = {
@@ -158,7 +155,6 @@ jobs:
 
           current_csv_paths = list(artifacts_dir.rglob("speed_test*.txt"))
           if not current_csv_paths:
-              pr_comment_path.touch()
               check_body_path.touch()
               sys.exit(0)
 
@@ -367,7 +363,6 @@ jobs:
 
           # write md results
           check_body_path.write_text(check_body + "\n", encoding="utf-8")
-          pr_comment_path.write_text(comment_body + "\n", encoding="utf-8")
 
           # Exit with 42 if regressions are found, 0 otherwise
           sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]) if reg_found else 0)
@@ -387,17 +382,6 @@ jobs:
             echo "CHECK_OUTPUT=" >> "$GITHUB_ENV"
           fi
 
-          # Only set SCRIPT_OUTPUT when we actually want to comment
-          if [ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && [ -s "$PR_COMMENT_PATH" ]; then
-            {
-              echo 'SCRIPT_OUTPUT<<__EOF__'
-              cat "$PR_COMMENT_PATH"
-              echo '__EOF__'
-            } >> "$GITHUB_ENV"
-          else
-            echo "SCRIPT_OUTPUT=" >> "$GITHUB_ENV"
-          fi
-
           # Export status
           echo "CONCLUSION=$([ "$EXIT_CODE" = "0" ] && echo 'success' || echo 'failure')" >> "$GITHUB_ENV"
           echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
@@ -412,33 +396,8 @@ jobs:
             compile_time.csv
           if-no-files-found: warn
 
-      - name: Add PR comment
-        if: ${{ env.SCRIPT_OUTPUT != '' }}
-        uses: actions/github-script@v8
-        env:
-          COMMENT_BODY: ${{ env.SCRIPT_OUTPUT }}
-        with:
-          script: |
-            // Getting PR number when using 'workflow_run' is tricky. For reference, see:
-            // * https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run
-            // * https://stackoverflow.com/a/75420270/4820605
-            const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner: context.payload.workflow_run.head_repository.owner.login,
-              repo: context.payload.workflow_run.head_repository.name,
-              commit_sha: context.payload.workflow_run.head_sha,
-            });
-            if (!data || !data.length) {
-              core.info('No associated PR; skipping comment.');
-              return;
-            }
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: data[0].number,
-              body: process.env.COMMENT_BODY
-            });
-
       - name: Publish PR check
+        id: publish_check
         uses: actions/github-script@v8
         env:
           CHECK_NAME: Benchmark Comparison
@@ -469,4 +428,35 @@ jobs:
                 summary,
                 text: body || undefined
               }
+            });
+            core.setOutput("check-url", check.data.html_url);
+
+      - name: Add PR comment
+        if: ${{ env.HAS_REGRESSIONS == '1' }}
+        uses: actions/github-script@v8
+        env:
+          REPORT_URL: ${{ steps.publish_check.outputs.check-url }}
+        with:
+          script: |
+            // Getting PR number when using 'workflow_run' is tricky. For reference, see:
+            // * https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run
+            // * https://stackoverflow.com/a/75420270/4820605
+            const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.payload.workflow_run.head_repository.owner.login,
+              repo: context.payload.workflow_run.head_repository.name,
+              commit_sha: context.payload.workflow_run.head_sha,
+            });
+            if (!data || !data.length) {
+              core.info('No associated PR; skipping comment.');
+              return;
+            }
+
+            const comment = `:warning: **Benchmark Regression Detected**
+            ➡️  **[Open Benchmark Comparison Report](${process.env.REPORT_URL})**`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: data[0].number,
+              body: comment
             });
