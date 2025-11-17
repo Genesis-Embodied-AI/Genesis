@@ -598,7 +598,10 @@ class RigidSolver(Solver):
                     [np.arange(geom.verts_state_start, geom.verts_state_start + geom.n_verts) for geom in geoms],
                     dtype=gs.np_int,
                 ),
-                is_fixed=np.concatenate([np.full(geom.n_verts, geom.is_fixed) for geom in geoms], dtype=gs.np_bool),
+                is_fixed=np.concatenate(
+                    [np.full(geom.n_verts, geom.is_fixed and not geom.entity._batch_fixed_verts) for geom in geoms],
+                    dtype=gs.np_bool,
+                ),
                 # taichi variables
                 verts_info=self.verts_info,
                 faces_info=self.faces_info,
@@ -1484,13 +1487,18 @@ class RigidSolver(Solver):
         if not unsafe and not torch.isin(links_idx, self._base_links_idx).all():
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
 
-        # Raise exception for fixed links with at least one geom, except if setting same location for all envs at once
+        # Raise exception for fixed links with at least one geom and non-batched fixed vertices, except if setting same
+        # location for all envs at once
         set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
-        has_fixed_geoms = any(
-            link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
+        has_fixed_verts = any(
+            link.is_fixed and (link.geoms or link.vgeoms) and not link.entity._batch_fixed_verts
+            for link in (self.links[i_l] for i_l in links_idx)
         )
-        if has_fixed_geoms and not (set_all_envs and (torch.diff(pos, dim=0).abs() < gs.EPS).all()):
-            gs.raise_exception("Impossible to set env-specific pos for fixed links with at least one geometry.")
+        if has_fixed_verts and not (set_all_envs and (torch.diff(pos, dim=0).abs() < gs.EPS).all()):
+            gs.raise_exception(
+                "Specifying env-specific pos for fixed links with at least one geometry requires setting morph "
+                "option 'batch_fixed_verts=True'."
+            )
 
         kernel_set_links_pos(
             relative,
@@ -1537,10 +1545,11 @@ class RigidSolver(Solver):
             gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
 
         set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
-        has_fixed_geoms = any(
-            link.is_fixed and (link.geoms or link.vgeoms) for link in (self.links[i_l] for i_l in links_idx)
+        has_fixed_verts = any(
+            link.is_fixed and (link.geoms or link.vgeoms) and not link.entity._batch_fixed_verts
+            for link in (self.links[i_l] for i_l in links_idx)
         )
-        if has_fixed_geoms and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
+        if has_fixed_verts and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
             gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
 
         kernel_set_links_quat(
@@ -2435,13 +2444,13 @@ class RigidSolver(Solver):
     def n_free_verts(self):
         if self.is_built:
             return self._n_free_verts
-        return sum(link.n_verts if not link.is_fixed else 0 for link in self.links)
+        return sum(link.n_verts if not link.is_fixed or link.entity._batch_fixed_verts else 0 for link in self.links)
 
     @property
     def n_fixed_verts(self):
         if self.is_built:
             return self._n_fixed_verts
-        return sum(link.n_verts if link.is_fixed else 0 for link in self.links)
+        return sum(link.n_verts if link.is_fixed and not link.entity._batch_fixed_verts else 0 for link in self.links)
 
     @property
     def n_vverts(self):
@@ -4953,7 +4962,6 @@ def func_update_geoms(
                         links_state.pos[geoms_info.link_idx[i_g], i_b],
                         links_state.quat[geoms_info.link_idx[i_g], i_b],
                     )
-
                     geoms_state.verts_updated[i_g, i_b] = False
     else:
         for i_g in range(n_geoms):
@@ -4967,7 +4975,6 @@ def func_update_geoms(
                     links_state.pos[geoms_info.link_idx[i_g], i_b],
                     links_state.quat[geoms_info.link_idx[i_g], i_b],
                 )
-
                 geoms_state.verts_updated[i_g, i_b] = False
 
 
@@ -4998,23 +5005,22 @@ def func_update_verts_for_geom(
     fixed_verts_state: array_class.VertsState,
 ):
     if not geoms_state.verts_updated[i_g, i_b]:
-        if geoms_info.is_fixed[i_g]:
-            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+        i_g_start = geoms_info.vert_start[i_g]
+        if verts_info.is_fixed[i_g_start]:
+            for i_v in range(i_g_start, geoms_info.vert_end[i_g]):
                 verts_state_idx = verts_info.verts_state_idx[i_v]
                 fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
                 )
-
             _B = geoms_state.verts_updated.shape[1]
             for j_b in range(_B):
                 geoms_state.verts_updated[i_g, j_b] = True
         else:
-            for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
+            for i_v in range(i_g_start, geoms_info.vert_end[i_g]):
                 verts_state_idx = verts_info.verts_state_idx[i_v]
                 free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
                 )
-
             geoms_state.verts_updated[i_g, i_b] = True
 
 

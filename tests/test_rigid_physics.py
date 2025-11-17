@@ -3,8 +3,9 @@ import uuid
 import os
 import sys
 import tempfile
-from typing import cast
 import xml.etree.ElementTree as ET
+from contextlib import nullcontext
+from typing import cast
 from pathlib import Path
 
 import igl
@@ -1196,8 +1197,9 @@ def test_position_control(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("batch_fixed_verts", [False, True])
 @pytest.mark.parametrize("relative", [False, True])
-def test_set_root_pose(relative, show_viewer, tol):
+def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     ROBOT_POS_ZERO = (0.0, 0.4, 0.1)
     ROBOT_EULER_ZERO = (0.0, 0.0, 90.0)
     CUBE_POS_ZERO = (0.65, 0.0, 0.02)
@@ -1207,11 +1209,15 @@ def test_set_root_pose(relative, show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
     robot = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
             pos=ROBOT_POS_ZERO,
             euler=ROBOT_EULER_ZERO,
+            batch_fixed_verts=batch_fixed_verts,
         ),
     )
     cube = scene.add_entity(
@@ -1227,17 +1233,41 @@ def test_set_root_pose(relative, show_viewer, tol):
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
 
     # Make sure that it is not possible to end up in an inconsistent state for fixed geometries
-    pos_delta = torch.as_tensor(np.random.rand(2, 3), dtype=gs.tc_float, device=gs.device)
-    with pytest.raises(gs.GenesisException):
+    pos_delta = np.random.rand(2, 3)
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_pos(pos_delta)
-    with pytest.raises(gs.GenesisException):
+        if show_viewer:
+            scene.visualizer.update()
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_pos(pos_delta[[0]], envs_idx=[0])
-    quat_delta = torch.as_tensor(np.random.rand(2, 4), dtype=gs.tc_float, device=gs.device)
-    with pytest.raises(gs.GenesisException):
-        robot.set_quat(pos_delta)
-    with pytest.raises(gs.GenesisException):
-        robot.set_quat(pos_delta[[0]], envs_idx=[0])
-    cube.set_pos(pos_delta[[0]], envs_idx=[0])
+        if show_viewer:
+            scene.visualizer.update()
+    cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0])
+    cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=[1])
+    quat_delta = np.random.rand(2, 4)
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_quat(quat_delta)
+        if show_viewer:
+            scene.visualizer.update()
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_quat(quat_delta[[0]], envs_idx=[0])
+        if show_viewer:
+            scene.visualizer.update()
+    cube.set_quat(quat_delta)
+    if show_viewer:
+        scene.visualizer.update()
+
+    # Simulate for a while to check if the dynamic object is colliding with the static one
+    if batch_fixed_verts:
+        has_collided = torch.tensor([False, False], dtype=torch.bool, device=gs.device)
+        for _ in range(20):
+            scene.step()
+            contacts_state = cube.get_contacts(with_entity=robot, exclude_self_contact=True)
+            has_collided |= contacts_state["valid_mask"].any(dim=-1)
+            if has_collided.all():
+                break
+        else:
+            raise AssertionError("Cube never collided with robot for at least one of the environments.")
 
     for _ in range(2):
         scene.reset()
@@ -1251,7 +1281,9 @@ def test_set_root_pose(relative, show_viewer, tol):
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
             assert_allclose(euler, euler_zero, tol=5e-4)
-            assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init, tol=tol)
+            base_aabb = entity.geoms[0].get_AABB()
+            assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
+            assert_allclose(base_aabb, base_aabb_init, tol=tol)
             assert_allclose(entity.get_AABB(), entity_aabb_init, tol=tol)
 
             pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device).expand((2, 3))

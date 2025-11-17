@@ -384,7 +384,7 @@ class RigidGeom(RBC):
         """
         self._solver.update_verts_for_geoms(self._idx)
 
-        if self.is_fixed:
+        if self.is_fixed and not self._entity._batch_fixed_verts:
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         else:

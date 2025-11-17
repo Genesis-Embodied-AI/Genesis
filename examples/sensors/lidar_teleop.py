@@ -87,7 +87,7 @@ def main():
             max_FPS=60,
         ),
         profiling_options=gs.options.ProfilingOptions(
-            show_FPS=True,
+            show_FPS=False,
         ),
         show_viewer=True,
     )
