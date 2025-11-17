@@ -302,6 +302,25 @@ def pytest_xdist_auto_num_workers(config):
     return int(num_workers)
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    # Run slow tests first
+
+    slow = [item for item in items if "slow" in item.keywords]
+    fast = [item for item in items if "slow" not in item.keywords]
+
+    max_workers = config.option.numprocesses
+    if max_workers is None:
+        max_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+    max_workers = max(max_workers, 1)
+
+    buckets = [[] for _ in range(max_workers)]
+    for idx, item in enumerate(slow + fast):
+        bucket_idx = idx % max_workers
+        buckets[bucket_idx].append(item)
+    items[:] = [item for bucket in sorted(buckets, key=len) for item in bucket]
+
+
 def pytest_runtest_setup(item):
     # Match CUDA device with EGL device.
     # Note that this must be done here instead of 'pytest_cmdline_main', otherwise it will segfault when using

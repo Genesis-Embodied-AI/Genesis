@@ -214,6 +214,7 @@ def init(
     if ti_num_cpu_threads is not None:
         taichi_kwargs.update(
             cpu_max_num_threads=int(ti_num_cpu_threads),
+            num_compile_threads=int(ti_num_cpu_threads),
         )
 
     if seed is not None:
@@ -229,9 +230,9 @@ def init(
     with redirect_stdout(_ti_outputs):
         ti.init(
             arch=TI_ARCH[platform][backend],
-            # Add a (hidden) mechanism to forceable disable taichi debug mode as it is still a bit experimental
-            debug=ti_debug and backend == gs.cpu,
-            check_out_of_bound=debug,
+            # Add a (hidden) mechanism to forcible disable taichi debug mode as it is still a bit experimental
+            debug=ti_debug and backend == gs_backend.cpu,
+            check_out_of_bound=debug and backend != gs_backend.metal,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
             force_scalarize_matrix=True,

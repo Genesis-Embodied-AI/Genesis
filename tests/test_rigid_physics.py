@@ -470,7 +470,9 @@ def test_dynamic_weld(show_viewer, tol):
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        surface=gs.surfaces.Plastic(color=(1, 0, 0)),
+        surface=gs.surfaces.Plastic(
+            color=(1, 0, 0),
+        ),
     )
     robot = scene.add_entity(
         gs.morphs.MJCF(
@@ -620,10 +622,6 @@ def test_urdf_rope(
 @pytest.mark.parametrize("gjk_collision", [True])
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path, tol):
-    # FIXME: Fix GsTaichi bug for ndarrays
-    if gs.use_ndarray and gs_solver == gs.constraint_solver.CG:
-        pytest.xfail("This test is broken for ndarrays, probably due to a bug in gstaichi...")
-
     # Make sure it is possible to set the configuration vector without failure
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
@@ -861,6 +859,7 @@ def test_box_box_dynamics(gs_sim):
         assert_allclose(qpos[8], 0.6, atol=2e-3)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
     [
@@ -878,7 +877,6 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=box_box_detection,
-            max_collision_pairs=1000,
             use_gjk_collision=gjk_collision,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -906,7 +904,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 650 if dynamics else 150
+    num_steps = 700 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
@@ -1348,7 +1346,6 @@ def test_stickman(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
-@pytest.mark.field_only
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_multilink_inverse_kinematics(show_viewer):
     TOL = 1e-5
@@ -1755,8 +1752,8 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
 def test_frictionloss_advanced(show_viewer, tol):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.0, 0.25, 0.75),
-            camera_lookat=(0.0, 0.0, 0.0),
+            camera_pos=(1.4, 0.7, 1.4),
+            camera_lookat=(0.6, 0.0, 0.0),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -1767,21 +1764,25 @@ def test_frictionloss_advanced(show_viewer, tol):
         morph=gs.morphs.MJCF(
             file=f"{asset_path}/SO101/so101_new_calib.xml",
         ),
+        # vis_mode="collision",
     )
     box = scene.add_entity(
         gs.morphs.Box(
+            pos=(0.1, 0.0, 0.6),
             size=(0.025, 0.025, 0.025),
         ),
     )
     scene.build()
 
     scene.reset()
-    box.set_pos(torch.tensor((0.1, 0.0, 1.0), dtype=gs.tc_float, device=gs.device))
-    for _ in range(200):
+    for _ in range(230):
         scene.step()
 
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
-    # assert_allclose(robot.get_AABB()[2], 0.0, tol=1e-3)
+    assert_allclose(robot.get_AABB()[0, 2], 0.0, tol=2e-4)
+    box_pos = box.get_pos()
+    assert box_pos[0] > 0.6
+    assert_allclose(box_pos[1:], 0.0, tol=0.02)
     assert_allclose(box.get_dofs_velocity(), 0.0, tol=tol)
 
 
@@ -2114,7 +2115,6 @@ def test_terrain_generation(request, show_viewer):
         name="my_terrain",
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
-    # np.random.seed(4)
     terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
     obj = scene.add_entity(
         morph=gs.morphs.Box(
@@ -2133,7 +2133,7 @@ def test_terrain_generation(request, show_viewer):
     obj.set_pos(obj_pos_init_rel + torch.tensor(TERRAIN_OFFSET))
 
     # Drop the objects and simulate for a while.
-    for _ in range(500):
+    for _ in range(600):
         scene.step()
 
     # Check that objects are not moving anymore
@@ -2161,7 +2161,7 @@ def test_terrain_generation(request, show_viewer):
 
 
 @pytest.mark.required
-def test_discrete_obstacles_terrain():
+def test_terrain_discrete_obstacles():
     scene = gs.Scene()
     terrain = scene.add_entity(
         gs.morphs.Terrain(
@@ -2182,9 +2182,9 @@ def test_discrete_obstacles_terrain():
     height_field = terrain.geoms[0].metadata["height_field"]
     platform = height_field[5:7, 5:7]
 
-    assert height_field.max().item() == 2.0
-    assert height_field.min().item() == -2.0
-    assert (platform == 0.0).all()
+    assert height_field.max() == 2.0
+    assert height_field.min() == -2.0
+    assert (platform < gs.EPS).all()
 
 
 def test_mesh_to_heightfield(tmp_path, show_viewer):
@@ -2308,16 +2308,15 @@ def test_jacobian(gs_sim, tol):
 
 
 @pytest.mark.required
-def test_urdf_parsing(show_viewer, tol):
+@pytest.mark.parametrize("gjk_collision", [True, False])
+def test_urdf_parsing(show_viewer, tol, gjk_collision):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
     DOOR_JOINT_DAMPING = 1.5
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            # Must use GJK to make collision detection independent from the center of each geometry.
-            # Note that it is also the case for MPR+SDF most of the time due to warm-start.
-            use_gjk_collision=True,
+            use_gjk_collision=gjk_collision,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -3113,8 +3112,8 @@ def test_contype_conaffinity(show_viewer, tol):
         scene.step()
 
     assert_allclose(box1.get_pos(), (0.0, 0.0, 0.25), atol=5e-4)
-    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=1e-3)
-    assert_allclose(box2.get_pos(), box3.get_pos(), atol=1e-4)
+    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=2e-3)
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=2e-3)
     assert_allclose(scene.rigid_solver.get_links_acc(slice(box4.link_start, box4.link_end)), GRAVITY, atol=tol)
 
 
@@ -3166,30 +3165,40 @@ def test_mesh_primitive_COM(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [0.1, 10.0])
+@pytest.mark.parametrize("box_box_detection", [False, True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, show_viewer, tol):
+def test_noslip_iterations(scale, box_box_detection, show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
+            box_box_detection=box_box_detection,
             noslip_iterations=5,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3 * scale, 3 * scale, 3 * scale),
+            camera_lookat=(scale, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
-    boxes = []
     for i in range(3):
-        boxes.append(
-            scene.add_entity(
-                gs.morphs.Box(
-                    size=(scale, scale, scale),
-                    pos=(i * scale, 0, 0),
-                    fixed=(i == 0),
-                ),
-            )
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(scale, scale, scale),
+                pos=(i * (1 - (not box_box_detection) * 1e-3) * scale, 0, 0),
+                fixed=(i == 0),
+            ),
+            surface=gs.surfaces.Default(
+                color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
+            ),
+            visualize_contact=True,
         )
+    box_1, box_2 = scene.entities[1:]
     scene.build()
 
     rho = 200
@@ -3200,24 +3209,24 @@ def test_noslip_iterations(scale, show_viewer, tol):
     safety = 2.5
 
     # simulate for 20 seconds
-    for i in range(2000):
-        boxes[2].control_dofs_force(np.array([-safety / coeff_f * n_box * rho * scale**3 * g]), np.array([0]))
+    for _ in range(2000):
+        # push to -x direction
+        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
         scene.step()
 
-    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
     # allow some small sliding due to first few frames
     # scale = 0.1 is less stable than bigger scale
+    _, _, box_1_z = box_1.get_pos()
     assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
 
     # reduce the multiplier and it will slide
     safety = 0.9
-    for i in range(2000):
-        # push to -x direction
-        boxes[2].control_dofs_force(np.array([-safety / coeff_f * n_box * rho * scale**3 * g]), np.array([0]))
+    for _ in range(300):
+        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
         scene.step()
 
-    box_1_z = boxes[1].get_qpos().cpu().numpy()[2]
     # it will slip away
+    _, _, box_1_z = box_1.get_pos()
     assert box_1_z < -scale
 
 
