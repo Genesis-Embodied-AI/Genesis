@@ -391,8 +391,7 @@ def anymal_c(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.fixture
-def batched_franka(solver, n_envs, gjk):
+def _batched_franka(solver, n_envs, gjk, is_collision_free):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -406,7 +405,7 @@ def batched_franka(solver, n_envs, gjk):
     )
 
     scene.add_entity(gs.morphs.Plane())
-    scene.add_entity(
+    franka = scene.add_entity(
         gs.morphs.MJCF(
             **get_file_morph_options(
                 file="xml/franka_emika_panda/panda.xml",
@@ -416,6 +415,13 @@ def batched_franka(solver, n_envs, gjk):
     time_start = time.time()
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
+
+    if is_collision_free:
+        franka.control_dofs_position(
+            torch.tile(
+                torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device), (n_envs, 1)
+            ),
+        )
 
     num_steps = 0
     is_recording = False
@@ -434,6 +440,16 @@ def batched_franka(solver, n_envs, gjk):
     realtime_factor = runtime_fps * STEP_DT
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
+@pytest.fixture
+def batched_franka(solver, n_envs, gjk):
+    return _batched_franka(solver, n_envs, gjk, is_collision_free=False)
+
+
+@pytest.fixture
+def batched_franka_free(solver, n_envs, gjk):
+    return _batched_franka(solver, n_envs, gjk, is_collision_free=True)
 
 
 def _duck_in_box(solver, n_envs, gjk, hard):
@@ -629,6 +645,8 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
         ("anymal_c", gs.constraint_solver.Newton, None, 30000, gs.gpu),
         ("anymal_c", None, None, 0, gs.gpu),
         ("anymal_c", None, None, 0, gs.cpu),
+        ("batched_franka_free", None, False, 30000, gs.gpu),
+        ("batched_franka_free", None, True, 30000, gs.gpu),
         ("batched_franka", None, True, 30000, gs.gpu),
         ("batched_franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
         ("batched_franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
