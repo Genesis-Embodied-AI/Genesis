@@ -58,6 +58,29 @@ class MeshPointSelectorPlugin(ViewerPluginBase):
 
         self.raycaster: ViewerRaycaster = ViewerRaycaster(self.scene)
 
+    def _snap_to_grid(self, position: Vec3) -> Vec3:
+        """
+        Snap a position to the grid based on grid_snap settings.
+        
+        Parameters
+        ----------
+        position : Vec3
+            The position to snap.
+            
+        Returns
+        -------
+        Vec3
+            The snapped position.
+        """
+        snap_x, snap_y, snap_z = self.options.grid_snap
+        
+        # Snap each axis if the snap value is non-negative
+        x = round(position.x / snap_x) * snap_x if snap_x >= 0 else position.x
+        y = round(position.y / snap_y) * snap_y if snap_y >= 0 else position.y
+        z = round(position.z / snap_z) * snap_z if snap_z >= 0 else position.z
+            
+        return Vec3.from_xyz(x, y, z)
+
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_motion(x, y, dx, dy)
@@ -79,6 +102,9 @@ class MeshPointSelectorPlugin(ViewerPluginBase):
                 pose: Pose = Pose.from_link(link)
                 local_pos = pose.inverse_transform_point(world_pos)
                 local_normal = pose.inverse_transform_direction(world_normal)
+
+                # Apply grid snapping to local position
+                local_pos = self._snap_to_grid(local_pos)
 
                 selected_point = SelectedPoint(
                     link=link,
@@ -103,14 +129,15 @@ class MeshPointSelectorPlugin(ViewerPluginBase):
 
             closest_hit = self.raycaster.cast_ray(mouse_ray.origin.v, mouse_ray.direction.v)
             if closest_hit.is_hit:
+                snap_pos = self._snap_to_grid(closest_hit.position)
                 # Draw hover preview
                 self.scene.draw_debug_sphere(
-                    closest_hit.position.v,
+                    snap_pos.v,
                     self.options.sphere_radius,
                     self.options.hover_color,
                 )
                 self.scene.draw_debug_arrow(
-                    closest_hit.position.v,
+                    snap_pos.v,
                     closest_hit.normal.v * 0.1,
                     self.options.sphere_radius / 2,
                     self.options.hover_color,
