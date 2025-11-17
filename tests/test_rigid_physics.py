@@ -877,6 +877,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=1000,
             box_box_detection=box_box_detection,
             use_gjk_collision=gjk_collision,
         ),
@@ -893,7 +894,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         scene.add_entity(
             gs.morphs.Box(
-                pos=(i * 1.01, j * 1.01, k * 1.01 + 0.5),
+                pos=(i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5),
                 size=(1.0, 1.0, 1.0),
             ),
             surface=gs.surfaces.Default(
@@ -920,7 +921,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             assert qpos[:2].norm() < 20.0
             assert qpos[2] < 5.0
         else:
-            qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
+            qpos0 = np.array((i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5))
             assert_allclose(qpos[:3], qpos0, atol=0.05)
             assert_allclose(qpos[3:], 0, atol=0.03)
 
