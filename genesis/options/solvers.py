@@ -209,6 +209,10 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Tolerance rate for linear system solver. Defaults to 1e-4.
     sanity_check_enable : bool, optional
         Whether to enable sanity checks. Defaults to False.
+    coupling_strategy : str, optional
+        Strategy for coupling rigid bodies between Genesis and IPC. Defaults to 'two_way_soft_constraint'.
+        - 'two_way_soft_constraint': Uses SoftTransformConstraint in IPC for bidirectional coupling
+        - 'contact_proxy': Alternative coupling strategy (placeholder for future implementation)
     ipc_constraint_strength : tuple, optional
         Strength ratios for IPC soft transform constraint coupling. Tuple of (translation_strength, rotation_strength).
         Higher values create stiffer coupling between Genesis rigid bodies and IPC ABD objects. Defaults to (100.0, 100.0).
@@ -243,6 +247,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     line_search_max_iter: int = 30
     linear_system_tol_rate: float = 1e-4
     sanity_check_enable: bool = False
+    coupling_strategy: str = "two_way_soft_constraint"
     ipc_constraint_strength: tuple = (100.0, 100.0)
     two_way_coupling: bool = True
     IPC_self_contact: bool = False
