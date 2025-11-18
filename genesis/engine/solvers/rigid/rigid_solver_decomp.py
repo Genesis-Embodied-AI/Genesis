@@ -3936,67 +3936,41 @@ def func_compute_mass_matrix(
                             + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
                         ) * rigid_global_info.mass_parent_mask[i_d, j_d]
 
-                # FIXME: Updating the lower-part of the mass matrix is irrelevant
-                for i_d_, j_d_ in (
-                    (
-                        # Dynamic inner loop for forward pass
+                if ti.static(not is_backward):
+                    for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                        for j_d in range(i_d + 1, entities_info.dof_end[i_e]):
+                            rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+                else:
+                    for i_d_, j_d_ in ti.static(
                         ti.ndrange(
-                            (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
-                            (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                            static_rigid_sim_config.max_n_dofs_per_entity,
+                            static_rigid_sim_config.max_n_dofs_per_entity,
                         )
-                    )
-                    if ti.static(not is_backward)
-                    else (
-                        # Static inner loop for backward pass
-                        ti.static(
-                            ti.ndrange(
-                                static_rigid_sim_config.max_n_dofs_per_entity,
-                                static_rigid_sim_config.max_n_dofs_per_entity,
-                            )
-                        )
-                    )
-                ):
-                    i_d = i_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + i_d_
-                    j_d = j_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + j_d_
-
-                    if i_d < entities_info.dof_end[i_e] and j_d < entities_info.dof_end[i_e] and j_d > i_d:
-                        rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
-
-                # In below blocks, we only update the diagonal terms of the mass matrix, which have not been read yet.
-                # Take into account motor armature
-                for i_d_ in (
-                    range(entities_info.dof_start[i_e], entities_info.dof_end[i_e])
-                    if ti.static(not is_backward)
-                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
-                ):
-                    i_d = i_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + i_d_
-
-                    if i_d < entities_info.dof_end[i_e]:
-                        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                        rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.armature[I_d]
-
-                # Take into account first-order correction terms for implicit integration scheme right away
-                if ti.static(implicit_damping):
-                    for i_d_ in (
-                        range(entities_info.dof_start[i_e], entities_info.dof_end[i_e])
-                        if ti.static(not is_backward)
-                        else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                     ):
-                        i_d = i_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + i_d_
+                        i_d = entities_info.dof_start[i_e] + i_d_
+                        j_d = entities_info.dof_start[i_e] + j_d_
 
-                        if i_d < entities_info.dof_end[i_e]:
-                            I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                            rigid_global_info.mass_mat[i_d, i_d, i_b] += (
-                                dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
-                            )
-                            if (
-                                dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
-                                or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
-                            ):
-                                # qM += d qfrc_actuator / d qvel
-                                rigid_global_info.mass_mat[i_d, i_d, i_b] += (
-                                    dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
-                                )
+                        if i_d < entities_info.dof_end[i_e] and j_d < entities_info.dof_end[i_e] and j_d > i_d:
+                            rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+
+    # Take into account motor armature
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in ti.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
+        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+        rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.armature[I_d]
+
+    # Take into account first-order correction terms for implicit integration scheme right away
+    if ti.static(implicit_damping):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
+            I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+            rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+            if (
+                dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
+                or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
+            ):
+                # qM += d qfrc_actuator / d qvel
+                rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
 
 
 @ti.func
