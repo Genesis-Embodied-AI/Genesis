@@ -334,6 +334,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
 
         kernel_update_all_verts(
+            geoms_info=shared_metadata.solver.geoms_info,
             geoms_state=shared_metadata.solver.geoms_state,
             verts_info=shared_metadata.solver.verts_info,
             free_verts_state=shared_metadata.solver.free_verts_state,
