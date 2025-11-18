@@ -911,6 +911,7 @@ class RigidSolver(Solver):
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 rigid_adjoint_cache=self._rigid_adjoint_cache,
+                static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
         kernel_step_1(
@@ -957,34 +958,13 @@ class RigidSolver(Solver):
                 is_backward=False,
             )
 
-            kernel_copy_next_to_curr(
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-            )
-
             if self._requires_grad:
                 kernel_save_adjoint_cache(
                     f=f + 1,
                     dofs_state=self.dofs_state,
                     rigid_global_info=self._rigid_global_info,
                     rigid_adjoint_cache=self._rigid_adjoint_cache,
-                )
-
-            if not self._static_rigid_sim_config.enable_mujoco_compatibility:
-                kernel_update_cartesian_space(
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_state=self.joints_state,
-                    joints_info=self.joints_info,
-                    dofs_state=self.dofs_state,
-                    dofs_info=self.dofs_info,
-                    geoms_info=self.geoms_info,
-                    geoms_state=self.geoms_state,
-                    entities_info=self.entities_info,
-                    rigid_global_info=self._rigid_global_info,
                     static_rigid_sim_config=self._static_rigid_sim_config,
-                    force_update_fixed_geoms=False,
-                    is_backward=False,
                 )
 
     def check_errno(self):
@@ -1308,6 +1288,7 @@ class RigidSolver(Solver):
         kernel_copy_next_to_curr.grad(
             dofs_state=self.dofs_state,
             rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
         # Load the current state from adjoint cache, as it was overwritten by [kernel_copy_next_to_curr]
@@ -1420,31 +1401,13 @@ class RigidSolver(Solver):
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 is_backward=False,
             )
-            kernel_copy_next_to_curr(
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-            )
-            kernel_save_adjoint_cache(
-                f=f + 1,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                rigid_adjoint_cache=self._rigid_adjoint_cache,
-            )
-            if not self._static_rigid_sim_config.enable_mujoco_compatibility:
-                kernel_update_cartesian_space(
-                    links_state=self.links_state,
-                    links_info=self.links_info,
-                    joints_state=self.joints_state,
-                    joints_info=self.joints_info,
+            if self._requires_grad:
+                kernel_save_adjoint_cache(
+                    f=f + 1,
                     dofs_state=self.dofs_state,
-                    dofs_info=self.dofs_info,
-                    geoms_info=self.geoms_info,
-                    geoms_state=self.geoms_state,
-                    entities_info=self.entities_info,
                     rigid_global_info=self._rigid_global_info,
+                    rigid_adjoint_cache=self._rigid_adjoint_cache,
                     static_rigid_sim_config=self._static_rigid_sim_config,
-                    force_update_fixed_geoms=False,
-                    is_backward=False,
                 )
         elif isinstance(self.sim.coupler, IPCCoupler):
             # For IPCCoupler, perform full rigid body computation in post-coupling phase
@@ -5159,6 +5122,34 @@ def kernel_step_2(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
+    if ti.static(not is_backward):
+        func_copy_next_to_curr(
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+        if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+            _B = links_state.pos.shape[1]
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                func_update_cartesian_space(
+                    i_b=i_b,
+                    links_state=links_state,
+                    links_info=links_info,
+                    joints_state=joints_state,
+                    joints_info=joints_info,
+                    dofs_state=dofs_state,
+                    dofs_info=dofs_info,
+                    geoms_info=geoms_info,
+                    geoms_state=geoms_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    force_update_fixed_geoms=False,
+                    is_backward=is_backward,
+                )
+
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_forward_kinematics_links_geoms(
@@ -7126,10 +7117,26 @@ def func_integrate(
 def kernel_copy_next_to_curr(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
 ):
+    func_copy_next_to_curr(
+        dofs_state=dofs_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+
+@ti.func
+def func_copy_next_to_curr(
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(dofs_state.vel.shape[0], dofs_state.vel.shape[1]):
         dofs_state.vel[i_d, i_b] = dofs_state.vel_next[i_d, i_b]
 
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_q, i_b in ti.ndrange(rigid_global_info.qpos.shape[0], rigid_global_info.qpos.shape[1]):
         rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
 
@@ -7140,15 +7147,18 @@ def kernel_save_adjoint_cache(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    static_rigid_sim_config: ti.template(),
 ):
     n_dofs = dofs_state.vel.shape[0]
     n_qs = rigid_global_info.qpos.shape[0]
     _B = dofs_state.vel.shape[1]
 
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         rigid_adjoint_cache.dofs_vel[f, i_d, i_b] = dofs_state.vel[i_d, i_b]
         rigid_adjoint_cache.dofs_acc[f, i_d, i_b] = dofs_state.acc[i_d, i_b]
 
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_q, i_b in ti.ndrange(n_qs, _B):
         rigid_adjoint_cache.qpos[f, i_q, i_b] = rigid_global_info.qpos[i_q, i_b]
 
