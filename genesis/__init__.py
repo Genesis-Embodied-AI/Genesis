@@ -291,7 +291,7 @@ def init(
             ("🌱 seed", seed),
             ("🐛 debug", debug),
             ("📏 precision", precision),
-            ("🏎️ performance", performance_mode),
+            ("🏎️  performance", performance_mode), # racecar emoji needs special treatment as it eats a character
             ("💬 verbose", _logging.getLevelName(gs.logger.level)),
         )
     )
