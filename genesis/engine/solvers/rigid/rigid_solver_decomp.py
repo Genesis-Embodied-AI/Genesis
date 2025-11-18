@@ -905,7 +905,7 @@ class RigidSolver(Solver):
 
         self._links_state_cache.clear()
 
-        if f == 0:
+        if f == 0 and self._requires_grad:
             kernel_save_adjoint_cache(
                 f=f,
                 dofs_state=self.dofs_state,
@@ -962,12 +962,13 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
             )
 
-            kernel_save_adjoint_cache(
-                f=f + 1,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                rigid_adjoint_cache=self._rigid_adjoint_cache,
-            )
+            if self._requires_grad:
+                kernel_save_adjoint_cache(
+                    f=f + 1,
+                    dofs_state=self.dofs_state,
+                    rigid_global_info=self._rigid_global_info,
+                    rigid_adjoint_cache=self._rigid_adjoint_cache,
+                )
 
             if not self._static_rigid_sim_config.enable_mujoco_compatibility:
                 kernel_update_cartesian_space(
