@@ -155,6 +155,7 @@ class IMUSensor(
         """
         Update the current ground truth values for all IMU sensors.
         """
+        # Extract acceleration and gravity in world frame
         assert shared_metadata.solver is not None
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
@@ -166,7 +167,7 @@ class IMUSensor(
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
-        # additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
+        # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
         if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
             ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
             if ang_acc.ndim == 2:
@@ -176,16 +177,13 @@ class IMUSensor(
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
             acc += tangential_acc + centripetal_acc
 
+        # Subtract gravity then move to local frame
         # acc/ang shape: (B, n_imus, 3)
-        local_acc = inv_transform_by_quat(acc, offset_quats)
+        local_acc = inv_transform_by_quat(acc - gravity.unsqueeze(-2), offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
 
-        *batch_size, n_imus, _ = local_acc.shape
-        local_acc = local_acc - inv_transform_by_quat(
-            gravity.unsqueeze(-2).expand((*batch_size, n_imus, -1)), offset_quats
-        )
-
         # cache shape: (B, n_imus * 6)
+        *batch_size, n_imus, _ = local_acc.shape
         strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 2, 3))
         strided_ground_truth_cache[..., 0, :].copy_(local_acc)
         strided_ground_truth_cache[..., 1, :].copy_(local_ang)

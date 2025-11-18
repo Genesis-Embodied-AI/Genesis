@@ -107,7 +107,8 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     lin_acc_no_offset = imu.read().lin_acc
     scene.step()
     lin_acc_with_offset = imu.read().lin_acc
-    assert not np.allclose(lin_acc_no_offset, lin_acc_with_offset, atol=0.2)
+    with np.testing.assert_raises(AssertionError):
+        assert_allclose(lin_acc_no_offset, lin_acc_with_offset, atol=0.2)
     imu.set_pos_offset((0.0, 0.0, 0.0))
 
     # let box collide with ground
