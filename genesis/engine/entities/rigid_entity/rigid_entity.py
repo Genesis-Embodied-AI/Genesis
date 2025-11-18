@@ -3049,7 +3049,7 @@ class RigidEntity(Entity):
         return self._is_local_collision_mask
 
 
-@ti.kernel
+@ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_get_free_verts(
     tensor: ti.types.ndarray(),
     free_verts_idx_local: ti.types.ndarray(),
@@ -3063,7 +3063,7 @@ def _kernel_get_free_verts(
         tensor[i_b, free_verts_idx_local[i_v_], i] = free_verts_state.pos[i_v, i_b][i]
 
 
-@ti.kernel
+@ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_get_fixed_verts(
     tensor: ti.types.ndarray(),
     fixed_verts_idx_local: ti.types.ndarray(),

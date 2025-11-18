@@ -236,23 +236,42 @@ class RigidSolver(Solver):
 
         self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
-        # FIXME: Must resort on 'getattr' because of 'AvatarSolver' that is completely broken...
-        self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
-            para_level=self.sim._para_level,
-            requires_grad=self.sim.options.requires_grad,
-            use_hibernation=getattr(self, "_use_hibernation", False),
-            batch_links_info=getattr(self._options, "batch_links_info", False),
-            batch_dofs_info=getattr(self._options, "batch_dofs_info", False),
-            batch_joints_info=getattr(self._options, "batch_joints_info", False),
-            enable_mujoco_compatibility=getattr(self, "_enable_mujoco_compatibility", False),
-            enable_multi_contact=getattr(self, "_enable_multi_contact", True),
-            enable_collision=self._enable_collision,
-            enable_joint_limit=getattr(self, "_enable_joint_limit", False),
-            box_box_detection=getattr(self, "_box_box_detection", True),
-            sparse_solve=getattr(self._options, "sparse_solve", False),
-            integrator=getattr(self, "_integrator", gs.integrator.implicitfast),
-            solver_type=getattr(self._options, "constraint_solver", gs.constraint_solver.CG),
-        )
+        # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
+        is_rigid_solver = type(self) is RigidSolver
+        if is_rigid_solver:
+            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
+                para_level=self.sim._para_level,
+                requires_grad=self.sim.options.requires_grad,
+                use_hibernation=self._use_hibernation,
+                batch_links_info=self._options.batch_links_info,
+                batch_dofs_info=self._options.batch_dofs_info,
+                batch_joints_info=self._options.batch_joints_info,
+                enable_mujoco_compatibility=self._enable_mujoco_compatibility,
+                enable_multi_contact=self._enable_multi_contact,
+                enable_collision=self._enable_collision,
+                enable_joint_limit=self._enable_joint_limit,
+                box_box_detection=self._box_box_detection,
+                sparse_solve=self._options.sparse_solve,
+                integrator=self._integrator,
+                solver_type=self._options.constraint_solver,
+            )
+        else:
+            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
+                para_level=self.sim._para_level,
+                requires_grad=self.sim.options.requires_grad,
+                use_hibernation=False,
+                batch_links_info=False,
+                batch_dofs_info=False,
+                batch_joints_info=False,
+                enable_mujoco_compatibility=False,
+                enable_multi_contact=True,
+                enable_collision=self._enable_collision,
+                enable_joint_limit=False,
+                box_box_detection=True,
+                sparse_solve=False,
+                integrator=gs.integrator.approximate_implicitfast,
+                solver_type=gs.constraint_solver.CG,
+            )
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -260,8 +279,7 @@ class RigidSolver(Solver):
 
         # For rigid solver, we initialize them even if the solver is not active because the coupler needs arguments like
         # rigid_solver.links_state, etc. regardless of the solver is active or not.
-        # FIXME: AvatarSolver should not inherite from RigidSolver.
-        if type(self) is RigidSolver or self.is_active:
+        if is_rigid_solver or self.is_active:
             self.data_manager = array_class.DataManager(self)
             self._errno = self.data_manager.errno
 

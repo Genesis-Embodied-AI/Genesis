@@ -302,8 +302,11 @@ class PathPlanner(ABC):
 
 @ti.data_oriented
 class RRT(PathPlanner):
+    def __init__(self, entity):
+        super().__init__(entity)
+        self._is_rrt_init = False
+
     def _init_rrt_fields(self, goal_bias=0.05, max_nodes=2000, pos_tol=5e-3, max_step_size=0.1):
-        self._is_rrt_init = getattr(self, "_is_rrt_init", False)
         if not self._is_rrt_init:
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
@@ -645,8 +648,11 @@ class RRT(PathPlanner):
 
 @ti.data_oriented
 class RRTConnect(PathPlanner):
+    def __init__(self, entity):
+        super().__init__(entity)
+        self._is_rrt_connect_init = False
+
     def _init_rrt_connect_fields(self, goal_bias=0.1, max_nodes=4000, max_step_size=0.05):
-        self._is_rrt_connect_init = getattr(self, "_is_rrt_connect_init", False)
         if not self._is_rrt_connect_init:
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
