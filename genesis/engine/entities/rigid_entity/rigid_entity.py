@@ -87,8 +87,9 @@ class RigidEntity(Entity):
 
         self._free_verts_idx_local = torch.tensor([], dtype=gs.tc_int, device=gs.device)
         self._fixed_verts_idx_local = torch.tensor([], dtype=gs.tc_int, device=gs.device)
-
         self._base_links_idx = torch.tensor([self.base_link_idx], dtype=gs.tc_int, device=gs.device)
+
+        self._batch_fixed_verts = morph.batch_fixed_verts
 
         self._visualize_contact: bool = visualize_contact
 
@@ -582,7 +583,7 @@ class RigidEntity(Entity):
         free_verts_idx_local, fixed_verts_idx_local = [], []
         for link in self.links:
             verts_idx = torch.arange(verts_start, verts_start + link.n_verts, dtype=gs.tc_int, device=gs.device)
-            if link.is_fixed:
+            if link.is_fixed and not self._batch_fixed_verts:
                 fixed_verts_idx_local.append(verts_idx)
             else:
                 free_verts_idx_local.append(verts_idx)
@@ -660,7 +661,7 @@ class RigidEntity(Entity):
         joint_start = self.n_joints + self._joint_start
         free_verts_start, fixed_verts_start = self._free_verts_state_start, self._fixed_verts_state_start
         for link in self.links:
-            if link.is_fixed:
+            if link.is_fixed and not self._batch_fixed_verts:
                 fixed_verts_start += link.n_verts
             else:
                 free_verts_start += link.n_verts

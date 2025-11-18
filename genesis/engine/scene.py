@@ -283,7 +283,9 @@ class Scene(RBC):
             gs.raise_exception(
                 "`rigid_options.box_box_detection` cannot be True when `sim_options.requires_grad` is True."
             )
-        if not rigid_options.use_gjk_collision and sim_options.requires_grad:
+        if rigid_options.use_gjk_collision is None:
+            rigid_options.use_gjk_collision = sim_options.requires_grad
+        elif not rigid_options.use_gjk_collision and sim_options.requires_grad:
             gs.raise_exception(
                 "`rigid_options.use_gjk_collision` cannot be False when `sim_options.requires_grad` is True."
             )

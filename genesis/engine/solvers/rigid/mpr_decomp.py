@@ -410,11 +410,11 @@ def mpr_find_penetration(
             # Let's consider the portal as an infinite plane rather than a face triangle. This makes sense because
             # the projection of the origin must be strictly included into the portal triangle for it to correspond
             # to the true penetration depth.
-            # For reference about this propery, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
+            # For reference about this property, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
             # https://modiasim.github.io/Modia3D.jl/resources/documentation/CollisionHandling_Neumayr_Otter_2017.pdf
             #
             # In theory, the center should have been shifted until to end up with the one and only portal satisfying
-            # this condition. However, a native implementation of this process must be avoided because it would be
+            # this condition. However, a naive implementation of this process must be avoided because it would be
             # very costly. In practice, assuming the portal is infinite provides a decent approximation of the true
             # penetration depth (it is actually a lower-bound estimate according to Theorem 4.3) and normal without
             # requiring any additional computations.
@@ -559,7 +559,7 @@ def mpr_discover_portal(
 
                 # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
                 # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
-                # Since this deadlock happens very rarely, a simple fix is to abord computation after a few trials.
+                # Since this deadlock happens very rarely, a simple fix is to abort computation after a few trials.
                 num_trials = gs.ti_int(0)
                 while mpr_state.simplex_size[i_b] < 4:
                     v, v1, v2 = compute_support(
@@ -621,6 +621,7 @@ def guess_geoms_center(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     mpr_info: array_class.MPRInfo,
     i_ga,
@@ -654,6 +655,7 @@ def guess_geoms_center(
     # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
     # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
     # signed distance is computed once again until to find a valid point. This procedure should be cheap.
+    EPS = rigid_global_info.EPS[None]
 
     g_pos_a = geoms_state.pos[i_ga, i_b]
     g_pos_b = geoms_state.pos[i_gb, i_b]
@@ -681,7 +683,7 @@ def guess_geoms_center(
                 offset = delta.dot(normal_ws) * normal_ws - delta
                 offset_norm = offset.norm()
 
-                if offset_norm > gs.EPS:
+                if offset_norm > EPS:
                     # Compute the size of the bounding boxes along the target offset direction.
                     # First, move the direction in local box frame
                     dir_offset = offset / offset_norm
@@ -779,6 +781,7 @@ def func_mpr_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
@@ -795,6 +798,7 @@ def func_mpr_contact(
         geoms_state,
         geoms_info,
         geoms_init_AABB,
+        rigid_global_info,
         static_rigid_sim_config,
         mpr_info,
         i_ga,

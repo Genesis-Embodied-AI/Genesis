@@ -344,6 +344,7 @@ def test_raycaster_hits(show_viewer, n_envs):
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
             pos=(RAYCAST_GRID_SIZE_X, grid_size_y, RAYCAST_HEIGHT + RAYCAST_BOX_SIZE + BOX_SIZE),
+            fixed=True,
         ),
     )
 
@@ -392,18 +393,23 @@ def test_raycaster_hits(show_viewer, n_envs):
     # Validate spherical raycast
     spherical_distances = spherical_raycaster.read().distances
     assert spherical_distances.shape == (*batch_shape, *NUM_RAYS_XY)
-    # Note that the tolerance must be large bevcause the sphere geometry is discretized
+    # Note that the tolerance must be large because the sphere geometry is discretized
     assert_allclose(spherical_distances, RAYCAST_HEIGHT, tol=5e-3)
 
     # Check that we can read image from depth camera
     assert_array_equal(depth_camera.read_image().shape, batch_shape + NUM_RAYS_XY)
-    # Note that the tolerance must be large bevcause the sphere geometry is discretized
+    # Note that the tolerance must be large because the sphere geometry is discretized
     assert_allclose(depth_camera.read_image(), RAYCAST_HEIGHT, tol=5e-3)
 
     # Simulate for a while and check again that the ray is casted properly
     offset = torch.from_numpy(np.random.rand(*batch_shape, 3)).to(dtype=gs.tc_float, device=gs.device)
     for entity in (grid_sensor, obstacle_1, obstacle_2):
-        entity.set_pos(entity.get_pos() + offset)
+        pos = entity.get_pos() + offset
+        if entity is obstacle_2:
+            pos[..., 2] = BOX_SIZE / 2
+        entity.set_pos(pos)
+    if show_viewer:
+        scene.visualizer.update(force=True)
     grid_sensor_pos = grid_sensor.get_pos()
     for _ in range(100):
         scene.step()

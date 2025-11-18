@@ -31,14 +31,15 @@ class ConstraintSolver:
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         self.sparse_solve = rigid_solver._options.sparse_solve
 
+        # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
         # * 4 constraints per contact
-        # * 1 constraint per joint limit (upper and lower, if not inf)
+        # * 1 constraint per 1DoF joint limit (upper and lower, if not inf)
         # * 1 constraint per dof frictionloss
         # * up to 6 constraints per equality (weld)
         self.len_constraints = int(
             4 * rigid_solver.collider._collider_info.max_contact_pairs[None]
-            + (self._solver.dofs_info.frictionloss.to_numpy() > gs.EPS).sum()
-            + (~np.isinf(self._solver.dofs_info.limit.to_numpy()).any(axis=-1)).sum()
+            + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
+            + self._solver.n_dofs
             + self._solver.n_equalities_candidate * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
@@ -401,8 +402,9 @@ def constraint_solver_kernel_reset(
             constraint_state.qacc_ws[i_d, i_b] = 0
             for i_c in range(len_constraints):
                 constraint_state.jac[i_c, i_d, i_b] = 0
-        for i_c in range(len_constraints):
-            constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+        if ti.static(static_rigid_sim_config.sparse_solve):
+            for i_c in range(len_constraints):
+                constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
 @ti.func
@@ -559,9 +561,10 @@ def func_equality_connect(
     for i_3 in range(3):
         n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
         ti.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
+        con_n_relevant_dofs = 0
 
         if ti.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(collider_state.jac_n_relevant_dofs[n_con, i_b]):
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
         else:
@@ -980,8 +983,9 @@ def func_equality_weld(
                 jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state.vel[i_d, i_b]
             )
 
-    for i_con in range(n_con, n_con + 3):
-        constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
+    if ti.static(static_rigid_sim_config.sparse_solve):
+        for i_con in range(n_con, n_con + 3):
+            constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
@@ -1229,9 +1233,8 @@ def func_nt_hessian_direct(
     n_entities = entities_info.n_links.shape[0]
 
     # H = M + J'*D*J
-    for i_d1 in range(n_dofs):
-        for i_d2 in range(n_dofs):
-            constraint_state.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
+    for i_d1, i_d2 in ti.ndrange(n_dofs, n_dofs):
+        constraint_state.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
 
     if ti.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1249,17 +1252,16 @@ def func_nt_hessian_direct(
                             * constraint_state.active[i_c, i_b]
                         )
     else:
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            for i_d1 in range(n_dofs):
-                if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
-                    for i_d2 in range(i_d1 + 1):
-                        constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                            constraint_state.nt_H[i_d1, i_d2, i_b]
-                            + constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.jac[i_c, i_d1, i_b]
-                            * constraint_state.efc_D[i_c, i_b]
-                            * constraint_state.active[i_c, i_b]
-                        )
+        for i_d1, i_c in ti.ndrange(n_dofs, constraint_state.n_constraints[i_b]):
+            if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
+                for i_d2 in range(i_d1 + 1):
+                    constraint_state.nt_H[i_d1, i_d2, i_b] = (
+                        constraint_state.nt_H[i_d1, i_d2, i_b]
+                        + constraint_state.jac[i_c, i_d2, i_b]
+                        * constraint_state.jac[i_c, i_d1, i_b]
+                        * constraint_state.efc_D[i_c, i_b]
+                        * constraint_state.active[i_c, i_b]
+                    )
 
     for i_d1 in range(n_dofs):
         for i_d2 in range(i_d1 + 1, n_dofs):
@@ -1402,6 +1404,7 @@ def func_solve(
 ):
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # this safeguard seems not necessary in normal execution
@@ -1417,8 +1420,10 @@ def func_solve(
                     constraint_state=constraint_state,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
-                if constraint_state.improved[i_b] < 1:
+                if not constraint_state.improved[i_b]:
                     break
+        else:
+            constraint_state.improved[i_b] = False
 
 
 @ti.func
@@ -1538,7 +1543,7 @@ def func_no_linesearch(i_b, constraint_state: array_class.ConstraintState):
     func_ls_init(i_b)
     n_dofs = constraint_state.search.shape[0]
 
-    constraint_state.improved[i_b] = 1
+    constraint_state.improved[i_b] = True
     for i_d in range(n_dofs):
         constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b]
         constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b]
@@ -1808,7 +1813,7 @@ def func_solve_body(
     )
 
     if ti.abs(alpha) < rigid_global_info.EPS[None]:
-        constraint_state.improved[i_b] = 0
+        constraint_state.improved[i_b] = False
     else:
         for i_d in range(n_dofs):
             constraint_state.qacc[i_d, i_b] = (
@@ -1859,9 +1864,9 @@ def func_solve_body(
             gradient += constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
         gradient = ti.sqrt(gradient)
         if gradient < tol_scaled or improvement < tol_scaled:
-            constraint_state.improved[i_b] = 0
+            constraint_state.improved[i_b] = False
         else:
-            constraint_state.improved[i_b] = 1
+            constraint_state.improved[i_b] = True
 
             if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
                 for i_d in range(n_dofs):

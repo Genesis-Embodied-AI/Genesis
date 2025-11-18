@@ -46,7 +46,7 @@ class EPA_POLY_INIT_RETURN_CODE(IntEnum):
 
 
 class GJK:
-    def __init__(self, rigid_solver):
+    def __init__(self, rigid_solver, is_active: bool = True):
         # Initialize static configuration.
         # MuJoCo's multi-contact detection algorithm is disabled by default, because it is often less stable than the
         # other multi-contact detection algorithm. However, we keep the code here for compatibility with MuJoCo and for
@@ -112,8 +112,11 @@ class GJK:
             diff_contact_min_penetration=gs.EPS * 100.0,
         )
 
-        # Initialize GJK state.
-        self._gjk_state = array_class.get_gjk_state(rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info)
+        # Initialize GJK state
+        self._gjk_state = array_class.get_gjk_state(
+            rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info, is_active
+        )
+        self._is_active = is_active
 
     def reset(self):
         pass

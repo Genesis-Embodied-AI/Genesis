@@ -79,6 +79,11 @@ class RigidLink(RBC):
         self._root_idx: int = root_idx
         self._is_fixed: bool = is_fixed
 
+        if is_fixed and not entity._batch_fixed_verts:
+            verts_state_start = fixed_verts_state_start
+        else:
+            verts_state_start = free_verts_state_start
+
         self._joint_start: int = joint_start
         self._n_joints: int = n_joints
 
@@ -87,7 +92,7 @@ class RigidLink(RBC):
         self._vert_start: int = vert_start
         self._face_start: int = face_start
         self._edge_start: int = edge_start
-        self._verts_state_start: int = fixed_verts_state_start if is_fixed else free_verts_state_start
+        self._verts_state_start: int = verts_state_start
         self._vgeom_start: int = vgeom_start
         self._vvert_start: int = vvert_start
         self._vface_start: int = vface_start
@@ -302,7 +307,7 @@ class RigidLink(RBC):
         """
         self._solver.update_verts_for_geoms(range(self.geom_start, self.geom_end))
 
-        if self.is_fixed:
+        if self.is_fixed and not self._entity._batch_fixed_verts:
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
         else:
