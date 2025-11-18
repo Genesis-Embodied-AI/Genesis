@@ -877,6 +877,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=1000,
             box_box_detection=box_box_detection,
             use_gjk_collision=gjk_collision,
         ),
@@ -893,7 +894,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         scene.add_entity(
             gs.morphs.Box(
-                pos=(i * 1.01, j * 1.01, k * 1.01 + 0.5),
+                pos=(i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5),
                 size=(1.0, 1.0, 1.0),
             ),
             surface=gs.surfaces.Default(
@@ -920,7 +921,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             assert qpos[:2].norm() < 20.0
             assert qpos[2] < 5.0
         else:
-            qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
+            qpos0 = np.array((i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5))
             assert_allclose(qpos[:3], qpos0, atol=0.05)
             assert_allclose(qpos[3:], 0, atol=0.03)
 
@@ -1220,6 +1221,13 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             batch_fixed_verts=batch_fixed_verts,
         ),
     )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.04,
+            batch_fixed_verts=False,
+            fixed=True,
+        ),
+    )
     cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
@@ -1244,6 +1252,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             scene.visualizer.update()
     cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0])
     cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=[1])
+    sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0)
     quat_delta = np.random.rand(2, 4)
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_quat(quat_delta)
@@ -1256,6 +1265,10 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     cube.set_quat(quat_delta)
     if show_viewer:
         scene.visualizer.update()
+
+    sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
+    assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
+    assert_allclose(sphere.get_AABB(), sphere.geoms[0].get_AABB(), tol=tol)
 
     # Simulate for a while to check if the dynamic object is colliding with the static one
     if batch_fixed_verts:

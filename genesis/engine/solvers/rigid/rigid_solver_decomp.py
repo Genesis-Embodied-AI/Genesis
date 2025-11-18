@@ -5005,9 +5005,9 @@ def func_update_verts_for_geom(
     fixed_verts_state: array_class.VertsState,
 ):
     if not geoms_state.verts_updated[i_g, i_b]:
-        i_g_start = geoms_info.vert_start[i_g]
-        if verts_info.is_fixed[i_g_start]:
-            for i_v in range(i_g_start, geoms_info.vert_end[i_g]):
+        i_v_start = geoms_info.vert_start[i_g]
+        if verts_info.is_fixed[i_v_start]:
+            for i_v in range(i_v_start, geoms_info.vert_end[i_g]):
                 verts_state_idx = verts_info.verts_state_idx[i_v]
                 fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
@@ -5016,7 +5016,7 @@ def func_update_verts_for_geom(
             for j_b in range(_B):
                 geoms_state.verts_updated[i_g, j_b] = True
         else:
-            for i_v in range(i_g_start, geoms_info.vert_end[i_g]):
+            for i_v in range(i_v_start, geoms_info.vert_end[i_g]):
                 verts_state_idx = verts_info.verts_state_idx[i_v]
                 free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
                     verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
@@ -5026,34 +5026,26 @@ def func_update_verts_for_geom(
 
 @ti.func
 def func_update_all_verts(
+    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
 ):
-    n_verts = verts_info.geom_idx.shape[0]
-    _B = geoms_state.pos.shape[1]
-    for i_v, i_b in ti.ndrange(n_verts, _B):
-        i_g = verts_info.geom_idx[i_v]
-        verts_state_idx = verts_info.verts_state_idx[i_v]
-        if verts_info.is_fixed[i_v]:
-            fixed_verts_state.pos[verts_state_idx] = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
-            )
-        else:
-            free_verts_state.pos[verts_state_idx, i_b] = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v], geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b]
-            )
+    n_geoms, _B = geoms_state.pos.shape
+    for i_g, i_b in ti.ndrange(n_geoms, _B):
+        func_update_verts_for_geom(i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_update_all_verts(
+    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
 ):
-    func_update_all_verts(geoms_state, verts_info, free_verts_state, fixed_verts_state)
+    func_update_all_verts(geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state)
 
 
 @ti.kernel
@@ -5115,7 +5107,6 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
 ) -> None:
-
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
 
