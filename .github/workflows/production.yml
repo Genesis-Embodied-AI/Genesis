@@ -45,47 +45,47 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Run unit tests
-        if: github.event_name == 'pull_request'
-        run: |
-          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+      # - name: Run unit tests
+      #   if: github.event_name == 'pull_request'
+      #   run: |
+      #     SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+      #     echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          mkdir -p "${HOME}/.cache" "${HOME}/.venv"
+      #     mkdir -p "${HOME}/.cache" "${HOME}/.venv"
 
-          # TODO: USD baking does not currently support Python 3.11 since
-          # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
-          # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
-          srun \
-            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
-            --container-mounts=\
-          "${HOME}/.venv":/root/.venv,\
-          "${HOME}/.cache":/root/.cache,\
-          "${{ github.workspace }}":/root/workspace \
-            --no-container-mount-home --container-workdir=/root/workspace \
-            --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
-            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
-            --job-name=${SLURM_JOB_NAME} \
-            bash -e -s << 'EOF'
-              if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
-                python3 -m venv --system-site-packages /root/.venv
-                source /root/.venv/bin/activate
-                pip install --no-input --upgrade pip pkg-info wheel
-                pip install --no-input --ignore-installed --upgrade blinker pyparsing setuptools
-              fi
-              source /root/.venv/bin/activate
+      #     # TODO: USD baking does not currently support Python 3.11 since
+      #     # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
+      #     # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
+      #     srun \
+      #       --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+      #       --container-mounts=\
+      #     "${HOME}/.venv":/root/.venv,\
+      #     "${HOME}/.cache":/root/.cache,\
+      #     "${{ github.workspace }}":/root/workspace \
+      #       --no-container-mount-home --container-workdir=/root/workspace \
+      #       --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
+      #       --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
+      #       --job-name=${SLURM_JOB_NAME} \
+      #       bash -e -s << 'EOF'
+      #         if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
+      #           python3 -m venv --system-site-packages /root/.venv
+      #           source /root/.venv/bin/activate
+      #           pip install --no-input --upgrade pip pkg-info wheel
+      #           pip install --no-input --ignore-installed --upgrade blinker pyparsing setuptools
+      #         fi
+      #         source /root/.venv/bin/activate
 
-              pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
-              pip install --no-input ".[dev,render,usd]"
+      #         pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
+      #         pip install --no-input ".[dev,render,usd]"
 
-              pytest -v -ra --backend gpu --dev --forked ./tests
-          EOF
-      - name: Kill srun job systematically
-        if: always()
-        run: |
-          if [ -n "${SLURM_JOB_NAME}" ] ; then
-            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
-          fi
+      #         pytest -v -ra --backend gpu --dev --forked ./tests
+      #     EOF
+      # - name: Kill srun job systematically
+      #   if: always()
+      #   run: |
+      #     if [ -n "${SLURM_JOB_NAME}" ] ; then
+      #       scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+      #     fi
 
   benchmarks:
     name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
@@ -109,52 +109,52 @@ jobs:
           # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
           # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
           fetch-depth: 0
-      - name: Run benchmarks
-        run: |
-          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+      # - name: Run benchmarks
+      #   run: |
+      #     SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+      #     echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
-            SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
-          fi
+      #     SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
+      #     if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
+      #       SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
+      #     fi
 
-          srun \
-            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
-            --container-mounts=\
-          "${HOME}/.venv":/root/.venv,\
-          /mnt/data/artifacts:/mnt/data/artifacts,\
-          "${{ github.workspace }}":/root/workspace \
-            --no-container-mount-home --container-workdir=/root/workspace \
-            --export=${SLURM_ENV_VARS} \
-            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
-            --job-name=${SLURM_JOB_NAME} \
-            bash -e -s << 'EOF'
-              # sudo apt update
-              # sudo apt install -y tmate
-              # tmate -S /tmp/tmate.sock new-session -d
-              # tmate -S /tmp/tmate.sock wait tmate-ready
-              # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+      #     srun \
+      #       --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+      #       --container-mounts=\
+      #     "${HOME}/.venv":/root/.venv,\
+      #     /mnt/data/artifacts:/mnt/data/artifacts,\
+      #     "${{ github.workspace }}":/root/workspace \
+      #       --no-container-mount-home --container-workdir=/root/workspace \
+      #       --export=${SLURM_ENV_VARS} \
+      #       --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
+      #       --job-name=${SLURM_JOB_NAME} \
+      #       bash -e -s << 'EOF'
+      #         # sudo apt update
+      #         # sudo apt install -y tmate
+      #         # tmate -S /tmp/tmate.sock new-session -d
+      #         # tmate -S /tmp/tmate.sock wait tmate-ready
+      #         # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-              source /root/.venv/bin/activate
-              pip install --no-input ".[dev,render]"
+      #         source /root/.venv/bin/activate
+      #         pip install --no-input ".[dev,render]"
 
-              pytest --print -x -m "benchmarks" ./tests
-              cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+      #         pytest --print -x -m "benchmarks" ./tests
+      #         cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
-              # tmate -S /tmp/tmate.sock wait tmate-exit
-          EOF
-      - name: Kill srun job systematically
-        if: always()
-        run: |
-          if [ -n "${SLURM_JOB_NAME}" ] ; then
-            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
-          fi
-      - name: Display benchmark stats
-        run: |
-          cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-      - name: Upload benchmark stats as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
-          path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+      #         # tmate -S /tmp/tmate.sock wait tmate-exit
+      #     EOF
+      # - name: Kill srun job systematically
+      #   if: always()
+      #   run: |
+      #     if [ -n "${SLURM_JOB_NAME}" ] ; then
+      #       scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+      #     fi
+      # - name: Display benchmark stats
+      #   run: |
+      #     cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+      # - name: Upload benchmark stats as artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
+      #     path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"

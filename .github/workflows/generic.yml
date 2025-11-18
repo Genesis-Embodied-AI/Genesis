@@ -156,9 +156,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache
-          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
+          key: Linux-x86_64-4.0.0-cpu-1-19442682589-1
           restore-keys: |
             ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          detached: false
+          limit-access-to-actor: false
 
       - name: Run unit tests
         run: |
