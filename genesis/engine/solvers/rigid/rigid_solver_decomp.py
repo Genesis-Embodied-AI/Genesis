@@ -1098,13 +1098,22 @@ class RigidSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
-            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
+            # Dispatch based on coupler type and strategy
             from genesis.engine.couplers import IPCCoupler
 
             if isinstance(self.sim.coupler, IPCCoupler):
-                return
+                # Dispatch to strategy-specific precoupling logic
+                if self.sim.coupler.options.coupling_strategy == "two_way_soft_constraint":
+                    # Skip rigid body computation (IPC handles rigid simulation)
+                    return
+                elif self.sim.coupler.options.coupling_strategy == "contact_proxy":
+                    # TODO: Implement contact proxy precoupling logic
+                    self.sim.coupler._set_genesis_transforms_from_ipc(ipc_only=False)
+                    self.sim.coupler._apply_ipc_contact_forces()
+                    self.substep()
+                    return
 
-            # Run Genesis rigid simulation step
+            # Run Genesis rigid simulation step for non-IPC couplers
             self.substep()
 
     def substep_pre_coupling_grad(self, f):
@@ -1139,16 +1148,21 @@ class RigidSolver(Solver):
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
-            # For IPCCoupler, perform full rigid body computation in post-coupling phase
-            # This allows IPC to handle rigid bodies during the coupling phase
-            # Temporarily disable ground collision if requested
-            if self.sim.coupler.options.disable_genesis_ground_contact:
-                original_enable_collision = self._enable_collision
-                self._enable_collision = False
-                self.substep()
-                self._enable_collision = original_enable_collision
-            else:
-                self.substep()
+            # Dispatch to strategy-specific postcoupling logic
+            if self.sim.coupler.options.coupling_strategy == "two_way_soft_constraint":
+                # For two_way_soft_constraint, perform full rigid body computation in post-coupling phase
+                # This allows IPC to handle rigid bodies during the coupling phase
+                # Temporarily disable ground collision if requested
+                if self.sim.coupler.options.disable_genesis_ground_contact:
+                    original_enable_collision = self._enable_collision
+                    self._enable_collision = False
+                    self.substep()
+                    self._enable_collision = original_enable_collision
+                else:
+                    self.substep()
+            elif self.sim.coupler.options.coupling_strategy == "contact_proxy":
+                # TODO: Implement contact proxy postcoupling logic
+                pass
 
     def substep_post_coupling_grad(self, f):
         pass

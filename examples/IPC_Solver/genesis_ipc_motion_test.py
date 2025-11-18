@@ -296,10 +296,6 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig("momentum_conservation_test.png", dpi=150)
-    print(f"\n{'='*70}")
-    print("Plot saved to: momentum_conservation_test.png")
-    print(f"{'='*70}")
     plt.show()
 
 
