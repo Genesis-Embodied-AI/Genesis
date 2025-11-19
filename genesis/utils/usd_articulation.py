@@ -5,6 +5,8 @@ import genesis as gs
 from . import geom as gu
 import numpy as np
 import trimesh
+import re
+from . import usd_parser_utils as usd_utils
 
 class UsdArticulationParser:
     """
@@ -28,26 +30,16 @@ class UsdArticulationParser:
         
         self.links:List[Usd.Prim] = []
         self._collect_links()
-        
-    @staticmethod
-    def bfs_iterator(root:Usd.Prim):
-        from collections import deque
-        queue = deque([root])
-        while queue:
-            prim = queue.popleft()
-            yield prim
-            for child in prim.GetChildren():
-                queue.append(child)
     
     @staticmethod
     def find_first_articulation_root(stage:Usd.Stage) -> Usd.Prim:
-        for prim in UsdArticulationParser.bfs_iterator(stage.GetDefaultPrim()):
+        for prim in usd_utils.bfs_iterator(stage.GetDefaultPrim()):
             if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
                 return prim
         return None
     
     def _collect_joints(self):
-        for child in UsdArticulationParser.bfs_iterator(self._root):
+        for child in usd_utils.bfs_iterator(self._root):
             if child.IsA(UsdPhysics.Joint):
                 joint_api = UsdPhysics.Joint(child)
                 self.joints.append(joint_api)
@@ -88,10 +80,16 @@ class UsdArticulationParser:
         Get all meshes under the articulation root prim.
         """
         meshes:List[UsdGeom.Mesh] = []
-        for prim in UsdArticulationParser.bfs_iterator(prim):
+        
+        if prim.IsA(UsdGeom.Mesh):
+            mesh = UsdGeom.Mesh(prim)
+            meshes.append(mesh)
+        
+        for prim in usd_utils.bfs_iterator(prim):
             if prim.IsA(UsdGeom.Mesh):
                 mesh = UsdGeom.Mesh(prim)
                 meshes.append(mesh)
+        
         return meshes
     
     @staticmethod
@@ -99,21 +97,36 @@ class UsdArticulationParser:
         """
         Get all meshes under the given link prim.
         """
-        # TO DISCUSS: how to identify visual meshes under a link prim?
-        # Now just hard code, assuming there is a Prim named "visuals" under each link
-        visuals_prim = link.GetChild("visuals")
-        return UsdArticulationParser.get_meshes(visuals_prim) if visuals_prim else []
+        # find any child name starting with "visual" or "Visual"
+        visual_pattern = re.compile(r'^(visual|Visual).*')
+        visual_prims:list[Usd.Prim] = []
+        for child in link.GetChildren():
+            child:Usd.Prim
+            if visual_pattern.match(child.GetName()):
+                visual_prims.append(child)
+        
+        meshes:List[UsdGeom.Mesh] = []
+        for visual_prim in visual_prims:
+            meshes.extend(UsdArticulationParser.get_meshes(visual_prim))
+        return meshes
     
     @staticmethod
     def get_collision_meshes(link:Usd.Prim) -> List[UsdGeom.Mesh]:
         """
         Get all collision meshes under the given link prim.
         """
-        # TO DISCUSS: how to identify collision meshes under a link prim?
-        # Now just hard code, assuming there is a Prim named "collisions" under each link
-        collisions_prim = link.GetChild("collisions")
-        return UsdArticulationParser.get_meshes(collisions_prim) if collisions_prim else []
-    
+        # find any child name starting with "collision" or "Collision"
+        collision_pattern = re.compile(r'^(collision|Collision).*')
+        collision_prims:list[Usd.Prim] = []
+        for child in link.GetChildren():
+            child:Usd.Prim
+            if collision_pattern.match(child.GetName()):
+                collision_prims.append(child)
+        
+        meshes:List[UsdGeom.Mesh] = []
+        for collision_prim in collision_prims:
+            meshes.extend(UsdArticulationParser.get_meshes(collision_prim))
+        return meshes
     
     @staticmethod
     def usd_mesh_to_trimesh(usd_mesh:UsdGeom.Mesh) -> trimesh.Trimesh:
@@ -145,36 +158,6 @@ class UsdArticulationParser:
             offset += count
         faces = np.array(faces)
         return trimesh.Trimesh(vertices=points, faces=faces)
-    
-    @staticmethod
-    def usd_global_transform_to_np(prim:Usd.Prim) -> np.ndarray:
-        """
-        Convert a USD transform to a 4x4 numpy transformation matrix.
-        """
-        imageable = UsdGeom.Imageable(prim)
-        if not imageable:
-            return np.eye(4)
-        # USD's transform is left-multiplied, while we use right-multiplied convention in genesis.
-        t = imageable.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetTranspose()
-        return np.array(t)
-    
-    @staticmethod
-    def usd_compute_related_transform(prim:Usd.Prim, ref_prim:Usd.Prim) -> np.ndarray:
-        """
-        Compute the transformation matrix from the related_prim to the prim.
-        """
-        prim_world_transform = UsdArticulationParser.usd_global_transform_to_np(prim)
-        ref_prim_to_world = UsdArticulationParser.usd_global_transform_to_np(ref_prim)
-        world_to_ref_prim = np.linalg.inv(ref_prim_to_world)
-        prim_to_ref_prim_transform = world_to_ref_prim @ prim_world_transform
-        return prim_to_ref_prim_transform
-
-    @staticmethod
-    def usd_quat_to_np(usd_quat:Gf.Quatf) -> np.ndarray:
-        """
-        Convert a USD Gf.Quatf to a numpy array.
-        """
-        return np.array([usd_quat.GetReal(), *usd_quat.GetImaginary()])
 
 def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> None:
     """
@@ -256,7 +239,7 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
             mesh.set_color([1.0, 0.7, 0.3, 1.0])  # set a default color for visualization
             g_info = {"mesh" if geom_is_col else "vmesh": mesh}
             
-            trans_mat = UsdArticulationParser.usd_compute_related_transform(usd_mesh, link)
+            trans_mat = usd_utils.compute_related_transform(usd_mesh, link)
             g_info["type"] = geom_type
             g_info["data"] = geom_data
             g_info["pos"] = trans_mat[:3, 3]
@@ -295,9 +278,9 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
         
         l_info = l_infos[idx]
         if parent_link:
-            trans_mat = UsdArticulationParser.usd_compute_related_transform(child_link, parent_link)
+            trans_mat = usd_utils.compute_related_transform(child_link, parent_link)
         else:
-            trans_mat = UsdArticulationParser.usd_global_transform_to_np(child_link)
+            trans_mat = usd_utils.compute_global_transform(child_link)
         l_info["pos"] = trans_mat[:3, 3]
         l_info["quat"] = gu.R_to_quat(trans_mat[:3, :3])
         
@@ -321,6 +304,8 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
         
         # Parse joint type and properties
         if joint_prim.IsA(UsdPhysics.FixedJoint):
+            if not body0_targets:
+                gs.logger.info(f"Root Fixed Joint detected {joint_prim.GetPath()}")
             j_info["dofs_motion_ang"] = np.zeros((0, 3))
             j_info["dofs_motion_vel"] = np.zeros((0, 3))
             j_info["dofs_limit"] = np.zeros((0, 2))
@@ -360,6 +345,7 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
             upper_limit_attr = revolute_joint.GetUpperLimitAttr()
             lower_limit = lower_limit_attr.Get() if lower_limit_attr else -np.inf
             upper_limit = upper_limit_attr.Get() if upper_limit_attr else np.inf
+            # gs.logger.info(f"Revolute joint {joint_prim.GetPath()} limits: [{lower_limit}, {upper_limit}]")
             
             j_info["dofs_limit"] = np.array([[lower_limit, upper_limit]])
             j_info["dofs_stiffness"] = np.array([0.0])
@@ -380,28 +366,8 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
         j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
         
         # Joint friction and damping
-        # Try to get these from USD joint drive attributes if available
         joint_friction = 0.0
         joint_damping = 0.0
-        
-        # Check for drive API which may contain damping
-        if joint_prim.HasAPI(UsdPhysics.DriveAPI):
-            # Get drive for the specific axis
-            if joint_prim.IsA(UsdPhysics.RevoluteJoint):
-                drive = UsdPhysics.DriveAPI.Apply(joint_prim, "angular")
-            elif joint_prim.IsA(UsdPhysics.PrismaticJoint):
-                drive = UsdPhysics.DriveAPI.Apply(joint_prim, "linear")
-            else:
-                drive = None
-            
-            if drive:
-                damping_attr = drive.GetDampingAttr()
-                stiffness_attr = drive.GetStiffnessAttr()
-                if damping_attr:
-                    joint_damping = damping_attr.Get() or 0.0
-                if stiffness_attr and j_info["n_dofs"] > 0:
-                    stiffness_val = stiffness_attr.Get() or 0.0
-                    j_info["dofs_stiffness"] = np.full(j_info["n_dofs"], stiffness_val)
         
         j_info["dofs_frictionloss"] = np.full(j_info["n_dofs"], joint_friction)
         j_info["dofs_damping"] = np.full(j_info["n_dofs"], joint_damping)
@@ -442,8 +408,7 @@ def parse_usd(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> N
 
 if __name__ == "__main__":
     stage = Usd.Stage.Open("D:/MyStorage/Project/GenesisProject/Genesis/playground/assets/input_mesh_simple.usda")
-    root_prim = stage.GetPrimAtPath(Sdf.Path("/World/orcahand_right"))
-    parser = UsdArticulationParser(stage, root_prim)
+    parser = UsdArticulationParser(stage, Sdf.Path("/World/orcahand_right"))
     print(f"Found {len(parser.joints)} joints.")
     print(f"Found {len(parser.revolute_joints)} revolute joints.")
     print(f"Found {len(parser.fixed_joints)} fixed joints.")

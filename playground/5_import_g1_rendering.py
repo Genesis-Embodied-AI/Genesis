@@ -19,9 +19,10 @@ scene = gs.Scene(
 
 # load an articulation from USD file
 entity:RigidEntity= scene.add_entity(
-    gs.morphs.USDArticulation(
-        file="playground/assets/input_mesh_simple.usda"
+    gs.morphs.Mesh(
+        file="D:\\Assets\\Fixed\\G1.usd"
     ),
+    surface=None
 )
 
 # Build the scene
@@ -29,5 +30,5 @@ scene.build()
 
 # Run the simulation for visualization
 while(scene.viewer.is_alive()):
-    print(entity.get_dofs_limit())
-    scene.step()
+    # scene.step()
+    pass

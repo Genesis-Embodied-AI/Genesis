@@ -29,7 +29,7 @@ cs_encode = {
     "": None,
 }
 
-
+# utils
 def get_input_attribute_value(shader:UsdShade.Shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
 
@@ -260,7 +260,21 @@ def decompress_usdz(usdz_path):
     return root_path
 
 
-def parse_mesh_usd(path:str, group_by_material, scale, surface:gs.surfaces.Surface, bake_cache=True):
+def parse_usd_materials(stage:Usd.Stage, surface:gs.surfaces.Surface):
+    materials = {}
+    for prim in stage.Traverse():
+        if prim.IsA(UsdShade.Material):
+            material_usd = UsdShade.Material(prim)
+            material_spec = prim.GetPrimStack()[-1]
+            material_id = material_spec.layer.identifier + material_spec.path.pathString
+            if material_id not in materials:
+                material, uv_name, _ = parse_usd_material(material_usd, surface)
+                materials[material_id] = (material, uv_name)
+    return materials
+
+
+# entrance
+def parse_mesh_usd(path:str, group_by_material:bool, scale, surface:gs.surfaces.Surface, bake_cache=True):
     if path.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
         path = decompress_usdz(path)
 
@@ -464,7 +478,7 @@ def parse_mesh_usd(path:str, group_by_material, scale, surface:gs.surfaces.Surfa
 
     return mesh_infos.export_meshes(scale=scale)
 
-
+# deprecated
 def parse_instance_usd(path):
     stage = Usd.Stage.Open(path)
     xform_cache = UsdGeom.XformCache()
@@ -480,3 +494,6 @@ def parse_instance_usd(path):
                     instance_list.append((matrix.T, instance_spec.layer.identifier))
 
     return instance_list
+
+def parse_mesh_prim_material(mesh_prim:UsdGeom.Mesh, surface:gs.surfaces.Surface):
+    pass
