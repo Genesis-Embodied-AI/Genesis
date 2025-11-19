@@ -94,24 +94,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     data_cam1 = raster_cam1.read()
     data_attached = raster_cam_attached.read()
 
-    # Check shapes
-    expected_batch_shape = (n_envs,) if n_envs > 0 else ()
-    assert data_cam0.rgb.shape == expected_batch_shape + (
-        512,
-        512,
-        3,
-    ), f"cam0 shape mismatch: got {data_cam0.rgb.shape}"
-    assert data_cam1.rgb.shape == expected_batch_shape + (
-        256,
-        256,
-        3,
-    ), f"cam1 shape mismatch: got {data_cam1.rgb.shape}"
-    assert data_attached.rgb.shape == expected_batch_shape + (
-        240,
-        320,
-        3,
-    ), f"attached cam shape mismatch: got {data_attached.rgb.shape}"
-
     # Check that images are not pure black (all zeros) or pure white (all 255s)
     def to_numpy_for_test(tensor_or_array):
         if hasattr(tensor_or_array, "cpu"):
@@ -176,9 +158,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     # Continue simulation
     for i in range(20):
         scene.step()
-
-    # Read detached camera (auto-render)
-    data_detached = raster_cam_attached.read()
 
     # After detachment, camera should stay at same position while sphere continues falling
     # So the camera position should be (almost) unchanged

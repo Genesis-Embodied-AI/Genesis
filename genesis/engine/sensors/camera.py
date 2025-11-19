@@ -16,7 +16,6 @@ from genesis.options.sensors import (
 )
 from genesis.utils.geom import pos_lookat_up_to_T
 from genesis.utils.misc import tensor_to_array
-from ._camera_wrappers import RasterizerCameraWrapper, BatchRendererCameraWrapper
 from .base_sensor import Sensor, SharedSensorMetadata
 from .sensor_manager import register_sensor
 
@@ -31,7 +30,79 @@ if TYPE_CHECKING:
 class CameraData(NamedTuple):
     """Camera sensor return data."""
 
-    rgb: np.ndarray  # Shape: (H, W, 3) for single env, (B, H, W, 3) for batched
+    rgb: torch.Tensor
+
+
+# Create a minimal visualizer-like object for BatchRenderer
+class MinimalVisualizerWrapper:
+    def __init__(self, scene, sensors, vis_options):
+        self.scene = scene
+        self._cameras = []  # Will be populated with camera wrappers
+        self._sensors = sensors  # Keep reference to sensors
+
+        # Create a minimal context for batch renderer
+        from genesis.vis.rasterizer_context import RasterizerContext
+
+        self._context = RasterizerContext(vis_options)
+        self._context.build(scene)
+        self._context.reset()
+
+
+class RasterizerCameraWrapper:
+    """Lightweight wrapper object used by the rasterizer backend."""
+
+    def __init__(self, sensor: "RasterizerCameraSensor"):
+        self.sensor = sensor
+        self.uid = sensor._idx
+        self.res = sensor._options.res
+        self.fov = sensor._options.fov
+        self.near = sensor._options.near
+        self.far = sensor._options.far
+        self.aspect_ratio = self.res[0] / self.res[1]
+
+
+class BatchRendererCameraWrapper:
+    """Wrapper object used by the batch renderer backend."""
+
+    def __init__(self, sensor: "BatchRendererCameraSensor"):
+        self.sensor = sensor
+        self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
+        self.uid = sensor._idx
+        self.res = sensor._options.res
+        self.fov = sensor._options.fov
+        self.near = sensor._options.near
+        self.far = sensor._options.far
+        self.debug = False
+
+        # Initial pose
+        pos = torch.tensor(sensor._options.pos, dtype=gs.tc_float, device=gs.device)
+        lookat = torch.tensor(sensor._options.lookat, dtype=gs.tc_float, device=gs.device)
+        up = torch.tensor(sensor._options.up, dtype=gs.tc_float, device=gs.device)
+
+        # Store pos/lookat/up for later updates
+        self._pos = pos
+        self._lookat = lookat
+        self._up = up
+        self.transform = pos_lookat_up_to_T(pos, lookat, up)
+
+    def get_pos(self):
+        """Get camera position (for batch renderer)."""
+        n_envs = self.sensor._manager._sim._B
+        if n_envs == 0:
+            return self._pos.unsqueeze(0)
+        else:
+            return self._pos.unsqueeze(0).expand(n_envs, -1)
+
+    def get_quat(self):
+        """Get camera quaternion (for batch renderer)."""
+        from genesis.utils.geom import T_to_trans_quat
+
+        _, quat = T_to_trans_quat(self.transform)
+        n_envs = self.sensor._manager._sim._B
+        if n_envs == 0:
+            return quat.unsqueeze(0)
+        else:
+            return quat.unsqueeze(0).expand(n_envs, -1)
 
 
 # ========================== Shared Metadata ==========================
@@ -99,11 +170,13 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         """Return image format for this camera in the SensorManager cache."""
-        return _camera_get_image_return_format(self)
+        h, w = self._options.res[1], self._options.res[0]
+        return ((h, w, 3),)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
-        return _camera_get_cache_dtype()
+        """Return the dtype of the cache for this camera."""
+        return torch.uint8
 
     @classmethod
     def _update_shared_ground_truth_cache(
@@ -240,8 +313,6 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
 
 
 # ========================== Camera Sensor Helpers ==========================
-
-
 def _camera_sanitize_envs_idx(envs_idx):
     """Shared envs_idx sanitization for camera sensors."""
     if envs_idx is None:
@@ -286,30 +357,6 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
             return sensor._return_data_class(rgb=cached_image[envs_idx])
 
 
-def _camera_get_cache_dtype() -> torch.dtype:
-    """Shared cache dtype for camera sensors (match image_cache dtype)."""
-    return torch.uint8
-
-
-def _camera_update_shared_cache(shared_ground_truth_cache: torch.Tensor, shared_cache: torch.Tensor) -> None:
-    """No-op for cameras: measured cache is managed lazily on read(), not per-step."""
-    return
-
-
-def _camera_mark_stale_if_scene_advanced(shared_metadata: SharedSensorMetadata, scene_t: float) -> None:
-    """Mark all cameras of this type stale if the scene timestep has advanced."""
-    # Not all SharedSensorMetadata have last_render_timestep; guard via hasattr.
-    if not hasattr(shared_metadata, "last_render_timestep"):
-        return
-    if getattr(shared_metadata, "last_render_timestep") != scene_t:
-        sensors = getattr(shared_metadata, "sensors", None) or []
-        for sensor in sensors:
-            # Cameras use _stale flag to track whether a re-render is needed.
-            if hasattr(sensor, "_stale"):
-                sensor._stale = True
-        setattr(shared_metadata, "last_render_timestep", scene_t)
-
-
 def _camera_compute_T_from_link(attached_link, attached_offset_T: torch.Tensor) -> torch.Tensor:
     """
     Compute camera transform from an attached link pose and offset.
@@ -329,12 +376,6 @@ def _camera_compute_T_from_link(attached_link, attached_offset_T: torch.Tensor) 
     link_T = trans_quat_to_T(link_pos, link_quat)
     camera_T = torch.matmul(link_T, attached_offset_T)
     return camera_T
-
-
-def _camera_get_image_return_format(sensor) -> tuple[tuple[int, ...], ...]:
-    """Return per-sensor image shape (H, W, 3) based on options.res (W, H)."""
-    h, w = sensor._options.res[1], sensor._options.res[0]
-    return ((h, w, 3),)
 
 
 # ========================== Rasterizer Camera Sensor ==========================
@@ -410,7 +451,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
             show_world_frame=False,
             show_link_frame=False,
             show_cameras=False,
-            rendered_envs_idx=list(range(max(self._manager._sim._B, 1))),
+            rendered_envs_idx=range(max(self._manager._sim._B, 1)),
         )
 
         context = RasterizerContext(vis_options)
@@ -764,22 +805,8 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                 show_world_frame=False,
                 show_link_frame=False,
                 show_cameras=False,
-                rendered_envs_idx=list(range(max(self._manager._sim._B, 1))),
+                rendered_envs_idx=range(max(self._manager._sim._B, 1)),
             )
-
-            # Create a minimal visualizer-like object for BatchRenderer
-            class MinimalVisualizerWrapper:
-                def __init__(self, scene, sensors, vis_options):
-                    self.scene = scene
-                    self._cameras = []  # Will be populated with camera wrappers
-                    self._sensors = sensors  # Keep reference to sensors
-
-                    # Create a minimal context for batch renderer
-                    from genesis.vis.rasterizer_context import RasterizerContext
-
-                    self._context = RasterizerContext(vis_options)
-                    self._context.build(scene)
-                    self._context.reset()
 
             self._shared_metadata.visualizer_wrapper = MinimalVisualizerWrapper(scene, all_sensors, vis_options)
             self._shared_metadata.renderer = BatchRenderer(
