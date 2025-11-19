@@ -14,7 +14,7 @@ from genesis.options.sensors import RasterizerCameraOptions, RaytracerCameraOpti
 ########################## init ##########################
 gs.init(seed=0, precision="32", backend=gs.gpu, logging_level="info")
 
-########################## check raytracer availability ##########################
+########################## check dependencies ##########################
 # Try to import LuisaRenderPy to determine if raytracer is available
 try:
     import LuisaRenderPy
@@ -24,6 +24,19 @@ try:
 except ImportError:
     ENABLE_RAYTRACER = False
     print("⊘ LuisaRenderPy not available - Raytracer will be disabled")
+
+# Check if CUDA is available for BatchRenderer
+try:
+    import torch
+
+    ENABLE_CUDA = torch.cuda.is_available()
+    if ENABLE_CUDA:
+        print("✓ CUDA available - BatchRenderer will be enabled")
+    else:
+        print("⊘ CUDA not available - BatchRenderer will be disabled")
+except ImportError:
+    ENABLE_CUDA = False
+    print("⊘ PyTorch not available - BatchRenderer will be disabled")
 
 ########################## create a scene ##########################
 # Choose renderer based on raytracer availability
@@ -150,7 +163,7 @@ def create_camera_configs(backend_name, options_class, **backend_specific):
 # Create configurations for each backend
 rasterizer_configs = create_camera_configs("raster", RasterizerCameraOptions)
 raytracer_configs = create_camera_configs("raytrace", RaytracerCameraOptions) if ENABLE_RAYTRACER else []
-batch_renderer_configs = create_camera_configs("batch", BatchRendererCameraOptions)
+batch_renderer_configs = create_camera_configs("batch", BatchRendererCameraOptions) if ENABLE_CUDA else []
 
 ########################## Create Cameras ##########################
 cameras = {}
