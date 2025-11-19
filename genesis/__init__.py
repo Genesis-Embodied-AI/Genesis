@@ -291,7 +291,7 @@ def init(
             ("🌱 seed", seed),
             ("🐛 debug", debug),
             ("📏 precision", precision),
-            ("🏎️ performance", performance_mode),
+            ("🔥 performance", performance_mode),
             ("💬 verbose", _logging.getLevelName(gs.logger.level)),
         )
     )
