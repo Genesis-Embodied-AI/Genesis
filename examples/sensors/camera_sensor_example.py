@@ -1,21 +1,9 @@
 """
 Example demonstrating camera sensors with different rendering backends.
 
-This example shows:
-1. Creating cameras as sensors using add_sensor() with three backends:
-   - Rasterizer (OpenGL-based, fast for debugging)
-   - Raytracer (LuisaRender, high-quality path tracing) - optional if LuisaRenderPy installed
-   - BatchRenderer (Madrona, efficient multi-camera GPU rendering)
-2. Multiple cameras sharing the same backend renderer
-3. Both .render() and .read() API patterns
-4. Adding lights per backend (each backend has its own light system)
-5. Rendering across multiple environments (batched)
-6. Attaching/detaching cameras to rigid links for ALL backends (dynamic camera mounting)
-   - Cameras follow a falling sphere from step 0-50
-   - At step 50, all cameras detach and remain static
-   - Demonstrates dynamic viewpoint changes vs. static cameras
-7. Comparing rendering quality across different backends
-8. Graceful handling of optional dependencies (LuisaRenderPy)
+Creating cameras as sensors using add_sensor() with three backends
+Rasterizer, Raytracer and BatchRenderer.
+Test the attach/detach, add light, batch rendering functionalities.
 """
 
 import genesis as gs
@@ -25,6 +13,9 @@ from genesis.options.sensors import RasterizerCameraOptions, RaytracerCameraOpti
 gs.init(seed=0, precision="32", backend=gs.gpu, logging_level="info")
 
 ########################## create a scene ##########################
+# Check if LuisaRenderPy is available
+ENABLE_RAYTRACER = True  # Set to True to test raytracer (currently has known issues with segfaults)
+
 scene = gs.Scene(
     rigid_options=gs.options.RigidOptions(
         enable_collision=True,
@@ -55,99 +46,108 @@ box = scene.add_entity(
     surface=gs.surfaces.Rough(color=(0.5, 1.0, 0.5)),
 )
 
-########################## Example 1: Rasterizer Cameras ##########################
-print("\n=== Rasterizer Cameras ===")
+########################## Camera Configurations ##########################
+# Define camera configurations as lists for easier management
 
-raster_cam0 = scene.add_sensor(
-    RasterizerCameraOptions(
-        res=(512, 512),
-        pos=(3.0, 0.0, 2.0),
-        lookat=(0.0, 0.0, 1.0),
-        up=(0.0, 0.0, 1.0),
-        fov=60.0,
-        near=0.1,
-        far=100.0,
-    )
-)
+rasterizer_configs = [
+    {
+        "name": "raster_cam0",
+        "options": RasterizerCameraOptions(
+            res=(512, 512),
+            pos=(3.0, 0.0, 2.0),
+            lookat=(0.0, 0.0, 1.0),
+            up=(0.0, 0.0, 1.0),
+            fov=60.0,
+            near=0.1,
+            far=100.0,
+        ),
+        "attach": False,
+        "lights": [{"pos": (2.0, 2.0, 5.0), "color": (1.0, 1.0, 1.0), "intensity": 5.0}],
+    },
+    {
+        "name": "raster_cam1",
+        "options": RasterizerCameraOptions(
+            res=(512, 512),
+            pos=(0.0, 3.0, 2.0),
+            lookat=(0.0, 0.0, 1.0),
+            up=(0.0, 0.0, 1.0),
+            fov=60.0,
+            near=0.1,
+            far=100.0,
+        ),
+        "attach": False,
+        "lights": [],
+    },
+    {
+        "name": "raster_cam_attached",
+        "options": RasterizerCameraOptions(
+            res=(320, 240),
+            pos=(0.0, 0.0, 3.0),  # Initial position (will be overridden by attachment)
+            lookat=(0.0, 0.0, 0.0),
+            up=(0.0, 0.0, 1.0),
+            fov=70.0,
+            near=0.1,
+            far=100.0,
+        ),
+        "attach": True,
+        "lights": [],
+    },
+]
 
-raster_cam1 = scene.add_sensor(
-    RasterizerCameraOptions(
-        res=(256, 256),
-        pos=(0.0, 3.0, 2.0),
-        lookat=(0.0, 0.0, 1.0),
-        up=(0.0, 0.0, 1.0),
-        fov=45.0,
-    )
-)
-
-# Camera attached to moving sphere
-raster_cam_attached = scene.add_sensor(
-    RasterizerCameraOptions(
-        res=(320, 240),
-        pos=(0.0, 0.0, 3.0),  # Initial position (will be overridden by attachment)
-        lookat=(0.0, 0.0, 0.0),
-        up=(0.0, 0.0, 1.0),
-        fov=70.0,
-    )
-)
-
-# Add lights (shared across all rasterizer cameras)
-raster_cam0.add_light(
-    pos=(2.0, 2.0, 5.0),
-    color=(1.0, 1.0, 1.0),
-    intensity=5.0,
-)
-
-########################## Example 2: Raytracer Cameras (TODO: Not implemented yet) ##########################
-# print("\n=== Raytracer Cameras ===")
-# raytrace_cam0 = scene.add_sensor(RaytracerCameraOptions(...))
-
-# Check if LuisaRenderPy is available
-# Note: Raytracer is experimental and may have issues. Set ENABLE_RAYTRACER=True to test it.
-ENABLE_RAYTRACER = True  # Set to True to test raytracer (currently has known issues with segfaults)
-
-raytrace_cam0 = None
-raytrace_cam_attached = None
+raytracer_configs = []
 if ENABLE_RAYTRACER:
     try:
         import LuisaRenderPy
 
-        raytrace_cam0 = scene.add_sensor(
-            RaytracerCameraOptions(
-                res=(512, 512),
-                pos=(3.5, 0.0, 2.5),
-                lookat=(0.0, 0.0, 1.0),
-                up=(0.0, 0.0, 1.0),
-                fov=55.0,
-                model="pinhole",
-                spp=64,
-                denoise=False,
-                env_surface=gs.surfaces.Emission(
-                    emissive_texture=gs.textures.ColorTexture(color=(0.2, 0.3, 0.5)),
+        raytracer_configs = [
+            {
+                "name": "raytrace_cam0",
+                "options": RaytracerCameraOptions(
+                    res=(512, 512),
+                    pos=(3.0, 0.0, 2.0),
+                    lookat=(0.0, 0.0, 1.0),
+                    up=(0.0, 0.0, 1.0),
+                    fov=60.0,
+                    model="pinhole",
+                    spp=64,
+                    denoise=False,
+                    env_surface=gs.surfaces.Emission(
+                        emissive_texture=gs.textures.ColorTexture(color=(0.2, 0.3, 0.5)),
+                    ),
+                    env_radius=20.0,
                 ),
-                env_radius=20.0,
-            )
-        )
-
-        # Camera attached to sphere for raytracer
-        raytrace_cam_attached = scene.add_sensor(
-            RaytracerCameraOptions(
-                res=(320, 240),
-                pos=(0.0, 0.0, 3.0),
-                lookat=(0.0, 0.0, 0.0),
-                up=(0.0, 0.0, 1.0),
-                fov=70.0,
-                spp=64,
-            )
-        )
-
-        # Add sphere light
-        raytrace_cam0.add_light(
-            pos=(0.0, 0.0, 5.0),
-            color=(10.0, 10.0, 10.0),
-            intensity=1.0,
-        )
-
+                "attach": False,
+                "lights": [{"pos": (2.0, 2.0, 5.0), "color": (10.0, 10.0, 10.0), "intensity": 1.0}],
+            },
+            {
+                "name": "raytrace_cam1",
+                "options": RaytracerCameraOptions(
+                    res=(512, 512),
+                    pos=(0.0, 3.0, 2.0),
+                    lookat=(0.0, 0.0, 1.0),
+                    up=(0.0, 0.0, 1.0),
+                    fov=60.0,
+                    model="pinhole",
+                    spp=64,
+                    denoise=False,
+                ),
+                "attach": False,
+                "lights": [],
+            },
+            {
+                "name": "raytrace_cam_attached",
+                "options": RaytracerCameraOptions(
+                    res=(320, 240),
+                    pos=(0.0, 0.0, 3.0),
+                    lookat=(0.0, 0.0, 0.0),
+                    up=(0.0, 0.0, 1.0),
+                    fov=70.0,
+                    spp=64,
+                ),
+                "attach": True,
+                "lights": [],
+            },
+        ]
         print("✓ Raytracer cameras created (LuisaRenderPy available)")
     except ImportError:
         print("⊘ Skipping Raytracer cameras (LuisaRenderPy not installed)")
@@ -155,52 +155,85 @@ if ENABLE_RAYTRACER:
 else:
     print("⊘ Raytracer disabled (set ENABLE_RAYTRACER=True to enable - experimental)")
 
-########################## Example 3: Batch Renderer Cameras ##########################
+batch_renderer_configs = [
+    {
+        "name": "batch_cam0",
+        "options": BatchRendererCameraOptions(
+            res=(512, 512),
+            pos=(3.0, 0.0, 2.0),
+            lookat=(0.0, 0.0, 1.0),
+            up=(0.0, 0.0, 1.0),
+            fov=60.0,
+            use_rasterizer=True,
+        ),
+        "attach": False,
+        "lights": [{"pos": (2.0, 2.0, 5.0), "color": (1.0, 1.0, 1.0), "intensity": 5.0, "directional": False}],
+    },
+    {
+        "name": "batch_cam1",
+        "options": BatchRendererCameraOptions(
+            res=(512, 512),
+            pos=(0.0, 3.0, 2.0),
+            lookat=(0.0, 0.0, 1.0),
+            up=(0.0, 0.0, 1.0),
+            fov=60.0,
+            use_rasterizer=True,
+        ),
+        "attach": False,
+        "lights": [],
+    },
+    {
+        "name": "batch_cam_attached",
+        "options": BatchRendererCameraOptions(
+            res=(512, 512),  # Must match other batch cameras
+            pos=(0.0, 0.0, 3.0),
+            lookat=(0.0, 0.0, 0.0),
+            up=(0.0, 0.0, 1.0),
+            fov=70.0,
+            use_rasterizer=True,
+        ),
+        "attach": True,
+        "lights": [],
+    },
+]
+
+########################## Create Cameras ##########################
+print("\n=== Rasterizer Cameras ===")
+cameras = {}
+
+# Create rasterizer cameras
+for config in rasterizer_configs:
+    camera = scene.add_sensor(config["options"])
+    cameras[config["name"]] = camera
+
+    # Add lights
+    for light_config in config["lights"]:
+        camera.add_light(**light_config)
+
+print(f"✓ Created {len(rasterizer_configs)} rasterizer cameras")
+
+# Create raytracer cameras
+if raytracer_configs:
+    for config in raytracer_configs:
+        camera = scene.add_sensor(config["options"])
+        cameras[config["name"]] = camera
+
+        # Add lights
+        for light_config in config["lights"]:
+            camera.add_light(**light_config)
+
+# Create batch renderer cameras
 print("\n=== Batch Renderer Cameras ===")
+for config in batch_renderer_configs:
+    camera = scene.add_sensor(config["options"])
+    cameras[config["name"]] = camera
 
-# Note: All batch renderer cameras must have same resolution
-batch_cam0 = scene.add_sensor(
-    BatchRendererCameraOptions(
-        res=(256, 256),
-        pos=(2.5, 1.0, 2.0),
-        lookat=(0.0, 0.0, 1.0),
-        up=(0.0, 0.0, 1.0),
-        fov=50.0,
-        use_rasterizer=True,
-    )
-)
+    # Add lights
+    for light_config in config["lights"]:
+        camera.add_light(**light_config)
 
-batch_cam1 = scene.add_sensor(
-    BatchRendererCameraOptions(
-        res=(256, 256),  # Must match batch_cam0
-        pos=(1.0, 2.5, 2.0),
-        lookat=(0.0, 0.0, 1.0),
-        up=(0.0, 0.0, 1.0),
-        fov=50.0,
-        use_rasterizer=True,
-    )
-)
+print(f"✓ Created {len(batch_renderer_configs)} batch renderer cameras")
 
-# Camera attached to sphere for batch renderer
-batch_cam_attached = scene.add_sensor(
-    BatchRendererCameraOptions(
-        res=(256, 256),  # Must match other batch cameras
-        pos=(0.0, 0.0, 3.0),
-        lookat=(0.0, 0.0, 0.0),
-        up=(0.0, 0.0, 1.0),
-        fov=60.0,
-        use_rasterizer=True,
-    )
-)
-
-# Add lights
-batch_cam0.add_light(
-    pos=(5.0, 5.0, 5.0),
-    dir=(-1.0, -1.0, -1.0),
-    color=(1.0, 1.0, 1.0),
-    intensity=3.0,
-    directional=True,
-)
 
 ########################## build ##########################
 scene.build(n_envs=2)  # Build with 2 environments for batched rendering
@@ -218,21 +251,65 @@ offset_T[2, 3] = 1.0  # 1 meter above the sphere center
 # Get sphere's rigid link
 sphere_link = sphere.links[0]  # Get the first (and only) link
 
-# Attach rasterizer camera
-raster_cam_attached.attach(sphere_link, offset_T)
-print(f"✓ Rasterizer camera attached to sphere link: {sphere_link}")
+# Attach cameras that are configured to be attached
+attached_cameras = []
+for config_group in [rasterizer_configs, raytracer_configs, batch_renderer_configs]:
+    for config in config_group:
+        if config["attach"]:
+            camera = cameras[config["name"]]
+            camera.attach(sphere_link, offset_T)
+            attached_cameras.append(camera)
+            print(f"✓ {config['name']} attached to sphere link: {sphere_link}")
 
-# Attach batch renderer camera
-batch_cam_attached.attach(sphere_link, offset_T)
-print(f"✓ Batch renderer camera attached to sphere link: {sphere_link}")
-
-# Attach raytracer camera (if available)
-if raytrace_cam_attached is not None:
-    raytrace_cam_attached.attach(sphere_link, offset_T)
-    print(f"✓ Raytracer camera attached to sphere link: {sphere_link}")
+print(f"✓ Attached {len(attached_cameras)} cameras to sphere")
 
 ########################## simulate and render ##########################
 print("\n=== Simulation Loop ===")
+
+# Define reading patterns for different camera types
+read_patterns = {
+    "raster_cam0": {"method": "all_envs", "print_suffix": ""},
+    "raster_cam1": {"method": "single_env", "env_idx": 0, "print_suffix": " (env 0)"},
+    "raster_cam_attached": {"method": "all_envs", "print_suffix": ""},
+    "raytrace_cam0": {"method": "all_envs", "print_suffix": " (auto-rendered on read)"},
+    "raytrace_cam1": {"method": "single_env", "env_idx": 0, "print_suffix": " (env 0, auto-rendered on read)"},
+    "raytrace_cam_attached": {"method": "all_envs", "print_suffix": " (auto-rendered on read)"},
+    "batch_cam0": {"method": "all_envs", "print_suffix": ""},
+    "batch_cam1": {"method": "single_env", "env_idx": 0, "print_suffix": " (env 0)"},
+    "batch_cam_attached": {"method": "all_envs", "print_suffix": ""},
+}
+
+# Define image saving patterns
+save_patterns = {
+    "raster_cam0": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
+    "raster_cam1": [
+        {"env_idx": 0, "suffix": "_env0"},
+        {"read_env": 1, "suffix": "_env1"},
+    ],  # Special case: read env 1 separately
+    "raster_cam_attached": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
+    "raytrace_cam0": [{"env_idx": 0, "suffix": "_env0"}],
+    "raytrace_cam1": [{"env_idx": 0, "suffix": "_env0"}],
+    "raytrace_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
+    "batch_cam0": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
+    "batch_cam1": [
+        {"env_idx": 0, "suffix": "_env0"},
+        {"read_env": 1, "suffix": "_env1"},
+    ],  # Special case: read env 1 separately
+    "batch_cam_attached": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
+}
+
+import matplotlib.pyplot as plt
+import os
+
+os.makedirs("camera_sensor_output", exist_ok=True)
+
+
+# Helper to convert torch tensors to numpy arrays for saving
+def to_numpy_for_save(tensor_or_array):
+    if hasattr(tensor_or_array, "cpu"):
+        return tensor_or_array.cpu().numpy()
+    return tensor_or_array
+
 
 for i in range(100):
     scene.step()
@@ -241,84 +318,46 @@ for i in range(100):
     if i % 10 == 0:
         print(f"\n--- Step {i} ---")
 
-        # ========== Rasterizer Cameras ==========
-        # Method 1: render() then read()
-        raster_cam0.render()
-        data_raster0 = raster_cam0.read()
-        print(f"  Rasterizer cam0 RGB shape: {data_raster0.rgb.shape}")
+        # Read and print camera data
+        camera_data = {}
+        for cam_name, camera in cameras.items():
+            if cam_name not in read_patterns:
+                continue
 
-        # Method 2: render() with envs_idx, then read specific env
-        raster_cam1.render()
-        data_raster1_env0 = raster_cam1.read(envs_idx=0)
-        print(f"  Rasterizer cam1 RGB (env 0) shape: {data_raster1_env0.rgb.shape}")
+            pattern = read_patterns[cam_name]
+            if pattern["method"] == "all_envs":
+                data = camera.read()
+            elif pattern["method"] == "single_env":
+                data = camera.read(envs_idx=pattern["env_idx"])
 
-        # Attached rasterizer camera automatically follows the sphere
-        raster_cam_attached.render()
-        data_raster_attached = raster_cam_attached.read()
-        print(f"  Rasterizer attached RGB shape: {data_raster_attached.rgb.shape}")
-
-        # ========== Raytracer Cameras ==========
-        if raytrace_cam0 is not None:
-            raytrace_cam0.render()
-            print("Raytracer cam0 rendered")
-            data_raytrace0 = raytrace_cam0.read()
-            print(f"  Raytracer cam0 RGB shape: {data_raytrace0.rgb.shape}")
-
-            # Attached raytracer camera
-            raytrace_cam_attached.render()
-            print("Raytracer attached rendered")
-            data_raytrace_attached = raytrace_cam_attached.read()
-            print(f"  Raytracer attached RGB shape: {data_raytrace_attached.rgb.shape}")
-
-        # ========== Batch Renderer Cameras ==========
-        # Note: Batch renderer renders all cameras at once
-        batch_cam0.render()  # This renders all batch cameras
-        batch_cam1.render()  # (internally coordinated to avoid duplicate work)
-        batch_cam_attached.render()
-
-        data_batch0 = batch_cam0.read()
-        data_batch1 = batch_cam1.read()
-        data_batch_attached = batch_cam_attached.read()
-        print(f"  Batch cam0 RGB shape: {data_batch0.rgb.shape}")
-        print(f"  Batch cam1 RGB shape: {data_batch1.rgb.shape}")
-        print(f"  Batch attached RGB shape: {data_batch_attached.rgb.shape}")
+            camera_data[cam_name] = data
+            print(f"  {cam_name.replace('_', ' ').title()} RGB shape: {data.rgb.shape}{pattern['print_suffix']}")
 
         # Detach cameras at step 50
         if i == 50:
             print("\n>>> Detaching all attached cameras from sphere...")
-            raster_cam_attached.detach()
-            batch_cam_attached.detach()
-            if raytrace_cam_attached is not None:
-                raytrace_cam_attached.detach()
+            for camera in attached_cameras:
+                camera.detach()
             print(">>> All cameras detached! They will now stay at their current positions.\n")
 
-        # Save images every 10 steps
-        import matplotlib.pyplot as plt
-        import os
+        # Save images
+        for cam_name, patterns in save_patterns.items():
+            if cam_name not in camera_data:
+                continue
 
-        os.makedirs("camera_sensor_output", exist_ok=True)
+            data = camera_data[cam_name]
+            for pattern in patterns:
+                if "read_env" in pattern:
+                    # Special case: read a different environment
+                    data_specific = cameras[cam_name].read(envs_idx=pattern["read_env"])
+                    rgb_data = data_specific.rgb
+                else:
+                    # Use data from the main read
+                    env_idx = pattern["env_idx"]
+                    rgb_data = data.rgb[env_idx] if data.rgb.ndim > 3 else data.rgb
 
-        # Save rasterizer outputs
-        plt.imsave(f"camera_sensor_output/raster_cam0_env0_step{i:03d}.png", data_raster0.rgb[0])
-        plt.imsave(f"camera_sensor_output/raster_cam0_env1_step{i:03d}.png", data_raster0.rgb[1])
-        plt.imsave(f"camera_sensor_output/raster_cam1_env0_step{i:03d}.png", data_raster1_env0.rgb)
-        data_raster1_env1 = raster_cam1.read(envs_idx=1)
-        plt.imsave(f"camera_sensor_output/raster_cam1_env1_step{i:03d}.png", data_raster1_env1.rgb)
-        plt.imsave(f"camera_sensor_output/raster_attached_env0_step{i:03d}.png", data_raster_attached.rgb[0])
-        plt.imsave(f"camera_sensor_output/raster_attached_env1_step{i:03d}.png", data_raster_attached.rgb[1])
-
-        # Save raytracer outputs (only renders env 0)
-        if raytrace_cam0 is not None:
-            plt.imsave(f"camera_sensor_output/raytrace_cam0_env0_step{i:03d}.png", data_raytrace0.rgb[0])
-            plt.imsave(f"camera_sensor_output/raytrace_attached_env0_step{i:03d}.png", data_raytrace_attached.rgb[0])
-
-        # Save batch renderer outputs
-        plt.imsave(f"camera_sensor_output/batch_cam0_env0_step{i:03d}.png", data_batch0.rgb[0])
-        plt.imsave(f"camera_sensor_output/batch_cam0_env1_step{i:03d}.png", data_batch0.rgb[1])
-        plt.imsave(f"camera_sensor_output/batch_cam1_env0_step{i:03d}.png", data_batch1.rgb[0])
-        plt.imsave(f"camera_sensor_output/batch_cam1_env1_step{i:03d}.png", data_batch1.rgb[1])
-        plt.imsave(f"camera_sensor_output/batch_attached_env0_step{i:03d}.png", data_batch_attached.rgb[0])
-        plt.imsave(f"camera_sensor_output/batch_attached_env1_step{i:03d}.png", data_batch_attached.rgb[1])
+                filename = f"camera_sensor_output/{cam_name}{pattern['suffix']}_step{i:03d}.png"
+                plt.imsave(filename, to_numpy_for_save(rgb_data))
 
         if i == 0:
             print("\n✓ Saving images to camera_sensor_output/")
@@ -327,13 +366,26 @@ for i in range(100):
 
 print("\n=== Simulation Complete ===")
 print("✓ Backend renderers tested successfully!")
-print("  - Rasterizer: Fast OpenGL rendering with camera attachment ✓")
-if raytrace_cam0 is not None:
-    print("  - Raytracer: High-quality path tracing with camera attachment ✓")
+print(
+    f"  - Rasterizer: Fast OpenGL rendering ({len([c for c in rasterizer_configs if not c['attach']])} static + {len([c for c in rasterizer_configs if c['attach']])} attached cameras) ✓"
+)
+
+if raytracer_configs:
+    attached_raytracer = len([c for c in raytracer_configs if c["attach"]])
+    static_raytracer = len([c for c in raytracer_configs if not c["attach"]])
+    print(
+        f"  - Raytracer: High-quality path tracing ({static_raytracer} static + {attached_raytracer} attached cameras) ✓"
+    )
 else:
     print("  - Raytracer: Disabled (set ENABLE_RAYTRACER=True to enable)")
-print("  - BatchRenderer: Efficient multi-camera batched rendering with camera attachment ✓")
+
+attached_batch = len([c for c in batch_renderer_configs if c["attach"]])
+static_batch = len([c for c in batch_renderer_configs if not c["attach"]])
+print(
+    f"  - BatchRenderer: Efficient multi-camera batched rendering ({static_batch} static + {attached_batch} attached cameras) ✓"
+)
+
 print(f"\n✓ Images saved to camera_sensor_output/")
-print("  - Tested attach/detach functionality for Rasterizer and BatchRenderer")
+print(f"  - Tested attach/detach functionality ({len(attached_cameras)} cameras attached to moving sphere)")
 print("  - Cameras follow sphere from step 0-50, then stay static after detachment")
 print("  - Compare the rendering quality across backends!")

@@ -40,6 +40,8 @@ class RasterizerCameraOptions(SensorOptions):
     near: float = 0.01
     far: float = 100.0
     platform: str = "egl"
+    # Camera images are updated lazily on read(), so skip per-step measured-cache updates
+    update_ground_truth_only: bool = True
 
     def model_post_init(self, _):
         if not isinstance(self.res, (tuple, list)) or len(self.res) != 2:
@@ -109,6 +111,7 @@ class RaytracerCameraOptions(SensorOptions):
     env_radius: float = 15.0
     env_pos: Tuple3FType = (0.0, 0.0, 0.0)
     env_quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+    update_ground_truth_only: bool = True
 
     def model_post_init(self, _):
         if not isinstance(self.res, (tuple, list)) or len(self.res) != 2:
@@ -157,6 +160,7 @@ class BatchRendererCameraOptions(SensorOptions):
     near: float = 0.01
     far: float = 100.0
     use_rasterizer: bool = True
+    update_ground_truth_only: bool = True
 
     def model_post_init(self, _):
         if not isinstance(self.res, (tuple, list)) or len(self.res) != 2:

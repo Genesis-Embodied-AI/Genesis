@@ -89,14 +89,9 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     for i in range(10):
         scene.step()
 
-    # Test render and read
-    raster_cam0.render()
+    # Test read (auto-render)
     data_cam0 = raster_cam0.read()
-
-    raster_cam1.render()
     data_cam1 = raster_cam1.read()
-
-    raster_cam_attached.render()
     data_attached = raster_cam_attached.read()
 
     # Check shapes
@@ -118,18 +113,24 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     ), f"attached cam shape mismatch: got {data_attached.rgb.shape}"
 
     # Check that images are not pure black (all zeros) or pure white (all 255s)
+    def to_numpy_for_test(tensor_or_array):
+        if hasattr(tensor_or_array, "cpu"):
+            return tensor_or_array.cpu().numpy()
+        return tensor_or_array
+
     for cam_name, data in [("cam0", data_cam0), ("cam1", data_cam1), ("attached", data_attached)]:
         rgb = data.rgb
+        rgb_np = to_numpy_for_test(rgb)
 
         # Check not pure black
-        mean_value = np.mean(rgb)
+        mean_value = np.mean(rgb_np)
         assert mean_value > 1.0, f"{cam_name}: Image is too dark (mean={mean_value:.2f}), likely pure black"
 
         # Check not pure white
         assert mean_value < 254.0, f"{cam_name}: Image is too bright (mean={mean_value:.2f}), likely pure white"
 
         # Check variance (should have some texture/variation)
-        variance = np.var(rgb)
+        variance = np.var(rgb_np)
         assert variance > 1.0, f"{cam_name}: Image has no variation (var={variance:.2f}), likely uniform color"
 
     # Test read with envs_idx
@@ -158,8 +159,7 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     for i in range(20):
         scene.step()
 
-    # Render attached camera (should follow sphere)
-    raster_cam_attached.render()
+    # Read attached camera (should follow sphere; auto-render)
     data_attached_moved = raster_cam_attached.read()
 
     # Camera position should be different after sphere moved
@@ -177,8 +177,7 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     for i in range(20):
         scene.step()
 
-    # Render detached camera
-    raster_cam_attached.render()
+    # Read detached camera (auto-render)
     data_detached = raster_cam_attached.read()
 
     # After detachment, camera should stay at same position while sphere continues falling
