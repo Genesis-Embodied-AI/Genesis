@@ -154,7 +154,7 @@ def main():
 
     ########################## forward + backward twice ##########################
     scene.reset()
-    horizon = 2000
+    horizon = 1
 
     for i in range(horizon):
         scene.step()
