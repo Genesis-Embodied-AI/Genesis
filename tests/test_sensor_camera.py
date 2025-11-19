@@ -140,8 +140,19 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         data_env1 = raster_cam0.read(envs_idx=1)
         assert data_env1.rgb.shape == (512, 512, 3), f"Single env read shape mismatch: got {data_env1.rgb.shape}"
 
+    # Helper to query the world position of a rasterizer camera sensor
+    def _get_camera_world_pos(sensor):
+        renderer = sensor._shared_metadata.renderer
+        context = sensor._shared_metadata.context
+        node = renderer._camera_nodes[sensor._idx]
+        pose = context._scene.get_pose(node)
+        # Handle possible batched pose (n_envs, 4, 4)
+        if pose.ndim == 3:
+            pose = pose[0]
+        return pose[:3, 3].copy()
+
     # Store attached camera position before detachment
-    initial_attached_data = data_attached.rgb.copy()
+    cam_pos_initial = _get_camera_world_pos(raster_cam_attached)
 
     # Continue simulation to let sphere fall
     for i in range(20):
@@ -151,9 +162,13 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     raster_cam_attached.render()
     data_attached_moved = raster_cam_attached.read()
 
-    # Image should be different after sphere moved
-    pixel_diff = np.abs(data_attached_moved.rgb.astype(float) - initial_attached_data.astype(float)).mean()
-    assert pixel_diff > 1.0, f"Attached camera image didn't change after sphere moved (diff={pixel_diff:.2f})"
+    # Camera position should be different after sphere moved
+    cam_pos_moved = _get_camera_world_pos(raster_cam_attached)
+    cam_move_dist = np.linalg.norm(cam_pos_moved - cam_pos_initial)
+    assert cam_move_dist > 1e-3, f"Attached camera position didn't change after sphere moved (dist={cam_move_dist:.3e})"
+
+    # Store camera position at the moment of detachment
+    cam_pos_at_detach = cam_pos_moved.copy()
 
     # Detach camera
     raster_cam_attached.detach()
@@ -167,8 +182,9 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     data_detached = raster_cam_attached.read()
 
     # After detachment, camera should stay at same position while sphere continues falling
-    # So the image should be very similar to right after detachment
-    pixel_diff_after_detach = np.abs(data_detached.rgb.astype(float) - data_attached_moved.rgb.astype(float)).mean()
+    # So the camera position should be (almost) unchanged
+    cam_pos_after_detach = _get_camera_world_pos(raster_cam_attached)
+    cam_move_after_detach = np.linalg.norm(cam_pos_after_detach - cam_pos_at_detach)
     assert (
-        pixel_diff_after_detach < 10.0
-    ), f"Detached camera image changed too much (diff={pixel_diff_after_detach:.2f}), should stay static"
+        cam_move_after_detach < 1e-6
+    ), f"Detached camera position changed too much (dist={cam_move_after_detach:.3e}), should stay static"
