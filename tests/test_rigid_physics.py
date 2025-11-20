@@ -3392,3 +3392,30 @@ def test_reset_control(robot_path, tol):
     new_control_force = robot.get_dofs_control_force()
     assert old_control_force.abs().max() > gs.EPS
     assert_allclose(new_control_force, 0, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_joint_get_anchor_pos_and_axis(n_envs):
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    joint = robot.joints[1]
+    anchor_pos = joint.get_anchor_pos()
+    assert anchor_pos.shape == (*batch_shape, 3)
+    expected_pos = scene.rigid_solver.joints_state.xanchor.to_numpy()
+    assert_allclose(anchor_pos, expected_pos[joint.idx], tol=gs.EPS)
+
+    anchor_axis = joint.get_anchor_axis()
+    assert anchor_axis.shape == (*batch_shape, 3)
+    expected_axis = scene.rigid_solver.joints_state.xaxis.to_numpy()
+    assert_allclose(anchor_axis, expected_axis[joint.idx], tol=gs.EPS)
