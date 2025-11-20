@@ -895,9 +895,9 @@ class RigidEntity(Entity):
                 links_state=sol.links_state,
             )
 
-        jacobian = self._jacobian.to_torch(gs.device).permute(2, 0, 1)
+        jacobian = ti_to_torch(self._jacobian, transpose=True)
         if self._solver.n_envs == 0:
-            jacobian = jacobian.squeeze(0)
+            jacobian = jacobian[0]
 
         return jacobian
 
@@ -1144,9 +1144,7 @@ class RigidEntity(Entity):
         if return_error:
             qpos, error_pose = ret
             return qpos, error_pose[..., 0, :]
-
-        else:
-            return ret
+        return ret
 
     @gs.assert_built
     def inverse_kinematics_multilink(
@@ -1348,14 +1346,20 @@ class RigidEntity(Entity):
             self._solver._static_rigid_sim_config,
         )
 
-        qpos = self._IK_qpos_best.to_torch(gs.device).transpose(1, 0)
-        qpos = qpos[0 if self._solver.n_envs == 0 else envs_idx]
+        qpos = ti_to_torch(self._IK_qpos_best, transpose=True)
+        if self._solver.n_envs == 0:
+            qpos = qpos[0].clone()
+        else:
+            qpos = qpos[envs_idx]
 
         if return_error:
-            error_pose = (
-                self._IK_err_pose_best.to_torch(gs.device).reshape((self._IK_n_tgts, 6, -1))[:n_links].permute(2, 0, 1)
-            )
-            error_pose = error_pose[0 if self._solver.n_envs == 0 else envs_idx]
+            error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True).reshape((-1, self._IK_n_tgts, 6))[
+                :, :n_links
+            ]
+            if self._solver.n_envs == 0:
+                error_pose = error_pose[0].clone()
+            else:
+                error_pose = error_pose[envs_idx]
             return qpos, error_pose
         return qpos
 
@@ -1412,8 +1416,8 @@ class RigidEntity(Entity):
         )
 
         if self._solver.n_envs == 0:
-            links_pos = links_pos.squeeze(0)
-            links_quat = links_quat.squeeze(0)
+            links_pos = links_pos[0]
+            links_quat = links_quat[0]
         return links_pos, links_quat
 
     @ti.kernel
@@ -2044,7 +2048,7 @@ class RigidEntity(Entity):
                 tensor += tensor_free
 
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
@@ -2678,7 +2682,7 @@ class RigidEntity(Entity):
         tensor = ti_to_torch(
             self._solver.links_state.contact_force, envs_idx, slice(self.link_start, self.link_end), transpose=True
         )
-        return tensor.squeeze(0) if self._solver.n_envs == 0 else tensor
+        return tensor[0] if self._solver.n_envs == 0 else tensor
 
     def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None, *, unsafe=False):
         """
@@ -3351,34 +3355,24 @@ def kernel_rigid_entity_inverse_kinematics(
 
                 # Resample init q
                 if respect_joint_limit and i_sample < max_samples - 1:
-                    for _i_l in range(n_links_by_dofs):
-                        i_l = links_idx_by_dofs[_i_l]
+                    for i_l_ in range(n_links_by_dofs):
+                        i_l = links_idx_by_dofs[i_l_]
                         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
                         for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
                             I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+                            i_d = joints_info.dof_start[I_j]
+                            I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
 
-                            I_dof_start = (
-                                [joints_info.dof_start[I_j], i_b]
-                                if ti.static(static_rigid_sim_config.batch_dofs_info)
-                                else joints_info.dof_start[I_j]
-                            )
-                            q_start = joints_info.q_start[I_j]
-                            dof_limit = dofs_info.limit[I_dof_start]
-
-                            if joints_info.type[I_j] == gs.JOINT_TYPE.FREE:
-                                pass
-
-                            elif (
+                            dof_limit = dofs_info.limit[I_d]
+                            if (
                                 joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE
                                 or joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC
-                            ):
-                                if ti.math.isinf(dof_limit[0]) or ti.math.isinf(dof_limit[1]):
-                                    pass
-                                else:
-                                    rigid_global_info.qpos[q_start, i_b] = dof_limit[0] + ti.random() * (
-                                        dof_limit[1] - dof_limit[0]
-                                    )
+                            ) and not (ti.math.isinf(dof_limit[0]) or ti.math.isinf(dof_limit[1])):
+                                q_start = joints_info.q_start[I_j]
+                                rigid_global_info.qpos[q_start, i_b] = dof_limit[0] + ti.random() * (
+                                    dof_limit[1] - dof_limit[0]
+                                )
                 else:
                     pass  # When respect_joint_limit=False, we can simply continue from the last solution
 
