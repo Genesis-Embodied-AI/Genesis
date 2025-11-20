@@ -102,7 +102,7 @@ class RigidJoint(RBC):
         the anchor point is the "output" of the joint transmission, on which the child body is welded.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_anchor_pos(tensor, self._solver.joints_state)
+        _kernel_get_anchor_pos(tensor, self._solver.joints_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
@@ -115,7 +115,7 @@ class RigidJoint(RBC):
         See `RigidJoint.get_anchor_pos` documentation for details about the notion on anchor point.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_anchor_axis(tensor, self._solver.joints_state)
+        _kernel_get_anchor_axis(tensor, self._solver.joints_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
