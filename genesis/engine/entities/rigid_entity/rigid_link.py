@@ -7,7 +7,6 @@ import trimesh
 from numpy.typing import ArrayLike
 
 import genesis as gs
-import genesis.utils.array_class as array_class
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 
@@ -120,9 +119,9 @@ class RigidLink(RBC):
     def _build(self):
         for geom in self._geoms:
             geom._build()
+
         for vgeom in self._vgeoms:
             vgeom._build()
-        self._vgeoms_idx = self._vgeom_start + torch.arange(self.n_vgeoms, dtype=gs.tc_int, device=gs.device)
 
         self._init_mesh = self._compose_init_mesh()
 
@@ -316,25 +315,6 @@ class RigidLink(RBC):
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
                 tensor = tensor.squeeze(0)
-        return tensor
-
-    @gs.assert_built
-    def get_vverts(self):
-        """
-        Get the vertices of the link's visualization body (concatenation of all `link.vgeoms`) in the world frame.
-        """
-
-        tensor = torch.empty((self._solver._B, self.n_vverts, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_vverts(
-            tensor,
-            self._solver.vgeoms_info,
-            self._solver.vgeoms_state,
-            self._solver.vverts_info,
-            self._vgeoms_idx,
-            self._vvert_start,
-        )
-        if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
         return tensor
 
     @gs.assert_built
@@ -730,25 +710,3 @@ class RigidLink(RBC):
 
     def _repr_brief(self):
         return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}"
-
-
-@ti.kernel(fastcache=gs.use_fastcache)
-def _kernel_get_vverts(
-    tensor: ti.types.ndarray(),
-    vgeoms_info: array_class.VGeomsInfo,
-    vgeoms_state: array_class.VGeomsState,
-    vverts_info: array_class.VVertsInfo,
-    vgeoms_idx: ti.types.ndarray(),
-    vvert_start: ti.i32,
-):
-    _B = vgeoms_state.pos.shape[1]
-    for i_vg_, i_b in ti.ndrange(vgeoms_idx.shape[0], _B):
-        i_vg = vgeoms_idx[i_vg_]
-        for i_v in range(vgeoms_info.vvert_start[i_vg], vgeoms_info.vvert_end[i_vg]):
-            vvert_pos = gu.ti_transform_by_trans_quat(
-                vverts_info.init_pos[i_v],
-                vgeoms_state.pos[i_vg, i_b],
-                vgeoms_state.quat[i_vg, i_b],
-            )
-            for j in range(3):
-                tensor[i_b, i_v - vvert_start, j] = vvert_pos[j]
