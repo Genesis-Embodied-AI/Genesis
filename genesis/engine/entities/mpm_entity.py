@@ -408,7 +408,6 @@ class MPMEntity(ParticleEntity):
         return actives
 
     @assert_muscle
-    @assert_active
     def set_actuation(self, actus, envs_idx=None, *, unsafe=False):
         """
         Set actuation values for each muscle group individually.

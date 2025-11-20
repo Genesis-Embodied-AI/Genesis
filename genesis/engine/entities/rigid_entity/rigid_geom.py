@@ -361,7 +361,7 @@ class RigidGeom(RBC):
         Get the position of the geom in world frame.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_geoms_pos(tensor, self._idx, self._solver.geoms_state)
+        _kernel_get_geoms_pos(self._idx, tensor, self._solver.geoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
@@ -372,7 +372,7 @@ class RigidGeom(RBC):
         Get the quaternion of the geom in world frame.
         """
         tensor = torch.empty((self._solver._B, 4), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_geoms_quat(tensor, self._idx, self._solver.geoms_state)
+        _kernel_get_geoms_quat(self._idx, tensor, self._solver.geoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
@@ -876,7 +876,7 @@ class RigidVisGeom(RBC):
         Get the position of the geom in world frame.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_vgeoms_pos(tensor, self._idx, self._solver.vgeoms_state)
+        _kernel_get_vgeoms_pos(self._idx, tensor, self._solver.vgeoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
@@ -887,7 +887,7 @@ class RigidVisGeom(RBC):
         Get the quaternion of the geom in world frame.
         """
         tensor = torch.empty((self._solver._B, 4), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_vgeoms_quat(tensor, self._idx, self._solver.vgeoms_state)
+        _kernel_get_vgeoms_quat(self._idx, tensor, self._solver.vgeoms_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
@@ -1059,35 +1059,35 @@ class RigidVisGeom(RBC):
         return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
 
 
-@ti.kernel
-def _kernel_get_geoms_pos(tensor: ti.types.ndarray(), geom_idx: ti.i32, geoms_state: array_class.GeomsState):
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_get_geoms_pos(geom_idx: ti.i32, tensor: ti.types.ndarray(), geoms_state: array_class.GeomsState):
     _B = geoms_state.pos.shape[1]
     for i, i_b in ti.ndrange(3, _B):
         tensor[i_b, i] = geoms_state.pos[geom_idx, i_b][i]
 
 
-@ti.kernel
-def _kernel_get_geoms_quat(tensor: ti.types.ndarray(), geom_idx: ti.i32, geoms_state: array_class.GeomsState):
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_get_geoms_quat(geom_idx: ti.i32, tensor: ti.types.ndarray(), geoms_state: array_class.GeomsState):
     _B = geoms_state.pos.shape[1]
     for i, i_b in ti.ndrange(4, _B):
         tensor[i_b, i] = geoms_state.quat[geom_idx, i_b][i]
 
 
-@ti.kernel
-def _kernel_get_vgeoms_pos(tensor: ti.types.ndarray(), vgeom_idx: ti.i32, vgeoms_state: array_class.VGeomsState):
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_get_vgeoms_pos(vgeom_idx: ti.i32, tensor: ti.types.ndarray(), vgeoms_state: array_class.VGeomsState):
     _B = vgeoms_state.pos.shape[1]
     for i, i_b in ti.ndrange(3, _B):
         tensor[i_b, i] = vgeoms_state.pos[vgeom_idx, i_b][i]
 
 
-@ti.kernel
-def _kernel_get_vgeoms_quat(tensor: ti.types.ndarray(), vgeom_idx: ti.i32, vgeoms_state: array_class.VGeomsState):
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_get_vgeoms_quat(vgeom_idx: ti.i32, tensor: ti.types.ndarray(), vgeoms_state: array_class.VGeomsState):
     _B = vgeoms_state.pos.shape[1]
     for i, i_b in ti.ndrange(4, _B):
         tensor[i_b, i] = vgeoms_state.quat[vgeom_idx, i_b][i]
 
 
-@ti.kernel
+@ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_get_free_verts(
     tensor: ti.types.ndarray(), verts_state_start: ti.i32, n_verts: ti.i32, free_verts_state: array_class.VertsState
 ):
@@ -1097,7 +1097,7 @@ def _kernel_get_free_verts(
         tensor[i_b, i_v_, i] = free_verts_state.pos[i_v, i_b][i]
 
 
-@ti.kernel
+@ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_get_fixed_verts(
     tensor: ti.types.ndarray(),
     verts_state_start: ti.i32,

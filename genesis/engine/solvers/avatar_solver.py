@@ -1,7 +1,7 @@
 import numpy as np
 import gstaichi as ti
+
 import genesis as gs
-from genesis.engine.entities import AvatarEntity
 from genesis.engine.states.solvers import AvatarSolverState
 
 from .base_solver import Solver
