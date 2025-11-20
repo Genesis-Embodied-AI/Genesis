@@ -458,4 +458,3 @@ def _kernel_get_anchor_axis(tensor: ti.types.ndarray(), joints_state: array_clas
         xaxis = joints_state.xaxis[self._idx, i_b]
         for i in ti.static(range(3)):
             tensor[i_b, i] = xaxis[i]
-
