@@ -10,7 +10,7 @@ scene = gs.Scene(
     ),
     rigid_options=gs.options.RigidOptions(
         # constraint_solver=gs.constraint_solver.Newton,
-        gravity=(0, 0, -1),
+        gravity=(0, 0, 0),
         enable_collision = False,
         enable_joint_limit = True,
     ),
@@ -30,5 +30,5 @@ scene.build()
 
 # Run the simulation for visualization
 while(scene.viewer.is_alive()):
-    # scene.step()
+    scene.step()
     pass

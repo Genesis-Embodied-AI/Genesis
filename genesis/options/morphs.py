@@ -6,7 +6,7 @@ rigid object / MPM object / FEM object.
 """
 
 import os
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union, ClassVar
 
 import numpy as np
 
@@ -1258,9 +1258,40 @@ class USDArticulation(FileMorph):
     
     prim_path : str, optional
         The path to the USD prim inside the USD file. If not specified, the default prim will be used.
+    
+    parser_ctx : UsdParserContext, optional, for better performance when parsing large USD files
     """
     file: str
     prim_path: str = None
+    parser_ctx: Any = None
+    def __init__(self, **data):
+        super().__init__(**data)
+        for USD_FORMAT in USD_FORMATS:
+            if self.is_format(USD_FORMAT):
+                break
+        else:
+            gs.raise_exception(f"Expected one of `{USD_FORMATS}` extensions for USD file: {self.file}")
+
+
+class USDRigidBody(FileMorph):
+    """
+    Morph loaded from a USD Prim with RigidBodyAPI (but not ArticulationRootAPI) inside a USD file.
+    
+    This morph supports single rigid bodies (not articulated structures).
+    
+    Parameters
+    ----------
+    file : str
+        The path to the file.
+    
+    prim_path : str, optional
+        The path to the USD prim inside the USD file. If not specified, the first prim with RigidBodyAPI will be used.
+    
+    parser_ctx : UsdParserContext, optional, for better performance when parsing large USD files
+    """
+    file: str
+    prim_path: str = None
+    parser_ctx: Any  = None
     def __init__(self, **data):
         super().__init__(**data)
         for USD_FORMAT in USD_FORMATS:

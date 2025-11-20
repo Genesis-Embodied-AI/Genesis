@@ -1008,7 +1008,6 @@ def add_joint_limit_constraints(
                     pos_delta_min = rigid_global_info.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
                     pos_delta_max = dofs_info.limit[I_d][1] - rigid_global_info.qpos[i_q, i_b]
                     pos_delta = min(pos_delta_min, pos_delta_max)
-
                     if pos_delta < 0:
                         jac = (pos_delta_min < pos_delta_max) * 2 - 1
                         jac_qvel = jac * dofs_state.vel[i_d, i_b]

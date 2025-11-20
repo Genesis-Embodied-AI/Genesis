@@ -29,5 +29,5 @@ scene.build()
 
 # Run the simulation for visualization
 while(scene.viewer.is_alive()):
-    # scene.step()
+    scene.step()
     pass

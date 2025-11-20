@@ -446,6 +446,15 @@ class Scene(RBC):
         return entity
 
     @gs.assert_unbuilt
+    def add_stage(self, file: str):
+        try:
+            from ..utils import usd_stage_importer
+            entities = usd_stage_importer.import_from_usd_stage(self, file)
+            return entities
+        except ImportError:
+            gs.raise_exception("usd_stage_importer module not found. Please install it with `pip install genesis[usd]`.")
+
+    @gs.assert_unbuilt
     def link_entities(
         self,
         parent_entity: "Entity",

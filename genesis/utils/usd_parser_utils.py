@@ -4,6 +4,44 @@ import genesis as gs
 import numpy as np
 import trimesh
 import re
+import scipy
+
+class UsdParserContext:
+    """
+    A context class for USD Parsing, can be pass as arguments to various usd entity parser
+    """
+    def __init__(self, stage:Usd.Stage):
+        self._stage = stage
+        self._materials: dict[str, tuple[gs.surfaces.Surface, str]] = {}  # material_id -> (material_surface, uv_name)
+    
+    @property
+    def stage(self) -> Usd.Stage:
+        return self._stage
+    
+    @property
+    def materials(self) -> dict:
+        """
+        Get the parsed materials dictionary.
+        Key: material_id (str)
+        Value: tuple of (material_surface, uv_name)
+        """
+        return self._materials
+    
+    def get_material(self, material_id: str):
+        """
+        Get a parsed material by its ID.
+        
+        Parameters
+        ----------
+        material_id : str
+            The material ID.
+        
+        Returns
+        -------
+        tuple or None
+            Tuple of (material_surface, uv_name) if found, None otherwise.
+        """
+        return self._materials.get(material_id)
 
 def bfs_iterator(root:Usd.Prim):
     from collections import deque
@@ -41,14 +79,59 @@ def usd_quat_to_np(usd_quat:Gf.Quatf) -> np.ndarray:
     """
     return np.array([usd_quat.GetReal(), *usd_quat.GetImaginary()])
 
-class UsdParserContext:
-    """
-    A context class for USD Parsing, can be pass as arguments to various usd entity parser
-    """
-    def __init__(self, stage:Usd.Stage):
-        self._stage = stage
+def extract_rotation_and_scale(global_transform: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    U, S, Vh = np.linalg.svd(global_transform[:3, :3])
+    # check if reflection is present
+    if np.linalg.det(U @ Vh) < 0:
+        Vh[-1, :] *= -1
+    R = U @ Vh
+    scale = np.diag(S)
+    return R, scale
     
-    @property
-    def stage(self) -> Usd.Stage:
-        return self._stage
-    pass
+
+def usd_mesh_to_trimesh(usd_mesh: UsdGeom.Mesh) -> trimesh.Trimesh:
+    """
+    Convert a USD mesh to a trimesh mesh.
+    
+    Parameters
+    ----------
+    usd_mesh : UsdGeom.Mesh
+        The USD mesh to convert.
+    
+    Returns
+    -------
+    trimesh.Trimesh
+        The converted trimesh object.
+    """
+    
+    global_transform = compute_global_transform(usd_mesh.GetPrim())
+    R, S = extract_rotation_and_scale(global_transform)
+    
+    points_attr = usd_mesh.GetPointsAttr()
+    
+    face_vertex_counts_attr = usd_mesh.GetFaceVertexCountsAttr()
+    face_vertex_indices_attr = usd_mesh.GetFaceVertexIndicesAttr()
+    
+    points = np.array(points_attr.Get())
+    # apply scaling to points
+    points = points @ S
+    face_vertex_counts = np.array(face_vertex_counts_attr.Get())
+    face_vertex_indices = np.array(face_vertex_indices_attr.Get())
+    faces = []
+    
+    offset = 0
+    for i, count in enumerate(face_vertex_counts):
+        face_vertex_counts[i] = count
+        if count == 3:
+            faces.append(face_vertex_indices[offset:offset+count])
+        elif count == 4:
+            quad = face_vertex_indices[offset:offset+count]
+            faces.append([quad[0], quad[1], quad[2]])
+            faces.append([quad[0], quad[2], quad[3]])
+        else:
+            gs.raise_exception(
+                f"Unsupported face vertex count {count} in USD mesh {usd_mesh.GetPath()}. Only triangles and quads are supported."
+            )
+        offset += count
+    faces = np.array(faces)
+    return trimesh.Trimesh(vertices=points, faces=faces)
