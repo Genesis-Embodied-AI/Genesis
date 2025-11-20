@@ -3392,3 +3392,75 @@ def test_reset_control(robot_path, tol):
     new_control_force = robot.get_dofs_control_force()
     assert old_control_force.abs().max() > gs.EPS
     assert_allclose(new_control_force, 0, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 3])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_joint_get_anchor_pos_and_axis(n_envs, backend, tol):
+    """Test that get_anchor_pos() and get_anchor_axis() work correctly."""
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    scene.build(n_envs=n_envs)
+
+    # Get a non-fixed joint (skip the root joint which is FREE type)
+    joint = None
+    for j in robot.joints:
+        if j.type != gs.JOINT_TYPE.FIXED and j.type != gs.JOINT_TYPE.FREE:
+            joint = j
+            break
+
+    assert joint is not None, "No suitable joint found for testing"
+
+    # Step the simulation to update joint states
+    scene.step()
+
+    # Test get_anchor_pos()
+    anchor_pos = joint.get_anchor_pos()
+
+    # Verify shape
+    if n_envs == 0:
+        assert anchor_pos.shape == (3,), f"Expected shape (3,), got {anchor_pos.shape}"
+    else:
+        assert anchor_pos.shape == (n_envs, 3), f"Expected shape ({n_envs}, 3), got {anchor_pos.shape}"
+
+    # Verify values match internal state
+    solver = scene.sim.rigid_solver
+    if n_envs == 0:
+        expected_pos = solver.joints_state.xanchor[joint.idx, 0].to_numpy()
+        assert_allclose(anchor_pos.cpu().numpy(), expected_pos, tol=tol)
+    else:
+        for i_env in range(n_envs):
+            expected_pos = solver.joints_state.xanchor[joint.idx, i_env].to_numpy()
+            assert_allclose(anchor_pos[i_env].cpu().numpy(), expected_pos, tol=tol)
+
+    # Test get_anchor_axis()
+    anchor_axis = joint.get_anchor_axis()
+
+    # Verify shape
+    if n_envs == 0:
+        assert anchor_axis.shape == (3,), f"Expected shape (3,), got {anchor_axis.shape}"
+    else:
+        assert anchor_axis.shape == (n_envs, 3), f"Expected shape ({n_envs}, 3), got {anchor_axis.shape}"
+
+    # Verify values match internal state
+    if n_envs == 0:
+        expected_axis = solver.joints_state.xaxis[joint.idx, 0].to_numpy()
+        assert_allclose(anchor_axis.cpu().numpy(), expected_axis, tol=tol)
+    else:
+        for i_env in range(n_envs):
+            expected_axis = solver.joints_state.xaxis[joint.idx, i_env].to_numpy()
+            assert_allclose(anchor_axis[i_env].cpu().numpy(), expected_axis, tol=tol)
+
+    # Verify that calling these methods multiple times doesn't crash
+    anchor_pos2 = joint.get_anchor_pos()
+    anchor_axis2 = joint.get_anchor_axis()
+    assert_allclose(anchor_pos, anchor_pos2, tol=gs.EPS)
+    assert_allclose(anchor_axis, anchor_axis2, tol=gs.EPS)

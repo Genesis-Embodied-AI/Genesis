@@ -3,6 +3,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils import array_class
 from genesis.utils.misc import DeprecationError
 from genesis.repr_base import RBC
 
@@ -102,15 +103,15 @@ class RigidJoint(RBC):
         the anchor point is the "output" of the joint transmission, on which the child body is welded.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_anchor_pos(tensor)
+        self._kernel_get_anchor_pos(tensor, self._solver.joints_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
 
     @ti.kernel
-    def _kernel_get_anchor_pos(self, tensor: ti.types.ndarray()):
+    def _kernel_get_anchor_pos(self, tensor: ti.types.ndarray(), joints_state: array_class.JointsState):
         for i_b in range(self._solver._B):
-            xpos = self._solver.joints_state.xanchor[self._idx, i_b]
+            xpos = joints_state.xanchor[self._idx, i_b]
             for i in ti.static(range(3)):
                 tensor[i_b, i] = xpos[i]
 
@@ -122,15 +123,15 @@ class RigidJoint(RBC):
         See `RigidJoint.get_anchor_pos` documentation for details about the notion on anchor point.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_anchor_axis(tensor)
+        self._kernel_get_anchor_axis(tensor, self._solver.joints_state)
         if self._solver.n_envs == 0:
             tensor = tensor.squeeze(0)
         return tensor
 
     @ti.kernel
-    def _kernel_get_anchor_axis(self, tensor: ti.types.ndarray()):
+    def _kernel_get_anchor_axis(self, tensor: ti.types.ndarray(), joints_state: array_class.JointsState):
         for i_b in range(self._solver._B):
-            xaxis = self._solver.joints_state.xaxis[self._idx, i_b]
+            xaxis = joints_state.xaxis[self._idx, i_b]
             for i in ti.static(range(3)):
                 tensor[i_b, i] = xaxis[i]
 
