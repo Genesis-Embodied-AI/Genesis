@@ -1,6 +1,7 @@
 import ctypes
 import datetime
 import functools
+import io
 import logging
 import math
 import numbers
@@ -59,11 +60,13 @@ class redirect_libc_stderr:
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
-    # --------------------------------------------------
-    # Enter: duplicate stderr → tmp, dup2(target) → stderr
-    # --------------------------------------------------
     def __enter__(self):
-        self.stderr_fileno = sys.stderr.fileno()
+        try:
+            self.stderr_fileno = sys.stderr.fileno()
+        except io.UnsupportedOperation:
+            # Do nothing is not a real OS-level file descriptor but rather some IO buffer
+            return self
+
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
         sys.stderr.flush()
 
@@ -89,9 +92,6 @@ class redirect_libc_stderr:
 
         return self
 
-    # --------------------------------------------------
-    # Exit: restore previous stderr, close the temp copy
-    # --------------------------------------------------
     def __exit__(self, exc_type, exc_value, traceback):
         if self.stderr_fileno is None:
             return
