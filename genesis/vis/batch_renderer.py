@@ -13,10 +13,14 @@ from genesis.utils.misc import ti_to_torch
 
 from .rasterizer_context import SegmentationColorMap
 
+# Optional imports for platform-specific functionality
 try:
-    from gs_madrona.renderer_gs import MadronaBatchRendererAdapter, GeomRetriever
-except ImportError as e:
-    gs.raise_exception_from("Madrona batch renderer is only supported on Linux x86-64.", e)
+    from gs_madrona.renderer_gs import MadronaBatchRendererAdapter
+
+    _MADRONA_AVAILABLE = True
+except ImportError:
+    MadronaBatchRendererAdapter = None
+    _MADRONA_AVAILABLE = False
 
 
 def _transform_camera_quat(quat):
@@ -29,7 +33,7 @@ def _make_tensor(data, *, dtype: torch.dtype = torch.float32):
     return torch.tensor(data, dtype=dtype, device=gs.device)
 
 
-class GenesisGeomRetriever(GeomRetriever):
+class GenesisGeomRetriever:
     def __init__(self, rigid_solver, seg_level):
         self.rigid_solver = rigid_solver
         self.seg_color_map = SegmentationColorMap(to_torch=True)
@@ -260,6 +264,9 @@ class BatchRenderer(RBC):
         """
         Build all cameras in the batch and initialize Moderona renderer
         """
+        if not _MADRONA_AVAILABLE:
+            gs.raise_exception("Madrona batch renderer is only supported on Linux x86-64.")
+
         if gs.backend != gs.cuda:
             gs.raise_exception("BatchRenderer requires CUDA backend.")
         gpu_id = gs.device.index if gs.device.index is not None else 0
