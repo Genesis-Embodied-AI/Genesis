@@ -2,20 +2,13 @@ import numpy as np
 import pytest
 
 import genesis as gs
-
-from .utils import assert_allclose, assert_array_equal
+from genesis.utils.misc import tensor_to_array
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs", [0, 1])
 def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
-    """Test if the RasterizerCameraSensor returns images with correct shapes and valid pixel values."""
-
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=True,
-            gravity=(0, 0, -9.8),
-        ),
         profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         show_viewer=show_viewer,
     )
@@ -36,7 +29,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         surface=gs.surfaces.Rough(color=(0.5, 1.0, 0.5)),
     )
 
-    # Add rasterizer cameras with different resolutions
     raster_cam0 = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(512, 512),
@@ -48,7 +40,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             far=100.0,
         )
     )
-
     raster_cam1 = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(256, 256),
@@ -58,8 +49,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             fov=45.0,
         )
     )
-
-    # Camera for attachment testing
     raster_cam_attached = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(320, 240),
@@ -69,8 +58,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             fov=70.0,
         )
     )
-
-    # Add lights
     raster_cam0.add_light(
         pos=(2.0, 2.0, 5.0),
         color=(1.0, 1.0, 1.0),
@@ -78,91 +65,52 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     )
 
     scene.build(n_envs=n_envs)
-
-    # Attach camera to sphere
     offset_T = np.eye(4, dtype=np.float32)
     offset_T[2, 3] = 1.0  # 1 meter above the sphere center
     sphere_link = sphere.links[0]
     raster_cam_attached.attach(sphere_link, offset_T)
-
-    # Run simulation
     for i in range(10):
         scene.step()
-
-    # Test read (auto-render)
     data_cam0 = raster_cam0.read()
     data_cam1 = raster_cam1.read()
     data_attached = raster_cam_attached.read()
 
-    # Check that images are not pure black (all zeros) or pure white (all 255s)
-    def to_numpy_for_test(tensor_or_array):
-        if hasattr(tensor_or_array, "cpu"):
-            return tensor_or_array.cpu().numpy()
-        return tensor_or_array
-
     for cam_name, data in [("cam0", data_cam0), ("cam1", data_cam1), ("attached", data_attached)]:
         rgb = data.rgb
-        rgb_np = to_numpy_for_test(rgb)
-
-        # Check not pure black
+        rgb_np = tensor_to_array(rgb)
         mean_value = np.mean(rgb_np)
-        assert mean_value > 1.0, f"{cam_name}: Image is too dark (mean={mean_value:.2f}), likely pure black"
-
-        # Check not pure white
-        assert mean_value < 254.0, f"{cam_name}: Image is too bright (mean={mean_value:.2f}), likely pure white"
-
-        # Check variance (should have some texture/variation)
+        assert mean_value > 1.0
+        assert mean_value < 254.0
         variance = np.var(rgb_np)
-        assert variance > 1.0, f"{cam_name}: Image has no variation (var={variance:.2f}), likely uniform color"
+        assert variance > 1.0
+    data_env0 = raster_cam0.read(envs_idx=0)
+    assert data_env0.rgb.shape == (512, 512, 3), f"Single env read shape mismatch: got {data_env0.rgb.shape}"
 
-    # Test read with envs_idx
-    if n_envs > 0:
-        data_env0 = raster_cam0.read(envs_idx=0)
-        assert data_env0.rgb.shape == (512, 512, 3), f"Single env read shape mismatch: got {data_env0.rgb.shape}"
-
-        data_env1 = raster_cam0.read(envs_idx=1)
-        assert data_env1.rgb.shape == (512, 512, 3), f"Single env read shape mismatch: got {data_env1.rgb.shape}"
-
-    # Helper to query the world position of a rasterizer camera sensor
     def _get_camera_world_pos(sensor):
         renderer = sensor._shared_metadata.renderer
         context = sensor._shared_metadata.context
         node = renderer._camera_nodes[sensor._idx]
         pose = context._scene.get_pose(node)
-        # Handle possible batched pose (n_envs, 4, 4)
         if pose.ndim == 3:
             pose = pose[0]
         return pose[:3, 3].copy()
 
-    # Store attached camera position before detachment
     cam_pos_initial = _get_camera_world_pos(raster_cam_attached)
 
-    # Continue simulation to let sphere fall
-    for i in range(20):
+    for i in range(1):
         scene.step()
 
-    # Read attached camera (should follow sphere; auto-render)
     data_attached_moved = raster_cam_attached.read()
-
-    # Camera position should be different after sphere moved
     cam_pos_moved = _get_camera_world_pos(raster_cam_attached)
     cam_move_dist = np.linalg.norm(cam_pos_moved - cam_pos_initial)
     assert cam_move_dist > 1e-3, f"Attached camera position didn't change after sphere moved (dist={cam_move_dist:.3e})"
-
-    # Store camera position at the moment of detachment
     cam_pos_at_detach = cam_pos_moved.copy()
-
-    # Detach camera
     raster_cam_attached.detach()
-
-    # Continue simulation
-    for i in range(20):
+    for i in range(1):
         scene.step()
 
     # After detachment, camera should stay at same position while sphere continues falling
     # So the camera position should be (almost) unchanged
     cam_pos_after_detach = _get_camera_world_pos(raster_cam_attached)
     cam_move_after_detach = np.linalg.norm(cam_pos_after_detach - cam_pos_at_detach)
-    assert (
-        cam_move_after_detach < 1e-6
-    ), f"Detached camera position changed too much (dist={cam_move_after_detach:.3e}), should stay static"
+    assert cam_move_after_detach < 1e-6

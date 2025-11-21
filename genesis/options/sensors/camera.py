@@ -39,7 +39,6 @@ class RasterizerCameraOptions(SensorOptions):
     fov: float = 60.0
     near: float = 0.01
     far: float = 100.0
-    platform: str = "egl"
     # Camera images are updated lazily on read(), so skip per-step measured-cache updates
     update_ground_truth_only: bool = True
 
@@ -54,8 +53,6 @@ class RasterizerCameraOptions(SensorOptions):
             gs.raise_exception(f"near must be positive, got: {self.near}")
         if self.far <= self.near:
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
-        if self.platform not in ("egl", "pyglet", "osmesa"):
-            gs.raise_exception(f"platform must be 'egl', 'pyglet', or 'osmesa', got: {self.platform}")
 
 
 class RaytracerCameraOptions(SensorOptions):
