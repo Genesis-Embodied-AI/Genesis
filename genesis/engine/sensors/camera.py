@@ -27,7 +27,11 @@ from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.rasterizer import Rasterizer
     from genesis.vis.rasterizer_context import RasterizerContext
+    from genesis.vis.batch_renderer import BatchRenderer
+    from genesis.vis.raytracer import Raytracer
+    from genesis.morphs.rigid_link import RigidLink
 
 
 # ========================== Data Class ==========================
@@ -119,11 +123,11 @@ class RasterizerCameraSharedMetadata(SharedSensorMetadata):
     """Shared metadata for all Rasterizer cameras."""
 
     # Rasterizer instance
-    renderer: Optional[Any] = None
+    renderer: Optional["Rasterizer"] = None
     # RasterizerContext instance
-    context: Optional[Any] = None
-    # gs.List of lights
-    lights: Optional[Any] = None
+    context: Optional["RasterizerContext"] = None
+    # List of light dictionaries
+    lights: Optional[List[Dict[str, Any]]] = None
     # List of RasterizerCameraSensor instances
     sensors: Optional[List["RasterizerCameraSensor"]] = None
     # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
@@ -137,9 +141,9 @@ class RaytracerCameraSharedMetadata(SharedSensorMetadata):
     """Shared metadata for all Raytracer cameras."""
 
     # Raytracer instance
-    renderer: Optional[Any] = None
+    renderer: Optional["Raytracer"] = None
     # List of light objects
-    lights: Optional[Any] = None
+    lights: Optional[List[Any]] = None
     # List of RaytracerCameraSensor instances
     sensors: Optional[List["RaytracerCameraSensor"]] = None
     # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
@@ -153,7 +157,7 @@ class BatchRendererCameraSharedMetadata(SharedSensorMetadata):
     """Shared metadata for all Batch Renderer cameras."""
 
     # BatchRenderer instance
-    renderer: Optional[Any] = None
+    renderer: Optional["BatchRenderer"] = None
     # gs.List of lights
     lights: Optional[Any] = None
     # List of BatchRendererCameraSensor instances
@@ -183,7 +187,7 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
 
     def __init__(self, options: "SensorOptions", idx: int, data_cls: Type[CameraData], manager: "gs.SensorManager"):
         super().__init__(options, idx, data_cls, manager)
-        self._attached_link = None
+        self._attached_link: Optional["RigidLink"] = None
         self._attached_offset_T: Optional[torch.Tensor] = None
         self._stale: bool = True
 
