@@ -3,7 +3,7 @@ Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple, Type
+from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
 
 import numpy as np
 import torch
@@ -13,11 +13,17 @@ from genesis.options.sensors import (
     RasterizerCameraOptions,
     RaytracerCameraOptions,
     BatchRendererCameraOptions,
+    SensorOptions,
 )
-from genesis.utils.geom import pos_lookat_up_to_T
+
+from genesis.utils.geom import pos_lookat_up_to_T, trans_quat_to_T
 from genesis.utils.misc import tensor_to_array
+from genesis.vis.batch_renderer import BatchRenderer
+from genesis.options.renderers import BatchRenderer as BatchRendererOptions
+from genesis.options.vis import VisOptions
 from .base_sensor import Sensor, SharedSensorMetadata
 from .sensor_manager import register_sensor
+
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -112,37 +118,52 @@ class BatchRendererCameraWrapper:
 class RasterizerCameraSharedMetadata(SharedSensorMetadata):
     """Shared metadata for all Rasterizer cameras."""
 
-    renderer: Any = None  # Rasterizer instance
-    context: Any = None  # RasterizerContext instance
-    lights: Any = None  # gs.List of lights
-    sensors: list = None  # List of RasterizerCameraSensor instances
-    camera_nodes: dict = None  # {sensor_idx: camera_node}
-    camera_targets: dict = None  # {sensor_idx: camera_target}
-    image_cache: dict = None  # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
-    last_render_timestep: int = -1  # Track when rasterizer cameras were last updated
+    # Rasterizer instance
+    renderer: Optional[Any] = None
+    # RasterizerContext instance
+    context: Optional[Any] = None
+    # gs.List of lights
+    lights: Optional[Any] = None
+    # List of RasterizerCameraSensor instances
+    sensors: Optional[List["RasterizerCameraSensor"]] = None
+    # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
+    image_cache: Optional[Dict[int, np.ndarray]] = None
+    # Track when rasterizer cameras were last updated
+    last_render_timestep: int = -1
 
 
 @dataclass
 class RaytracerCameraSharedMetadata(SharedSensorMetadata):
     """Shared metadata for all Raytracer cameras."""
 
-    renderer: Any = None  # Raytracer instance
-    lights: Any = None  # List of light objects
-    sensors: list = None  # List of RaytracerCameraSensor instances
-    image_cache: dict = None  # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
-    last_render_timestep: int = -1  # Track when raytracer cameras were last updated
+    # Raytracer instance
+    renderer: Optional[Any] = None
+    # List of light objects
+    lights: Optional[Any] = None
+    # List of RaytracerCameraSensor instances
+    sensors: Optional[List["RaytracerCameraSensor"]] = None
+    # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
+    image_cache: Optional[Dict[int, np.ndarray]] = None
+    # Track when raytracer cameras were last updated
+    last_render_timestep: int = -1
 
 
 @dataclass
 class BatchRendererCameraSharedMetadata(SharedSensorMetadata):
     """Shared metadata for all Batch Renderer cameras."""
 
-    renderer: Any = None  # BatchRenderer instance
-    lights: Any = None  # gs.List of lights
-    sensors: list = None  # List of BatchRendererCameraSensor instances
-    image_cache: dict = None  # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
-    last_render_timestep: int = -1  # Track when batch was last rendered
-    visualizer_wrapper: Any = None  # MinimalVisualizerWrapper instance
+    # BatchRenderer instance
+    renderer: Optional[Any] = None
+    # gs.List of lights
+    lights: Optional[Any] = None
+    # List of BatchRendererCameraSensor instances
+    sensors: Optional[List["BatchRendererCameraSensor"]] = None
+    # {sensor_idx: np.ndarray with shape (B, H, W, 3)}
+    image_cache: Optional[Dict[int, np.ndarray]] = None
+    # Track when batch was last rendered
+    last_render_timestep: int = -1
+    # MinimalVisualizerWrapper instance
+    visualizer_wrapper: Optional["MinimalVisualizerWrapper"] = None
 
 
 # ========================== Base Camera Sensor ==========================
@@ -160,29 +181,26 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
     - Shared read() method returning torch tensors
     """
 
-    def __init__(self, options, idx, data_cls, manager: "gs.SensorManager"):
+    def __init__(self, options: "SensorOptions", idx: int, data_cls: Type[CameraData], manager: "gs.SensorManager"):
         super().__init__(options, idx, data_cls, manager)
         self._attached_link = None
-        self._attached_offset_T: torch.Tensor | None = None
+        self._attached_offset_T: Optional[torch.Tensor] = None
         self._stale: bool = True
 
     # ========================== Cache Integration (shared) ==========================
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        """Return image format for this camera in the SensorManager cache."""
-        h, w = self._options.res[1], self._options.res[0]
+        w, h = self._options.res
         return ((h, w, 3),)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
-        """Return the dtype of the cache for this camera."""
         return torch.uint8
 
     @classmethod
     def _update_shared_ground_truth_cache(
         cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
-        """Shared ground truth cache update (timestamp-based, overridden in subclasses if needed)."""
         pass
 
     @classmethod
@@ -193,7 +211,7 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        """No per-step measured-cache update for cameras (handled lazily on read())."""
+        # No per-step measured-cache update for cameras (handled lazily on read()).
         pass
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
@@ -207,53 +225,53 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
         """
         Attach the camera to a rigid link in the scene.
 
-        Subclasses can customize backend behavior in on_attach_backend().
+        Subclasses can customize backend behavior in _on_attach_backend().
         """
         self._attached_link = rigid_link
         self._attached_offset_T = torch.as_tensor(offset_T, dtype=gs.tc_float, device=gs.device)
         self._stale = True
-        self.on_attach_backend(rigid_link, offset_T)
+        self._on_attach_backend(rigid_link, offset_T)
 
     @gs.assert_built
     def detach(self):
         """
         Detach the camera from the currently attached rigid link.
 
-        Subclasses can customize backend behavior in on_detach_backend().
+        Subclasses can customize backend behavior in _on_detach_backend().
         """
         self._attached_link = None
         self._attached_offset_T = None
         self._stale = True
-        self.on_detach_backend()
+        self._on_detach_backend()
 
     @gs.assert_built
     def move_to_attach(self):
         """
         Move the camera to follow the currently attached rigid link.
 
-        Uses a shared transform computation and delegates to apply_camera_transform().
+        Uses a shared transform computation and delegates to _apply_camera_transform().
         """
         if self._attached_link is None:
             gs.raise_exception("Camera not attached to any rigid link.")
 
         camera_T = _camera_compute_T_from_link(self._attached_link, self._attached_offset_T)
-        self.apply_camera_transform(camera_T)
+        self._apply_camera_transform(camera_T)
 
     # ========================== Hooks for subclasses ==========================
 
-    def on_attach_backend(self, rigid_link, offset_T):
+    def _on_attach_backend(self, rigid_link, offset_T):
         """Optional backend-specific behavior when attaching; default is no-op."""
         pass
 
-    def on_detach_backend(self):
+    def _on_detach_backend(self):
         """Optional backend-specific behavior when detaching; default is no-op."""
         pass
 
-    def apply_camera_transform(self, camera_T: torch.Tensor):
+    def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Apply the computed camera transform to the backend-specific camera representation."""
         pass
 
-    def render_current_state(self):
+    def _render_current_state(self):
         """Perform the actual render for the current state; subclasses must implement."""
         pass
 
@@ -266,7 +284,7 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
     def _ensure_rendered_for_current_state(self):
         """Ensure this camera has an up-to-date render before reading.
 
-        Base handles staleness and timestamps; subclasses implement render_current_state().
+        Base handles staleness and timestamps; subclasses implement _render_current_state().
         """
         scene = self._manager._sim.scene
 
@@ -286,7 +304,7 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
             self.move_to_attach()
 
         # Call subclass-specific render
-        self.render_current_state()
+        self._render_current_state()
 
         # Mark as fresh
         self._stale = False
@@ -367,15 +385,12 @@ def _camera_compute_T_from_link(attached_link, attached_offset_T: torch.Tensor) 
     link_quat = attached_link.get_quat()
 
     # Handle batched case - use first environment
-    if hasattr(link_pos, "ndim") and link_pos.ndim > 1:
+    if link_pos.ndim > 1:
         link_pos = link_pos[0]
         link_quat = link_quat[0]
 
-    from genesis.utils.geom import trans_quat_to_T
-
     link_T = trans_quat_to_T(link_pos, link_quat)
-    camera_T = torch.matmul(link_T, attached_offset_T)
-    return camera_T
+    return torch.matmul(link_T, attached_offset_T)
 
 
 # ========================== Rasterizer Camera Sensor ==========================
@@ -411,30 +426,22 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
         scene = self._manager._sim.scene
 
-        # Initialize shared metadata on first camera
         if self._shared_metadata.sensors is None:
             self._shared_metadata.sensors = []
             self._shared_metadata.lights = gs.List()
-            self._shared_metadata.camera_nodes = {}
-            self._shared_metadata.camera_targets = {}
             self._shared_metadata.image_cache = {}
 
-            # Create standalone rasterizer context
             self._shared_metadata.context = self._create_standalone_context(scene)
 
-            # Create offscreen rasterizer
             from genesis.vis.rasterizer import Rasterizer
 
             self._shared_metadata.renderer = Rasterizer(viewer=None, context=self._shared_metadata.context)
             self._shared_metadata.renderer.build()
 
-        # Register this camera
         self._shared_metadata.sensors.append(self)
 
-        # Add camera to rasterizer
         self._add_camera_to_rasterizer()
 
-        # Initialize image cache for this camera
         n_envs = max(self._manager._sim._B, 1)
         h, w = self._options.res[1], self._options.res[0]
         self._shared_metadata.image_cache[self._idx] = torch.zeros(
@@ -446,7 +453,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
         from genesis.vis.rasterizer_context import RasterizerContext
         from genesis.options.vis import VisOptions
 
-        # Create minimal visualizer options
         vis_options = VisOptions(
             show_world_frame=False,
             show_link_frame=False,
@@ -461,11 +467,9 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _add_camera_to_rasterizer(self):
         """Add this camera to the rasterizer."""
-        # Use the rasterizer's add_camera method
         camera_wrapper = self._get_camera_wrapper()
         self._shared_metadata.renderer.add_camera(camera_wrapper)
 
-        # Set initial camera pose
         self._update_camera_pose()
 
     def _update_camera_pose(self):
@@ -481,24 +485,20 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _get_camera_wrapper(self):
         """Get (and lazily create) the persistent camera wrapper for the renderer."""
-
         if self._camera_wrapper is None:
             self._camera_wrapper = RasterizerCameraWrapper(self)
-
         return self._camera_wrapper
 
-    def apply_camera_transform(self, camera_T: torch.Tensor):
+    def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Update rasterizer camera wrapper from a world transform."""
         camera_wrapper = self._get_camera_wrapper()
         camera_wrapper.transform = tensor_to_array(camera_T)
         self._shared_metadata.renderer.update_camera(camera_wrapper)
 
-    def render_current_state(self):
+    def _render_current_state(self):
         """Perform the actual render for the current state."""
-        # Update scene state
         self._shared_metadata.context.update(force_render=False)
 
-        # Render this camera
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._get_camera_wrapper(),
             rgb=True,
@@ -507,20 +507,19 @@ class RasterizerCameraSensor(BaseCameraSensor):
             normal=False,
         )
 
-        # Convert to torch tensor and store in cache
         rgb_tensor = torch.from_numpy(rgb_arr.copy()).to(dtype=torch.uint8, device=gs.device)
 
         # Store in cache
-        # rgb_arr shape: (H, W, 3) for single env or needs batching
         n_envs = self._manager._sim._B
-        if n_envs == 0:
+        if n_envs <= 1:
             # Single environment case - add batch dimension
             self._shared_metadata.image_cache[self._idx][0] = rgb_tensor
         else:
-            # TODO: Handle multi-env rendering properly
-            # For now, just replicate the single render
-            for i in range(n_envs):
-                self._shared_metadata.image_cache[self._idx][i] = rgb_tensor
+            # Multi-environment rendering is not yet supported for Rasterizer cameras
+            gs.raise_exception(
+                f"Rasterizer camera sensors do not support multi-environment rendering (n_envs={n_envs}). "
+                "Use BatchRenderer camera sensors for batched rendering."
+            )
 
     def add_light(
         self,
@@ -565,8 +564,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
 class RaytracerCameraSensor(BaseCameraSensor):
     """
     Raytracer camera sensor using LuisaRender path tracing.
-
-    Note: Raytracer only renders environment 0 (expensive path tracing).
     """
 
     def __init__(
@@ -595,28 +592,13 @@ class RaytracerCameraSensor(BaseCameraSensor):
                 "the same LuisaRender backend as the main visualizer (see examples/rendering/demo.py)."
             )
 
-        # Initialize shared metadata on first camera
         if self._shared_metadata.sensors is None:
             self._shared_metadata.sensors = []
             self._shared_metadata.lights = []
             self._shared_metadata.image_cache = {}
             self._shared_metadata.renderer = renderer
 
-        # Register this sensor
         self._shared_metadata.sensors.append(self)
-
-        # Create the underlying visualizer camera
-        self._create_camera(visualizer)
-
-        # Initialize image cache for this camera (only env 0)
-        h, w = self._options.res[1], self._options.res[0]
-        n_envs = max(self._manager._sim._B, 1)
-        self._shared_metadata.image_cache[self._idx] = torch.zeros(
-            (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
-        )
-
-    def _create_camera(self, visualizer):
-        """Create the underlying visualizer camera that drives the raytracer."""
         opts = self._options
         self._camera_obj = visualizer.add_camera(
             res=opts.res,
@@ -636,17 +618,23 @@ class RaytracerCameraSensor(BaseCameraSensor):
             debug=False,
         )
 
-    def on_attach_backend(self, rigid_link, offset_T):
+        h, w = self._options.res[1], self._options.res[0]
+        n_envs = max(self._manager._sim._B, 1)
+        self._shared_metadata.image_cache[self._idx] = torch.zeros(
+            (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
+        )
+
+    def _on_attach_backend(self, rigid_link, offset_T):
         """Keep the underlying visualizer camera in sync when attaching."""
         if self._camera_obj is not None:
             self._camera_obj.attach(rigid_link, offset_T)
 
-    def on_detach_backend(self):
+    def _on_detach_backend(self):
         """Keep the underlying visualizer camera in sync when detaching."""
         if self._camera_obj is not None:
             self._camera_obj.detach()
 
-    def render_current_state(self):
+    def _render_current_state(self):
         """Perform the actual render for the current state."""
         if self._attached_link is not None:
             self._camera_obj.move_to_attach()
@@ -661,18 +649,17 @@ class RaytracerCameraSensor(BaseCameraSensor):
             force_render=False,
         )
 
-        # Convert to torch tensor and store in cache
         rgb_tensor = torch.from_numpy(rgb_arr.copy()).to(dtype=torch.uint8, device=gs.device)
 
-        # Store in cache (rgb_arr is already (H, W, 3) for env 0)
         n_envs = self._manager._sim._B
-        if n_envs == 0:
-            # Single environment case
+        if n_envs <= 1:
             self._shared_metadata.image_cache[self._idx][0] = rgb_tensor
         else:
-            # Multi-env case: only render env 0, replicate for others
-            for i in range(n_envs):
-                self._shared_metadata.image_cache[self._idx][i] = rgb_tensor
+            # Multi-environment rendering is not yet supported for Raytracer cameras
+            gs.raise_exception(
+                f"Raytracer camera sensors do not support multi-environment rendering (n_envs={n_envs}). "
+                "Use BatchRenderer camera sensors for batched rendering."
+            )
 
     def add_light(
         self,
@@ -726,7 +713,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
         """Attach the camera to a rigid link in the scene."""
         self._attached_link = rigid_link
         self._attached_offset_T = torch.as_tensor(offset_T, dtype=gs.tc_float, device=gs.device)
-        # Keep the underlying visualizer camera in sync so its own attach logic works.
         self._camera_obj.attach(rigid_link, offset_T)
         self._stale = True
 
@@ -741,7 +727,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
     @gs.assert_built
     def move_to_attach(self):
         """Move the camera to follow the currently attached rigid link."""
-        # Delegate to the underlying visualizer camera implementation
         self._camera_obj.move_to_attach()
 
 
@@ -776,14 +761,12 @@ class BatchRendererCameraSensor(BaseCameraSensor):
 
         scene = self._manager._sim.scene
 
-        # Initialize shared metadata on first camera
         if self._shared_metadata.sensors is None:
             self._shared_metadata.sensors = []
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
             self._shared_metadata.last_render_timestep = -1
 
-            # Validate that all batch renderer cameras have the same resolution
             all_sensors = self._manager._sensors_by_type[type(self)]
             resolutions = [s._options.res for s in all_sensors]
             if len(set(resolutions)) > 1:
@@ -791,11 +774,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                     f"All BatchRendererCameraSensor instances must have the same resolution. "
                     f"Found: {set(resolutions)}"
                 )
-
-            # Create batch renderer (will be initialized after all cameras are added)
-            from genesis.vis.batch_renderer import BatchRenderer
-            from genesis.options.renderers import BatchRenderer as BatchRendererOptions
-            from genesis.options.vis import VisOptions
 
             br_options = BatchRendererOptions(
                 use_rasterizer=self._options.use_rasterizer,
@@ -815,7 +793,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.sensors.append(self)
 
-        self._create_camera()
+        self._camera_obj = BatchRendererCameraWrapper(self)
 
         if len(self._shared_metadata.sensors) == len(self._manager._sensors_by_type[type(self)]):
             self._shared_metadata.visualizer_wrapper._cameras = [s._camera_obj for s in self._shared_metadata.sensors]
@@ -827,12 +805,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
         )
 
-    def _create_camera(self):
-        """Create batch renderer camera object."""
-
-        self._camera_obj = BatchRendererCameraWrapper(self)
-
-    def render_current_state(self):
+    def _render_current_state(self):
         """Perform the actual render for the current state."""
         sensors = self._shared_metadata.sensors or [self]
 
@@ -850,7 +823,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         # rgb_arr might be a tuple of arrays (one per camera) or a single array
         # Handle both cases
         if isinstance(rgb_arr, (tuple, list)):
-            # Convert each array in the tuple to torch tensor
             rgb_tensors = []
             for arr in rgb_arr:
                 if isinstance(arr, torch.Tensor):
@@ -859,7 +831,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                     rgb_tensors.append(torch.from_numpy(arr).to(dtype=torch.uint8, device=gs.device))
             rgb_arr = torch.stack(rgb_tensors)
         else:
-            # Single array case
             if isinstance(rgb_arr, torch.Tensor):
                 rgb_arr = rgb_arr.to(dtype=torch.uint8, device=gs.device)
             else:
@@ -869,7 +840,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
             sensor._stale = False
 
-        # Mark timestep as updated
         self._shared_metadata.last_render_timestep = self._manager._sim.scene.t
 
     def add_light(
@@ -926,7 +896,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                 }
             )
 
-    def apply_camera_transform(self, camera_T: torch.Tensor):
+    def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Update batch renderer camera from a world transform."""
         from genesis.utils.geom import T_to_trans_quat
 
