@@ -118,7 +118,7 @@ def init(
 
     # Configure GsTaichi fast cache and array type
     global use_ndarray, use_fastcache
-    is_ndarray_disabled = (os.environ.get("GS_ENABLE_NDARRAY") or ("0" if sys.platform == "darwin" else "1")) == "0"
+    is_ndarray_disabled = (os.environ.get("GS_ENABLE_NDARRAY") or ("0" if backend == gs_backend.metal else "1")) == "0"
     if use_ndarray is None:
         _use_ndarray = not (is_ndarray_disabled or performance_mode)
     else:
