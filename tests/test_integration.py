@@ -13,7 +13,7 @@ def test_pick_and_place(mode, show_viewer):
     #
     # This is necessary because the first-order correction term involved in the implicit integration schemes
     # 'implicitfast' and 'Euler' are only able to stabilize each entity independently, from the forces that were
-    # obtained from the instable accelerations. As a result, eveything is fine as long as the entities are not
+    # obtained from the instable accelerations. As a result, everything is fine as long as the entities are not
     # interacting with each other, but it induces unrealistic motion otherwise. In this case, the acceleration of the
     # cube being lifted is based on the acceleration that the gripper would have without implicit damping.
     #

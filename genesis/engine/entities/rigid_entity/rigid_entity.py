@@ -561,6 +561,7 @@ class RigidEntity(Entity):
 
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
+        self._n_geoms = self.n_geoms
         self._is_built = True
 
         verts_start = 0
@@ -576,6 +577,8 @@ class RigidEntity(Entity):
             self._free_verts_idx_local = torch.cat(free_verts_idx_local)
         if fixed_verts_idx_local:
             self._fixed_verts_idx_local = torch.cat(fixed_verts_idx_local)
+        self._n_free_verts = len(self._free_verts_idx_local)
+        self._n_fixed_verts = len(self._fixed_verts_idx_local)
 
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
@@ -1347,19 +1350,13 @@ class RigidEntity(Entity):
         )
 
         qpos = ti_to_torch(self._IK_qpos_best, transpose=True)
-        if self._solver.n_envs == 0:
-            qpos = qpos[0].clone()
-        else:
-            qpos = qpos[envs_idx]
+        qpos = qpos[0] if self._solver.n_envs == 0 else qpos[envs_idx]
 
         if return_error:
             error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True).reshape((-1, self._IK_n_tgts, 6))[
                 :, :n_links
             ]
-            if self._solver.n_envs == 0:
-                error_pose = error_pose[0].clone()
-            else:
-                error_pose = error_pose[envs_idx]
+            error_pose = error_pose[0] if self._solver.n_envs == 0 else error_pose[envs_idx]
             return qpos, error_pose
         return qpos
 
@@ -2029,23 +2026,36 @@ class RigidEntity(Entity):
         verts : torch.Tensor, shape (n_envs, n_verts, 3)
             The vertices of the entity.
         """
-        self._solver.update_verts_for_geoms(range(self.geom_start, self.geom_end))
+        self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
 
-        tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-        has_fixed_verts, has_free_vertices = len(self._fixed_verts_idx_local) > 0, len(self._free_verts_idx_local) > 0
-        if has_fixed_verts:
-            _kernel_get_fixed_verts(
-                tensor, self._fixed_verts_idx_local, self._fixed_verts_state_start, self._solver.fixed_verts_state
-            )
-        if has_free_vertices:
-            # FIXME: Get around some bug in gstaichi when using gstaichi with metal backend
-            must_copy = gs.backend == gs.metal and has_fixed_verts
-            tensor_free = torch.zeros_like(tensor) if must_copy else tensor
-            _kernel_get_free_verts(
-                tensor_free, self._free_verts_idx_local, self._free_verts_state_start, self._solver.free_verts_state
-            )
-            if must_copy:
-                tensor += tensor_free
+        n_fixed_verts, n_free_vertices = self._n_fixed_verts, self._n_free_verts
+        tensor = torch.empty((self._solver._B, n_fixed_verts + n_free_vertices, 3), dtype=gs.tc_float, device=gs.device)
+
+        if n_fixed_verts > 0:
+            if gs.use_zerocopy:
+                fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos)
+                tensor[:, self._fixed_verts_idx_local] = fixed_verts_state[
+                    self._fixed_verts_state_start : self._fixed_verts_state_start + n_fixed_verts
+                ]
+            else:
+                _kernel_get_fixed_verts(
+                    tensor, self._fixed_verts_idx_local, self._fixed_verts_state_start, self._solver.fixed_verts_state
+                )
+        if n_free_vertices > 0:
+            if gs.use_zerocopy:
+                free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, transpose=True)
+                tensor[:, self._free_verts_idx_local] = free_verts_state[
+                    :, self._free_verts_state_start : self._free_verts_state_start + n_free_vertices
+                ]
+            else:
+                # FIXME: Get around some bug in gstaichi when using gstaichi with metal backend
+                must_copy = gs.backend == gs.metal and n_fixed_verts > 0
+                tensor_free = torch.zeros_like(tensor) if must_copy else tensor
+                _kernel_get_free_verts(
+                    tensor_free, self._free_verts_idx_local, self._free_verts_state_start, self._solver.free_verts_state
+                )
+                if must_copy:
+                    tensor += tensor_free
 
         if self._solver.n_envs == 0:
             tensor = tensor[0]
@@ -2854,6 +2864,8 @@ class RigidEntity(Entity):
     @property
     def n_geoms(self):
         """The number of `RigidGeom` in the entity."""
+        if self._is_built:
+            return self._n_geoms
         return sum(link.n_geoms for link in self._links)
 
     @property

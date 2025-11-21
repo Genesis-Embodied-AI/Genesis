@@ -894,7 +894,13 @@ class RigidSolver(Solver):
             )
 
     def check_errno(self):
-        match kernel_get_errno(self._errno):
+        # Note that errno must be evaluated BEFORE match because otherwise it will be evaluated for each case...
+        # See official documentation: https://docs.python.org/3.10/reference/compound_stmts.html#overview
+        if gs.use_zerocopy:
+            errno = int(ti_to_torch(self._errno, copy=None, non_blocking=True))
+        else:
+            errno = kernel_get_errno(self._errno)
+        match errno:
             case 1:
                 max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
                 gs.raise_exception(
@@ -1362,8 +1368,10 @@ class RigidSolver(Solver):
         _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
         if _inputs_idx is not inputs_idx:
             gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        _inputs_idx = torch.atleast_1d(_inputs_idx)
-        if _inputs_idx.ndim != 1:
+        _inputs_ndim = _inputs_idx.ndim
+        if _inputs_ndim == 0:
+            _inputs_idx = _inputs_idx[None]
+        elif _inputs_ndim > 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
         if not ((0 <= _inputs_idx).all() or (_inputs_idx < input_size).all()):
             gs.raise_exception(f"`{idx_name}` is out-of-range.")
@@ -1372,19 +1380,23 @@ class RigidSolver(Solver):
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
             if _tensor is not tensor:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor.unsqueeze(0) if batched and self.n_envs and _tensor.ndim == 1 else _tensor
-
+            tensor_ndim = _tensor.ndim
+            if batched and self.n_envs and tensor_ndim == 1:
+                tensor = _tensor.unsqueeze(0)
+                tensor_ndim += 1
+            else:
+                tensor = _tensor
             if tensor.shape[-1] != len(inputs_idx):
                 gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
 
             if batched:
                 if self.n_envs == 0:
-                    if tensor.ndim != 1:
+                    if tensor_ndim != 1:
                         gs.raise_exception(
                             f"Invalid input shape: {tensor.shape}. Expecting a 1D tensor for non-parallelized scene."
                         )
                 else:
-                    if tensor.ndim == 2:
+                    if tensor_ndim == 2:
                         if tensor.shape[0] != len(envs_idx):
                             gs.raise_exception(
                                 f"Invalid input shape: {tensor.shape}. First dimension of the input tensor does not match "
@@ -1395,7 +1407,7 @@ class RigidSolver(Solver):
                             f"Invalid input shape: {tensor.shape}. Expecting a 2D tensor for scene with parallelized envs."
                         )
             else:
-                if tensor.ndim != 1:
+                if tensor_ndim != 1:
                     gs.raise_exception("Expecting 1D output tensor.")
         return tensor, _inputs_idx, envs_idx
 
@@ -2285,7 +2297,12 @@ class RigidSolver(Solver):
         return self.constraint_solver.get_equality_constraints(as_tensor, to_torch)
 
     def clear_external_force(self):
-        kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
+        if gs.use_zerocopy:
+            for tensor in (self.links_state.cfrc_applied_ang, self.links_state.cfrc_applied_vel):
+                out = ti_to_python(tensor, copy=False, non_blocking=True)
+                out.zero_()
+        else:
+            kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
 
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
@@ -2320,6 +2337,11 @@ class RigidSolver(Solver):
         )
 
     def update_verts_for_geoms(self, geoms_idx):
+        if gs.use_zerocopy:
+            verts_updated = ti_to_torch(self.geoms_state.verts_updated, transpose=False)
+            if verts_updated[geoms_idx].all():
+                return
+
         _, geoms_idx, _ = self._sanitize_1D_io_variables(
             None, geoms_idx, self.n_geoms, None, idx_name="geoms_idx", skip_allocation=True, unsafe=False
         )

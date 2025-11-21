@@ -569,51 +569,102 @@ def _get_ti_metadata(value: ti.Field | ti.Ndarray) -> FieldMetadata:
 
 
 def ti_to_python(
-    value: ti.Field | ti.Ndarray, transpose: bool = False, to_torch: bool = True
+    value: ti.Field | ti.Ndarray,
+    transpose: bool = False,
+    copy: bool | None = True,
+    to_torch: bool = True,
+    non_blocking: bool = False,
 ) -> torch.Tensor | np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor / Numpy array.
 
     Args:
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.
         transpose (bool, optional): Whether to move the last batch dimension in front. Defaults to False.
+        copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
+        without raising an exception if not.
+        non_blocking (bool): Whether to skip GPU synchronization. It will be faster, but there will be no guarantee
+        that the return buffer is up-to-date. Default to False.
         to_torch (bool): Whether to convert to Torch tensor or Numpy array. Defaults to True.
     """
-    # Get metadata
-    ti_data_meta = _get_ti_metadata(value)
-
-    # Extract value as a whole.
-    # Note that this is usually much faster than using a custom kernel to extract a slice.
-    # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
-    is_metal = gs.device.type == "mps"
-    out_dtype = _to_torch_type_fast(ti_data_meta.dtype) if to_torch else _to_numpy_type_fast(ti_data_meta.dtype)
+    # Check if copy mode is supported while setting default mode if not specified.
+    # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
+    # See: https://github.com/pytorch/pytorch/pull/168193
+    # FIXME: Zero-copy is currently broken for ti.Field for some reason...
     data_type = type(value)
-    if issubclass(data_type, (ti.ScalarField, ti.ScalarNdarray)):
-        if to_torch:
-            out = torch.zeros(ti_data_meta.shape, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-        else:
-            out = np.zeros(ti_data_meta.shape, dtype=out_dtype)
-        TO_EXT_ARR_FAST_MAP[data_type](value, out)
-    elif issubclass(data_type, ti.MatrixField):
-        as_vector = value.m == 1
-        shape_ext = (value.n,) if as_vector else (value.n, value.m)
-        if to_torch:
-            out = torch.empty(ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-        else:
-            out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
-        TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
-    elif issubclass(data_type, (ti.VectorNdarray, ti.MatrixNdarray)):
-        layout_is_aos = 1
-        as_vector = issubclass(data_type, ti.VectorNdarray)
-        shape_ext = (value.n,) if as_vector else (value.n, value.m)
-        if to_torch:
-            out = torch.empty(ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-        else:
-            out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
-        TO_EXT_ARR_FAST_MAP[ti.MatrixNdarray](value, out, layout_is_aos, as_vector)
+    use_zerocopy = (
+        gs.use_zerocopy
+        and (to_torch or gs.backend == gs.cpu)
+        and not issubclass(data_type, ti.Field)
+        # and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
+    )
+    if not use_zerocopy:
+        if copy is False:
+            gs.raise_exception(
+                "Specifying 'copy=False' is not supported if 'gs.use_zerocopy=False' or ('to_torch=False' and "
+                "'gs.backend != gs.cpu')."
+            )
+        copy = True
+    elif copy is None:
+        copy = False
+
+    # Extract metadata if necessary
+    if transpose or not use_zerocopy:
+        ti_data_meta = _get_ti_metadata(value)
+
+    # Leverage zero-copy if enabled
+    if use_zerocopy:
+        try:
+            out = value._tc if to_torch or gs.backend != gs.cpu else value._np
+        except AttributeError:
+            out = value._tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
+            if gs.backend == gs.cpu:
+                value._np = value._tc.numpy()
+                if not to_torch:
+                    out = value._np
+        if not non_blocking:
+            ti.sync()
+        if copy:
+            if to_torch:
+                out = out.clone()
+            else:
+                out = tensor_to_array(out)
     else:
-        gs.raise_exception(f"Unsupported type '{type(value)}'.")
-    if to_torch and is_metal:
-        out = out.to(gs.device)
+        # Extract value as a whole.
+        # Note that this is usually much faster than using a custom kernel to extract a slice.
+        # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
+        is_metal = gs.device.type == "mps"
+        out_dtype = _to_torch_type_fast(ti_data_meta.dtype) if to_torch else _to_numpy_type_fast(ti_data_meta.dtype)
+        if issubclass(data_type, (ti.ScalarField, ti.ScalarNdarray)):
+            if to_torch:
+                out = torch.zeros(ti_data_meta.shape, dtype=out_dtype, device="cpu" if is_metal else gs.device)
+            else:
+                out = np.zeros(ti_data_meta.shape, dtype=out_dtype)
+            TO_EXT_ARR_FAST_MAP[data_type](value, out)
+        elif issubclass(data_type, ti.MatrixField):
+            as_vector = value.m == 1
+            shape_ext = (value.n,) if as_vector else (value.n, value.m)
+            if to_torch:
+                out = torch.empty(
+                    ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device
+                )
+            else:
+                out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
+            TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
+        elif issubclass(data_type, (ti.VectorNdarray, ti.MatrixNdarray)):
+            layout_is_aos = 1
+            as_vector = issubclass(data_type, ti.VectorNdarray)
+            shape_ext = (value.n,) if as_vector else (value.n, value.m)
+            if to_torch:
+                out = torch.empty(
+                    ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device
+                )
+            else:
+                out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
+            TO_EXT_ARR_FAST_MAP[ti.MatrixNdarray](value, out, layout_is_aos, as_vector)
+        else:
+            gs.raise_exception(f"Unsupported type '{type(value)}'.")
+        if to_torch and is_metal:
+            out = out.to(gs.device)
 
     # Transpose if necessary and requested.
     # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
@@ -645,7 +696,7 @@ def extract_slice(
     """
     # Make sure that the user-arguments are valid if requested
     if not unsafe:
-        if value.ndim == 1 and col_mask is not None:
+        if col_mask is not None and value.ndim == 1:
             gs.raise_exception("Cannot specify column mask for 1D tensor.")
         for i, mask in enumerate((row_mask, col_mask)):
             if mask is None or isinstance(mask, slice):
@@ -726,6 +777,8 @@ def ti_to_torch(
     keepdim=True,
     transpose=False,
     *,
+    copy: bool | None = True,
+    non_blocking: bool = False,
     unsafe=False,
 ) -> torch.Tensor:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor.
@@ -734,11 +787,18 @@ def ti_to_torch(
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
         col_mask (optional): Columns to extract from batch dimension after transpose if requested.
-        keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
-        transpose (bool, optional): Whether move to front the first non-batch dimension.
+        keepdim (bool): Whether to keep all dimensions even if masks are integers.
+        transpose (bool): Whether move to front the first non-batch dimension.
+        copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
+        without raising an exception if not.
+        non_blocking (bool): Whether to skip GPU synchronization. It will be faster, but there will be no guarantee
+        that the return buffer is up-to-date. Default to False.
         unsafe (bool, optional): Whether to skip validity check of the masks.
     """
-    tensor = ti_to_python(value, transpose, to_torch=True)
+    # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here
+    tensor = ti_to_python(value, transpose, copy=copy, non_blocking=non_blocking, to_torch=True)
+    if row_mask is None and col_mask is None:
+        return tensor
 
     ti_data_meta = _get_ti_metadata(value)
     if len(ti_data_meta.shape) < 2:
@@ -748,6 +808,7 @@ def ti_to_torch(
     else:
         batch_shape = (row_mask, col_mask)
 
+    # FIXME: Should raise an exception if extracting a slice requires doing a copy
     return extract_slice(tensor, *batch_shape, keepdim, unsafe=unsafe)
 
 
@@ -758,6 +819,8 @@ def ti_to_numpy(
     keepdim=True,
     transpose=False,
     *,
+    copy: bool | None = True,
+    non_blocking: bool = False,
     unsafe=False,
 ) -> np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a Numpy array.
@@ -768,9 +831,15 @@ def ti_to_numpy(
         col_mask (optional): Columns to extract from batch dimension after transpose if requested.
         keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
         transpose (bool, optional): Whether move to front the first non-batch dimension.
+        copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
+        without raising an exception if not.
+        non_blocking (bool): Whether to skip GPU synchronization. It will be faster, but there will be no guarantee
+        that the return buffer is up-to-date. Default to False.
         unsafe (bool, optional): Whether to skip validity check of the masks.
     """
-    tensor = ti_to_python(value, transpose, to_torch=False)
+    tensor = ti_to_python(value, transpose, copy=copy, non_blocking=non_blocking, to_torch=False)
+    if row_mask is None and col_mask is None:
+        return tensor
 
     ti_data_meta = _get_ti_metadata(value)
     if len(ti_data_meta.shape) < 2:
