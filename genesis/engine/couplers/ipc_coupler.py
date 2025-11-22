@@ -70,6 +70,10 @@ class IPCCoupler(RBC):
         # If entity_idx not in dict or value is None, all links of that entity participate
         self._ipc_link_filters = {}
 
+        # IPC-only links: maps entity_idx -> set of link_idx that should ONLY exist in IPC
+        # These links will not have soft constraints, use full density, and directly set Genesis transforms
+        self._ipc_only_links = {}
+
     def build(self) -> None:
         """Build IPC system"""
         # Initialize IPC system
@@ -402,13 +406,14 @@ class IPCCoupler(RBC):
                         geom_rot_mat = gu.quat_to_R(geom_rel_quat)
                         transformed_verts = geom_verts @ geom_rot_mat.T + geom_rel_pos
 
-                        # Convert trimesh to tetmesh
+                        # Create uipc trimesh for rigid body (ABD doesn't need tetmesh)
                         try:
-                            tri_mesh = trimesh.Trimesh(vertices=transformed_verts, faces=geom_faces)
-                            verts, elems = mu.tetrahedralize_mesh(tri_mesh, tet_cfg=dict())
-                            rigid_mesh = tetmesh(verts.astype(np.float64), elems.astype(np.int32))
+                            from uipc.geometry import trimesh as uipc_trimesh
 
-                            # Store mesh and geom info
+                            # Create uipc trimesh directly (dim=2, surface mesh for ABD)
+                            rigid_mesh = uipc_trimesh(transformed_verts.astype(np.float64), geom_faces.astype(np.int32))
+
+                            # Store uipc mesh (SimplicialComplex) for merging
                             link_geoms[link_idx]["meshes"].append((i_g, rigid_mesh))
 
                         except Exception as e:
@@ -434,7 +439,7 @@ class IPCCoupler(RBC):
                             # Single mesh in link
                             geom_idx, merged_mesh = link_data["meshes"][0]
                         else:
-                            # Multiple meshes in link - merge them
+                            # Multiple meshes in link - merge them using uipc.geometry.merge
                             meshes_to_merge = [mesh for geom_idx, mesh in link_data["meshes"]]
                             merged_mesh = merge(meshes_to_merge)
                             geom_idx = link_data["meshes"][0][0]  # Use first geom's index for metadata
@@ -459,8 +464,6 @@ class IPCCoupler(RBC):
 
                         # Process surface for contact
                         label_surface(merged_mesh)
-                        label_triangle_orient(merged_mesh)
-                        merged_mesh = flip_inward_triangles(merged_mesh)
 
                         # Create rigid object
                         rigid_obj = scene.objects().create(f"rigid_link_{i_b}_{link_idx}")
@@ -473,30 +476,45 @@ class IPCCoupler(RBC):
                         self._ipc_abd_contact.apply_to(merged_mesh)
                         from uipc.unit import MPa
 
-                        # Use half density for IPC ABD to avoid double-counting mass
-                        # (the other half is in Genesis rigid solver, scaled in _scale_genesis_rigid_link_masses)
+                        # Check if this link is IPC-only
+                        is_ipc_only = (
+                            link_data["entity_idx"] in self._ipc_only_links
+                            and link_idx in self._ipc_only_links[link_data["entity_idx"]]
+                        )
+
                         entity_rho = rigid_solver._entities[link_data["entity_idx"]].material.rho
-                        abd.apply_to(
-                            merged_mesh,
-                            kappa=10.0 * MPa,
-                            mass_density=entity_rho / 2.0,
-                        )
 
-                        # Apply soft transform constraints
-                        from uipc.constitution import SoftTransformConstraint
+                        if is_ipc_only:
+                            # IPC-only links use full density (no mass splitting with Genesis)
+                            abd.apply_to(
+                                merged_mesh,
+                                kappa=10.0 * MPa,
+                                mass_density=entity_rho,
+                            )
+                        else:
+                            # Regular coupled links use half density for IPC ABD to avoid double-counting mass
+                            # (the other half is in Genesis rigid solver, scaled in _scale_genesis_rigid_link_masses)
+                            abd.apply_to(
+                                merged_mesh,
+                                kappa=10.0 * MPa,
+                                mass_density=entity_rho / 2.0,
+                            )
 
-                        if not hasattr(self, "_ipc_stc"):
-                            self._ipc_stc = SoftTransformConstraint()
-                            scene.constitution_tabular().insert(self._ipc_stc)
+                            # Apply soft transform constraints only for coupled links (not IPC-only)
+                            from uipc.constitution import SoftTransformConstraint
 
-                        strength_tuple = self.options.ipc_constraint_strength
-                        constraint_strength = np.array(
-                            [
-                                strength_tuple[0],  # translation strength
-                                strength_tuple[1],  # rotation strength
-                            ]
-                        )
-                        self._ipc_stc.apply_to(merged_mesh, constraint_strength)
+                            if not hasattr(self, "_ipc_stc"):
+                                self._ipc_stc = SoftTransformConstraint()
+                                scene.constitution_tabular().insert(self._ipc_stc)
+
+                            strength_tuple = self.options.ipc_constraint_strength
+                            constraint_strength = np.array(
+                                [
+                                    strength_tuple[0],  # translation strength
+                                    strength_tuple[1],  # rotation strength
+                                ]
+                            )
+                            self._ipc_stc.apply_to(merged_mesh, constraint_strength)
 
                         # Add metadata
                         meta_attrs = merged_mesh.meta()
@@ -623,45 +641,102 @@ class IPCCoupler(RBC):
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
 
-    def set_ipc_link_filter(self, entity, link_names=None, link_indices=None):
+    def set_link_ipc_coupling_type(self, entity, coupling_type: str, link_names=None, link_indices=None):
         """
-        Set which links of an entity should participate in IPC simulation.
+        Set IPC coupling type for links of an entity.
 
         Parameters
         ----------
         entity : RigidEntity
-            The rigid entity to set the filter for
+            The rigid entity to configure
+        coupling_type : str
+            Type of coupling: 'both', 'ipc_only', or 'genesis_only'
+            - 'both': Two-way coupling between IPC and Genesis (default behavior)
+            - 'ipc_only': Links only simulated in IPC, transforms copied to Genesis (one-way)
+            - 'genesis_only': Links only simulated in Genesis, excluded from IPC
         link_names : list of str, optional
-            Names of links to include in IPC. If None and link_indices is None, all links participate.
+            Names of links to configure. If None and link_indices is None, applies to all links.
         link_indices : list of int, optional
-            Local indices of links to include in IPC. If None and link_names is None, all links participate.
+            Local indices of links to configure. If None and link_names is None, applies to all links.
+
+        Notes
+        -----
+        - 'both': Links use half density in IPC, have SoftTransformConstraint, bidirectional forces
+        - 'ipc_only': Links use full density in IPC, no SoftTransformConstraint, transforms copied to Genesis
+        - 'genesis_only': Links excluded from IPC simulation entirely
         """
+        entity_idx = entity._idx
+
+        # Determine which links to configure
         if link_names is None and link_indices is None:
-            # Remove filter for this entity (all links participate)
-            if entity._idx in self._ipc_link_filters:
-                del self._ipc_link_filters[entity._idx]
-            return
-
-        link_filter = set()
-
-        if link_names is not None:
-            # Convert link names to solver-level indices
-            for name in link_names:
-                link = entity.get_link(name=name)
-                if link is not None:
-                    # Use solver-level index
-                    link_filter.add(link.idx)
-                else:
-                    gs.logger.warning(f"Link name '{name}' not found in entity")
-
-        if link_indices is not None:
-            # Convert local link indices to solver-level indices
-            for local_idx in link_indices:
+            # Apply to all links
+            target_links = set()
+            for local_idx in range(entity.n_links):
                 solver_link_idx = local_idx + entity._link_start
-                link_filter.add(solver_link_idx)
+                target_links.add(solver_link_idx)
+        else:
+            # Apply to specified links
+            target_links = set()
 
-        # Store filter for this entity
-        self._ipc_link_filters[entity._idx] = link_filter
+            if link_names is not None:
+                for name in link_names:
+                    link = entity.get_link(name=name)
+                    if link is not None:
+                        target_links.add(link.idx)
+                    else:
+                        gs.logger.warning(f"Link name '{name}' not found in entity")
+
+            if link_indices is not None:
+                for local_idx in link_indices:
+                    solver_link_idx = local_idx + entity._link_start
+                    target_links.add(solver_link_idx)
+
+        # Apply coupling type
+        if coupling_type == "both":
+            # Two-way coupling: include in IPC, not in IPC-only
+            self._ipc_link_filters[entity_idx] = target_links
+
+            # Remove from IPC-only if present
+            if entity_idx in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] -= target_links
+                if not self._ipc_only_links[entity_idx]:
+                    del self._ipc_only_links[entity_idx]
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'both' coupling")
+
+        elif coupling_type == "ipc_only":
+            # One-way coupling: IPC -> Genesis
+            if entity_idx not in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] = set()
+            self._ipc_only_links[entity_idx].update(target_links)
+
+            # Also add to IPC link filter
+            if entity_idx not in self._ipc_link_filters:
+                self._ipc_link_filters[entity_idx] = set()
+            self._ipc_link_filters[entity_idx].update(target_links)
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'ipc_only' coupling")
+
+        elif coupling_type == "genesis_only":
+            # Genesis-only: remove from both filters
+            if entity_idx in self._ipc_link_filters:
+                self._ipc_link_filters[entity_idx] -= target_links
+                if not self._ipc_link_filters[entity_idx]:
+                    del self._ipc_link_filters[entity_idx]
+
+            if entity_idx in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] -= target_links
+                if not self._ipc_only_links[entity_idx]:
+                    del self._ipc_only_links[entity_idx]
+
+            gs.logger.info(
+                f"Entity {entity_idx}: {len(target_links)} link(s) set to 'genesis_only' (excluded from IPC)"
+            )
+
+        else:
+            raise ValueError(
+                f"Invalid coupling_type '{coupling_type}'. " f"Must be 'both', 'ipc_only', or 'genesis_only'."
+            )
 
     def preprocess(self, f):
         """Preprocessing step before coupling"""
@@ -828,7 +903,7 @@ class IPCCoupler(RBC):
         for geo_slot in visitor.geometries():
             if isinstance(geo_slot, SimplicialComplexSlot):
                 geo = geo_slot.geometry()
-                if geo.dim() == 3:
+                if geo.dim() in [2, 3]:
                     try:
                         # Check if this is an ABD geometry using metadata
                         meta_attrs = geo.meta()
@@ -889,10 +964,127 @@ class IPCCoupler(RBC):
         # Store transforms for later access
         rigid_solver._abd_affines = abd_data_by_link
 
+        # Handle IPC-only links: directly set Genesis transform to IPC result (one-way coupling)
+        self._set_genesis_transforms_from_ipc(abd_data_by_link)
+
         # Apply coupling forces from IPC ABD to Genesis rigid bodies (two-way coupling)
         # Based on soft_transform_constraint.cu gradient computation
         if self.options.two_way_coupling:
             self._apply_abd_coupling_forces(abd_data_by_link)
+
+    def _set_genesis_transforms_from_ipc(self, abd_data_by_link):
+        """
+        For IPC-only links, directly set Genesis transform to IPC result (one-way coupling).
+
+        Parameters
+        ----------
+        abd_data_by_link : dict
+            Dictionary mapping link_idx -> {env_idx: {transform, aim_transform}}
+        """
+        import numpy as np
+        from scipy.spatial.transform import Rotation as R
+        import torch
+
+        rigid_solver = self.rigid_solver
+        is_parallelized = self.sim._scene.n_envs > 0
+
+        for link_idx, env_data in abd_data_by_link.items():
+            # Check if this link is IPC-only and find the entity
+            entity_idx = None
+            for ent_idx, link_set in self._ipc_only_links.items():
+                if link_idx in link_set:
+                    entity_idx = ent_idx
+                    break
+
+            if entity_idx is None:
+                continue  # Skip non-IPC-only links
+
+            # Get the entity (needed for zero_all_dofs_velocity)
+            entity = rigid_solver._entities[entity_idx]
+
+            for env_idx, data in env_data.items():
+                ipc_transform = data.get("transform")
+                if ipc_transform is None:
+                    continue
+
+                try:
+                    # Extract position and rotation from IPC transform matrix
+                    pos = ipc_transform[:3, 3]
+                    rot_mat = ipc_transform[:3, :3]
+
+                    # Convert rotation matrix to quaternion
+                    quat_xyzw = R.from_matrix(rot_mat).as_quat()  # Returns [x, y, z, w]
+
+                    # Convert from scipy's [x, y, z, w] to Genesis's [w, x, y, z] format
+                    quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+
+                    # Convert to torch tensors and add batch dimension
+                    pos_tensor = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).unsqueeze(0)  # (1, 3)
+                    quat_tensor = torch.as_tensor(quat_wxyz, dtype=gs.tc_float, device=gs.device).unsqueeze(
+                        0
+                    )  # (1, 4) [w, x, y, z]
+
+                    # Determine if this is a base link
+                    is_base_link = link_idx == entity.base_link_idx
+
+                    if is_base_link:
+                        # Use base link methods for base links
+                        base_links_idx = torch.tensor([link_idx], dtype=gs.tc_int, device=gs.device)
+
+                        if is_parallelized:
+                            rigid_solver.set_base_links_pos(
+                                pos_tensor,
+                                base_links_idx,
+                                envs_idx=env_idx,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
+                            )
+                            rigid_solver.set_base_links_quat(
+                                quat_tensor,
+                                base_links_idx,
+                                envs_idx=env_idx,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
+                            )
+                        else:
+                            rigid_solver.set_base_links_pos(
+                                pos_tensor,
+                                base_links_idx,
+                                envs_idx=None,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
+                            )
+                            rigid_solver.set_base_links_quat(
+                                quat_tensor,
+                                base_links_idx,
+                                envs_idx=None,
+                                relative=False,
+                                unsafe=True,
+                                skip_forward=False,
+                            )
+                    else:
+                        # Use regular link methods for non-base links
+                        if is_parallelized:
+                            rigid_solver.set_links_pos(pos_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True)
+                            rigid_solver.set_links_quat(quat_tensor, links_idx=link_idx, envs_idx=env_idx, unsafe=True)
+                        else:
+                            rigid_solver.set_links_pos(pos_tensor, links_idx=link_idx, unsafe=True)
+                            rigid_solver.set_links_quat(quat_tensor, links_idx=link_idx, unsafe=True)
+
+                    # Zero velocities after setting transform to avoid spurious forces
+                    if is_parallelized:
+                        entity.zero_all_dofs_velocity(envs_idx=env_idx, unsafe=True)
+                    else:
+                        entity.zero_all_dofs_velocity(envs_idx=None, unsafe=True)
+
+                except Exception as e:
+                    gs.logger.warning(
+                        f"Failed to set Genesis transform for IPC-only link {link_idx}, env {env_idx}: {e}"
+                    )
+                    continue
 
     def _get_genesis_link_transform(self, link_idx, env_idx):
         """
@@ -969,6 +1161,16 @@ class IPCCoupler(RBC):
         dt2 = dt * dt
 
         for link_idx, env_data in abd_data_by_link.items():
+            # Skip IPC-only links (they don't need coupling forces)
+            is_ipc_only = False
+            for entity_idx, link_set in self._ipc_only_links.items():
+                if link_idx in link_set:
+                    is_ipc_only = True
+                    break
+
+            if is_ipc_only:
+                continue  # Skip IPC-only links
+
             for env_idx, data in env_data.items():
                 ipc_transform = data.get("transform")  # Current transform after IPC solve
                 aim_transform = data.get("aim_transform")  # Target from Genesis
