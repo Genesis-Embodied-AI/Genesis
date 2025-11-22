@@ -13,7 +13,7 @@ import types
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, NoReturn, Optional, Type
+from typing import Any, Callable, NoReturn, Optional, Type, cast
 
 import cpuinfo
 import gstaichi as ti
@@ -765,6 +765,50 @@ def extract_slice(
             out = out[None] if is_vector else out[:, None]
 
     return out
+
+
+def indices_to_mask(*indices: Any) -> tuple[slice | int | torch.Tensor, ...]:
+    """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product."""
+    mask: list[slice | int | torch.Tensor] = []
+
+    is_all_none = True
+    num_tensors = 0
+    is_tensor: list[bool] = [False] * len(indices)
+    for i in range(len(indices) - 1, -1, -1):
+        arg = indices[i]
+        if arg is None:
+            if is_all_none:
+                continue
+            arg = slice(None)
+        else:
+            is_all_none = False
+            if (arg_type := type(arg)) is slice:
+                pass
+            elif arg_type is range:
+                arg = slice(arg.start, arg.stop, arg.step)
+            elif arg_type is int:
+                arg = slice(arg, arg + 1)
+            else:
+                if len(arg) == 1:
+                    arg = slice(idx := arg.item() if isinstance(arg, torch.Tensor) else arg[0], idx + 1)
+                else:
+                    if not isinstance(arg, torch.Tensor):
+                        arg = torch.tensor(arg, dtype=gs.tc_int, device=gs.device)
+                    is_tensor[i] = True
+                    num_tensors += 1
+        mask.insert(0, arg)
+
+    if num_tensors > 1:
+        tensor_idx = 0
+        for i in range(len(mask)):
+            if is_tensor[i]:
+                # assert isinstance(arg, torch.Tensor)
+                shape = [1] * num_tensors
+                shape[tensor_idx] = -1
+                mask[i] = mask[i].reshape(shape)
+                tensor_idx += 1
+
+    return tuple(mask)
 
 
 def ti_to_torch(

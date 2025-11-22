@@ -21,6 +21,7 @@ from genesis.utils.misc import (
     ti_to_numpy,
     ti_to_python,
     extract_slice,
+    indices_to_mask,
     _get_ti_metadata,
 )
 from genesis.utils.sdf_decomp import SDF
@@ -1729,7 +1730,7 @@ class RigidSolver(Solver):
         """
         # Make sure that a single constraint type has been selected at once
         if sum(inputs_idx is not None for inputs_idx in (geoms_idx, joints_idx, eqs_idx)) > 1:
-            raise gs.raise_exception("Cannot set more than one constraint type at once.")
+            gs.raise_exception("Cannot set more than one constraint type at once.")
 
         # Select the right input type
         if eqs_idx is not None:
@@ -1919,50 +1920,71 @@ class RigidSolver(Solver):
             )
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
+            ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+            ctrl_mode[mask] = gs.CTRL_MODE.FORCE
+            ctrl_force = ti_to_torch(self.dofs_state.ctrl_force, transpose=True, copy=False)
+            ctrl_force[mask] = torch.as_tensor(force, dtype=gs.tc_float, device=gs.device)
+            return
+
         force, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             force, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             force = force.unsqueeze(0)
+
         kernel_control_dofs_force(force, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
+            ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+            ctrl_mode[mask] = gs.CTRL_MODE.VELOCITY
+            ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
+            ctrl_pos[mask] = 0.0
+            ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
+            ctrl_vel[mask] = torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+            return
+
         velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             velocity = velocity.unsqueeze(0)
-        has_gains = kernel_control_dofs_velocity(
-            velocity,
-            dofs_idx,
-            envs_idx,
-            self.dofs_state,
-            self.dofs_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
-        )
-        if not unsafe and not has_gains:
-            raise gs.raise_exception("Please set control gains kv using `set_dofs_kv` prior to calling this method.")
+
+        kernel_control_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
+            ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+            ctrl_mode[mask] = gs.CTRL_MODE.POSITION
+            ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
+            ctrl_pos[mask] = torch.as_tensor(position, dtype=gs.tc_float, device=gs.device)
+            ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
+            ctrl_vel[mask] = 0.0
+            return
+
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             position, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
         if self.n_envs == 0:
             position = position.unsqueeze(0)
-        has_gains = kernel_control_dofs_position(
-            position,
-            dofs_idx,
-            envs_idx,
-            self.dofs_state,
-            self.dofs_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
-        )
-        if not unsafe and not has_gains:
-            raise gs.raise_exception("Please set control gains kp using `set_dofs_kp` prior to calling this method.")
+
+        kernel_control_dofs_position(position, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def control_dofs_position_velocity(self, position, velocity, dofs_idx=None, envs_idx=None, *, unsafe=False):
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
+            ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+            ctrl_mode[mask] = gs.CTRL_MODE.POSITION
+            ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
+            ctrl_pos[mask] = torch.as_tensor(position, dtype=gs.tc_float, device=gs.device)
+            ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
+            ctrl_vel[mask] = torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+            return
+
         position, dofs_idx, _ = self._sanitize_1D_io_variables(
             position, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
@@ -1972,20 +1994,10 @@ class RigidSolver(Solver):
         if self.n_envs == 0:
             position = position.unsqueeze(0)
             velocity = velocity.unsqueeze(0)
-        has_gains = kernel_control_dofs_position_velocity(
-            position,
-            velocity,
-            dofs_idx,
-            envs_idx,
-            self.dofs_state,
-            self.dofs_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
+
+        kernel_control_dofs_position_velocity(
+            position, velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config
         )
-        if not unsafe and not has_gains:
-            raise gs.raise_exception(
-                "Please set control gains kp and/or kv using `set_dofs_kp`,`set_dofs_kv` prior to calling this method."
-            )
 
     def get_sol_params(self, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None, unsafe=False):
         """
@@ -2021,7 +2033,7 @@ class RigidSolver(Solver):
         elif ref == "link_origin":
             return 2
         else:
-            raise gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+            gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
 
     def get_links_pos(
         self,
@@ -2042,7 +2054,7 @@ class RigidSolver(Solver):
         elif ref == 2:
             tensor = self._get_links_data("pos", envs_idx, links_idx, to_torch=to_torch, unsafe=unsafe)
         else:
-            raise gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+            gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
@@ -2338,11 +2350,6 @@ class RigidSolver(Solver):
         )
 
     def update_verts_for_geoms(self, geoms_idx):
-        if gs.use_zerocopy:
-            verts_updated = ti_to_torch(self.geoms_state.verts_updated, transpose=False)
-            if verts_updated[geoms_idx].all():
-                return
-
         _, geoms_idx, _ = self._sanitize_1D_io_variables(
             None, geoms_idx, self.n_geoms, None, idx_name="geoms_idx", skip_allocation=True, unsafe=False
         )
@@ -4773,7 +4780,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-) -> None:
+):
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
 
@@ -4881,7 +4888,7 @@ def func_hibernate_entity_and_zero_dof_velocities(
     dofs_state: array_class.DofsState,
     links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
-) -> None:
+):
     """
     Mark RigidEnity, individual DOFs in DofsState, RigidLinks, and RigidGeoms as hibernated.
 
@@ -6372,24 +6379,15 @@ def kernel_control_dofs_velocity(
     dofs_idx: ti.types.ndarray(),
     envs_idx: ti.types.ndarray(),
     dofs_state: array_class.DofsState,
-    dofs_info: array_class.DofsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-) -> ti.i32:
-    EPS = rigid_global_info.EPS[None]
-
-    has_gains = gs.ti_bool(False)
+):
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         i_d = dofs_idx[i_d_]
         i_b = envs_idx[i_b_]
 
-        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.VELOCITY
         dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
-        if dofs_info.kv[I_d] > EPS:
-            has_gains = True
-    return has_gains
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6398,25 +6396,16 @@ def kernel_control_dofs_position(
     dofs_idx: ti.types.ndarray(),
     envs_idx: ti.types.ndarray(),
     dofs_state: array_class.DofsState,
-    dofs_info: array_class.DofsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-) -> ti.i32:
-    EPS = rigid_global_info.EPS[None]
-
-    has_gains = gs.ti_bool(False)
+):
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         i_d = dofs_idx[i_d_]
         i_b = envs_idx[i_b_]
 
-        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION
         dofs_state.ctrl_pos[i_d, i_b] = position[i_b_, i_d_]
         dofs_state.ctrl_vel[i_d, i_b] = 0.0
-        if dofs_info.kp[I_d] > EPS:
-            has_gains = True
-    return has_gains
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6426,25 +6415,16 @@ def kernel_control_dofs_position_velocity(
     dofs_idx: ti.types.ndarray(),
     envs_idx: ti.types.ndarray(),
     dofs_state: array_class.DofsState,
-    dofs_info: array_class.DofsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-) -> ti.i32:
-    EPS = rigid_global_info.EPS[None]
-
-    has_gains = gs.ti_bool(False)
+):
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         i_d = dofs_idx[i_d_]
         i_b = envs_idx[i_b_]
 
-        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.POSITION
         dofs_state.ctrl_pos[i_d, i_b] = position[i_b_, i_d_]
         dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
-        if (dofs_info.kp[I_d] > EPS) | (dofs_info.kv[I_d] > EPS):
-            has_gains = True
-    return has_gains
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
