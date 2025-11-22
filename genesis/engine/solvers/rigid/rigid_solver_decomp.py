@@ -1460,9 +1460,10 @@ class RigidSolver(Solver):
         _inputs_idx = torch.atleast_1d(_inputs_idx)
         if _inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
-        if inputs_start < 0 or input_size <= inputs_end:
-            gs.raise_exception(f"`{idx_name}` is out-of-range.")
+        # FIXME: Disabling these checks between them are too expensive
+        # inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
+        # if inputs_start < 0 or input_size <= inputs_end:
+        #     gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
             _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
