@@ -669,11 +669,11 @@ def ti_to_python(
     # Transpose if necessary and requested.
     # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
     # advanced masking, which would spare computation later on if expected from the user.
-    if transpose and len(ti_data_meta.shape) > 1:
+    if transpose and (batch_ndim := len(ti_data_meta.shape)) > 1:
         if to_torch:
-            out = out.movedim(out.ndim - ti_data_meta.ndim - 1, 0)
+            out = out.movedim(batch_ndim - 1, 0)
         else:
-            out = np.moveaxis(out, out.ndim - ti_data_meta.ndim - 1, 0)
+            out = np.moveaxis(out, batch_ndim - 1, 0)
 
     return out
 
@@ -695,8 +695,10 @@ def extract_slice(
         unsafe (bool): Whether to skip validity check of the masks.
     """
     # Make sure that the user-arguments are valid if requested
+    if col_mask is not None:
+        is_vector = value.ndim == 1
     if not unsafe:
-        if col_mask is not None and value.ndim == 1:
+        if col_mask is not None and is_vector:
             gs.raise_exception("Cannot specify column mask for 1D tensor.")
         for i, mask in enumerate((row_mask, col_mask)):
             if mask is None or isinstance(mask, slice):
@@ -749,7 +751,7 @@ def extract_slice(
                 out = out[row_mask, col_mask]
         else:
             if col_mask is not None:
-                out = out[col_mask] if out.ndim == 1 else out[:, col_mask]
+                out = out[col_mask] if is_vector else out[:, col_mask]
             if row_mask is not None:
                 out = out[row_mask]
     except IndexError as e:
@@ -765,7 +767,7 @@ def extract_slice(
         if is_single_row:
             out = out[None]
         if is_single_col:
-            out = out[None] if value.ndim == 1 else out[:, None]
+            out = out[None] if is_vector else out[:, None]
 
     return out
 
