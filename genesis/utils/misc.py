@@ -573,7 +573,6 @@ def ti_to_python(
     transpose: bool = False,
     copy: bool | None = True,
     to_torch: bool = True,
-    non_blocking: bool = False,
 ) -> torch.Tensor | np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor / Numpy array.
 
@@ -582,8 +581,6 @@ def ti_to_python(
         transpose (bool, optional): Whether to move the last batch dimension in front. Defaults to False.
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
-        non_blocking (bool): Whether to skip GPU synchronization. It will be faster, but there will be no guarantee
-        that the return buffer is up-to-date. Default to False.
         to_torch (bool): Whether to convert to Torch tensor or Numpy array. Defaults to True.
     """
     # Check if copy mode is supported while setting default mode if not specified.
@@ -621,8 +618,6 @@ def ti_to_python(
                 value._np = value._tc.numpy()
                 if not to_torch:
                     out = value._np
-        if not non_blocking:
-            ti.sync()
         if copy:
             if to_torch:
                 out = out.clone()
@@ -669,11 +664,11 @@ def ti_to_python(
     # Transpose if necessary and requested.
     # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
     # advanced masking, which would spare computation later on if expected from the user.
-    if transpose and len(ti_data_meta.shape) > 1:
+    if transpose and (batch_ndim := len(ti_data_meta.shape)) > 1:
         if to_torch:
-            out = out.movedim(out.ndim - ti_data_meta.ndim - 1, 0)
+            out = out.movedim(batch_ndim - 1, 0)
         else:
-            out = np.moveaxis(out, out.ndim - ti_data_meta.ndim - 1, 0)
+            out = np.moveaxis(out, batch_ndim - 1, 0)
 
     return out
 
@@ -695,8 +690,10 @@ def extract_slice(
         unsafe (bool): Whether to skip validity check of the masks.
     """
     # Make sure that the user-arguments are valid if requested
+    if col_mask is not None:
+        is_vector = value.ndim == 1
     if not unsafe:
-        if col_mask is not None and value.ndim == 1:
+        if col_mask is not None and is_vector:
             gs.raise_exception("Cannot specify column mask for 1D tensor.")
         for i, mask in enumerate((row_mask, col_mask)):
             if mask is None or isinstance(mask, slice):
@@ -749,7 +746,7 @@ def extract_slice(
                 out = out[row_mask, col_mask]
         else:
             if col_mask is not None:
-                out = out[col_mask] if out.ndim == 1 else out[:, col_mask]
+                out = out[col_mask] if is_vector else out[:, col_mask]
             if row_mask is not None:
                 out = out[row_mask]
     except IndexError as e:
@@ -765,7 +762,7 @@ def extract_slice(
         if is_single_row:
             out = out[None]
         if is_single_col:
-            out = out[None] if value.ndim == 1 else out[:, None]
+            out = out[None] if is_vector else out[:, None]
 
     return out
 
@@ -778,7 +775,6 @@ def ti_to_torch(
     transpose=False,
     *,
     copy: bool | None = True,
-    non_blocking: bool = False,
     unsafe=False,
 ) -> torch.Tensor:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor.
@@ -791,12 +787,10 @@ def ti_to_torch(
         transpose (bool): Whether move to front the first non-batch dimension.
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
-        non_blocking (bool): Whether to skip GPU synchronization. It will be faster, but there will be no guarantee
-        that the return buffer is up-to-date. Default to False.
         unsafe (bool, optional): Whether to skip validity check of the masks.
     """
     # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here
-    tensor = ti_to_python(value, transpose, copy=copy, non_blocking=non_blocking, to_torch=True)
+    tensor = ti_to_python(value, transpose, copy=copy, to_torch=True)
     if row_mask is None and col_mask is None:
         return tensor
 
@@ -820,7 +814,6 @@ def ti_to_numpy(
     transpose=False,
     *,
     copy: bool | None = True,
-    non_blocking: bool = False,
     unsafe=False,
 ) -> np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a Numpy array.
@@ -833,11 +826,9 @@ def ti_to_numpy(
         transpose (bool, optional): Whether move to front the first non-batch dimension.
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
-        non_blocking (bool): Whether to skip GPU synchronization. It will be faster, but there will be no guarantee
-        that the return buffer is up-to-date. Default to False.
         unsafe (bool, optional): Whether to skip validity check of the masks.
     """
-    tensor = ti_to_python(value, transpose, copy=copy, non_blocking=non_blocking, to_torch=False)
+    tensor = ti_to_python(value, transpose, copy=copy, to_torch=False)
     if row_mask is None and col_mask is None:
         return tensor
 

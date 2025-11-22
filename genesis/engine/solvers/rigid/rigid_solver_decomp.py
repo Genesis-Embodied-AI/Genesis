@@ -897,7 +897,7 @@ class RigidSolver(Solver):
         # Note that errno must be evaluated BEFORE match because otherwise it will be evaluated for each case...
         # See official documentation: https://docs.python.org/3.10/reference/compound_stmts.html#overview
         if gs.use_zerocopy:
-            errno = int(ti_to_torch(self._errno, copy=None, non_blocking=True))
+            errno = int(ti_to_torch(self._errno, copy=None))
         else:
             errno = kernel_get_errno(self._errno)
         match errno:
@@ -2299,7 +2299,7 @@ class RigidSolver(Solver):
     def clear_external_force(self):
         if gs.use_zerocopy:
             for tensor in (self.links_state.cfrc_applied_ang, self.links_state.cfrc_applied_vel):
-                out = ti_to_python(tensor, copy=False, non_blocking=True)
+                out = ti_to_python(tensor, copy=False)
                 out.zero_()
         else:
             kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
