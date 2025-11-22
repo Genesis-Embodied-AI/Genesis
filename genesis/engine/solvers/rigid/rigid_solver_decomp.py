@@ -2069,6 +2069,21 @@ class RigidSolver(Solver):
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
         unsafe: bool = False,
     ):
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
+            cd_vel = ti_to_torch(self.links_state.cd_vel, transpose=True, copy=False)
+            if ref == "root_com":
+                return cd_vel[mask]
+            cd_ang = ti_to_torch(self.links_state.cd_ang, transpose=True, copy=False)
+            if ref == "link_com":
+                i_pos = ti_to_torch(self.links_state.i_pos, transpose=True, copy=False)
+                delta = i_pos[mask]
+            else:
+                pos = ti_to_torch(self.links_state.pos, transpose=True, copy=False)
+                root_COM = ti_to_torch(self.links_state.root_COM, transpose=True, copy=False)
+                delta = pos[mask] - root_COM[mask]
+            return cd_vel[mask] + cd_ang[mask].cross(delta, dim=-1)
+
         _tensor, links_idx, envs_idx = self._sanitize_2D_io_variables(
             None, links_idx, self.n_links, 3, envs_idx, idx_name="links_idx", unsafe=unsafe
         )

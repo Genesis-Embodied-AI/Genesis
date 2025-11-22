@@ -87,7 +87,7 @@ class RigidEntity(Entity):
 
         self._free_verts_idx_local = torch.tensor([], dtype=gs.tc_int, device=gs.device)
         self._fixed_verts_idx_local = torch.tensor([], dtype=gs.tc_int, device=gs.device)
-        self._base_links_idx = torch.tensor([self.base_link_idx], dtype=gs.tc_int, device=gs.device)
+        self._base_links_idx_ = torch.tensor([self.base_link_idx], dtype=gs.tc_int, device=gs.device)
 
         self._batch_fixed_verts = morph.batch_fixed_verts
 
@@ -1702,7 +1702,7 @@ class RigidEntity(Entity):
         pos : torch.Tensor, shape (3,) or (n_envs, 3)
             The position of the entity's base link.
         """
-        return self._solver.get_links_pos(self._base_links_idx, envs_idx, unsafe=unsafe).squeeze(-2)
+        return self._solver.get_links_pos(self.base_link_idx, envs_idx, unsafe=unsafe).squeeze(-2)
 
     @gs.assert_built
     def get_quat(self, envs_idx=None, *, unsafe=False):
@@ -1719,7 +1719,7 @@ class RigidEntity(Entity):
         quat : torch.Tensor, shape (4,) or (n_envs, 4)
             The quaternion of the entity's base link.
         """
-        return self._solver.get_links_quat(self._base_links_idx, envs_idx, unsafe=unsafe).squeeze(-2)
+        return self._solver.get_links_quat(self.base_link_idx, envs_idx, unsafe=unsafe).squeeze(-2)
 
     @gs.assert_built
     def get_vel(self, envs_idx=None, *, unsafe=False):
@@ -1736,7 +1736,7 @@ class RigidEntity(Entity):
         vel : torch.Tensor, shape (3,) or (n_envs, 3)
             The linear velocity of the entity's base link.
         """
-        return self._solver.get_links_vel(self._base_links_idx, envs_idx, unsafe=unsafe).squeeze(-2)
+        return self._solver.get_links_vel(self.base_link_idx, envs_idx, unsafe=unsafe).squeeze(-2)
 
     @gs.assert_built
     def get_ang(self, envs_idx=None, *, unsafe=False):
@@ -1753,7 +1753,7 @@ class RigidEntity(Entity):
         ang : torch.Tensor, shape (3,) or (n_envs, 3)
             The angular velocity of the entity's base link.
         """
-        return self._solver.get_links_ang(self._base_links_idx, envs_idx, unsafe=unsafe).squeeze(-2)
+        return self._solver.get_links_ang(self.base_link_idx, envs_idx, unsafe=unsafe).squeeze(-2)
 
     @gs.assert_built
     def get_links_pos(
@@ -1973,7 +1973,7 @@ class RigidEntity(Entity):
             pos = _pos
         self._solver.set_base_links_pos(
             pos.unsqueeze(-2),
-            self._base_links_idx,
+            self._base_links_idx_,
             envs_idx,
             relative=relative,
             unsafe=unsafe,
@@ -2007,7 +2007,7 @@ class RigidEntity(Entity):
             quat = _quat
         self._solver.set_base_links_quat(
             quat.unsqueeze(-2),
-            self._base_links_idx,
+            self._base_links_idx_,
             envs_idx,
             relative=relative,
             unsafe=unsafe,
