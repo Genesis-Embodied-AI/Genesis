@@ -494,6 +494,7 @@ class StructColliderState(metaclass=BASE_METACLASS):
     xyz_max_min: V_ANNOTATION
     prism: V_ANNOTATION
     n_contacts: V_ANNOTATION
+    n_contacts_max: V_ANNOTATION
     n_contacts_hibernated: V_ANNOTATION
     first_time: V_ANNOTATION
     contact_cache: StructContactCache
@@ -546,6 +547,7 @@ def get_collider_state(
         xyz_max_min=V(dtype=gs.ti_float, shape=(6, _B)),
         prism=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
         n_contacts=V(dtype=gs.ti_int, shape=(_B,)),
+        n_contacts_max=V(dtype=gs.ti_int, shape=()),
         n_contacts_hibernated=V(dtype=gs.ti_int, shape=(_B,)),
         first_time=V(dtype=gs.ti_int, shape=(_B,)),
         contact_cache=get_contact_cache(solver),

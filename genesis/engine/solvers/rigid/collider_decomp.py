@@ -9,7 +9,6 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.styles import colors, formats
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.gjk_decomp as gjk
 import genesis.engine.solvers.rigid.diff_gjk_decomp as diff_gjk
@@ -17,6 +16,7 @@ import genesis.engine.solvers.rigid.mpr_decomp as mpr
 import genesis.utils.sdf_decomp as sdf
 import genesis.engine.solvers.rigid.support_field_decomp as support_field
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 
 from .mpr_decomp import MPR
 from .gjk_decomp import GJK
@@ -61,6 +61,22 @@ class Collider:
 
         self._init_static_config()
         self._init_collision_fields()
+
+        if gs.use_zerocopy:
+            self._contacts_info: dict[str, torch.Tensor] = {}
+            for key, name in (
+                ("link_a", "link_a"),
+                ("link_b", "link_b"),
+                ("geom_a", "geom_a"),
+                ("geom_b", "geom_b"),
+                ("penetration", "penetration"),
+                ("position", "pos"),
+                ("normal", "normal"),
+                ("force", "force"),
+            ):
+                self._contacts_info[key] = ti_to_torch(
+                    getattr(self._collider_state.contact_data, name), transpose=True, copy=False
+                )
 
         # Support field used for mpr and gjk. Rather than having separate support fields for each algorithm, keep only
         # one copy here to save memory and maintain cleaner code.
@@ -131,8 +147,8 @@ class Collider:
             self._collider_static_config,
         )
 
-        # [contacts_info_cache] is not used in Taichi kernels, so keep it outside of the collider state / info.
-        self._contacts_info_cache = {}
+        # 'contacts_info_cache' is not used in Taichi kernels, so keep it outside of the collider state / info
+        self._contacts_info_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
         self.reset()
 
@@ -288,7 +304,7 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
         )
-        self._contacts_info_cache = {}
+        self._contacts_info_cache.clear()
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -302,7 +318,7 @@ class Collider:
         )
 
     def detection(self) -> None:
-        self._contacts_info_cache = {}
+        self._contacts_info_cache.clear()
         rigid_solver.kernel_update_geom_aabbs(
             self._solver.geoms_state,
             self._solver.geoms_init_AABB,
@@ -391,18 +407,46 @@ class Collider:
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
-        contacts_info = self._contacts_info_cache.get((as_tensor, to_torch))
-        if contacts_info is not None:
+        contacts_info = self._contacts_info_cache.setdefault((as_tensor, to_torch), {})
+        if contacts_info:
+            return contacts_info.copy()
+
+        n_envs = self._solver.n_envs
+        if gs.use_zerocopy:
+            if as_tensor or n_envs == 0:
+                n_contacts_max = ti_to_torch(self._collider_state.n_contacts_max, copy=False).item()
+            else:
+                n_contacts = ti_to_torch(self._collider_state.n_contacts, copy=False)
+
+            for key, data in self._contacts_info.items():
+                if n_envs == 0:
+                    data = data[0, :n_contacts_max]
+                    if not to_torch:
+                        data = tensor_to_array(data)
+                else:
+                    if as_tensor:
+                        data = data[:, :n_contacts_max]
+                        if not to_torch:
+                            data = tensor_to_array(data)
+                    else:
+                        if not to_torch:
+                            data = tensor_to_array(data)
+                        if keep_batch_dim:
+                            data = tuple([data[i : i + 1, :j] for i, j in enumerate(n_contacts.tolist())])
+                        else:
+                            data = tuple([data[i, :j] for i, j in enumerate(n_contacts.tolist())])
+                contacts_info[key] = data
+
             return contacts_info.copy()
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = tuple(self._collider_state.n_contacts.to_numpy())
-        n_envs = len(n_contacts)
-        n_contacts_max = max(n_contacts)
+        n_contacts = ti_to_numpy(self._collider_state.n_contacts)
+        n_contacts_max = n_contacts.max().item()
         if as_tensor:
-            out_size = n_contacts_max * n_envs
+            out_size = n_contacts_max * max(n_envs, 1)
         else:
             *n_contacts_starts, out_size = np.cumsum(n_contacts)
+        n_contacts = n_contacts.tolist()
 
         # Allocate output buffer
         if to_torch:
@@ -415,21 +459,15 @@ class Collider:
         # Copy contact data
         if n_contacts_max > 0:
             collider_kernel_get_contacts(
-                as_tensor,
-                iout,
-                fout,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-                self._collider_state,
-                self._collider_info,
+                as_tensor, iout, fout, self._solver._static_rigid_sim_config, self._collider_state
             )
 
         # Build structured view (no copy)
         if as_tensor:
-            if self._solver.n_envs > 0:
+            if n_envs > 0:
                 iout = iout.reshape((n_envs, n_contacts_max, 4))
                 fout = fout.reshape((n_envs, n_contacts_max, 10))
-            if keep_batch_dim and self._solver.n_envs == 0:
+            if keep_batch_dim and n_envs == 0:
                 iout = iout.reshape((1, n_contacts_max, 4))
                 fout = fout.reshape((1, n_contacts_max, 10))
             iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
@@ -437,7 +475,7 @@ class Collider:
             values = (*iout_chunks, *fout_chunks)
         else:
             # Split smallest dimension first, then largest dimension
-            if self._solver.n_envs == 0:
+            if n_envs == 0:
                 iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
                 fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
                 values = (*iout_chunks, *fout_chunks)
@@ -454,7 +492,7 @@ class Collider:
             else:
                 iout_chunks = (iout[..., 0], iout[..., 1], iout[..., 2], iout[..., 3])
                 fout_chunks = (fout[..., 0], fout[..., 1:4], fout[..., 4:7], fout[..., 7:])
-                if self._solver.n_envs == 1:
+                if n_envs == 1:
                     values = [(value,) for value in (*iout_chunks, *fout_chunks)]
                 else:
                     if to_torch:
@@ -465,12 +503,10 @@ class Collider:
                         fout_chunks = (np.split(out, n_contacts_starts) for out in fout_chunks)
                     values = (*iout_chunks, *fout_chunks)
 
-        contacts_info = dict(
+        # Store contact information in cache
+        contacts_info.update(
             zip(("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"), values)
         )
-
-        # Cache contact information before returning
-        self._contacts_info_cache[(as_tensor, to_torch)] = contacts_info
 
         return contacts_info.copy()
 
@@ -514,16 +550,16 @@ def collider_kernel_reset(
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
 ):
+    n_geoms = collider_state.active_buffer.shape[0]
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         collider_state.first_time[i_b] = 1
-        n_geoms = collider_state.active_buffer.shape[0]
-        for i_ga in range(n_geoms):
-            for i_gb in range(n_geoms):
-                collider_state.contact_cache.i_va_ws[i_ga, i_gb, i_b] = -1
-                collider_state.contact_cache.i_va_ws[i_gb, i_ga, i_b] = -1
-                collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
+        for i_ga, i_gb in ti.ndrange(n_geoms, n_geoms):
+            collider_state.contact_cache.i_va_ws[i_ga, i_gb, i_b] = -1
+            collider_state.contact_cache.i_va_ws[i_gb, i_ga, i_b] = -1
+            collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
 # only used with hibernation ??
@@ -574,9 +610,22 @@ def kernel_collider_clear(
 
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
+        for i_c in range(collider_state.n_contacts[i_b]):
+            collider_state.contact_data.link_a[i_c, i_b] = -1
+            collider_state.contact_data.link_b[i_c, i_b] = -1
+            collider_state.contact_data.geom_a[i_c, i_b] = -1
+            collider_state.contact_data.geom_b[i_c, i_b] = -1
+            collider_state.contact_data.penetration[i_c, i_b] = 0.0
+            collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+
+        if ti.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
         else:
             collider_state.n_contacts[i_b] = 0
+
+        collider_state.n_contacts_max[None] = 0
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -584,21 +633,11 @@ def collider_kernel_get_contacts(
     is_padded: ti.template(),
     iout: ti.types.ndarray(),
     fout: ti.types.ndarray(),
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
 ):
     _B = collider_state.active_buffer.shape[1]
-    n_contacts_max = gs.ti_int(0)
-
-    # this is a reduction operation (global max), we have to serialize it
-    # TODO: a good unittest and a better implementation from gstaichi for this kind of reduction
-    ti.loop_config(serialize=True)
-    for i_b in range(_B):
-        n_contacts = collider_state.n_contacts[i_b]
-        if n_contacts > n_contacts_max:
-            n_contacts_max = n_contacts
+    n_contacts_max = collider_state.n_contacts_max[None]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -1187,9 +1226,10 @@ def func_collision_clear(
     static_rigid_sim_config: ti.template(),
 ):
     _B = collider_state.n_contacts.shape[0]
-    if ti.static(static_rigid_sim_config.use_hibernation):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        if ti.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts_hibernated[i_b] = 0
 
             # Advect hibernated contacts
@@ -1210,11 +1250,22 @@ def func_collision_clear(
                         collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
+        for i_c in range(collider_state.n_contacts[i_b]):
+            collider_state.contact_data.link_a[i_c, i_b] = -1
+            collider_state.contact_data.link_b[i_c, i_b] = -1
+            collider_state.contact_data.geom_a[i_c, i_b] = -1
+            collider_state.contact_data.geom_b[i_c, i_b] = -1
+            collider_state.contact_data.penetration[i_c, i_b] = 0.0
+            collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+
+        if ti.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-    else:
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
+        else:
             collider_state.n_contacts[i_b] = 0
+
+        collider_state.n_contacts_max[None] = 0
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -2087,6 +2138,7 @@ def func_add_contact(
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
 
         collider_state.n_contacts[i_b] = i_c + 1
+        ti.atomic_max(collider_state.n_contacts_max[None], i_c + 1)
     else:
         errno[None] = 2
 

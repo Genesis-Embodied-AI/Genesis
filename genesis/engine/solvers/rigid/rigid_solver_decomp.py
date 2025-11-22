@@ -898,7 +898,7 @@ class RigidSolver(Solver):
         # Note that errno must be evaluated BEFORE match because otherwise it will be evaluated for each case...
         # See official documentation: https://docs.python.org/3.10/reference/compound_stmts.html#overview
         if gs.use_zerocopy:
-            errno = int(ti_to_torch(self._errno, copy=None))
+            errno = ti_to_torch(self._errno, copy=None).item()
         else:
             errno = kernel_get_errno(self._errno)
         match errno:
