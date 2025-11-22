@@ -305,7 +305,7 @@ class RigidLink(RBC):
         """
         Get the vertices of the link's collision body (concatenation of all `link.geoms`) in the world frame.
         """
-        self._solver.update_verts_for_geoms(range(self.geom_start, self.geom_end))
+        self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
 
         if self.is_fixed and not self._entity._batch_fixed_verts:
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)

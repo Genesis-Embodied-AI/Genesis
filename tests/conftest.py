@@ -107,6 +107,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # relying on this mechanism is fragile.
     os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
+    # Disable GsTaichi dynamic array mode by default on MacOS because it is not supported by Metal
+    if sys.platform == "darwin":
+        os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
+
     # Enforce special environment variable before importing test modules if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
