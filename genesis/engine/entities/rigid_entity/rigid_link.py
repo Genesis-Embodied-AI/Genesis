@@ -10,7 +10,7 @@ import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 
-from genesis.utils.misc import DeprecationError
+from genesis.utils.misc import DeprecationError, tensor_to_array
 
 from .rigid_geom import RigidGeom, RigidVisGeom, _kernel_get_free_verts, _kernel_get_fixed_verts
 
@@ -262,7 +262,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the position. If None, get the position of all environments. Default is None.
         """
-        return self._solver.get_links_pos([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_pos(self._idx, envs_idx).squeeze(-2)
 
     @gs.assert_built
     def get_quat(self, envs_idx=None):
@@ -274,7 +274,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
         """
-        return self._solver.get_links_quat([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_quat(self._idx, envs_idx).squeeze(-2)
 
     @gs.assert_built
     def get_vel(self, envs_idx=None) -> torch.Tensor:
@@ -286,7 +286,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
         """
-        return self._solver.get_links_vel([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_vel(self._idx, envs_idx).squeeze(-2)
 
     @gs.assert_built
     def get_ang(self, envs_idx=None) -> torch.Tensor:
@@ -298,7 +298,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the angular velocity. If None, get the angular velocity of all environments. Default is None.
         """
-        return self._solver.get_links_ang([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_ang(self._idx, envs_idx).squeeze(-2)
 
     @gs.assert_built
     def get_verts(self):
@@ -545,7 +545,7 @@ class RigidLink(RBC):
         The invweight of the link.
         """
         if self._invweight is None:
-            self._invweight = self._solver.get_links_invweight([self._idx]).cpu().numpy()[..., 0, :]
+            self._invweight = tensor_to_array(self._solver.get_links_invweight(self._idx))[..., 0, :]
         return self._invweight
 
     @property
