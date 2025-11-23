@@ -139,7 +139,7 @@ jobs:
               source /root/.venv/bin/activate
               pip install --no-input ".[dev,render]"
 
-              pytest --print -x -m "benchmarks" ./tests
+              pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" --print -x -m "benchmarks" ./tests
               cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
               # tmate -S /tmp/tmate.sock wait tmate-exit
@@ -158,3 +158,8 @@ jobs:
         with:
           name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
           path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+      - name: Upload benchmark mem stats as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
+          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"
