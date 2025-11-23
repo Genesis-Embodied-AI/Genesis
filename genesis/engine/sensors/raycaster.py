@@ -405,9 +405,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         self._shared_metadata.total_n_rays += num_rays
 
         self._shared_metadata.points_to_sensor_idx = concat_with_tensor(
-            self._shared_metadata.points_to_sensor_idx,
-            [self._idx] * num_rays,
-            flatten=True,
+            self._shared_metadata.points_to_sensor_idx, [self._idx] * num_rays, flatten=True
         )
         self._shared_metadata.return_world_frame = concat_with_tensor(
             self._shared_metadata.return_world_frame, self._options.return_world_frame
