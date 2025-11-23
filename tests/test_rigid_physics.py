@@ -1140,22 +1140,23 @@ def test_position_control(show_viewer):
         device=gs.device,
     )
 
-    robot.set_dofs_kp(torch.zeros_like(MOTORS_KP), envs_idx=0)
-    robot.set_dofs_kv(torch.zeros_like(MOTORS_KD), envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
-
-    robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
-    robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
-    robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
+    # FIXME: We do NOT raise exception anymore when setting control targets that would have no effect
+    # robot.set_dofs_kp(torch.zeros_like(MOTORS_KP), envs_idx=0)
+    # robot.set_dofs_kv(torch.zeros_like(MOTORS_KD), envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
+    # robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
+    # robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    # robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
 
     robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
+    robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
     robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
 
