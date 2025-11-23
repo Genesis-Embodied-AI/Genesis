@@ -413,10 +413,9 @@ class Collider:
 
         n_envs = self._solver.n_envs
         if gs.use_zerocopy:
+            n_contacts = ti_to_torch(self._collider_state.n_contacts, copy=False)
             if as_tensor or n_envs == 0:
-                n_contacts_max = ti_to_torch(self._collider_state.n_contacts_max, copy=False).item()
-            else:
-                n_contacts = ti_to_torch(self._collider_state.n_contacts, copy=False)
+                n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()
 
             for key, data in self._contacts_info.items():
                 if n_envs == 0:
@@ -625,8 +624,6 @@ def kernel_collider_clear(
         else:
             collider_state.n_contacts[i_b] = 0
 
-        collider_state.n_contacts_max[None] = 0
-
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_get_contacts(
@@ -637,7 +634,14 @@ def collider_kernel_get_contacts(
     collider_state: array_class.ColliderState,
 ):
     _B = collider_state.active_buffer.shape[1]
-    n_contacts_max = collider_state.n_contacts_max[None]
+
+    # TODO: Better implementation from gstaichi for this kind of reduction.
+    n_contacts_max = gs.ti_int(0)
+    ti.loop_config(serialize=True)
+    for i_b in range(_B):
+        n_contacts = collider_state.n_contacts[i_b]
+        if n_contacts > n_contacts_max:
+            n_contacts_max = n_contacts
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -1264,8 +1268,6 @@ def func_collision_clear(
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
         else:
             collider_state.n_contacts[i_b] = 0
-
-        collider_state.n_contacts_max[None] = 0
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -2138,7 +2140,6 @@ def func_add_contact(
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
 
         collider_state.n_contacts[i_b] = i_c + 1
-        ti.atomic_max(collider_state.n_contacts_max[None], i_c + 1)
     else:
         errno[None] = 2
 
