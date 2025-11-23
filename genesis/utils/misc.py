@@ -591,8 +591,7 @@ def ti_to_python(
     use_zerocopy = (
         gs.use_zerocopy
         and (to_torch or gs.backend == gs.cpu)
-        and not issubclass(data_type, ti.Field)
-        # and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
+        and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
     )
     if not use_zerocopy:
         if copy is False:

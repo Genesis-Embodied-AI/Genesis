@@ -149,7 +149,7 @@ def init(
         if _use_zerocopy:
             raise_exception(f"Zero-copy only support by GsTaichi dynamic array mode on CPU and CUDA backend.")
         _use_zerocopy = False
-    use_zerocopy = _use_zerocopy and _use_ndarray  # (_use_ndarray or backend != gs_backend.metal)
+    use_zerocopy = _use_zerocopy and (_use_ndarray or backend != gs_backend.metal)
 
     # Define the right dtypes in accordance with selected backend and precision
     global ti_float, np_float, tc_float
@@ -171,9 +171,10 @@ def init(
     tc_int = torch.int32
 
     # Bool
-    # Note that `ti.u1` is broken on Apple Metal and output garbage.
+    # FIXME: `ti.u1` is broken on Apple Metal and output garbage.
+    # FIXME: `ti.u1` breaks zero-copy mode for fields on all backends.
     global ti_bool, np_bool, tc_bool
-    if backend == gs_backend.metal:
+    if (use_zerocopy and not use_ndarray) or backend == gs_backend.metal:
         ti_bool = ti.i32
         np_bool = np.int32
         tc_bool = torch.int32
