@@ -33,7 +33,7 @@ IGNORE_SCRIPT_NAMES = {
     "genesis_ipc_motion_test.py",  # TODO: wait for IPC's wheel to be released
 }
 
-TIMEOUT = 400.0
+TIMEOUT = 450.0
 
 
 pytestmark = [

@@ -1,15 +1,12 @@
-from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
-import torch
 from pydantic import Field
 
 import genesis as gs
 
 from ..options import Options
-from .raycaster import RaycastPattern, DepthCameraPattern
-
+from .raycaster import DepthCameraPattern, RaycastPattern
 
 Tuple3FType = tuple[float, float, float]
 MaybeTuple3FType = float | Tuple3FType
@@ -190,7 +187,7 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     acc_resolution : float, optional
         The measurement resolution of the accelerometer (smallest increment of change in the sensor reading).
         Default is 0.0, which means no quantization is applied.
-    acc_axes_skew : float | tuple[float, float, float] | Sequence[float]
+    acc_cross_axis_coupling : float | tuple[float, float, float] | Sequence[float]
         Accelerometer axes alignment as a 3x3 rotation matrix, where diagonal elements represent alignment (0.0 to 1.0)
         for each axis, and off-diagonal elements account for cross-axis misalignment effects.
         - If a scalar is provided (float), all off-diagonal elements are set to the scalar value.
@@ -205,8 +202,8 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     gyro_resolution : float, optional
         The measurement resolution of the gyroscope (smallest increment of change in the sensor reading).
         Default is 0.0, which means no quantization is applied.
-    gyro_axes_skew : float | tuple[float, float, float] | Sequence[float]
-        Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_axes_skew`.
+    gyro_cross_axis_coupling : float | tuple[float, float, float] | Sequence[float]
+        Gyroscope axes alignment as a 3x3 rotation matrix, similar to `acc_cross_axis_coupling`.
     gyro_bias : tuple[float, float, float]
         The constant additive bias for each axis of the gyroscope.
     gyro_noise : tuple[float, float, float]
@@ -225,8 +222,8 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
 
     acc_resolution: MaybeTuple3FType = 0.0
     gyro_resolution: MaybeTuple3FType = 0.0
-    acc_axes_skew: MaybeMatrix3x3Type = 0.0
-    gyro_axes_skew: MaybeMatrix3x3Type = 0.0
+    acc_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
+    gyro_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
     acc_noise: MaybeTuple3FType = 0.0
     gyro_noise: MaybeTuple3FType = 0.0
     acc_bias: MaybeTuple3FType = 0.0
@@ -240,15 +237,17 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     debug_gyro_scale: float = 0.01
 
     def model_post_init(self, _):
-        self._validate_axes_skew(self.acc_axes_skew)
-        self._validate_axes_skew(self.gyro_axes_skew)
+        self._validate_cross_axis_coupling(self.acc_cross_axis_coupling)
+        self._validate_cross_axis_coupling(self.gyro_cross_axis_coupling)
 
-    def _validate_axes_skew(self, axes_skew):
-        axes_skew_np = np.array(axes_skew)
-        if axes_skew_np.shape not in ((), (3,), (3, 3)):
-            gs.raise_exception(f"axes_skew shape should be (), (3,), or (3, 3), got: {axes_skew_np.shape}")
-        if np.any(axes_skew_np < 0.0) or np.any(axes_skew_np > 1.0):
-            gs.raise_exception(f"axes_skew values should be between 0.0 and 1.0, got: {axes_skew}")
+    def _validate_cross_axis_coupling(self, cross_axis_coupling):
+        cross_axis_coupling_np = np.array(cross_axis_coupling)
+        if cross_axis_coupling_np.shape not in ((), (3,), (3, 3)):
+            gs.raise_exception(
+                f"cross_axis_coupling shape should be (), (3,), or (3, 3), got: {cross_axis_coupling_np.shape}"
+            )
+        if np.any(cross_axis_coupling_np < 0.0) or np.any(cross_axis_coupling_np > 1.0):
+            gs.raise_exception(f"cross_axis_coupling values should be between 0.0 and 1.0, got: {cross_axis_coupling}")
 
 
 class Raycaster(RigidSensorOptionsMixin, SensorOptions):

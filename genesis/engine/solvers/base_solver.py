@@ -57,7 +57,7 @@ class Solver(RBC):
             _kernel_set_gravity_ndarray(gravity, envs_idx, self._gravity)
 
     def get_gravity(self, envs_idx=None, *, unsafe=False):
-        tensor = ti_to_torch(self._gravity, envs_idx, transpose=True, unsafe=unsafe)
+        tensor = ti_to_torch(self._gravity, envs_idx, transpose=True)
         return tensor.squeeze(0) if self.n_envs == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:

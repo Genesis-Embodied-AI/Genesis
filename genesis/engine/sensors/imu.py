@@ -6,11 +6,13 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.options.sensors import (
-    MaybeMatrix3x3Type,
-    IMU as IMUOptions,
+from genesis.options.sensors import IMU as IMUOptions
+from genesis.options.sensors import MaybeMatrix3x3Type
+from genesis.utils.geom import (
+    inv_transform_by_quat,
+    transform_by_quat,
+    transform_quat_by_quat,
 )
-from genesis.utils.geom import inv_transform_by_trans_quat, transform_by_quat, transform_quat_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
@@ -30,21 +32,9 @@ if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
 
 
-def _view_metadata_as_acc_gyro(metadata_tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Get views of the metadata tensor (B, n_imus * 6) as a tuple of acc and gyro metadata tensors (B, n_imus * 3).
-    """
-    batch_shape, n_data = metadata_tensor.shape[:-1], metadata_tensor.shape[-1]
-    n_imus = n_data // 6
-    metadata_tensor_per_sensor = metadata_tensor.reshape((*batch_shape, n_imus, 2, 3))
-
-    return (
-        metadata_tensor_per_sensor[..., 0, :].reshape(*batch_shape, n_imus * 3),
-        metadata_tensor_per_sensor[..., 1, :].reshape(*batch_shape, n_imus * 3),
-    )
-
-
-def _get_skew_to_alignment_matrix(input: MaybeMatrix3x3Type, out: torch.Tensor | None = None) -> torch.Tensor:
+def _get_cross_axis_coupling_to_alignment_matrix(
+    input: MaybeMatrix3x3Type, out: torch.Tensor | None = None
+) -> torch.Tensor:
     """
     Convert the alignment input to a matrix. Modifies in place if provided, else allocate a new matrix.
     """
@@ -109,40 +99,16 @@ class IMUSensor(
         self.pos_offset: torch.Tensor
 
     @gs.assert_built
-    def set_acc_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
+    def set_acc_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
-        rot_matrix = _get_skew_to_alignment_matrix(axes_skew)
+        rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2, :, :] = rot_matrix
 
     @gs.assert_built
-    def set_gyro_axes_skew(self, axes_skew: MaybeMatrix3x3Type, envs_idx=None):
+    def set_gyro_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
-        rot_matrix = _get_skew_to_alignment_matrix(axes_skew)
+        rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2 + 1, :, :] = rot_matrix
-
-    @gs.assert_built
-    def set_acc_bias(self, bias, envs_idx=None):
-        self._set_metadata_field(bias, self._shared_metadata.acc_bias, field_size=3, envs_idx=envs_idx)
-
-    @gs.assert_built
-    def set_gyro_bias(self, bias, envs_idx=None):
-        self._set_metadata_field(bias, self._shared_metadata.gyro_bias, field_size=3, envs_idx=envs_idx)
-
-    @gs.assert_built
-    def set_acc_random_walk(self, random_walk, envs_idx=None):
-        self._set_metadata_field(random_walk, self._shared_metadata.acc_random_walk, field_size=3, envs_idx=envs_idx)
-
-    @gs.assert_built
-    def set_gyro_random_walk(self, random_walk, envs_idx=None):
-        self._set_metadata_field(random_walk, self._shared_metadata.gyro_random_walk, field_size=3, envs_idx=envs_idx)
-
-    @gs.assert_built
-    def set_acc_noise(self, noise, envs_idx=None):
-        self._set_metadata_field(noise, self._shared_metadata.acc_noise, field_size=3, envs_idx=envs_idx)
-
-    @gs.assert_built
-    def set_gyro_noise(self, noise, envs_idx=None):
-        self._set_metadata_field(noise, self._shared_metadata.gyro_noise, field_size=3, envs_idx=envs_idx)
 
     # ================================ internal methods ================================
 
@@ -160,21 +126,12 @@ class IMUSensor(
         self._options.noise = _to_tuple(self._options.acc_noise, self._options.gyro_noise, length_per_value=3)
         super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
 
-        self._shared_metadata.acc_bias, self._shared_metadata.gyro_bias = _view_metadata_as_acc_gyro(
-            self._shared_metadata.bias
-        )
-        self._shared_metadata.acc_random_walk, self._shared_metadata.gyro_random_walk = _view_metadata_as_acc_gyro(
-            self._shared_metadata.random_walk
-        )
-        self._shared_metadata.acc_noise, self._shared_metadata.gyro_noise = _view_metadata_as_acc_gyro(
-            self._shared_metadata.noise
-        )
         self._shared_metadata.alignment_rot_matrix = concat_with_tensor(
             self._shared_metadata.alignment_rot_matrix,
             torch.stack(
                 [
-                    _get_skew_to_alignment_matrix(self._options.acc_axes_skew),
-                    _get_skew_to_alignment_matrix(self._options.gyro_axes_skew),
+                    _get_cross_axis_coupling_to_alignment_matrix(self._options.acc_cross_axis_coupling),
+                    _get_cross_axis_coupling_to_alignment_matrix(self._options.gyro_cross_axis_coupling),
                 ],
             ),
             expand=(self._manager._sim._B, 2, 3, 3),
@@ -198,22 +155,35 @@ class IMUSensor(
         """
         Update the current ground truth values for all IMU sensors.
         """
+        # Extract acceleration and gravity in world frame
         assert shared_metadata.solver is not None
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
         ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
+        if acc.ndim == 2:
+            acc = acc.unsqueeze(0)
+            ang = ang.unsqueeze(0)
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
-        # acc/ang shape: (B, n_imus, 3)
-        local_acc = inv_transform_by_trans_quat(acc, shared_metadata.offsets_pos, offset_quats)
-        local_ang = inv_transform_by_trans_quat(ang, shared_metadata.offsets_pos, offset_quats)
+        # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
+        if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
+            ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
+            if ang_acc.ndim == 2:
+                ang_acc = ang_acc.unsqueeze(0)
+            offset_pos_world = transform_by_quat(shared_metadata.offsets_pos, quats)
+            tangential_acc = torch.cross(ang_acc, offset_pos_world, dim=-1)
+            centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
+            acc += tangential_acc + centripetal_acc
 
-        *batch_size, n_imus, _ = local_acc.shape
-        local_acc = local_acc - gravity.unsqueeze(-2).expand((*batch_size, n_imus, -1))
+        # Subtract gravity then move to local frame
+        # acc/ang shape: (B, n_imus, 3)
+        local_acc = inv_transform_by_quat(acc - gravity.unsqueeze(-2), offset_quats)
+        local_ang = inv_transform_by_quat(ang, offset_quats)
 
         # cache shape: (B, n_imus * 6)
+        *batch_size, n_imus, _ = local_acc.shape
         strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 2, 3))
         strided_ground_truth_cache[..., 0, :].copy_(local_acc)
         strided_ground_truth_cache[..., 1, :].copy_(local_ang)

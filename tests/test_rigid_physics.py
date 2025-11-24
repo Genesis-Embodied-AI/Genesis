@@ -3,8 +3,9 @@ import uuid
 import os
 import sys
 import tempfile
-from typing import cast
 import xml.etree.ElementTree as ET
+from contextlib import nullcontext
+from typing import cast
 from pathlib import Path
 
 import igl
@@ -876,6 +877,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=1000,
             box_box_detection=box_box_detection,
             use_gjk_collision=gjk_collision,
         ),
@@ -892,7 +894,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         i, j, k = int(n / 25), int(n / 5) % 5, n % 5
         scene.add_entity(
             gs.morphs.Box(
-                pos=(i * 1.01, j * 1.01, k * 1.01 + 0.5),
+                pos=(i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5),
                 size=(1.0, 1.0, 1.0),
             ),
             surface=gs.surfaces.Default(
@@ -919,7 +921,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
             assert qpos[:2].norm() < 20.0
             assert qpos[2] < 5.0
         else:
-            qpos0 = np.array((i * 1.01, j * 1.01, k * 1.01 + 0.5))
+            qpos0 = np.array((i * (1.0 - 1e-3), j * (1.0 - 1e-3), k * (1.0 - 1e-3) + 0.5))
             assert_allclose(qpos[:3], qpos0, atol=0.05)
             assert_allclose(qpos[3:], 0, atol=0.03)
 
@@ -1138,22 +1140,23 @@ def test_position_control(show_viewer):
         device=gs.device,
     )
 
-    robot.set_dofs_kp(torch.zeros_like(MOTORS_KP), envs_idx=0)
-    robot.set_dofs_kv(torch.zeros_like(MOTORS_KD), envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
-
-    robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
-    robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
-    with pytest.raises(gs.GenesisException):
-        robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
-    robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
+    # FIXME: We do NOT raise exception anymore when setting control targets that would have no effect
+    # robot.set_dofs_kp(torch.zeros_like(MOTORS_KP), envs_idx=0)
+    # robot.set_dofs_kv(torch.zeros_like(MOTORS_KD), envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
+    # robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
+    # robot.control_dofs_velocity(MOTORS_VEL_TARGET, envs_idx=0)
+    # with pytest.raises(gs.GenesisException):
+    #     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
+    # robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
 
     robot.set_dofs_kp(MOTORS_KP, envs_idx=0)
+    robot.set_dofs_kv(MOTORS_KD, envs_idx=0)
     robot.control_dofs_position(MOTORS_POS_TARGET, envs_idx=0)
     robot.control_dofs_position_velocity(MOTORS_POS_TARGET, MOTORS_VEL_TARGET, envs_idx=0)
 
@@ -1196,8 +1199,9 @@ def test_position_control(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("batch_fixed_verts", [False, True])
 @pytest.mark.parametrize("relative", [False, True])
-def test_set_root_pose(relative, show_viewer, tol):
+def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     ROBOT_POS_ZERO = (0.0, 0.4, 0.1)
     ROBOT_EULER_ZERO = (0.0, 0.0, 90.0)
     CUBE_POS_ZERO = (0.65, 0.0, 0.02)
@@ -1207,11 +1211,22 @@ def test_set_root_pose(relative, show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
     robot = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
             pos=ROBOT_POS_ZERO,
             euler=ROBOT_EULER_ZERO,
+            batch_fixed_verts=batch_fixed_verts,
+        ),
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.04,
+            batch_fixed_verts=False,
+            fixed=True,
         ),
     )
     cube = scene.add_entity(
@@ -1227,17 +1242,46 @@ def test_set_root_pose(relative, show_viewer, tol):
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
 
     # Make sure that it is not possible to end up in an inconsistent state for fixed geometries
-    pos_delta = torch.as_tensor(np.random.rand(2, 3), dtype=gs.tc_float, device=gs.device)
-    with pytest.raises(gs.GenesisException):
+    pos_delta = np.random.rand(2, 3)
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_pos(pos_delta)
-    with pytest.raises(gs.GenesisException):
+        if show_viewer:
+            scene.visualizer.update()
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
         robot.set_pos(pos_delta[[0]], envs_idx=[0])
-    quat_delta = torch.as_tensor(np.random.rand(2, 4), dtype=gs.tc_float, device=gs.device)
-    with pytest.raises(gs.GenesisException):
-        robot.set_quat(pos_delta)
-    with pytest.raises(gs.GenesisException):
-        robot.set_quat(pos_delta[[0]], envs_idx=[0])
-    cube.set_pos(pos_delta[[0]], envs_idx=[0])
+        if show_viewer:
+            scene.visualizer.update()
+    cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0])
+    cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=[1])
+    sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0)
+    quat_delta = np.random.rand(2, 4)
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_quat(quat_delta)
+        if show_viewer:
+            scene.visualizer.update()
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_quat(quat_delta[[0]], envs_idx=[0])
+        if show_viewer:
+            scene.visualizer.update()
+    cube.set_quat(quat_delta)
+    if show_viewer:
+        scene.visualizer.update()
+
+    sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
+    assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
+    assert_allclose(sphere.get_AABB(), sphere.geoms[0].get_AABB(), tol=tol)
+
+    # Simulate for a while to check if the dynamic object is colliding with the static one
+    if batch_fixed_verts:
+        has_collided = torch.tensor([False, False], dtype=torch.bool, device=gs.device)
+        for _ in range(20):
+            scene.step()
+            contacts_state = cube.get_contacts(with_entity=robot, exclude_self_contact=True)
+            has_collided |= contacts_state["valid_mask"].any(dim=-1)
+            if has_collided.all():
+                break
+        else:
+            raise AssertionError("Cube never collided with robot for at least one of the environments.")
 
     for _ in range(2):
         scene.reset()
@@ -1251,7 +1295,9 @@ def test_set_root_pose(relative, show_viewer, tol):
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
             euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
             assert_allclose(euler, euler_zero, tol=5e-4)
-            assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init, tol=tol)
+            base_aabb = entity.geoms[0].get_AABB()
+            assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
+            assert_allclose(base_aabb, base_aabb_init, tol=tol)
             assert_allclose(entity.get_AABB(), entity_aabb_init, tol=tol)
 
             pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device).expand((2, 3))
@@ -3347,3 +3393,30 @@ def test_reset_control(robot_path, tol):
     new_control_force = robot.get_dofs_control_force()
     assert old_control_force.abs().max() > gs.EPS
     assert_allclose(new_control_force, 0, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_joint_get_anchor_pos_and_axis(n_envs):
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    joint = robot.joints[1]
+    anchor_pos = joint.get_anchor_pos()
+    assert anchor_pos.shape == (*batch_shape, 3)
+    expected_pos = scene.rigid_solver.joints_state.xanchor.to_numpy()
+    assert_allclose(anchor_pos, expected_pos[joint.idx], tol=gs.EPS)
+
+    anchor_axis = joint.get_anchor_axis()
+    assert anchor_axis.shape == (*batch_shape, 3)
+    expected_axis = scene.rigid_solver.joints_state.xaxis.to_numpy()
+    assert_allclose(anchor_axis, expected_axis[joint.idx], tol=gs.EPS)

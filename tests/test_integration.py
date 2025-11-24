@@ -13,7 +13,7 @@ def test_pick_and_place(mode, show_viewer):
     #
     # This is necessary because the first-order correction term involved in the implicit integration schemes
     # 'implicitfast' and 'Euler' are only able to stabilize each entity independently, from the forces that were
-    # obtained from the instable accelerations. As a result, eveything is fine as long as the entities are not
+    # obtained from the instable accelerations. As a result, everything is fine as long as the entities are not
     # interacting with each other, but it induces unrealistic motion otherwise. In this case, the acceleration of the
     # cube being lifted is based on the acceleration that the gripper would have without implicit damping.
     #
@@ -47,7 +47,7 @@ def test_pick_and_place(mode, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     cube = scene.add_entity(
@@ -57,10 +57,11 @@ def test_pick_and_place(mode, show_viewer):
         ),
         surface=gs.surfaces.Plastic(color=(1, 0, 0)),
     )
-    cube_2 = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.05, 0.05, 0.05),
             pos=(0.4, 0.2, 0.025),
+            fixed=True,
         ),
         surface=gs.surfaces.Plastic(color=(0, 1, 0)),
     )
@@ -159,9 +160,9 @@ def test_pick_and_place(mode, show_viewer):
     # release
     franka.control_dofs_position(np.array([0.15, 0.15]), fingers_dof)
 
-    for i in range(550):
+    for i in range(180):
         scene.step()
-        if i > 550:
+        if i > 150:
             qvel = cube.get_dofs_velocity()
             assert_allclose(qvel, 0, atol=0.02)
 

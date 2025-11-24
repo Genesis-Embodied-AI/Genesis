@@ -152,7 +152,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
-        raise gs.raise_exception(f"'{xml}' is not a valid MJCF or URDF file.")
+        gs.raise_exception(f"'{xml}' is not a valid MJCF or URDF file.")
 
     return mj
 
@@ -267,7 +267,7 @@ def parse_link(mj, i_l, scale):
             j_info["dofs_stiffness"] = np.zeros((0))
         elif gs_type == gs.JOINT_TYPE.FREE:
             if mj_stiffness > 0.0:
-                raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
+                gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
 
             j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
             j_info["dofs_motion_vel"] = np.eye(6, 3)
@@ -722,7 +722,7 @@ def parse_equalities(mj, scale):
             eq_info["type"] = gs.EQUALITY_TYPE.JOINT
             name_objadr = mj.name_jntadr
         else:
-            raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
+            gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
         objs_name = []
         for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):

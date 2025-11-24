@@ -75,6 +75,7 @@ class GraspEnv:
                 size=env_cfg["box_size"],
                 fixed=env_cfg["box_fixed"],
                 collision=env_cfg["box_collision"],
+                batch_fixed_verts=True,
             ),
             # material=gs.materials.Rigid(gravity_compensation=1),
             surface=gs.surfaces.Rough(

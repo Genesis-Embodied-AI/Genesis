@@ -12,8 +12,8 @@ from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers import RigidSolver
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.solvers import RigidSolver
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -292,7 +292,36 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         return self._return_data_class(*return_values)
 
     def _sanitize_envs_idx(self, envs_idx) -> torch.Tensor:
+        if self._manager._sim.n_envs == 0:
+            return torch.tensor([0], device=gs.device, dtype=gs.tc_int)
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
+
+    def _set_metadata_field(self, input, field, field_size, envs_idx):
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        if field.ndim == 2:
+            # flat field structure
+            idx = self._idx * field_size
+            index_slice = slice(idx, idx + field_size)
+        else:
+            # per sensor field structure
+            index_slice = self._idx
+        field[:, index_slice] = self._sanitize_for_metadata_tensor(
+            input, shape=(len(envs_idx), field_size), dtype=field.dtype
+        )
+
+    def _sanitize_for_metadata_tensor(self, input, shape, dtype) -> torch.Tensor:
+        if not isinstance(input, Sequence):
+            input = [input]
+        tensor_input = torch.tensor(input, dtype=dtype, device=gs.device)
+        if tensor_input.ndim == len(shape) - 1:
+            # Batch dimension is missing
+            tensor_input = tensor_input.unsqueeze(0)
+        if tensor_input.shape[0] != shape[0]:
+            tensor_input = tensor_input.expand((shape[0], *tensor_input.shape[1:]))
+        assert (
+            tensor_input.shape == shape
+        ), f"Input shape {tensor_input.shape} for setting sensor metadata does not match shape {shape}"
+        return tensor_input
 
 
 @dataclass
@@ -345,6 +374,16 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
             dim=1,
         )
 
+    @gs.assert_built
+    def set_pos_offset(self, pos_offset, envs_idx=None):
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        self._set_metadata_field(pos_offset, self._shared_metadata.offsets_pos, field_size=3, envs_idx=envs_idx)
+
+    @gs.assert_built
+    def set_quat_offset(self, quat_offset, envs_idx=None):
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        self._set_metadata_field(quat_offset, self._shared_metadata.offsets_quat, field_size=4, envs_idx=envs_idx)
+
 
 @dataclass
 class NoisySensorMetadataMixin:
@@ -371,25 +410,6 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
     """
     Base sensor class for analog sensors that are attached to a RigidEntity.
     """
-
-    def _set_metadata_field(self, input, field, field_size, envs_idx):
-        envs_idx = self._sanitize_envs_idx(envs_idx)
-        idx = self._idx * field_size
-        field[envs_idx, idx : idx + field_size] = self._sanitize_for_metadata_tensor(
-            input, shape=(len(envs_idx), field_size), dtype=field.dtype
-        )
-
-    def _sanitize_for_metadata_tensor(self, input, shape, dtype) -> torch.Tensor:
-        if not isinstance(input, Sequence):
-            input = [input]
-        tensor_input = torch.tensor(input, dtype=dtype, device=gs.device)
-        if tensor_input.ndim == len(shape) - 1:
-            # Batch dimension is missing
-            tensor_input = tensor_input.unsqueeze(0).expand((shape[0], *tensor_input.shape))
-        assert (
-            tensor_input.shape == shape
-        ), f"Input shape {tensor_input.shape} for setting sensor metadata does not match shape {shape}"
-        return tensor_input
 
     @gs.assert_built
     def set_resolution(self, resolution, envs_idx=None):

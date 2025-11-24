@@ -601,6 +601,7 @@ class SAPCoupler(RBC):
 
         if self.rigid_solver.is_active:
             kernel_update_all_verts(
+                geoms_info=self.rigid_solver.geoms_info,
                 geoms_state=self.rigid_solver.geoms_state,
                 verts_info=self.rigid_solver.verts_info,
                 free_verts_state=self.rigid_solver.free_verts_state,

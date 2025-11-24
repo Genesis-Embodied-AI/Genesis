@@ -1,3 +1,5 @@
+from functools import wraps
+
 import igl
 import numpy as np
 import gstaichi as ti
@@ -14,6 +16,16 @@ from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, to_gs_tensor, tensor_to_array
 
 from .base_entity import Entity
+
+
+def assert_muscle(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if not isinstance(self.material, gs.materials.FEM.Muscle):
+            gs.raise_exception("This method is only supported by entities with 'FEM.Muscle' material.")
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 @ti.data_oriented
@@ -200,6 +212,7 @@ class FEMEntity(Entity):
         if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
+    @assert_muscle
     def set_actuation(self, actu):
         """
         Set the actuation signal for the FEM entity.
@@ -221,9 +234,8 @@ class FEMEntity(Entity):
 
         actu = to_gs_tensor(actu)
 
-        n_groups = getattr(self.material, "n_groups", 1)
-
         is_valid = False
+        n_groups = self.material.n_groups
         if actu.ndim == 0:
             self._tgt["actu"] = actu.tile((self._sim._B, n_groups))
             is_valid = True
@@ -257,19 +269,17 @@ class FEMEntity(Entity):
         AssertionError
             If tensor shapes are incorrect or normalization fails.
         """
-
         self._assert_active()
 
-        if muscle_group is not None:
-            n_groups = getattr(self.material, "n_groups", 1)
-            max_group_id = muscle_group.max().item()
+        n_groups = self.material.n_groups
+        max_group_id = muscle_group.max().item()
 
-            muscle_group = to_gs_tensor(muscle_group)
+        muscle_group = to_gs_tensor(muscle_group)
 
-            assert muscle_group.shape == (self.n_elements,)
-            assert isinstance(max_group_id, int) and max_group_id < n_groups
+        assert muscle_group.shape == (self.n_elements,)
+        assert isinstance(max_group_id, int) and max_group_id < n_groups
 
-            self.set_muscle_group(muscle_group)
+        self.set_muscle_group(muscle_group)
 
         if muscle_direction is not None:
             muscle_direction = to_gs_tensor(muscle_direction)
@@ -280,12 +290,7 @@ class FEMEntity(Entity):
 
     def get_state(self):
         state = FEMEntityState(self, self._sim.cur_step_global)
-        self.get_frame(
-            self._sim.cur_substep_local,
-            state.pos,
-            state.vel,
-            state.active,
-        )
+        self.get_frame(self._sim.cur_substep_local, state.pos, state.vel, state.active)
 
         # we store all queried states to track gradient flow
         self._queried_states.append(state)
@@ -775,6 +780,7 @@ class FEMEntity(Entity):
             active=active,
         )
 
+    @assert_muscle
     def set_muscle_group(self, muscle_group):
         """
         Set muscle group index for each element.
@@ -791,6 +797,7 @@ class FEMEntity(Entity):
             muscle_group=muscle_group,
         )
 
+    @assert_muscle
     def set_muscle_direction(self, muscle_direction):
         """
         Set muscle force direction for each element.
