@@ -95,7 +95,7 @@ class Viewer(RBC):
                         shadow=self.context.shadow,
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
-                        viewer_plugin=self._viewer_plugin,
+                        plugin_options=self._viewer_plugin,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,

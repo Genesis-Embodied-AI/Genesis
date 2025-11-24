@@ -8,14 +8,14 @@ from .vec3 import Vec3
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
-    from genesis.options.viewer_plugins import ViewerPlugin as ViewerPluginOptions
+    from genesis.options.viewer_interactions import ViewerInteraction as ViewerPluginOptions
 
 
 EVENT_HANDLE_STATE = Literal[True] | None
 EVENT_HANDLED: Literal[True] = True
 
 # Global map from options class to viewer plugin class
-VIEWER_PLUGIN_MAP: dict[Type["ViewerPluginOptions"], Type["ViewerPluginBase"]] = {}
+VIEWER_PLUGIN_MAP: dict[Type["ViewerPluginOptions"], Type["BaseViewerInteraction"]] = {}
 
 
 def register_viewer_plugin(options_cls: Type["ViewerPluginOptions"]):
@@ -38,25 +38,27 @@ def register_viewer_plugin(options_cls: Type["ViewerPluginOptions"]):
     class ViewerInteraction(ViewerInteractionBase):
         ...
     """
-    def _impl(plugin_cls: Type["ViewerPluginBase"]):
+    def _impl(plugin_cls: Type["BaseViewerInteraction"]):
         VIEWER_PLUGIN_MAP[options_cls] = plugin_cls
         return plugin_cls
     return _impl
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 
-class ViewerPluginBase():
+class BaseViewerInteraction():
     """
     Base class for handling pyglet.window.Window events.
     """
 
     def __init__(
         self,
+        viewer,
         options: "ViewerPluginOptions",
         camera: "Node",
         scene: "Scene",
         viewport_size: tuple[int, int],
     ):
+        self.viewer = viewer
         self.options: "ViewerPluginOptions" = options
         self.camera: 'Node' = camera
         self.scene: 'Scene' = scene

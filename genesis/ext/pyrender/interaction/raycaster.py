@@ -206,6 +206,7 @@ class ViewerRaycaster:
         from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
         
         kernel_update_all_verts(
+            geoms_info=self.solver.geoms_info,
             geoms_state=self.solver.geoms_state,
             verts_info=self.solver.verts_info,
             free_verts_state=self.solver.free_verts_state,

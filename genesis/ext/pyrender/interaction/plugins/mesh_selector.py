@@ -1,15 +1,16 @@
 import csv
 from typing import TYPE_CHECKING, NamedTuple
 
-from genesis.options.viewer_plugins import MeshPointSelectorPlugin as MeshPointSelectorPluginOptions
+from genesis.options.viewer_interactions import MeshPointSelectorPlugin as MeshPointSelectorPluginOptions
 from typing_extensions import override
 
 import genesis as gs
 
+from ..base_interaction import EVENT_HANDLE_STATE, EVENT_HANDLED, register_viewer_plugin
 from ..ray import Ray
 from ..raycaster import ViewerRaycaster
 from ..vec3 import Pose, Vec3
-from ..viewer_plugin_base import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPluginBase, register_viewer_plugin
+from .viewer_controls import ViewerDefaultControls
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidLink
@@ -37,7 +38,7 @@ class SelectedPoint(NamedTuple):
 
 
 @register_viewer_plugin(MeshPointSelectorPluginOptions)
-class MeshPointSelectorPlugin(ViewerPluginBase):
+class MeshPointSelectorPlugin(ViewerDefaultControls):
     """
     Interactive viewer plugin that enables using mouse clicks to select points on rigid meshes.
     Selected points are stored in local coordinates relative to their link's frame.
@@ -45,12 +46,13 @@ class MeshPointSelectorPlugin(ViewerPluginBase):
 
     def __init__(
         self,
+        viewer,
         options: MeshPointSelectorPluginOptions,
         camera: "Node",
         scene: "Scene",
         viewport_size: tuple[int, int],
     ) -> None:
-        super().__init__(options, camera, scene, viewport_size)
+        super().__init__(viewer, options, camera, scene, viewport_size)
         self.prev_mouse_pos: tuple[int, int] = (viewport_size[0] // 2, viewport_size[1] // 2)
 
         # List of selected points with link, local position, and local normal

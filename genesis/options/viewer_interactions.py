@@ -1,17 +1,30 @@
 from .options import Options
 
 
-class ViewerPlugin(Options):
+class ViewerInteraction(Options):
     """
-    Base class for viewer plugin options.
+    Base class for viewer interaction options.
 
-    All viewer plugin option classes should inherit from this base class.
+    All viewer interaction option classes should inherit from this base class.
     """
 
     pass
 
 
-class MouseSpringViewerPlugin(ViewerPlugin):
+class ViewerDefaultControls(ViewerInteraction):
+    """
+    Default viewer interaction controls with keyboard shortcuts for recording, changing render modes, etc.
+
+    Parameters
+    ----------
+    keybindings : dict[str, int]
+        Override the default mapping of action names to keyboard key codes (pyglet.window.key.*).
+    """
+
+    keybindings: dict[str, int] = None
+
+
+class MouseSpringViewerPlugin(ViewerDefaultControls):
     """
     Options for the interactive viewer plugin that allows mouse-based object manipulation.
     """
@@ -19,7 +32,7 @@ class MouseSpringViewerPlugin(ViewerPlugin):
     pass
 
 
-class MeshPointSelectorPlugin(ViewerPlugin):
+class MeshPointSelectorPlugin(ViewerDefaultControls):
     """
     Options for the mesh point selector plugin that allows selecting points on a mesh.
 
