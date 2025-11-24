@@ -3,6 +3,7 @@ from typing import Optional
 import genesis as gs
 
 from .options import Options
+from .viewer_interactions import ViewerDefaultControls, ViewerInteraction
 
 
 class ViewerOptions(Options):
@@ -33,17 +34,19 @@ class ViewerOptions(Options):
         The up vector of the camera's extrinsic pose.
     camera_fov : float
         The field of view (in degrees) of the camera.
+    viewer_plugin : ViewerPluginOptions
+        Viewer plugin that adds interactive functionality to the viewer.
     """
 
-    res: Optional[tuple] = None
-    run_in_thread: Optional[bool] = None
+    res: tuple | None = None
+    run_in_thread: bool | None = None
     refresh_rate: int = 60
-    max_FPS: Optional[int] = 60
+    max_FPS: int | None = 60
     camera_pos: tuple = (3.5, 0.5, 2.5)
     camera_lookat: tuple = (0.0, 0.0, 0.5)
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
-    enable_interaction: bool = False
+    viewer_plugin: ViewerInteraction = ViewerDefaultControls()
 
 
 class VisOptions(Options):
@@ -139,7 +142,7 @@ class VisOptions(Options):
                 f"Unsupported `render_particle_as`: {self.render_particle_as}, must be one of ['sphere', 'tet']"
             )
 
-        if not self.n_rendered_envs is None:
+        if self.n_rendered_envs is not None:
             gs.logger.warning(
                 "Viewer option 'n_rendered_envs' is deprecated and will be removed in future release. Please use "
                 "'rendered_envs_idx' instead."

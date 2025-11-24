@@ -1,44 +1,125 @@
-from typing import TYPE_CHECKING, cast
-from typing_extensions import override
 from threading import Lock as threading_Lock
+from typing import TYPE_CHECKING
 
-import numpy as np
+import torch
+from genesis.options.viewer_interactions import MouseSpringViewerPlugin as MouseSpringViewerPluginOptions
+from typing_extensions import override
 
 import genesis as gs
 
-from .aabb import AABB, OBB
-from .mouse_spring import MouseSpring
-from .ray import Plane, Ray, RayHit
-from .vec3 import Pose, Quat, Vec3, Color
-from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
+from ..aabb import AABB, OBB
+from ..base_interaction import EVENT_HANDLE_STATE, EVENT_HANDLED, register_viewer_plugin
+from ..ray import Plane, Ray, RayHit
+from ..raycaster import ViewerRaycaster
+from ..vec3 import Color, Pose, Quat, Vec3
+from .viewer_controls import ViewerDefaultControls
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity import RigidGeom, RigidLink, RigidEntity
+    from genesis.engine.entities.rigid_entity import RigidEntity, RigidGeom, RigidLink
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
 
 
-class ViewerInteraction(ViewerInteractionBase):
-    """Functionalities to be implemented:
-    - mouse picking
-    - mouse dragging
+MOUSE_SPRING_POSITION_CORRECTION_FACTOR = 1.0
+MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR = 1.0
+
+class MouseSpring:
+    def __init__(self) -> None:
+        self.held_link: "RigidLink | None" = None
+        self.held_point_in_local: Vec3 | None = None
+        self.prev_control_point: Vec3 | None = None
+
+    def attach(self, picked_link: "RigidLink", control_point: Vec3) -> None:
+        # for now, we just pick the first geometry
+        self.held_link = picked_link
+        pose: Pose = Pose.from_link(self.held_link)
+        self.held_point_in_local = pose.inverse_transform_point(control_point)
+        self.prev_control_point = control_point
+
+    def detach(self) -> None:
+        self.held_link = None
+
+    def apply_force(self, control_point: Vec3, delta_time: float) -> None:
+        # note when threaded: apply_force is called before attach!
+        # note2: that was before we added a lock to ViewerInteraction; this migth be fixed now
+        if not self.held_link:
+            return
+
+        self.prev_control_point = control_point
+
+        # do simple force on COM only:
+        link: "RigidLink" = self.held_link
+        lin_vel: Vec3 = Vec3.from_tensor(link.get_vel())
+        ang_vel: Vec3 = Vec3.from_tensor(link.get_ang())
+        link_pose: Pose = Pose.from_link(link)
+        held_point_in_world: Vec3 = link_pose.transform_point(self.held_point_in_local)
+
+        # note: we should assert earlier that link inertial_pos/quat are not None
+        # todo: verify inertial_pos/quat are stored in local frame
+        link_T_principal: Pose = Pose(Vec3.from_arraylike(link.inertial_pos), Quat.from_arraylike(link.inertial_quat))
+        world_T_principal: Pose = link_pose * link_T_principal
+
+        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(self.held_point_in_local)   # for non-spherical inertia
+        arm_in_world: Vec3 = world_T_principal.rot * arm_in_principal  # for spherical inertia
+
+        pos_err_v: Vec3 = control_point - held_point_in_world
+        inv_mass: float = float(1.0 / link.get_mass() if link.get_mass() > 0.0 else 0.0)
+        inv_spherical_inertia: float = float(1.0 / link.inertial_i[0, 0] if link.inertial_i[0, 0] > 0.0 else 0.0)
+
+        inv_dt: float = 1.0 / delta_time
+        tau: float = MOUSE_SPRING_POSITION_CORRECTION_FACTOR
+        damp: float = MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR
+
+        total_impulse: Vec3 = Vec3.zero()
+        total_torque_impulse: Vec3 = Vec3.zero()
+
+        for i in range(3*4):
+            body_point_vel: Vec3 = lin_vel + ang_vel.cross(arm_in_world)
+            vel_err_v: Vec3 = Vec3.zero() - body_point_vel
+
+            dir: Vec3 = Vec3.zero()
+            dir.v[i % 3] = 1.0
+            pos_err: float = dir.dot(pos_err_v)
+            vel_err: float = dir.dot(vel_err_v)
+            error: float = tau * pos_err * inv_dt + damp * vel_err
+
+            arm_x_dir: Vec3 = arm_in_world.cross(dir)
+            virtual_mass: float = 1.0 / (inv_mass + arm_x_dir.sqr_magnitude() * inv_spherical_inertia + 1e-24)
+            impulse: float = error * virtual_mass
+
+            lin_vel += impulse * inv_mass * dir
+            ang_vel += impulse * inv_spherical_inertia * arm_x_dir
+            total_impulse.v[i % 3] += impulse
+            total_torque_impulse += impulse * arm_x_dir
+
+        # Apply the new force
+        total_force = total_impulse * inv_dt
+        total_torque = total_torque_impulse * inv_dt
+        force_tensor: torch.Tensor = total_force.as_tensor().unsqueeze(0)
+        torque_tensor: torch.Tensor = total_torque.as_tensor().unsqueeze(0)
+        link.solver.apply_links_external_force(force_tensor, (link.idx,), ref='link_com', local=False)
+        link.solver.apply_links_external_torque(torque_tensor, (link.idx,), ref='link_com', local=False)
+
+    @property
+    def is_attached(self) -> bool:
+        return self.held_link is not None
+
+
+@register_viewer_plugin(MouseSpringViewerPluginOptions)
+class MouseSpringViewerPlugin(ViewerDefaultControls):
+    """
+    Basic interactive viewer plugin that enables using mouse to apply spring force on rigid entities.
     """
 
-    def __init__(self,
-        camera: 'Node',
-        scene: 'Scene',
+    def __init__(
+        self,
+        viewer,
+        options: MouseSpringViewerPluginOptions,
+        camera: "Node",
+        scene: "Scene",
         viewport_size: tuple[int, int],
-        camera_yfov: float,
-        log_events: bool = False,
-        camera_fov: float = 60.0,
     ) -> None:
-        super().__init__(log_events)
-        self.camera: 'Node' = camera
-        self.scene: 'Scene' = scene
-        self.viewport_size: tuple[int, int] = viewport_size
-        self.camera_yfov: float = camera_yfov
-
-        self.tan_half_fov: float = np.tan(0.5 * self.camera_yfov)
+        super().__init__(viewer, options, camera, scene, viewport_size)
         self.prev_mouse_pos: tuple[int, int] = (viewport_size[0] // 2, viewport_size[1] // 2)
 
         self.picked_link: RigidLink | None = None
@@ -48,6 +129,8 @@ class ViewerInteraction(ViewerInteractionBase):
 
         self.mouse_spring: MouseSpring = MouseSpring()
         self.lock = threading_Lock()
+
+        self.raycaster: ViewerRaycaster = ViewerRaycaster(self.scene)
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -67,13 +150,14 @@ class ViewerInteraction(ViewerInteractionBase):
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_press(x, y, button, modifiers)
         if button == 1: # left mouse button
-            ray_hit = self.raycast_against_entities(self.screen_position_to_ray(x, y))
+
+            ray_hit = self.raycaster.cast_ray(self._screen_position_to_ray(x, y).origin.v, self._screen_position_to_ray(x, y).direction.v)
             with self.lock:
                 if ray_hit.geom:
                     self.picked_link = ray_hit.geom.link
                     assert self.picked_link is not None
 
-                    temp_fwd = self.get_camera_forward()
+                    temp_fwd = self._get_camera_forward()
                     temp_back = -temp_fwd
 
                     self.mouse_drag_plane = Plane(temp_back, ray_hit.position)
@@ -97,16 +181,12 @@ class ViewerInteraction(ViewerInteractionBase):
                 self.mouse_spring.detach()
 
     @override
-    def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
-        super().on_resize(width, height)
-        self.viewport_size = (width, height)
-        self.tan_half_fov = np.tan(0.5 * self.camera_yfov)
-
-    @override
     def update_on_sim_step(self) -> None:
+        self.raycaster.update_bvh()
+
         with self.lock:
             if self.picked_link:
-                mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
+                mouse_ray: Ray = self._screen_position_to_ray(*self.prev_mouse_pos)
                 ray_hit: RayHit = self.mouse_drag_plane.raycast(mouse_ray)
                 assert ray_hit.is_hit
                 if ray_hit.is_hit:
@@ -119,7 +199,7 @@ class ViewerInteraction(ViewerInteractionBase):
                         # apply force
                         self.mouse_spring.apply_force(new_mouse_3d_pos, self.scene.sim.dt)
                     else:
-                        #apply displacement
+                        # apply displacement
                         pos = Vec3.from_tensor(self.picked_link.entity.get_pos())
                         pos += delta_3d_pos
                         self.picked_link.entity.set_pos(pos.as_tensor())
@@ -129,11 +209,8 @@ class ViewerInteraction(ViewerInteractionBase):
         super().on_draw()
         if self.scene._visualizer is not None and self.scene._visualizer.is_built:
             self.scene.clear_debug_objects()
-            mouse_ray: Ray = self.screen_position_to_ray(*self.prev_mouse_pos)
-
-            closest_hit = self.raycast_against_entities(mouse_ray)
-            if not closest_hit.is_hit:
-                closest_hit = self._raycast_against_ground_plane(mouse_ray)
+            mouse_ray: Ray = self._screen_position_to_ray(*self.prev_mouse_pos)
+            closest_hit = self.raycaster.cast_ray(mouse_ray.origin.v, mouse_ray.direction.v)
 
             with self.lock:
                 if self.picked_link:
@@ -157,76 +234,6 @@ class ViewerInteraction(ViewerInteractionBase):
                         self._draw_entity_unrotated_obb(closest_hit.geom)
 
 
-    def screen_position_to_ray(self, x: float, y: float) -> Ray:
-        # convert screen position to ray
-        if True:
-            x = x - 0.5 * self.viewport_size[0]
-            y = y - 0.5 * self.viewport_size[1]
-            x = 2.0 * x / self.viewport_size[1] * self.tan_half_fov
-            y = 2.0 * y / self.viewport_size[1] * self.tan_half_fov
-        else:
-            # alternative way
-            projection_matrix = self.camera.camera.get_projection_matrix(*self.viewport_size)
-            x = x - 0.5 * self.viewport_size[0]
-            y = y - 0.5 * self.viewport_size[1]
-            x = 2.0 * x / self.viewport_size[0] / projection_matrix[0, 0]
-            y = 2.0 * y / self.viewport_size[1] / projection_matrix[1, 1]
-
-        # Note: ignoring pixel aspect ratio
-
-        mtx = self.camera.matrix
-        position = Vec3.from_array(mtx[:3, 3])
-        forward = Vec3.from_array(-mtx[:3, 2])
-        right = Vec3.from_array(mtx[:3, 0])
-        up = Vec3.from_array(mtx[:3, 1])
-
-        direction = forward + right * x + up * y
-        return Ray(position, direction)
-
-    def get_camera_forward(self) -> Vec3:
-        mtx = self.camera.matrix
-        return Vec3.from_array(-mtx[:3, 2])
-
-    def get_camera_ray(self) -> Ray:
-        mtx = self.camera.matrix
-        position = Vec3.from_array(mtx[:3, 3])
-        forward = Vec3.from_array(-mtx[:3, 2])
-        return Ray(position, forward)
-
-    def _raycast_against_ground_plane(self, ray: Ray) -> RayHit:
-        ground_plane = Plane(Vec3.from_xyz(0, 0, 1), Vec3.zero())
-        return ground_plane.raycast(ray)
-
-    def raycast_against_entity_obb(self, entity: "RigidEntity", ray: Ray) -> RayHit:
-        if isinstance(entity.morph, gs.morphs.Box):
-            obb: OBB = self._get_box_obb(entity)
-            ray_hit = obb.raycast(ray)
-            if ray_hit.is_hit:
-                ray_hit.geom = entity.geoms[0]
-            return ray_hit
-        elif isinstance(entity.morph, gs.morphs.Plane):
-            # ignore plane
-            return RayHit.no_hit()
-        else:
-            closest_hit = RayHit.no_hit()
-            for link in entity.links:
-                if not link.is_fixed:
-                    for geom in link.geoms:
-                        obb: OBB = self._get_geom_placeholder_obb(geom)
-                        ray_hit = obb.raycast(ray)
-                        if ray_hit.distance < closest_hit.distance:
-                            ray_hit.geom = geom
-                            closest_hit = ray_hit
-            return closest_hit
-
-    def raycast_against_entities(self, ray: Ray) -> RayHit:
-        closest_hit = RayHit.no_hit()
-        for entity in self.scene.sim.rigid_solver.entities:
-            rigid_entity: "RigidEntity" = cast("RigidEntity", entity)
-            ray_hit = self.raycast_against_entity_obb(rigid_entity, ray)
-            if ray_hit.distance < closest_hit.distance:
-                closest_hit = ray_hit
-        return closest_hit
 
     def _get_box_obb(self, box_entity: "RigidEntity") -> OBB:
         box: gs.morphs.Box = box_entity.morph
