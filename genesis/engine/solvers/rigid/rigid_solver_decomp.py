@@ -1658,19 +1658,24 @@ class RigidSolver(Solver):
         )
 
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
-        qpos, qs_idx, envs_idx = self._sanitize_1D_io_variables(
-            qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", skip_allocation=True, unsafe=unsafe
-        )
-        if self.n_envs == 0:
-            qpos = qpos.unsqueeze(0)
-        kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(qs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, qs_idx)
+            data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+            data[mask] = torch.as_tensor(qpos, dtype=gs.tc_float, device=gs.device)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        else:
+            qpos, qs_idx, envs_idx = self._sanitize_1D_io_variables(
+                qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", skip_allocation=True, unsafe=unsafe
+            )
+            if self.n_envs == 0:
+                qpos = qpos.unsqueeze(0)
+            kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
-        self.collider.reset(envs_idx)
-        self.collider.clear(envs_idx)
-        if self.constraint_solver is not None:
-            self.constraint_solver.reset(envs_idx)
-            self.constraint_solver.clear(envs_idx)
         self._links_state_cache.clear()
+        self.collider.reset(envs_idx)
+        self.collider.clear(envs_idx, clear_contacts_info=not skip_forward)
+        self.constraint_solver.reset(envs_idx)
+        self.constraint_solver.clear(envs_idx)
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,

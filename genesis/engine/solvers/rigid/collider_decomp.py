@@ -297,6 +297,12 @@ class Collider:
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def reset(self, envs_idx: npt.NDArray[np.int32] | None = None) -> None:
+        self._contacts_info_cache.clear()
+        if gs.use_zerocopy:
+            first_time = ti_to_torch(self._collider_state.first_time, copy=False)
+            first_time[envs_idx] = -1
+            return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         collider_kernel_reset(
@@ -304,9 +310,12 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
         )
-        self._contacts_info_cache.clear()
 
-    def clear(self, envs_idx=None):
+    def clear(self, envs_idx=None, *, clear_contacts_info=True):
+        if gs.use_zerocopy and not self._solver._use_hibernation and not clear_contacts_info:
+            n_contacts = ti_to_torch(self._collider_state.n_contacts, copy=False)
+            n_contacts[envs_idx] = 0
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         kernel_collider_clear(
@@ -554,11 +563,7 @@ def collider_kernel_reset(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        collider_state.first_time[i_b] = 1
-        for i_ga, i_gb in ti.ndrange(n_geoms, n_geoms):
-            collider_state.contact_cache.i_va_ws[i_ga, i_gb, i_b] = -1
-            collider_state.contact_cache.i_va_ws[i_gb, i_ga, i_b] = -1
-            collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
+        collider_state.first_time[i_b] = True
 
 
 # only used with hibernation ??
@@ -1314,6 +1319,12 @@ def func_broad_phase(
 
                 geoms_state.min_buffer_idx[i, i_b] = 2 * i
                 geoms_state.max_buffer_idx[i, i_b] = 2 * i + 1
+
+            # Clear contact cache if necessary
+            for i_ga, i_gb in ti.ndrange(n_geoms, n_geoms):
+                collider_state.contact_cache.i_va_ws[i_ga, i_gb, i_b] = -1
+                collider_state.contact_cache.i_va_ws[i_gb, i_ga, i_b] = -1
+                collider_state.contact_cache.normal[i_ga, i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
             collider_state.first_time[i_b] = False
 
