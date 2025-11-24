@@ -1848,7 +1848,7 @@ class RigidSolver(Solver):
 
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         if gs.use_zerocopy:
-            mask = indices_to_mask(0 if self.n_envs == 0 else envs_idx, dofs_idx)
+            mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             vel = ti_to_torch(self.dofs_state.vel, transpose=True, copy=False)
             vel[mask] = 0.0 if velocity is None else torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
             envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
@@ -1865,16 +1865,12 @@ class RigidSolver(Solver):
 
         self._links_state_cache.clear()
         if not skip_forward:
-            kernel_forward_kinematics_links_geoms(
+            kernel_forward_velocity(
                 envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
-                joints_state=self.joints_state,
                 joints_info=self.joints_info,
                 dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -1898,12 +1894,12 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
+        self._links_state_cache.clear()
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
             self.constraint_solver.clear(envs_idx)
-        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -3699,17 +3695,6 @@ def func_update_cartesian_space(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
     )
-    func_forward_velocity(
-        i_b,
-        entities_info=entities_info,
-        links_info=links_info,
-        links_state=links_state,
-        joints_info=joints_info,
-        dofs_state=dofs_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
-
     func_update_geoms(
         i_b=i_b,
         entities_info=entities_info,
@@ -3756,6 +3741,16 @@ def kernel_step_1(
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
+            )
+            func_forward_velocity(
+                i_b=i_b,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
             )
 
     func_forward_dynamics(
@@ -3923,6 +3918,16 @@ def kernel_step_2(
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
             )
+            func_forward_velocity(
+                i_b=i_b,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -3957,6 +3962,41 @@ def kernel_forward_kinematics_links_geoms(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             force_update_fixed_geoms=True,
+        )
+        func_forward_velocity(
+            i_b=i_b,
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_forward_velocity(
+    envs_idx: ti.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        func_forward_velocity(
+            i_b=i_b,
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
         )
 
 
@@ -5923,7 +5963,6 @@ def kernel_set_links_pos(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -5958,7 +5997,6 @@ def kernel_set_links_quat(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
