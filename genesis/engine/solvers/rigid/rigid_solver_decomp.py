@@ -1665,7 +1665,6 @@ class RigidSolver(Solver):
             qpos = qpos.unsqueeze(0)
         kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
-        self._errno[None] = 0
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
@@ -1894,7 +1893,6 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
-        self._errno[None] = 0
         self.collider.reset(envs_idx)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
