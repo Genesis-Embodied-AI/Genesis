@@ -2,13 +2,13 @@
 Camera sensor options for Rasterizer, Raytracer, and Batch Renderer backends.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 import genesis as gs
-from .options import SensorOptions, Tuple3FType
+from .options import SensorOptions, Tuple3FType, RigidSensorOptionsMixin
 
 
-class RasterizerCameraOptions(SensorOptions):
+class RasterizerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     """
     Options for Rasterizer camera sensor (OpenGL-based rendering).
 
@@ -17,7 +17,8 @@ class RasterizerCameraOptions(SensorOptions):
     res : tuple[int, int]
         Resolution as (width, height). Default is (512, 512).
     pos : tuple[float, float, float]
-        Camera position in world frame.
+        Camera position offset. If attached to a link, this is relative to the link frame.
+        If not attached, this is relative to the world origin. Default is (3.5, 0.0, 1.5).
     lookat : tuple[float, float, float]
         Point the camera looks at in world frame.
     up : tuple[float, float, float]
@@ -28,9 +29,16 @@ class RasterizerCameraOptions(SensorOptions):
         Near clipping plane distance. Default is 0.01.
     far : float
         Far clipping plane distance. Default is 100.0.
-    platform : str
-        PyOpenGL platform: "egl", "pyglet", or "osmesa". Default is "egl".
+    entity_idx : int, optional
+        The global entity index of the RigidEntity to which this sensor is attached.
+        If None, the camera is static (not attached to any entity).
+    link_idx_local : int, optional
+        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+        Default is 0.
     """
+
+    # Override to make entity_idx optional for static cameras
+    entity_idx: Optional[int] = None
 
     res: tuple[int, int] = (512, 512)
     pos: Tuple3FType = (3.5, 0.0, 1.5)
@@ -55,7 +63,7 @@ class RasterizerCameraOptions(SensorOptions):
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
 
 
-class RaytracerCameraOptions(SensorOptions):
+class RaytracerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     """
     Options for Raytracer camera sensor (LuisaRender path tracing).
 
@@ -64,7 +72,8 @@ class RaytracerCameraOptions(SensorOptions):
     res : tuple[int, int]
         Resolution as (width, height). Default is (512, 512).
     pos : tuple[float, float, float]
-        Camera position in world frame.
+        Camera position offset. If attached to a link, this is relative to the link frame.
+        If not attached, this is relative to the world origin. Default is (3.5, 0.0, 1.5).
     lookat : tuple[float, float, float]
         Point the camera looks at in world frame.
     up : tuple[float, float, float]
@@ -91,7 +100,16 @@ class RaytracerCameraOptions(SensorOptions):
         Environment sphere position. Default is (0, 0, 0).
     env_quat : tuple[float, float, float, float]
         Environment sphere quaternion (w, x, y, z). Default is (1, 0, 0, 0).
+    entity_idx : int, optional
+        The global entity index of the RigidEntity to which this sensor is attached.
+        If None, the camera is static (not attached to any entity).
+    link_idx_local : int, optional
+        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+        Default is 0.
     """
+
+    # Override to make entity_idx optional for static cameras
+    entity_idx: Optional[int] = None
 
     res: tuple[int, int] = (512, 512)
     pos: Tuple3FType = (3.5, 0.0, 1.5)
@@ -123,7 +141,7 @@ class RaytracerCameraOptions(SensorOptions):
             gs.raise_exception(f"spp must be positive, got: {self.spp}")
 
 
-class BatchRendererCameraOptions(SensorOptions):
+class BatchRendererCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     """
     Options for Batch Renderer camera sensor (Madrona GPU batch rendering).
 
@@ -134,7 +152,8 @@ class BatchRendererCameraOptions(SensorOptions):
     res : tuple[int, int]
         Resolution as (width, height). Default is (512, 512).
     pos : tuple[float, float, float]
-        Camera position in world frame.
+        Camera position offset. If attached to a link, this is relative to the link frame.
+        If not attached, this is relative to the world origin. Default is (3.5, 0.0, 1.5).
     lookat : tuple[float, float, float]
         Point the camera looks at in world frame.
     up : tuple[float, float, float]
@@ -147,7 +166,16 @@ class BatchRendererCameraOptions(SensorOptions):
         Far clipping plane distance. Default is 100.0.
     use_rasterizer : bool
         Whether to use rasterizer mode. Default is True.
+    entity_idx : int, optional
+        The global entity index of the RigidEntity to which this sensor is attached.
+        If None, the camera is static (not attached to any entity).
+    link_idx_local : int, optional
+        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+        Default is 0.
     """
+
+    # Override to make entity_idx optional for static cameras
+    entity_idx: Optional[int] = None
 
     res: tuple[int, int] = (512, 512)
     pos: Tuple3FType = (3.5, 0.0, 1.5)

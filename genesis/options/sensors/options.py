@@ -77,6 +77,9 @@ class RigidSensorOptionsMixin:
         from genesis.engine.entities import RigidEntity
 
         super().validate(scene)
+        # Skip validation if entity_idx is None (static sensors)
+        if self.entity_idx is None:
+            return
         if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
         entity = scene.entities[self.entity_idx]

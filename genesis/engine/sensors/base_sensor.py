@@ -327,23 +327,31 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
 
         batch_size = self._manager._sim._B
 
+        # If entity_idx is None, this is a static sensor (not attached to any link)
+        if self._options.entity_idx is None:
+            self._link = None
+            return
+
         entity = self._shared_metadata.solver.entities[self._options.entity_idx]
         self._link = entity.links[self._options.link_idx_local]
-        self._shared_metadata.links_idx = concat_with_tensor(
-            self._shared_metadata.links_idx, self._options.link_idx_local + entity.link_start
-        )
-        self._shared_metadata.offsets_pos = concat_with_tensor(
-            self._shared_metadata.offsets_pos,
-            self._options.pos_offset,
-            expand=(batch_size, 1, 3),
-            dim=1,
-        )
-        self._shared_metadata.offsets_quat = concat_with_tensor(
-            self._shared_metadata.offsets_quat,
-            euler_to_quat([self._options.euler_offset]),
-            expand=(batch_size, 1, 4),
-            dim=1,
-        )
+
+        # Only set shared offsets for non-camera sensors (cameras handle positioning differently)
+        if not hasattr(self, "_camera_wrapper"):  # Camera sensors have _camera_wrapper
+            self._shared_metadata.links_idx = concat_with_tensor(
+                self._shared_metadata.links_idx, self._options.link_idx_local + entity.link_start
+            )
+            self._shared_metadata.offsets_pos = concat_with_tensor(
+                self._shared_metadata.offsets_pos,
+                self._options.pos_offset,
+                expand=(batch_size, 1, 3),
+                dim=1,
+            )
+            self._shared_metadata.offsets_quat = concat_with_tensor(
+                self._shared_metadata.offsets_quat,
+                euler_to_quat([self._options.euler_offset]),
+                expand=(batch_size, 1, 4),
+                dim=1,
+            )
 
 
 @dataclass

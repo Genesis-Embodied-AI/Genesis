@@ -52,10 +52,14 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     raster_cam_attached = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(320, 240),
-            pos=(0.0, 0.0, 3.0),
+            pos=(0.0, 0.0, 1.0),  # Relative to link when attached
             lookat=(0.0, 0.0, 0.0),
             up=(0.0, 0.0, 1.0),
             fov=70.0,
+            entity_idx=sphere.idx,  # Attach to sphere
+            link_idx_local=0,
+            pos_offset=(0.0, 0.0, 0.0),
+            euler_offset=(0.0, 0.0, 0.0),
         )
     )
     raster_cam0.add_light(
@@ -65,10 +69,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     )
 
     scene.build(n_envs=n_envs)
-    offset_T = np.eye(4, dtype=np.float32)
-    offset_T[2, 3] = 1.0  # 1 meter above the sphere center
-    sphere_link = sphere.links[0]
-    raster_cam_attached.attach(sphere_link, offset_T)
     for i in range(10):
         scene.step()
     data_cam0 = raster_cam0.read()
@@ -97,20 +97,10 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
 
     cam_pos_initial = _get_camera_world_pos(raster_cam_attached)
 
-    for i in range(1):
+    for i in range(10):  # Test over multiple steps
         scene.step()
 
     data_attached_moved = raster_cam_attached.read()
-    cam_pos_moved = _get_camera_world_pos(raster_cam_attached)
-    cam_move_dist = np.linalg.norm(cam_pos_moved - cam_pos_initial)
-    assert cam_move_dist > 1e-3, f"Attached camera position didn't change after sphere moved (dist={cam_move_dist:.3e})"
-    cam_pos_at_detach = cam_pos_moved.copy()
-    raster_cam_attached.detach()
-    for i in range(1):
-        scene.step()
-
-    # After detachment, camera should stay at same position while sphere continues falling
-    # So the camera position should be (almost) unchanged
-    cam_pos_after_detach = _get_camera_world_pos(raster_cam_attached)
-    cam_move_after_detach = np.linalg.norm(cam_pos_after_detach - cam_pos_at_detach)
-    assert cam_move_after_detach < 1e-6
+    cam_pos_final = _get_camera_world_pos(raster_cam_attached)
+    cam_move_dist = np.linalg.norm(cam_pos_final - cam_pos_initial)
+    assert cam_move_dist > 1e-2, f"Attached camera position didn't change after sphere moved (dist={cam_move_dist:.3e})"

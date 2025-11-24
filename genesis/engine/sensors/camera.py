@@ -21,7 +21,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.vis.batch_renderer import BatchRenderer
 from genesis.options.renderers import BatchRenderer as BatchRendererOptions
 from genesis.options.vis import VisOptions
-from .base_sensor import Sensor, SharedSensorMetadata
+from .base_sensor import Sensor, SharedSensorMetadata, RigidSensorMixin, RigidSensorMetadataMixin
 from .sensor_manager import register_sensor
 
 
@@ -119,7 +119,7 @@ class BatchRendererCameraWrapper:
 
 
 @dataclass
-class RasterizerCameraSharedMetadata(SharedSensorMetadata):
+class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Rasterizer cameras."""
 
     # Rasterizer instance
@@ -137,7 +137,7 @@ class RasterizerCameraSharedMetadata(SharedSensorMetadata):
 
 
 @dataclass
-class RaytracerCameraSharedMetadata(SharedSensorMetadata):
+class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Raytracer cameras."""
 
     # Raytracer instance
@@ -153,7 +153,7 @@ class RaytracerCameraSharedMetadata(SharedSensorMetadata):
 
 
 @dataclass
-class BatchRendererCameraSharedMetadata(SharedSensorMetadata):
+class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Batch Renderer cameras."""
 
     # BatchRenderer instance
@@ -173,22 +173,19 @@ class BatchRendererCameraSharedMetadata(SharedSensorMetadata):
 # ========================== Base Camera Sensor ==========================
 
 
-class BaseCameraSensor(Sensor[SharedSensorMetadata]):
+class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
     """
     Base class for camera sensors that render RGB images into an internal image_cache.
 
     This class centralizes:
-    - Attachment state (_attached_link, _attached_offset_T)
+    - Attachment handling via RigidSensorMixin
     - The _stale flag used for auto-render-on-read
     - Common Sensor cache integration (shape/dtype)
-    - Generic attach/detach/move_to_attach behavior
     - Shared read() method returning torch tensors
     """
 
     def __init__(self, options: "SensorOptions", idx: int, data_cls: Type[CameraData], manager: "gs.SensorManager"):
         super().__init__(options, idx, data_cls, manager)
-        self._attached_link: Optional["RigidLink"] = None
-        self._attached_offset_T: Optional[torch.Tensor] = None
         self._stale: bool = True
 
     # ========================== Cache Integration (shared) ==========================
@@ -222,31 +219,7 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
         """No debug drawing for cameras."""
         pass
 
-    # ========================== Shared attach / detach ==========================
-
-    @gs.assert_built
-    def attach(self, rigid_link, offset_T):
-        """
-        Attach the camera to a rigid link in the scene.
-
-        Subclasses can customize backend behavior in _on_attach_backend().
-        """
-        self._attached_link = rigid_link
-        self._attached_offset_T = torch.as_tensor(offset_T, dtype=gs.tc_float, device=gs.device)
-        self._stale = True
-        self._on_attach_backend(rigid_link, offset_T)
-
-    @gs.assert_built
-    def detach(self):
-        """
-        Detach the camera from the currently attached rigid link.
-
-        Subclasses can customize backend behavior in _on_detach_backend().
-        """
-        self._attached_link = None
-        self._attached_offset_T = None
-        self._stale = True
-        self._on_detach_backend()
+    # ========================== Attachment handling ==========================
 
     @gs.assert_built
     def move_to_attach(self):
@@ -255,21 +228,17 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
 
         Uses a shared transform computation and delegates to _apply_camera_transform().
         """
-        if self._attached_link is None:
+        if self._link is None:
             gs.raise_exception("Camera not attached to any rigid link.")
 
-        camera_T = _camera_compute_T_from_link(self._attached_link, self._attached_offset_T)
+        # Use pos directly as offset from link
+        pos_offset = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
+        offset_T = trans_quat_to_T(pos_offset, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
+
+        camera_T = _camera_compute_T_from_link(self._link, offset_T)
         self._apply_camera_transform(camera_T)
 
     # ========================== Hooks for subclasses ==========================
-
-    def _on_attach_backend(self, rigid_link, offset_T):
-        """Optional backend-specific behavior when attaching; default is no-op."""
-        pass
-
-    def _on_detach_backend(self):
-        """Optional backend-specific behavior when detaching; default is no-op."""
-        pass
 
     def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Apply the computed camera transform to the backend-specific camera representation."""
@@ -304,7 +273,7 @@ class BaseCameraSensor(Sensor[SharedSensorMetadata]):
             return
 
         # Update camera pose only when attached; detached cameras keep their last world pose
-        if self._attached_link is not None:
+        if self._link is not None:
             self.move_to_attach()
 
         # Call subclass-specific render
@@ -482,6 +451,27 @@ class RasterizerCameraSensor(BaseCameraSensor):
         lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
         up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
 
+        # If attached to a link and the link is built, pos is relative to link frame
+        if self._link is not None and self._link.is_built:
+            # Convert pos from link-relative to world coordinates
+            link_pos = self._link.get_pos()
+            link_quat = self._link.get_quat()
+
+            # Handle batched case - use first environment
+            if link_pos.ndim > 1:
+                link_pos = link_pos[0]
+                link_quat = link_quat[0]
+
+            # Apply pos directly as offset from link
+            from genesis.utils.geom import transform_by_quat
+
+            pos_world = transform_by_quat(pos, link_quat) + link_pos
+            pos = pos_world
+        elif self._link is not None:
+            # Link exists but not built yet - use configured pose as-is (treat as world coordinates for now)
+            # This will be corrected when move_to_attach is called
+            pass
+
         transform = pos_lookat_up_to_T(pos, lookat, up)
         camera_wrapper = self._get_camera_wrapper()
         camera_wrapper.transform = tensor_to_array(transform)
@@ -504,11 +494,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
         self._shared_metadata.context.update(force_render=False)
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
-            self._get_camera_wrapper(),
-            rgb=True,
-            depth=False,
-            segmentation=False,
-            normal=False,
+            self._get_camera_wrapper(), rgb=True, depth=False, segmentation=False, normal=False
         )
 
         rgb_tensor = torch.from_numpy(rgb_arr.copy()).to(dtype=torch.uint8, device=gs.device)
@@ -604,11 +590,46 @@ class RaytracerCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.sensors.append(self)
         opts = self._options
+
+        # Compute world pose for the camera
+        pos = opts.pos
+        lookat = opts.lookat
+        up = opts.up
+
+        # If attached to a link and the link is built, transform pos to world coordinates
+        if self._link is not None and self._link.is_built:
+            link_pos = self._link.get_pos()
+            link_quat = self._link.get_quat()
+
+            # Handle batched case - use first environment
+            if link_pos.ndim > 1:
+                link_pos = link_pos[0]
+                link_quat = link_quat[0]
+
+            # Apply pos directly as offset from link
+            from genesis.utils.geom import transform_by_quat
+
+            pos_world = transform_by_quat(torch.tensor(pos, dtype=gs.tc_float, device=gs.device), link_quat) + link_pos
+            pos = pos_world.tolist()
+
+            # Transform lookat and up (no rotation offset since rotation is defined by lookat/up)
+            lookat_world = (
+                transform_by_quat(torch.tensor(lookat, dtype=gs.tc_float, device=gs.device), link_quat) + link_pos
+            )
+            lookat = lookat_world.tolist()
+
+            up_world = transform_by_quat(torch.tensor(up, dtype=gs.tc_float, device=gs.device), link_quat)
+            up = up_world.tolist()
+        elif self._link is not None:
+            # Link exists but not built yet - use configured pose as-is (treat as world coordinates for now)
+            # This will be corrected when move_to_attach is called
+            pass
+
         self._camera_obj = visualizer.add_camera(
             res=opts.res,
-            pos=opts.pos,
-            lookat=opts.lookat,
-            up=opts.up,
+            pos=pos,
+            lookat=lookat,
+            up=up,
             model=opts.model,
             fov=opts.fov,
             aperture=opts.aperture,
@@ -621,6 +642,16 @@ class RaytracerCameraSensor(BaseCameraSensor):
             env_idx=0,
             debug=False,
         )
+
+        # Attach the visualizer camera to the link if this sensor is attached
+        if self._link is not None:
+            from genesis.utils.geom import trans_quat_to_T
+
+            pos_offset = torch.tensor(opts.pos, dtype=gs.tc_float, device=gs.device)
+            offset_T = trans_quat_to_T(
+                pos_offset, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
+            )
+            self._camera_obj.attach(self._link, offset_T)
 
         h, w = self._options.res[1], self._options.res[0]
         n_envs = max(self._manager._sim._B, 1)
@@ -640,7 +671,7 @@ class RaytracerCameraSensor(BaseCameraSensor):
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
-        if self._attached_link is not None:
+        if self._link is not None:
             self._camera_obj.move_to_attach()
 
         rgb_arr, _, _, _ = self._camera_obj.render(
@@ -711,27 +742,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
             double_sided=double_sided,
             cutoff=cutoff,
         )
-
-    @gs.assert_built
-    def attach(self, rigid_link, offset_T):
-        """Attach the camera to a rigid link in the scene."""
-        self._attached_link = rigid_link
-        self._attached_offset_T = torch.as_tensor(offset_T, dtype=gs.tc_float, device=gs.device)
-        self._camera_obj.attach(rigid_link, offset_T)
-        self._stale = True
-
-    @gs.assert_built
-    def detach(self):
-        """Detach the camera from the currently attached rigid link."""
-        self._attached_link = None
-        self._attached_offset_T = None
-        self._camera_obj.detach()
-        self._stale = True
-
-    @gs.assert_built
-    def move_to_attach(self):
-        """Move the camera to follow the currently attached rigid link."""
-        self._camera_obj.move_to_attach()
 
 
 # ========================== Batch Renderer Camera Sensor ==========================
@@ -814,7 +824,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         sensors = self._shared_metadata.sensors or [self]
 
         for sensor in sensors:
-            if sensor._attached_link is not None:
+            if sensor._link is not None:
                 sensor.move_to_attach()
 
         self._shared_metadata.renderer.update_scene(force_render=False)

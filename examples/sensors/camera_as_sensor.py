@@ -3,7 +3,7 @@ Example demonstrating camera sensors with different rendering backends.
 
 Creating cameras as sensors using add_sensor() with three backends
 Rasterizer, Raytracer and BatchRenderer.
-Test the attach/detach, add light, batch rendering functionalities.
+Test the attachment, add light, batch rendering functionalities.
 """
 
 import os
@@ -90,18 +90,25 @@ CAMERA_POSITIONS = [
         (3.0, 0.0, 2.0),
         (0.0, 0.0, 1.0),
         60.0,
-        False,
+        None,  # No attachment
         [{"pos": (2.0, 2.0, 5.0), "color": (1.0, 1.0, 1.0), "intensity": 5.0}],
     ),
-    ("cam1", (0.0, 3.0, 2.0), (0.0, 0.0, 1.0), 60.0, False, []),
-    ("cam_attached", (0.0, 0.0, 3.0), (0.0, 0.0, 0.0), 70.0, True, []),
+    ("cam1", (0.0, 3.0, 2.0), (0.0, 0.0, 1.0), 60.0, None, []),
+    (
+        "cam_attached",
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, 0.0),
+        70.0,
+        {"entity_idx": None, "link_idx_local": 0, "pos_offset": (0.0, 0.0, 0.0), "euler_offset": (0.0, 0.0, 0.0)},
+        [],
+    ),
 ]
 
 
-def create_camera_configs(backend_name, options_class, **backend_specific):
+def create_camera_configs(backend_name, options_class, sphere_entity_idx=None, **backend_specific):
     """Create camera configurations for a specific backend."""
     configs = []
-    for cam_suffix, pos, lookat, fov, attach, lights in CAMERA_POSITIONS:
+    for cam_suffix, pos, lookat, fov, attachment, lights in CAMERA_POSITIONS:
         name = f"{backend_name}_{cam_suffix}"
         res = (500, 600)
 
@@ -115,6 +122,22 @@ def create_camera_configs(backend_name, options_class, **backend_specific):
             **backend_specific,
         }
 
+        # Handle attachment
+        if attachment is not None:
+            # For attached cameras, set the entity_idx to the sphere's index
+            if sphere_entity_idx is not None:
+                options_kwargs.update(
+                    {
+                        "entity_idx": sphere_entity_idx,
+                        "link_idx_local": attachment["link_idx_local"],
+                        "pos_offset": attachment["pos_offset"],
+                        "euler_offset": attachment["euler_offset"],
+                    }
+                )
+            else:
+                # If sphere_entity_idx is not provided, create as static camera
+                pass
+
         # Add backend-specific parameters
         if backend_name == "raster":
             options_kwargs.update({"near": CAMERA_COMMON_PARAMS["near"], "far": CAMERA_COMMON_PARAMS["far"]})
@@ -126,7 +149,7 @@ def create_camera_configs(backend_name, options_class, **backend_specific):
                     "denoise": False,
                 }
             )
-            if not attach:  # Only add env surface for non-attached cameras
+            if attachment is None:  # Only add env surface for non-attached cameras
                 options_kwargs.update(
                     {
                         "env_surface": gs.surfaces.Emission(
@@ -152,7 +175,7 @@ def create_camera_configs(backend_name, options_class, **backend_specific):
             {
                 "name": name,
                 "options": options,
-                "attach": attach,
+                "attachment": attachment,
                 "lights": lights,
             }
         )
@@ -161,9 +184,13 @@ def create_camera_configs(backend_name, options_class, **backend_specific):
 
 
 # Create configurations for each backend
-rasterizer_configs = create_camera_configs("raster", RasterizerCameraOptions)
-raytracer_configs = create_camera_configs("raytrace", RaytracerCameraOptions) if ENABLE_RAYTRACER else []
-batch_renderer_configs = create_camera_configs("batch", BatchRendererCameraOptions) if ENABLE_CUDA else []
+rasterizer_configs = create_camera_configs("raster", RasterizerCameraOptions, sphere_entity_idx=sphere.idx)
+raytracer_configs = (
+    create_camera_configs("raytrace", RaytracerCameraOptions, sphere_entity_idx=sphere.idx) if ENABLE_RAYTRACER else []
+)
+batch_renderer_configs = (
+    create_camera_configs("batch", BatchRendererCameraOptions, sphere_entity_idx=sphere.idx) if ENABLE_CUDA else []
+)
 
 ########################## Create Cameras ##########################
 cameras = {}
@@ -190,32 +217,21 @@ for group_name, configs in config_groups:
 
 
 ########################## build ##########################
-scene.build(n_envs=2)  # Build with 2 environments for batched rendering
+scene.build(n_envs=1)  # Build with 1 environment
 
-########################## attach cameras to sphere ##########################
-print("\n=== Attaching Cameras to Sphere ===")
+########################## identify attached cameras ##########################
+print("\n=== Identifying Attached Cameras ===")
 
-# Create offset transform for camera attachment
-# Camera will be positioned 1.0 unit above the sphere, looking down
-import numpy as np
-
-offset_T = np.eye(4, dtype=np.float32)
-offset_T[2, 3] = 1.0  # 1 meter above the sphere center
-
-# Get sphere's rigid link
-sphere_link = sphere.links[0]  # Get the first (and only) link
-
-# Attach cameras that are configured to be attached
+# Identify cameras that are configured to be attached
 attached_cameras = []
 for config_group in [rasterizer_configs, raytracer_configs, batch_renderer_configs]:
     for config in config_group:
-        if config["attach"]:
+        if config["attachment"] is not None:
             camera = cameras[config["name"]]
-            camera.attach(sphere_link, offset_T)
             attached_cameras.append(camera)
-            print(f"✓ {config['name']} attached to sphere link: {sphere_link}")
+            print(f"✓ {config['name']} is attached to sphere")
 
-print(f"✓ Attached {len(attached_cameras)} cameras to sphere")
+print(f"✓ Identified {len(attached_cameras)} attached cameras")
 
 ########################## simulate and render ##########################
 print("\n=== Simulation Loop ===")
@@ -235,21 +251,15 @@ read_patterns = {
 
 # Define image saving patterns
 save_patterns = {
-    "raster_cam0": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
-    "raster_cam1": [
-        {"env_idx": 0, "suffix": "_env0"},
-        {"read_env": 1, "suffix": "_env1"},
-    ],  # Special case: read env 1 separately
-    "raster_cam_attached": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
+    "raster_cam0": [{"env_idx": 0, "suffix": "_env0"}],
+    "raster_cam1": [{"env_idx": 0, "suffix": "_env0"}],
+    "raster_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
     "raytrace_cam0": [{"env_idx": 0, "suffix": "_env0"}],
     "raytrace_cam1": [{"env_idx": 0, "suffix": "_env0"}],
     "raytrace_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
-    "batch_cam0": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
-    "batch_cam1": [
-        {"env_idx": 0, "suffix": "_env0"},
-        {"read_env": 1, "suffix": "_env1"},
-    ],  # Special case: read env 1 separately
-    "batch_cam_attached": [{"env_idx": 0, "suffix": "_env0"}, {"env_idx": 1, "suffix": "_env1"}],
+    "batch_cam0": [{"env_idx": 0, "suffix": "_env0"}],
+    "batch_cam1": [{"env_idx": 0, "suffix": "_env0"}],
+    "batch_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
 }
 
 
@@ -285,12 +295,7 @@ for i in range(100):
             camera_data[cam_name] = data
             print(f"  {cam_name.replace('_', ' ').title()} RGB shape: {data.rgb.shape}{pattern['print_suffix']}")
 
-        # Detach cameras at step 50
-        if i == 50:
-            print("\n>>> Detaching all attached cameras from sphere...")
-            for camera in attached_cameras:
-                camera.detach()
-            print(">>> All cameras detached! They will now stay at their current positions.\n")
+        # Attached cameras follow the sphere throughout the simulation
 
         # Save images
         for cam_name, patterns in save_patterns.items():
@@ -313,5 +318,3 @@ for i in range(100):
 
         if i == 0:
             print("\n✓ Saving images to camera_sensor_output/")
-        if i == 50:
-            print("✓ Saved detachment frame")
