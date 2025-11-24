@@ -1847,16 +1847,21 @@ class RigidSolver(Solver):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx, unsafe=unsafe)
 
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
-        velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
-            velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
-        )
-
-        if velocity is None:
-            kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+        if gs.use_zerocopy:
+            mask = indices_to_mask(0 if self.n_envs == 0 else envs_idx, dofs_idx)
+            vel = ti_to_torch(self.dofs_state.vel, transpose=True, copy=False)
+            vel[mask] = 0.0 if velocity is None else torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
-            if self.n_envs == 0:
-                velocity = velocity.unsqueeze(0)
-            kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+            velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
+                velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
+            )
+            if velocity is None:
+                kernel_set_dofs_zero_velocity(dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+            else:
+                if self.n_envs == 0:
+                    velocity = velocity.unsqueeze(0)
+                kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
         self._links_state_cache.clear()
         if not skip_forward:
