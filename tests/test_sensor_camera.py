@@ -37,6 +37,13 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             fov=60.0,
             near=0.1,
             far=100.0,
+            lights=[
+                {
+                    "pos": (2.0, 2.0, 5.0),
+                    "color": (1.0, 1.0, 1.0),
+                    "intensity": 5.0,
+                }
+            ],
         )
     )
     raster_cam1 = scene.add_sensor(
@@ -60,11 +67,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             pos_offset=(0.0, 0.0, 0.0),
             euler_offset=(0.0, 0.0, 0.0),
         )
-    )
-    raster_cam0.add_light(
-        pos=(2.0, 2.0, 5.0),
-        color=(1.0, 1.0, 1.0),
-        intensity=5.0,
     )
 
     scene.build(n_envs=n_envs)
