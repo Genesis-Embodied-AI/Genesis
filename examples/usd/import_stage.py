@@ -10,7 +10,7 @@ scene = gs.Scene(
     ),
     rigid_options=gs.options.RigidOptions(
         # constraint_solver=gs.constraint_solver.Newton,
-        gravity=(0, 0, -1),
+        gravity=(0, 1, -1),
         enable_collision = True,
         enable_joint_limit = True,
     ),
@@ -18,7 +18,8 @@ scene = gs.Scene(
 )
 
 # load a stage from USD file
-entities = scene.add_stage("D:\\Assets\\Fixed\\G1_with_cube.usd")
+entities = scene.add_stage("D:\\Assets\\Lightwheel_KitchenRoom\\Kitchen3.usd")
+# entities = scene.add_stage("d:\\Assets\\Fixed\\G1.usd")
 # Build the scene
 scene.build()
 

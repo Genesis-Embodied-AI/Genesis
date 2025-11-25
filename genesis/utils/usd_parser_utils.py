@@ -120,18 +120,34 @@ def usd_mesh_to_trimesh(usd_mesh: UsdGeom.Mesh) -> trimesh.Trimesh:
     faces = []
     
     offset = 0
+    has_non_tri_quads = False
     for i, count in enumerate(face_vertex_counts):
         face_vertex_counts[i] = count
         if count == 3:
+            # Triangle - use directly
             faces.append(face_vertex_indices[offset:offset+count])
         elif count == 4:
+            # Quad - split into two triangles
             quad = face_vertex_indices[offset:offset+count]
             faces.append([quad[0], quad[1], quad[2]])
             faces.append([quad[0], quad[2], quad[3]])
+        elif count > 4:
+            # Polygon with more than 4 vertices - triangulate using triangle fan
+            # Use the first vertex as the fan center and connect to each pair of consecutive vertices
+            polygon = face_vertex_indices[offset:offset+count]
+            for j in range(1, count - 1):
+                faces.append([polygon[0], polygon[j], polygon[j + 1]])
+            has_non_tri_quads = True
         else:
-            gs.raise_exception(
-                f"Unsupported face vertex count {count} in USD mesh {usd_mesh.GetPath()}. Only triangles and quads are supported."
+            # Invalid face (count < 3)
+            gs.logger.warning(
+                f"Invalid face vertex count {count} in USD mesh {usd_mesh.GetPath()}. Skipping face."
             )
         offset += count
+    
+    if has_non_tri_quads:
+        gs.logger.info(
+            f"USD mesh {usd_mesh.GetPath()} contains polygons with more than 4 vertices. Triangulated using triangle fan method."
+        )
     faces = np.array(faces)
     return trimesh.Trimesh(vertices=points, faces=faces)

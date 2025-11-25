@@ -30,11 +30,9 @@ def import_from_usd_stage(scene: gs.Scene, path: str, surface: gs.surfaces.Surfa
     # 0. Parse materials to context for later use
     usda.parse_materials_to_context(context, surface)
     
-    gs.logger.info(f"Parsed {len(context.materials)} materials")
-    for material_id, material in context.materials.items():
-        gs.logger.info(f"Material {material_id}: {material}")
-    
     entities = []
+    
+    # WITH Physics API
     
     # 1. Find all articulation roots
     articulation_roots = usd_physics.UsdArticulationParser.find_all_articulation_roots(stage)

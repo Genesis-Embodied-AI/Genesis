@@ -586,7 +586,8 @@ class RigidEntity(Entity):
         else:
             gs.raise_exception(f"Unsupported morph type: {type(morph)}")
         
-        self._build_up_articulation(l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface)
+        if(len(l_infos) > 0):
+            self._build_up_articulation(l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface)
 
 
     def _build(self):

@@ -32,6 +32,8 @@ class UsdArticulationParser:
                 f"Provided prim {articulation_root_prim.GetPath()} is not an Articulation Root. Now we only support articulation parsing from ArticulationRootAPI."
             )
         
+        gs.logger.info(f"Parsing USD articulation from {articulation_root_prim.GetPath()}.")
+        
         self.joints:List[UsdPhysics.Joint] = []
         self.fixed_joints:List[UsdPhysics.FixedJoint] = []
         self.revolute_joints:List[UsdPhysics.RevoluteJoint] = []
@@ -119,6 +121,12 @@ class UsdArticulationParser:
         """
         Get all meshes under the given link prim.
         """
+        meshes:List[UsdGeom.Mesh] = []
+        
+        # check if this prim is a mesh
+        if link.IsA(UsdGeom.Mesh):
+            meshes.append(UsdGeom.Mesh(link))
+        
         # find any child name starting with "visual" or "Visual"
         visual_pattern = re.compile(r'^(visual|Visual).*')
         visual_prims:list[Usd.Prim] = []
@@ -127,7 +135,7 @@ class UsdArticulationParser:
             if visual_pattern.match(child.GetName()):
                 visual_prims.append(child)
         
-        meshes:List[UsdGeom.Mesh] = []
+        
         for visual_prim in visual_prims:
             meshes.extend(UsdArticulationParser.get_meshes(visual_prim))
         return meshes
@@ -137,6 +145,12 @@ class UsdArticulationParser:
         """
         Get all collision meshes under the given link prim.
         """
+        meshes:List[UsdGeom.Mesh] = []
+        
+        # check if this prim is a mesh
+        if link.IsA(UsdGeom.Mesh):
+            meshes.append(UsdGeom.Mesh(link))
+        
         # find any child name starting with "collision" or "Collision"
         collision_pattern = re.compile(r'^(collision|Collision).*')
         collision_prims:list[Usd.Prim] = []
@@ -385,9 +399,20 @@ class UsdRigidBodyParser:
         return rigid_bodies[0] if rigid_bodies else None
 
 
-def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface) -> None:
+def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.Surface):
     """
     Parse USD articulation from the given USD file and prim path, translating it into genesis structures.
+    
+    Returns
+    -------
+    l_infos : list
+        List of link info dictionaries.
+    links_j_infos : list
+        List of lists of joint info dictionaries.
+    links_g_infos : list
+        List of lists of geometry info dictionaries.
+    eqs_info : list
+        List of equality constraint info dictionaries.
     """
     
     if morph.scale:
@@ -408,6 +433,11 @@ def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.
         )
     
     robot = UsdArticulationParser(stage, root_prim)
+    
+    # Get the ArticulationRoot's global transform - this will be applied to the base link
+    articulation_root_transform = usd_utils.compute_global_transform(root_prim)
+    articulation_root_pos = articulation_root_transform[:3, 3]
+    articulation_root_quat = gu.R_to_quat(articulation_root_transform[:3, :3])
     
     # Get materials from parser context if available
     if morph.parser_ctx:
@@ -449,11 +479,17 @@ def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.
         
         # collect geometry info
         visual_meshes = UsdArticulationParser.get_visual_meshes(link)
-        n_visuals = len(visual_meshes)
         collision_meshes = UsdArticulationParser.get_collision_meshes(link)
         
+        if not (len(visual_meshes) > 0 or len(collision_meshes) > 0):
+           gs.logger.warning(f"Link {link.GetPath()} has no visual or collision meshes.")
+        
         assert morph.scale == 1.0, "Currently we only support scale=1.0 for USD articulation parsing."
+        
+        if(len(visual_meshes) == 0):
+            visual_meshes = collision_meshes.copy()
 
+        n_visuals = len(visual_meshes)
         # collect visual and collision meshes
         for i, usd_mesh in enumerate((*visual_meshes, *collision_meshes)):
             geom_is_col = i >= n_visuals
@@ -529,9 +565,11 @@ def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.
         
         l_info = l_infos[idx]
         if parent_link:
+            # Compute transform relative to parent link
             trans_mat = usd_utils.compute_related_transform(child_link, parent_link)
         else:
-            trans_mat = usd_utils.compute_global_transform(child_link)
+            # For base links, compute transform relative to ArticulationRoot
+            trans_mat = usd_utils.compute_related_transform(child_link, root_prim)
         l_info["pos"] = trans_mat[:3, 3]
         l_info["quat"] = gu.R_to_quat(trans_mat[:3, :3])
         
@@ -608,9 +646,66 @@ def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.
             j_info["n_dofs"] = 1
             j_info["init_qpos"] = np.zeros(1)
         elif joint_prim.IsA(UsdPhysics.PrismaticJoint):
-            gs.raise_exception(f"Unsupported USD joint type: {joint_prim.GetTypeName()}")
+            prismatic_joint = UsdPhysics.PrismaticJoint(joint_prim)
+            
+            # Get joint axis (same as revolute)
+            axis_attr = prismatic_joint.GetAxisAttr()
+            axis_str = axis_attr.Get() if axis_attr else "X"
+            if axis_str == "X":
+                axis = np.array([1.0, 0.0, 0.0])
+            elif axis_str == "Y":
+                axis = np.array([0.0, 1.0, 0.0])
+            elif axis_str == "Z":
+                axis = np.array([0.0, 0.0, 1.0])
+            else:
+                gs.raise_exception(
+                    f"Unsupported joint axis {axis_str} in USD prismatic joint {joint_prim.GetPath()}."
+                )
+            
+            # Transform axis using joint rotation
+            quat = usd_utils.usd_quat_to_np(joint.GetLocalRot0Attr().Get()) if joint.GetLocalRot0Attr() else gu.identity_quat()
+            R_joint = gu.quat_to_R(quat)
+            axis = R_joint @ axis
+            
+            # Prismatic joints use dofs_motion_vel (linear motion) instead of dofs_motion_ang
+            j_info["dofs_motion_ang"] = np.zeros((1, 3))
+            j_info["dofs_motion_vel"] = np.array([axis])
+            
+            # Get joint limits (in linear units, not degrees)
+            lower_limit_attr = prismatic_joint.GetLowerLimitAttr()
+            upper_limit_attr = prismatic_joint.GetUpperLimitAttr()
+            lower_limit = lower_limit_attr.Get() if lower_limit_attr else -np.inf
+            upper_limit = upper_limit_attr.Get() if upper_limit_attr else np.inf
+            # Limits are in meters, no deg2rad conversion needed
+            # Apply scale to limits (similar to urdf.py)
+            lower_limit = lower_limit * morph.scale if lower_limit != -np.inf else -np.inf
+            upper_limit = upper_limit * morph.scale if upper_limit != np.inf else np.inf
+            
+            j_info["dofs_limit"] = np.array([[lower_limit, upper_limit]])
+            j_info["dofs_stiffness"] = np.array([0.0])
+            
+            j_info["type"] = gs.JOINT_TYPE.PRISMATIC
+            j_info["n_qs"] = 1
+            j_info["n_dofs"] = 1
+            j_info["init_qpos"] = np.zeros(1)
         elif joint_prim.IsA(UsdPhysics.SphericalJoint):
-            gs.raise_exception(f"Unsupported USD joint type: {joint_prim.GetTypeName()}")
+            spherical_joint = UsdPhysics.SphericalJoint(joint_prim)
+            
+            # Spherical joints have 3 DOF (rotation around all 3 axes)
+            # No axis needed - can rotate around all axes
+            j_info["dofs_motion_ang"] = np.eye(3)  # Identity matrix for 3 rotational axes
+            j_info["dofs_motion_vel"] = np.zeros((3, 3))
+            
+            # Spherical joints typically don't have simple limits
+            # If limits exist, they would be complex (cone limits), which we don't support yet
+            # For now, set unlimited range
+            j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
+            j_info["dofs_stiffness"] = np.zeros(3)
+            
+            j_info["type"] = gs.JOINT_TYPE.SPHERICAL
+            j_info["n_qs"] = 4  # Quaternion representation
+            j_info["n_dofs"] = 3  # 3 rotational DOF
+            j_info["init_qpos"] = gu.identity_quat()  # Initial quaternion
         else:
             gs.raise_exception(f"Unsupported USD joint type: {joint_prim.GetTypeName()}")
         
@@ -632,6 +727,29 @@ def parse_usd_articulation(morph:gs.morphs.USDArticulation, surface:gs.surfaces.
         
         # Force limits
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
+    
+    # Apply ArticulationRoot transform to base links (links with parent_idx == -1)
+    # This accounts for the ArticulationRoot's position and orientation in the scene
+    from scipy.spatial.transform import Rotation as R
+    for l_info in l_infos:
+        if l_info["parent_idx"] == -1:
+            # This is a base link - apply ArticulationRoot transform
+            # Transform the base link's position
+            base_pos = l_info["pos"]
+            base_quat = l_info["quat"]
+            
+            # Convert quaternions to rotation matrices
+            R_base = gu.quat_to_R(base_quat)
+            R_root = gu.quat_to_R(articulation_root_quat)
+            
+            # Apply root rotation to base position, then add root translation
+            l_info["pos"] = R_root @ base_pos + articulation_root_pos
+            
+            # Compose rotations: root_quat * base_quat
+            r_root = R.from_quat(articulation_root_quat[[1, 2, 3, 0]])  # wxyz to xyzw
+            r_base = R.from_quat(base_quat[[1, 2, 3, 0]])  # wxyz to xyzw
+            r_result = r_root * r_base
+            l_info["quat"] = np.array([r_result.as_quat()[3], *r_result.as_quat()[:3]])  # xyzw to wxyz
     
     # Apply scaling factor
     for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
