@@ -12,6 +12,7 @@ import genesis.engine.solvers.rigid.backward_constraint_solver as backward_const
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
+from genesis.utils.misc import ti_to_torch
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
@@ -107,6 +108,7 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
         if cache_only:
             return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_clear(
@@ -115,8 +117,26 @@ class ConstraintSolver:
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx=None, clear_contraints_info=True):
         self._eq_const_info_cache.clear()
+
+        if gs.use_zerocopy and not clear_contraints_info:
+            n_constraints = ti_to_torch(self.constraint_state.n_constraints, copy=False)
+            n_constraints_equality = ti_to_torch(self.constraint_state.n_constraints_equality, copy=False)
+            n_constraints_frictionloss = ti_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
+            qacc_ws = ti_to_torch(self.constraint_state.qacc_ws, copy=False)
+            if isinstance(envs_idx, torch.Tensor):
+                n_constraints.scatter_(0, envs_idx, 0)
+                n_constraints_equality.scatter_(0, envs_idx, 0)
+                n_constraints_frictionloss.scatter_(0, envs_idx, 0)
+                qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
+            else:
+                n_constraints[envs_idx] = 0
+                n_constraints_equality[envs_idx] = 0
+                n_constraints_frictionloss[envs_idx] = 0
+                qacc_ws[:, envs_idx] = 0.0
+            return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         constraint_solver_kernel_reset(

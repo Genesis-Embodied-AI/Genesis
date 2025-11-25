@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import genesis as gs
 
@@ -9,12 +10,13 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
     object_type = args.object
+    horizon = 50 if "PYTEST_VERSION" in os.environ else 1000
 
     gs.init(backend=gs.cpu, precision="32")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.005,
+            dt=0.004,
         ),
         rigid_options=gs.options.RigidOptions(
             max_collision_pairs=200,
@@ -27,7 +29,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Plane())
 
     # create pyramid of boxes
     box_width, box_length, box_height = 0.25, 2.0, 0.1
@@ -51,12 +53,12 @@ def main():
 
     # Drop a huge mesh
     if object_type == "duck":
-        duck_scale = 1.0
-        duck = scene.add_entity(
+        duck_scale = 0.8
+        scene.add_entity(
             morph=gs.morphs.Mesh(
                 file="meshes/duck.obj",
                 scale=duck_scale,
-                pos=(0, 0, num_stacks * box_height + 10 * duck_scale),
+                pos=(0, -0.1, num_stacks * box_height + 10 * duck_scale),
             ),
         )
     elif object_type == "sphere":
@@ -78,7 +80,7 @@ def main():
         )
 
     scene.build()
-    for i in range(600):
+    for i in range(horizon):
         scene.step()
 
 

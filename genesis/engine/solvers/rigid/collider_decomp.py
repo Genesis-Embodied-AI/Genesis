@@ -296,15 +296,30 @@ class Collider:
             self._collider_info.terrain_scale.from_numpy(scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
-    def reset(self, envs_idx: npt.NDArray[np.int32] | None = None) -> None:
+    def reset(self, envs_idx: npt.NDArray[np.int32] | None = None, cache_only: bool = False) -> None:
+        self._contacts_info_cache.clear()
+        if gs.use_zerocopy:
+            mask = () if envs_idx is None else envs_idx
+            if not cache_only:
+                first_time = ti_to_torch(self._collider_state.first_time, copy=False)
+                if isinstance(envs_idx, torch.Tensor):
+                    first_time.scatter_(0, envs_idx, True)
+                else:
+                    first_time[mask] = True
+            i_va_ws = ti_to_torch(self._collider_state.contact_cache.i_va_ws, copy=False)
+            normal = ti_to_torch(self._collider_state.contact_cache.normal, copy=False)
+            if isinstance(envs_idx, torch.Tensor):
+                n_geoms = i_va_ws.shape[0]
+                i_va_ws.scatter_(2, envs_idx[None, None].expand((n_geoms, n_geoms, -1)), -1)
+                normal.scatter_(2, envs_idx[None, None, :, None].expand((n_geoms, n_geoms, -1, 3)), 0.0)
+            else:
+                i_va_ws[mask] = -1
+                normal[mask] = 0.0
+            return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        collider_kernel_reset(
-            envs_idx,
-            self._solver._static_rigid_sim_config,
-            self._collider_state,
-        )
-        self._contacts_info_cache.clear()
+        collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
 
     def clear(self, envs_idx=None):
         if envs_idx is None:
@@ -548,13 +563,17 @@ def collider_kernel_reset(
     envs_idx: ti.types.ndarray(),
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
+    cache_only: ti.template(),
 ):
     n_geoms = collider_state.active_buffer.shape[0]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        collider_state.first_time[i_b] = 1
+
+        if ti.static(not cache_only):
+            collider_state.first_time[i_b] = True
+
         for i_ga, i_gb in ti.ndrange(n_geoms, n_geoms):
             collider_state.contact_cache.i_va_ws[i_ga, i_gb, i_b] = -1
             collider_state.contact_cache.i_va_ws[i_gb, i_ga, i_b] = -1

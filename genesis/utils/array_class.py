@@ -547,7 +547,7 @@ def get_collider_state(
         prism=V_VEC(3, dtype=gs.ti_float, shape=(6, _B)),
         n_contacts=V(dtype=gs.ti_int, shape=(_B,)),
         n_contacts_hibernated=V(dtype=gs.ti_int, shape=(_B,)),
-        first_time=V(dtype=gs.ti_int, shape=(_B,)),
+        first_time=V(dtype=gs.ti_bool, shape=(_B,)),
         contact_cache=get_contact_cache(solver),
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
