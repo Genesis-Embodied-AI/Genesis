@@ -1501,12 +1501,10 @@ class RigidSolver(Solver):
     def _get_qs_idx(self, qs_idx_local=None):
         return self._get_qs_idx_local(qs_idx_local) + self._q_start
 
-    def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
+    def set_links_pos(self, pos, links_idx=None, envs_idx=None, *, unsafe=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    def set_base_links_pos(
-        self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False, unsafe=False
-    ):
+    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, unsafe=False):
         if links_idx is None:
             links_idx = self._base_links_idx
         pos, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -1542,28 +1540,25 @@ class RigidSolver(Solver):
         )
 
         self._links_state_cache.clear()
-        if not skip_forward:
-            kernel_forward_kinematics_links_geoms(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+        kernel_forward_kinematics_links_geoms(
+            envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            geoms_state=self.geoms_state,
+            geoms_info=self.geoms_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
-    def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
+    def set_links_quat(self, quat, links_idx=None, envs_idx=None, *, unsafe=False):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
-    def set_base_links_quat(
-        self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False, unsafe=False
-    ):
+    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, unsafe=False):
         if links_idx is None:
             links_idx = self._base_links_idx
         quat, links_idx, envs_idx = self._sanitize_2D_io_variables(
@@ -1594,21 +1589,20 @@ class RigidSolver(Solver):
         )
 
         self._links_state_cache.clear()
-        if not skip_forward:
-            kernel_forward_kinematics_links_geoms(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+        kernel_forward_kinematics_links_geoms(
+            envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            geoms_state=self.geoms_state,
+            geoms_info=self.geoms_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None, *, unsafe=False):
         mass, links_idx, envs_idx = self._sanitize_1D_io_variables(
@@ -1881,7 +1875,7 @@ class RigidSolver(Solver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
-    def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
+    def set_dofs_position(self, position, dofs_idx=None, envs_idx=None, *, unsafe=False):
         position, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
             position, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
         )
@@ -1905,21 +1899,20 @@ class RigidSolver(Solver):
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
             self.constraint_solver.clear(envs_idx)
-        if not skip_forward:
-            kernel_forward_kinematics_links_geoms(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+        kernel_forward_kinematics_links_geoms(
+            envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            geoms_state=self.geoms_state,
+            geoms_info=self.geoms_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None, *, unsafe=False):
         if gs.use_zerocopy:

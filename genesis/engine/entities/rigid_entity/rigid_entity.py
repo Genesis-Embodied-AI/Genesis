@@ -1497,6 +1497,7 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
     # --------------------------------- motion planing -----------------------------------
     # ------------------------------------------------------------------------------------
+
     @gs.assert_built
     def plan_path(
         self,
@@ -1626,6 +1627,50 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
+
+    def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
+        # Handling default argument and special cases
+        if idx_local is None:
+            if unsafe:
+                idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
+            else:
+                idx_global = range(idx_global_start, idx_local_max + idx_global_start)
+        elif isinstance(idx_local, (range, slice)):
+            idx_global = range(
+                (idx_local.start or 0) + idx_global_start,
+                (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
+                idx_local.step or 1,
+            )
+        elif isinstance(idx_local, (int, np.integer)):
+            idx_global = idx_local + idx_global_start
+        elif isinstance(idx_local, (list, tuple)):
+            try:
+                idx_global = [i + idx_global_start for i in idx_local]
+            except TypeError:
+                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
+        else:
+            # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
+            if idx_global_start > 0:
+                idx_global = idx_local + idx_global_start
+            else:
+                idx_global = idx_local
+
+        # Early return if unsafe
+        if unsafe:
+            return idx_global
+
+        # Perform a bunch of sanity checks
+        _idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
+        if _idx_global is not idx_global:
+            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        idx_global = torch.atleast_1d(_idx_global)
+
+        if idx_global.ndim != 1:
+            gs.raise_exception("Expecting a 1D tensor for `idx_local`.")
+        if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
+            gs.raise_exception("`idx_local` exceeds valid range.")
+
+        return idx_global
 
     def get_joint(self, name=None, uid=None):
         """
@@ -2053,50 +2098,6 @@ class RigidEntity(Entity):
             tensor = tensor[0]
         return tensor
 
-    def _get_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
-        # Handling default argument and special cases
-        if idx_local is None:
-            if unsafe:
-                idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
-            else:
-                idx_global = range(idx_global_start, idx_local_max + idx_global_start)
-        elif isinstance(idx_local, (range, slice)):
-            idx_global = range(
-                (idx_local.start or 0) + idx_global_start,
-                (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
-                idx_local.step or 1,
-            )
-        elif isinstance(idx_local, (int, np.integer)):
-            idx_global = idx_local + idx_global_start
-        elif isinstance(idx_local, (list, tuple)):
-            try:
-                idx_global = [i + idx_global_start for i in idx_local]
-            except TypeError:
-                gs.raise_exception("Expecting a sequence of integers for `idx_local`.")
-        else:
-            # Increment may be slow when dealing with heterogenuous data, so it must be avoided if possible
-            if idx_global_start > 0:
-                idx_global = idx_local + idx_global_start
-            else:
-                idx_global = idx_local
-
-        # Early return if unsafe
-        if unsafe:
-            return idx_global
-
-        # Perform a bunch of sanity checks
-        _idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _idx_global is not idx_global:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        idx_global = torch.atleast_1d(_idx_global)
-
-        if idx_global.ndim != 1:
-            gs.raise_exception("Expecting a 1D tensor for `idx_local`.")
-        if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
-            gs.raise_exception("`idx_local` exceeds valid range.")
-
-        return idx_global
-
     @gs.assert_built
     def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True, skip_forward=False, unsafe=False):
         """
@@ -2245,7 +2246,7 @@ class RigidEntity(Entity):
         """
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=False)
+            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
         self._solver.set_dofs_position(position, dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
