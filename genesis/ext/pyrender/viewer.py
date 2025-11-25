@@ -205,6 +205,7 @@ class Viewer(pyglet.window.Window):
         plane_reflection=False,
         env_separate_rigid=False,
         enable_interaction=False,
+        disable_keyboard_shortcuts=False,
         **kwargs,
     ):
         #######################################################################
@@ -284,6 +285,8 @@ class Viewer(pyglet.window.Window):
         if registered_keys is not None:
             self._registered_keys = {ord(k.lower()): registered_keys[k] for k in registered_keys}
 
+        self._disable_keyboard_shortcuts = disable_keyboard_shortcuts
+
         #######################################################################
         # Save internal settings
         #######################################################################
@@ -294,6 +297,7 @@ class Viewer(pyglet.window.Window):
         self._message_opac = 1.0 + self._ticks_till_fade
 
         self._display_instr = False
+
         self._instr_texts = [
             ["> [i]: show keyboard instructions"],
             [
@@ -735,46 +739,47 @@ class Viewer(pyglet.window.Window):
 
         self.viewer_interaction.on_draw()
 
-        if self._display_instr:
-            self._renderer.render_texts(
-                self._instr_texts[1],
-                TEXT_PADDING,
-                self.viewport_size[1] - TEXT_PADDING,
-                font_pt=26,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
-            )
-        else:
-            self._renderer.render_texts(
-                self._instr_texts[0],
-                TEXT_PADDING,
-                self.viewport_size[1] - TEXT_PADDING,
-                font_pt=26,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
-            )
-
-        if self._message_text is not None:
-            self._renderer.render_text(
-                self._message_text,
-                self.viewport_size[0] - TEXT_PADDING,
-                TEXT_PADDING,
-                font_pt=20,
-                color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
-                align=TextAlign.BOTTOM_RIGHT,
-            )
-
-        if self.viewer_flags["caption"] is not None:
-            for caption in self.viewer_flags["caption"]:
-                xpos, ypos = self._location_to_x_y(caption["location"])
-                self._renderer.render_text(
-                    caption["text"],
-                    xpos,
-                    ypos,
-                    font_name=caption["font_name"],
-                    font_pt=caption["font_pt"],
-                    color=caption["color"],
-                    scale=caption["scale"],
-                    align=caption["location"],
+        if not self._disable_keyboard_shortcuts:
+            if self._display_instr:
+                self._renderer.render_texts(
+                    self._instr_texts[1],
+                    TEXT_PADDING,
+                    self.viewport_size[1] - TEXT_PADDING,
+                    font_pt=26,
+                    color=np.array([1.0, 1.0, 1.0, 0.85]),
                 )
+            else:
+                self._renderer.render_texts(
+                    self._instr_texts[0],
+                    TEXT_PADDING,
+                    self.viewport_size[1] - TEXT_PADDING,
+                    font_pt=26,
+                    color=np.array([1.0, 1.0, 1.0, 0.85]),
+                )
+
+            if self._message_text is not None:
+                self._renderer.render_text(
+                    self._message_text,
+                    self.viewport_size[0] - TEXT_PADDING,
+                    TEXT_PADDING,
+                    font_pt=20,
+                    color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
+                    align=TextAlign.BOTTOM_RIGHT,
+                )
+
+            if self.viewer_flags["caption"] is not None:
+                for caption in self.viewer_flags["caption"]:
+                    xpos, ypos = self._location_to_x_y(caption["location"])
+                    self._renderer.render_text(
+                        caption["text"],
+                        xpos,
+                        ypos,
+                        font_name=caption["font_name"],
+                        font_pt=caption["font_pt"],
+                        color=caption["color"],
+                        scale=caption["scale"],
+                        align=caption["location"],
+                    )
 
         if self._run_in_thread or not self.auto_start:
             self.render_lock.release()
@@ -868,6 +873,10 @@ class Viewer(pyglet.window.Window):
                 if len(tup) == 3:
                     kwargs = tup[2]
             callback(self, *args, **kwargs)
+            return self.viewer_interaction.on_key_press(symbol, modifiers)
+
+        # If keyboard shortcuts are disabled, skip default key functions
+        if self._disable_keyboard_shortcuts:
             return self.viewer_interaction.on_key_press(symbol, modifiers)
 
         # Otherwise, use default key functions
