@@ -1068,6 +1068,32 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
         assert f.read() == png_snapshot
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+def test_interactive_viewer_disable_keyboard_shortcuts():
+    """Test that keyboard shortcuts can be disabled in the interactive viewer."""
+
+    # Test with keyboard shortcuts DISABLED
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            disable_keyboard_shortcuts=True,
+        ),
+        show_viewer=True,
+    )
+    scene.build()
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    # Verify the flag is set correctly
+    assert pyrender_viewer._disable_keyboard_shortcuts is True
+
+    # Verify instruction texts show disabled message
+    instr_texts = pyrender_viewer._instr_texts
+    assert "Keyboard shortcuts are DISABLED" in instr_texts[0][0]
+    assert "Keyboard shortcuts are DISABLED" in instr_texts[1][0]
+
+
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
