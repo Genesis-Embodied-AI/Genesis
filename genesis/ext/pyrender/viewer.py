@@ -297,30 +297,25 @@ class Viewer(pyglet.window.Window):
         self._message_opac = 1.0 + self._ticks_till_fade
 
         self._display_instr = False
-        if self._disable_keyboard_shortcuts:
-            self._instr_texts = [
-                ["Keyboard shortcuts are DISABLED"],
-                ["Keyboard shortcuts are DISABLED"],
-            ]
-        else:
-            self._instr_texts = [
-                ["> [i]: show keyboard instructions"],
-                [
-                    "< [i]: hide keyboard instructions",
-                    "     [r]: record video",
-                    "     [s]: save image",
-                    "     [z]: reset camera",
-                    "     [a]: camera rotation",
-                    "     [h]: shadow",
-                    "     [f]: face normal",
-                    "     [v]: vertex normal",
-                    "     [w]: world frame",
-                    "     [l]: link frame",
-                    "     [d]: wireframe",
-                    "     [c]: camera & frustrum",
-                    "   [F11]: full-screen mode",
-                ],
-            ]
+
+        self._instr_texts = [
+            ["> [i]: show keyboard instructions"],
+            [
+                "< [i]: hide keyboard instructions",
+                "     [r]: record video",
+                "     [s]: save image",
+                "     [z]: reset camera",
+                "     [a]: camera rotation",
+                "     [h]: shadow",
+                "     [f]: face normal",
+                "     [v]: vertex normal",
+                "     [w]: world frame",
+                "     [l]: link frame",
+                "     [d]: wireframe",
+                "     [c]: camera & frustrum",
+                "   [F11]: full-screen mode",
+            ],
+        ]
 
         # Set up raymond lights and direct lights
         self._raymond_lights = self._create_raymond_lights()
@@ -744,46 +739,47 @@ class Viewer(pyglet.window.Window):
 
         self.viewer_interaction.on_draw()
 
-        if self._display_instr:
-            self._renderer.render_texts(
-                self._instr_texts[1],
-                TEXT_PADDING,
-                self.viewport_size[1] - TEXT_PADDING,
-                font_pt=26,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
-            )
-        else:
-            self._renderer.render_texts(
-                self._instr_texts[0],
-                TEXT_PADDING,
-                self.viewport_size[1] - TEXT_PADDING,
-                font_pt=26,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
-            )
-
-        if self._message_text is not None:
-            self._renderer.render_text(
-                self._message_text,
-                self.viewport_size[0] - TEXT_PADDING,
-                TEXT_PADDING,
-                font_pt=20,
-                color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
-                align=TextAlign.BOTTOM_RIGHT,
-            )
-
-        if self.viewer_flags["caption"] is not None:
-            for caption in self.viewer_flags["caption"]:
-                xpos, ypos = self._location_to_x_y(caption["location"])
-                self._renderer.render_text(
-                    caption["text"],
-                    xpos,
-                    ypos,
-                    font_name=caption["font_name"],
-                    font_pt=caption["font_pt"],
-                    color=caption["color"],
-                    scale=caption["scale"],
-                    align=caption["location"],
+        if not self._disable_keyboard_shortcuts:
+            if self._display_instr:
+                self._renderer.render_texts(
+                    self._instr_texts[1],
+                    TEXT_PADDING,
+                    self.viewport_size[1] - TEXT_PADDING,
+                    font_pt=26,
+                    color=np.array([1.0, 1.0, 1.0, 0.85]),
                 )
+            else:
+                self._renderer.render_texts(
+                    self._instr_texts[0],
+                    TEXT_PADDING,
+                    self.viewport_size[1] - TEXT_PADDING,
+                    font_pt=26,
+                    color=np.array([1.0, 1.0, 1.0, 0.85]),
+                )
+
+            if self._message_text is not None:
+                self._renderer.render_text(
+                    self._message_text,
+                    self.viewport_size[0] - TEXT_PADDING,
+                    TEXT_PADDING,
+                    font_pt=20,
+                    color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
+                    align=TextAlign.BOTTOM_RIGHT,
+                )
+
+            if self.viewer_flags["caption"] is not None:
+                for caption in self.viewer_flags["caption"]:
+                    xpos, ypos = self._location_to_x_y(caption["location"])
+                    self._renderer.render_text(
+                        caption["text"],
+                        xpos,
+                        ypos,
+                        font_name=caption["font_name"],
+                        font_pt=caption["font_pt"],
+                        color=caption["color"],
+                        scale=caption["scale"],
+                        align=caption["location"],
+                    )
 
         if self._run_in_thread or not self.auto_start:
             self.render_lock.release()
