@@ -123,10 +123,8 @@ usd = [
 [project.scripts]
 gs = "genesis._main:main"
 
-[project.entry-points]
-pytest11 = [
-    "genesis-test-plugin = tests.pytest_plugin",
-]
+[project.entry-points."pytest11"]
+genesis-test-plugin = "tests.pytest_plugin"
 
 [tool.setuptools.packages.find]
 where = ["."]
