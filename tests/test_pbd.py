@@ -187,8 +187,8 @@ def test_cloth_attach_rigid_link(show_viewer):
     vel = np.array([[-0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], dtype=np.float32)
     box.set_dofs_velocity(vel, dofs_idx_local=[0, 1, 2])
 
-    cloth_pos0 = cloth.get_particles_pos()[:, particles_idx]
-    link_pos0 = scene.rigid_solver.links[box_link_idx].get_pos()
+    cloth_pos0 = cloth.get_particles_pos()[:, particles_idx].clone()
+    link_pos0 = scene.rigid_solver.links[box_link_idx].get_pos().clone()
 
     for _ in range(25):
         scene.step()
@@ -199,8 +199,8 @@ def test_cloth_attach_rigid_link(show_viewer):
         scene.step()
 
     # Check that the attached particles followed the link displacement per env
-    cloth_pos1 = cloth.get_particles_pos()[:, particles_idx]
-    link_pos1 = scene.rigid_solver.links[box_link_idx].get_pos()
+    cloth_pos1 = cloth.get_particles_pos()[:, particles_idx].clone()
+    link_pos1 = scene.rigid_solver.links[box_link_idx].get_pos().clone()
 
     cloth_disp = cloth_pos1 - cloth_pos0
     link_disp = link_pos1 - link_pos0
@@ -216,8 +216,8 @@ def test_cloth_attach_rigid_link(show_viewer):
         scene.step()
 
     # Make sure that the cloth is laying on the ground without moving
-    cloth_pos2 = cloth.get_particles_pos()[:, particles_idx]
-    link_pos2 = scene.rigid_solver.links[box_link_idx].get_pos()
+    cloth_pos2 = cloth.get_particles_pos()[:, particles_idx].clone()
+    link_pos2 = scene.rigid_solver.links[box_link_idx].get_pos().clone()
     cloth_disp = cloth_pos2 - cloth_pos1
     link_disp = link_pos2 - link_pos1
     link_disp = link_disp.unsqueeze(1)
