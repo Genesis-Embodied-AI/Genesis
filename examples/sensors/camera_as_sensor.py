@@ -34,7 +34,7 @@ try:
 except ImportError:
     ENABLE_MADRONA = False
     print("⊘ gs_madrona not available - BatchRenderer will be disabled")
-
+ENABLE_MADRONA = ENABLE_MADRONA and (gs.backend == gs.cuda)
 ########################## create a scene ##########################
 # Choose renderer based on raytracer availability
 if ENABLE_RAYTRACER:
