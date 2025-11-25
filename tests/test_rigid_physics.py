@@ -1292,9 +1292,11 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         ):
             pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
+            quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
-            euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
-            assert_allclose(euler, euler_zero, tol=5e-4)
+            # Use quaternion for comparison to avoid gymbal lock issue in euler angles
+            quat = entity.get_quat()
+            assert_allclose(quat, quat_zero, tol=tol)
             base_aabb = entity.geoms[0].get_AABB()
             assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
             assert_allclose(base_aabb, base_aabb_init, tol=tol)
@@ -1311,14 +1313,12 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
             quat_delta /= torch.linalg.norm(quat_delta)
             entity.set_quat(quat_delta, relative=relative)
-            euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
-            quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
+            quat = entity.get_quat()
             if relative:
                 quat_ref = gu.transform_quat_by_quat(quat_zero, quat_delta)
             else:
                 quat_ref = quat_delta
-            euler_ref = gu.quat_to_xyz(quat_ref, rpy=True)
-            assert_allclose(euler, euler_ref, tol=tol)
+            assert_allclose(quat, quat_ref, tol=tol)
 
 
 @pytest.mark.required
