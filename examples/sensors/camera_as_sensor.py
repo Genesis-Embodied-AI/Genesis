@@ -9,6 +9,7 @@ Test the attachment, add light, batch rendering functionalities.
 import os
 import matplotlib.pyplot as plt
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 from genesis.options.sensors import RasterizerCameraOptions, RaytracerCameraOptions, BatchRendererCameraOptions
 
 ########################## init ##########################
@@ -25,18 +26,14 @@ except ImportError:
     ENABLE_RAYTRACER = False
     print("⊘ LuisaRenderPy not available - Raytracer will be disabled")
 
-# Check if CUDA is available for BatchRenderer
 try:
-    import torch
+    import gs_madrona
 
-    ENABLE_CUDA = torch.cuda.is_available()
-    if ENABLE_CUDA:
-        print("✓ CUDA available - BatchRenderer will be enabled")
-    else:
-        print("⊘ CUDA not available - BatchRenderer will be disabled")
+    ENABLE_MADRONA = True
+    print("✓ gs_madrona available - BatchRenderer will be enabled")
 except ImportError:
-    ENABLE_CUDA = False
-    print("⊘ PyTorch not available - BatchRenderer will be disabled")
+    ENABLE_MADRONA = False
+    print("⊘ gs_madrona not available - BatchRenderer will be disabled")
 
 ########################## create a scene ##########################
 # Choose renderer based on raytracer availability
@@ -78,13 +75,15 @@ box = scene.add_entity(
 
 ########################## Camera Configurations ##########################
 # Define common camera parameters
-CAMERA_COMMON_PARAMS = {
-    "up": (0.0, 0.0, 1.0),
-    "near": 0.1,
-    "far": 100.0,
-}
+CAMERA_COMMON_KWARGS = dict(
+    {
+        "up": (0.0, 0.0, 1.0),
+        "near": 0.1,
+        "far": 100.0,
+    }
+)
 
-CAMERA_POSITIONS = [
+CAMERA_SENSORS_KWARGS = [
     (
         "cam0",
         (3.0, 0.0, 2.0),
@@ -108,7 +107,7 @@ CAMERA_POSITIONS = [
 def create_camera_configs(backend_name, options_class, sphere_entity_idx=None, **backend_specific):
     """Create camera configurations for a specific backend."""
     configs = []
-    for cam_suffix, pos, lookat, fov, attachment, lights in CAMERA_POSITIONS:
+    for cam_suffix, pos, lookat, fov, attachment, lights in CAMERA_SENSORS_KWARGS:
         name = f"{backend_name}_{cam_suffix}"
         res = (500, 600)
 
@@ -117,7 +116,7 @@ def create_camera_configs(backend_name, options_class, sphere_entity_idx=None, *
             "res": res,
             "pos": pos,
             "lookat": lookat,
-            "up": CAMERA_COMMON_PARAMS["up"],
+            "up": CAMERA_COMMON_KWARGS["up"],
             "fov": fov,
             **backend_specific,
         }
@@ -140,7 +139,7 @@ def create_camera_configs(backend_name, options_class, sphere_entity_idx=None, *
 
         # Add backend-specific parameters
         if backend_name == "raster":
-            options_kwargs.update({"near": CAMERA_COMMON_PARAMS["near"], "far": CAMERA_COMMON_PARAMS["far"]})
+            options_kwargs.update({"near": CAMERA_COMMON_KWARGS["near"], "far": CAMERA_COMMON_KWARGS["far"]})
         elif backend_name == "raytrace":
             options_kwargs.update(
                 {
@@ -189,27 +188,22 @@ raytracer_configs = (
     create_camera_configs("raytrace", RaytracerCameraOptions, sphere_entity_idx=sphere.idx) if ENABLE_RAYTRACER else []
 )
 batch_renderer_configs = (
-    create_camera_configs("batch", BatchRendererCameraOptions, sphere_entity_idx=sphere.idx) if ENABLE_CUDA else []
+    create_camera_configs("batch", BatchRendererCameraOptions, sphere_entity_idx=sphere.idx) if ENABLE_MADRONA else []
 )
 
 ########################## Create Cameras ##########################
 cameras = {}
-config_groups = [
-    ("Rasterizer", rasterizer_configs),
-    ("Raytracer", raytracer_configs),
-    ("Batch Renderer", batch_renderer_configs),
-]
+config_groups = []
+config_groups += [("Rasterizer", rasterizer_configs)] if rasterizer_configs else []
+config_groups += [("Raytracer", raytracer_configs)] if raytracer_configs else []
+config_groups += [("Batch Renderer", batch_renderer_configs)] if batch_renderer_configs else []
 
 for group_name, configs in config_groups:
-    if not configs:  # Skip empty groups (like raytracer when disabled)
-        continue
-
     print(f"\n=== {group_name} Cameras ===")
     for config in configs:
         camera = scene.add_sensor(config["options"])
         cameras[config["name"]] = camera
 
-        # Add lights
         for light_config in config["lights"]:
             camera.add_light(**light_config)
 
@@ -217,15 +211,16 @@ for group_name, configs in config_groups:
 
 
 ########################## build ##########################
-scene.build(n_envs=1)  # Build with 1 environment
+n_envs = 1
+scene.build(n_envs=n_envs)  # Build with 1 environment
 
 ########################## identify attached cameras ##########################
 print("\n=== Identifying Attached Cameras ===")
 
 # Identify cameras that are configured to be attached
 attached_cameras = []
-for config_group in [rasterizer_configs, raytracer_configs, batch_renderer_configs]:
-    for config in config_group:
+for group_name, configs in config_groups:
+    for config in configs:
         if config["attachment"] is not None:
             camera = cameras[config["name"]]
             attached_cameras.append(camera)
@@ -234,48 +229,10 @@ for config_group in [rasterizer_configs, raytracer_configs, batch_renderer_confi
 print(f"✓ Identified {len(attached_cameras)} attached cameras")
 
 ########################## simulate and render ##########################
-print("\n=== Simulation Loop ===")
-
-# Define reading patterns for different camera types
-read_patterns = {
-    "raster_cam0": {"method": "all_envs", "print_suffix": ""},
-    "raster_cam1": {"method": "single_env", "env_idx": 0, "print_suffix": " (env 0)"},
-    "raster_cam_attached": {"method": "all_envs", "print_suffix": ""},
-    "raytrace_cam0": {"method": "all_envs", "print_suffix": " (auto-rendered on read)"},
-    "raytrace_cam1": {"method": "single_env", "env_idx": 0, "print_suffix": " (env 0, auto-rendered on read)"},
-    "raytrace_cam_attached": {"method": "all_envs", "print_suffix": " (auto-rendered on read)"},
-    "batch_cam0": {"method": "all_envs", "print_suffix": ""},
-    "batch_cam1": {"method": "single_env", "env_idx": 0, "print_suffix": " (env 0)"},
-    "batch_cam_attached": {"method": "all_envs", "print_suffix": ""},
-}
-
-# Define image saving patterns
-save_patterns = {
-    "raster_cam0": [{"env_idx": 0, "suffix": "_env0"}],
-    "raster_cam1": [{"env_idx": 0, "suffix": "_env0"}],
-    "raster_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
-    "raytrace_cam0": [{"env_idx": 0, "suffix": "_env0"}],
-    "raytrace_cam1": [{"env_idx": 0, "suffix": "_env0"}],
-    "raytrace_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
-    "batch_cam0": [{"env_idx": 0, "suffix": "_env0"}],
-    "batch_cam1": [{"env_idx": 0, "suffix": "_env0"}],
-    "batch_cam_attached": [{"env_idx": 0, "suffix": "_env0"}],
-}
-
-
 os.makedirs("camera_sensor_output", exist_ok=True)
-
-
-# Helper to convert torch tensors to numpy arrays for saving
-def to_numpy_for_save(tensor_or_array):
-    if hasattr(tensor_or_array, "cpu"):
-        return tensor_or_array.cpu().numpy()
-    return tensor_or_array
-
 
 for i in range(100):
     scene.step()
-
     # Render every 10 steps
     if i % 10 == 0:
         print(f"\n--- Step {i} ---")
@@ -283,38 +240,14 @@ for i in range(100):
         # Read and print camera data
         camera_data = {}
         for cam_name, camera in cameras.items():
-            if cam_name not in read_patterns:
-                continue
-
-            pattern = read_patterns[cam_name]
-            if pattern["method"] == "all_envs":
-                data = camera.read()
-            elif pattern["method"] == "single_env":
-                data = camera.read(envs_idx=pattern["env_idx"])
-
+            # Read camera data (handles both single and multi-environment cases)
+            data = camera.read()
             camera_data[cam_name] = data
-            print(f"  {cam_name.replace('_', ' ').title()} RGB shape: {data.rgb.shape}{pattern['print_suffix']}")
+            print(f"  {cam_name.replace('_', ' ').title()} RGB shape: {data.rgb.shape}")
 
-        # Attached cameras follow the sphere throughout the simulation
-
-        # Save images
-        for cam_name, patterns in save_patterns.items():
-            if cam_name not in camera_data:
-                continue
-
-            data = camera_data[cam_name]
-            for pattern in patterns:
-                if "read_env" in pattern:
-                    # Special case: read a different environment
-                    data_specific = cameras[cam_name].read(envs_idx=pattern["read_env"])
-                    rgb_data = data_specific.rgb
-                else:
-                    # Use data from the main read
-                    env_idx = pattern["env_idx"]
-                    rgb_data = data.rgb[env_idx] if data.rgb.ndim > 3 else data.rgb
-
-                filename = f"camera_sensor_output/{cam_name}{pattern['suffix']}_step{i:03d}.png"
-                plt.imsave(filename, to_numpy_for_save(rgb_data))
-
-        if i == 0:
-            print("\n✓ Saving images to camera_sensor_output/")
+        # Save images (always from environment 0 for visualization)
+        for cam_name, data in camera_data.items():
+            rgb_data = data.rgb[0] if data.rgb.ndim > 3 else data.rgb
+            suffix = "_env0" if n_envs > 1 else ""
+            filename = f"camera_sensor_output/{cam_name}{suffix}_step{i:03d}.png"
+            plt.imsave(filename, tensor_to_array(rgb_data))

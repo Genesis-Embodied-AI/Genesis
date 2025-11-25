@@ -21,6 +21,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.vis.batch_renderer import BatchRenderer
 from genesis.options.renderers import BatchRenderer as BatchRendererOptions
 from genesis.options.vis import VisOptions
+from genesis.vis.rasterizer_context import RasterizerContext
 from .base_sensor import Sensor, SharedSensorMetadata, RigidSensorMixin, RigidSensorMetadataMixin
 from .sensor_manager import register_sensor
 
@@ -43,45 +44,54 @@ class CameraData(NamedTuple):
     rgb: torch.Tensor
 
 
-# Create a minimal visualizer-like object for BatchRenderer
 class MinimalVisualizerWrapper:
+    """
+    Minimal visualizer wrapper for BatchRenderer camera sensors.
+
+    BatchRenderer requires a visualizer-like object to provide camera information and context,
+    but camera sensors don't need the full visualizer functionality (viewer, UI, etc.).
+    This wrapper provides just the minimal interface expected by BatchRenderer while
+    avoiding the overhead of creating a full visualizer instance.
+    """
+
     def __init__(self, scene, sensors, vis_options):
         self.scene = scene
         self._cameras = []  # Will be populated with camera wrappers
         self._sensors = sensors  # Keep reference to sensors
 
-        # Create a minimal context for batch renderer
-        from genesis.vis.rasterizer_context import RasterizerContext
-
+        # Create a minimal rasterizer context for camera frustum visualization
+        # (required by BatchRenderer even though cameras don't render frustums)
         self._context = RasterizerContext(vis_options)
         self._context.build(scene)
         self._context.reset()
 
 
-class RasterizerCameraWrapper:
+class BaseCameraWrapper:
+    """Base class for camera wrappers to reduce code duplication."""
+
+    def __init__(self, sensor):
+        self.sensor = sensor
+        self.uid = sensor._idx
+        self.res = sensor._options.res
+        self.fov = sensor._options.fov
+        self.near = sensor._options.near
+        self.far = sensor._options.far
+
+
+class RasterizerCameraWrapper(BaseCameraWrapper):
     """Lightweight wrapper object used by the rasterizer backend."""
 
     def __init__(self, sensor: "RasterizerCameraSensor"):
-        self.sensor = sensor
-        self.uid = sensor._idx
-        self.res = sensor._options.res
-        self.fov = sensor._options.fov
-        self.near = sensor._options.near
-        self.far = sensor._options.far
+        super().__init__(sensor)
         self.aspect_ratio = self.res[0] / self.res[1]
 
 
-class BatchRendererCameraWrapper:
+class BatchRendererCameraWrapper(BaseCameraWrapper):
     """Wrapper object used by the batch renderer backend."""
 
     def __init__(self, sensor: "BatchRendererCameraSensor"):
-        self.sensor = sensor
+        super().__init__(sensor)
         self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
-        self.uid = sensor._idx
-        self.res = sensor._options.res
-        self.fov = sensor._options.fov
-        self.near = sensor._options.near
-        self.far = sensor._options.far
         self.debug = False
 
         # Initial pose
@@ -107,12 +117,11 @@ class BatchRendererCameraWrapper:
         """Get camera quaternion (for batch renderer)."""
         from genesis.utils.geom import T_to_trans_quat
 
-        _, quat = T_to_trans_quat(self.transform)
+        _, quat = T_to_trans_quat(self.transform.unsqueeze(0))
         n_envs = self.sensor._manager._sim._B
-        if n_envs == 0:
-            return quat.unsqueeze(0)
-        else:
-            return quat.unsqueeze(0).expand(n_envs, -1)
+        if n_envs > 0:
+            return quat.expand(n_envs, -1)
+        return quat
 
 
 # ========================== Shared Metadata ==========================
@@ -304,15 +313,6 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
 
 
 # ========================== Camera Sensor Helpers ==========================
-def _camera_sanitize_envs_idx(envs_idx):
-    """Shared envs_idx sanitization for camera sensors."""
-    if envs_idx is None:
-        return None
-    if isinstance(envs_idx, (int, np.integer)):
-        return envs_idx
-    return np.asarray(envs_idx)
-
-
 def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: bool) -> CameraData:
     """
     Shared helper to convert a cached RGB image array into CameraData with correct env handling.
@@ -330,22 +330,15 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
     if to_numpy and isinstance(cached_image, torch.Tensor):
         cached_image = tensor_to_array(cached_image)
 
-    envs_idx = _camera_sanitize_envs_idx(envs_idx)
     n_envs = sensor._manager._sim.n_envs
 
     if envs_idx is None:
         if n_envs == 0:
-            # Single environment: cached_image has leading env dim of size 1
             return sensor._return_data_class(rgb=cached_image[0])
-        else:
-            # Batched environments: return all
-            return sensor._return_data_class(rgb=cached_image)
-    else:
-        # Specific environment(s)
-        if isinstance(envs_idx, (int, np.integer)):
-            return sensor._return_data_class(rgb=cached_image[envs_idx])
-        else:
-            return sensor._return_data_class(rgb=cached_image[envs_idx])
+        return sensor._return_data_class(rgb=cached_image)
+    if isinstance(envs_idx, (int, np.integer)):
+        return sensor._return_data_class(rgb=cached_image[envs_idx])
+    return sensor._return_data_class(rgb=cached_image[envs_idx])
 
 
 def _camera_compute_T_from_link(attached_link, attached_offset_T: torch.Tensor) -> torch.Tensor:

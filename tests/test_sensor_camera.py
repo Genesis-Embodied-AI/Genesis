@@ -13,7 +13,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         show_viewer=show_viewer,
     )
 
-    # Add entities
     plane = scene.add_entity(
         morph=gs.morphs.Plane(),
         surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),

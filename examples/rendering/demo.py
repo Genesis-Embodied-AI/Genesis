@@ -151,8 +151,6 @@ def main():
         spp=512,
     )
     scene.build()
-
-    ########################## forward + backward twice ##########################
     scene.reset()
     horizon = 10
 
