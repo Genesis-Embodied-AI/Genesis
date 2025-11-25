@@ -46,7 +46,7 @@ class EPA_POLY_INIT_RETURN_CODE(IntEnum):
 
 
 class GJK:
-    def __init__(self, rigid_solver):
+    def __init__(self, rigid_solver, is_active: bool = True):
         # Initialize static configuration.
         # MuJoCo's multi-contact detection algorithm is disabled by default, because it is often less stable than the
         # other multi-contact detection algorithm. However, we keep the code here for compatibility with MuJoCo and for
@@ -112,8 +112,11 @@ class GJK:
             diff_contact_min_penetration=gs.EPS * 100.0,
         )
 
-        # Initialize GJK state.
-        self._gjk_state = array_class.get_gjk_state(rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info)
+        # Initialize GJK state
+        self._gjk_state = array_class.get_gjk_state(
+            rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info, is_active
+        )
+        self._is_active = is_active
 
     def reset(self):
         pass
@@ -159,6 +162,7 @@ def func_gjk_contact(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -265,6 +269,7 @@ def func_gjk_contact(
                         geoms_state,
                         geoms_info,
                         verts_info,
+                        rigid_global_info,
                         static_rigid_sim_config,
                         collider_state,
                         collider_static_config,
@@ -340,6 +345,7 @@ def func_gjk_contact(
             geoms_state,
             geoms_info,
             verts_info,
+            rigid_global_info,
             static_rigid_sim_config,
             collider_state,
             collider_static_config,
@@ -365,6 +371,7 @@ def func_gjk_contact(
                 geoms_state,
                 geoms_info,
                 verts_info,
+                rigid_global_info,
                 static_rigid_sim_config,
                 collider_state,
                 collider_static_config,
@@ -1467,6 +1474,7 @@ def func_epa_init_polytope_2d(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -1503,7 +1511,7 @@ def func_epa_init_polytope_2d(
 
     # Cross product with the found axis, then rotate it by 120 degrees around the axis [diff] to get three more
     # points spaced 120 degrees apart
-    rotmat = gu.ti_rotvec_to_R(diff * ti.math.radians(120.0))
+    rotmat = gu.ti_rotvec_to_R(diff * ti.math.radians(120.0), rigid_global_info.EPS[None])
     e = gs.ti_vec3(0.0, 0.0, 0.0)
     e[min_i] = 1.0
 
@@ -3644,6 +3652,7 @@ def func_safe_gjk(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -3691,6 +3700,7 @@ def func_safe_gjk(
             geoms_state,
             geoms_info,
             verts_info,
+            rigid_global_info,
             static_rigid_sim_config,
             collider_state,
             collider_static_config,
@@ -3712,6 +3722,7 @@ def func_safe_gjk(
                 geoms_state,
                 geoms_info,
                 verts_info,
+                rigid_global_info,
                 static_rigid_sim_config,
                 collider_state,
                 collider_static_config,
@@ -3790,6 +3801,7 @@ def func_safe_gjk(
                 geoms_state,
                 geoms_info,
                 verts_info,
+                rigid_global_info,
                 static_rigid_sim_config,
                 collider_state,
                 collider_static_config,
@@ -3966,6 +3978,7 @@ def func_search_valid_simplex_vertex(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -4036,6 +4049,7 @@ def func_search_valid_simplex_vertex(
                     geoms_state,
                     geoms_info,
                     verts_info,
+                    rigid_global_info,
                     static_rigid_sim_config,
                     collider_state,
                     collider_static_config,
@@ -4149,6 +4163,7 @@ def func_safe_gjk_support(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -4172,6 +4187,8 @@ def func_safe_gjk_support(
     dir: gs.ti_vec3
         The unit direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
     """
+    EPS = rigid_global_info.EPS[None]
+
     obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
     obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
     local_obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
@@ -4184,9 +4201,9 @@ def func_safe_gjk_support(
         n_dir = dir
         if i > 0:
             j = i - 1
-            n_dir[0] += -(1.0 - 2.0 * (j & 1)) * gs.EPS
-            n_dir[1] += -(1.0 - 2.0 * (j & 2)) * gs.EPS
-            n_dir[2] += -(1.0 - 2.0 * (j & 4)) * gs.EPS
+            n_dir[0] += -(1.0 - 2.0 * (j & 1)) * EPS
+            n_dir[1] += -(1.0 - 2.0 * (j & 2)) * EPS
+            n_dir[2] += -(1.0 - 2.0 * (j & 4)) * EPS
 
         # First order normalization based on Taylor series is accurate enough
         n_dir *= 2.0 - n_dir.dot(dir)
@@ -4317,6 +4334,7 @@ def func_safe_epa(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -4341,6 +4359,7 @@ def func_safe_epa(
     upper2 = gjk_info.FLOAT_MAX_SQ[None]
     lower = gs.ti_float(0.0)
     tolerance = gjk_info.tolerance[None]
+    EPS = rigid_global_info.EPS[None]
 
     # Index of the nearest face
     nearest_i_f = gs.ti_int(-1)
@@ -4349,7 +4368,7 @@ def func_safe_epa(
     discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = gs.EPS
+        tolerance = rigid_global_info.EPS[None]
 
     k_max = gjk_info.epa_max_iterations[None]
     for k in range(k_max):
@@ -4479,7 +4498,7 @@ def func_safe_epa(
                 break
 
             dist2 = gjk_state.polytope_faces.dist2[i_b, gjk_state.polytope.nfaces[i_b] - 1]
-            if (dist2 >= lower2 - gs.EPS) and (dist2 <= upper2 + gs.EPS):
+            if (dist2 >= lower2 - EPS) and (dist2 <= upper2 + EPS):
                 # Store face in the map
                 nfaces_map = gjk_state.polytope.nfaces_map[i_b]
                 gjk_state.polytope_faces_map[i_b, nfaces_map] = i_f0

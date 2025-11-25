@@ -52,7 +52,7 @@ class Visualizer(RBC):
 
         if show_viewer:
             if gs._scene_registry:
-                raise gs.raise_exception(
+                gs.raise_exception(
                     "Interactive viewer not supported when managing multiple scenes. Please set `show_viewer=False` "
                     "or call `del scene`."
                 )

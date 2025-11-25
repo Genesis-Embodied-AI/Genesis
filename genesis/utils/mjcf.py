@@ -121,7 +121,9 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 mesh_path = elem.get("filename")
                 if mesh_path.startswith("package://"):
                     mesh_path = mesh_path[10:]
-                elem.set("filename", str((Path(asset_path) / mesh_path).resolve()))
+                # Beware symlinks must NOT be resolved, otherwise it may break the file extension, which is used by
+                # Mujoco MJCF parser to determine how to load mesh files.
+                elem.set("filename", str(Path(asset_path) / mesh_path))
 
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
             # Parse updated URDF file as a string
@@ -150,7 +152,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
-        raise gs.raise_exception(f"'{xml}' is not a valid MJCF or URDF file.")
+        gs.raise_exception(f"'{xml}' is not a valid MJCF or URDF file.")
 
     return mj
 
@@ -265,7 +267,7 @@ def parse_link(mj, i_l, scale):
             j_info["dofs_stiffness"] = np.zeros((0))
         elif gs_type == gs.JOINT_TYPE.FREE:
             if mj_stiffness > 0.0:
-                raise gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
+                gs.raise_exception("(MJCF) Joint stiffness not supported for free joints")
 
             j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
             j_info["dofs_motion_vel"] = np.eye(6, 3)
@@ -720,7 +722,7 @@ def parse_equalities(mj, scale):
             eq_info["type"] = gs.EQUALITY_TYPE.JOINT
             name_objadr = mj.name_jntadr
         else:
-            raise gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
+            gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
         objs_name = []
         for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):

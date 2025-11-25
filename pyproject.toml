@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.6"
+version = "0.3.7"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==3.3.0",
+    "gstaichi==4.2.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
@@ -154,8 +154,6 @@ addopts = [
     # "--exitfirst",
     "--numprocesses=auto",
     "--dist=worksteal",
-    "--random-order-bucket=global",
-    "--random-order-seed=0",
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",

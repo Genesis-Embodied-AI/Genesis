@@ -2,8 +2,6 @@ import gstaichi as ti
 
 import genesis.utils.array_class as array_class
 
-from genesis.engine.solvers.rigid.contact_island import INVALID_NEXT_HIBERNATED_ENTITY_IDX
-
 
 @ti.func
 def func_wakeup_entity_and_its_temp_island(
@@ -28,9 +26,7 @@ def func_wakeup_entity_and_its_temp_island(
         is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
 
         if is_entity_hibernated:
-            contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = (
-                INVALID_NEXT_HIBERNATED_ENTITY_IDX
-            )
+            contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = -1
 
             entities_state.hibernated[entity_idx, i_b] = False
             n_awake_entities = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)

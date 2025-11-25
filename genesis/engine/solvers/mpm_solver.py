@@ -369,6 +369,7 @@ class MPMSolver(Solver):
                                 sdf_normal_cell = sdf_decomp.sdf_func_normal_world(
                                     geoms_state=geoms_state,
                                     geoms_info=geoms_info,
+                                    rigid_global_info=rigid_global_info,
                                     collider_static_config=collider_static_config,
                                     sdf_info=sdf_info,
                                     pos_world=cell_pos,

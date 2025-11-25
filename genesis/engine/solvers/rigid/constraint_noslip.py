@@ -17,7 +17,7 @@ def kernel_build_efc_AR_b(
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         nefc = constraint_state.n_constraints[i_b]
         # zero AR
@@ -62,6 +62,7 @@ def kernel_noslip(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
@@ -133,7 +134,7 @@ def kernel_noslip(
                     y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
                     K1 = Ac[0] + Ac[3] - Ac[1] - Ac[2]
                     K0 = mid * (Ac[0] - Ac[3]) + bc[0] - bc[1]
-                    if K1 < gs.EPS:
+                    if K1 < EPS:
                         constraint_state.efc_force[j_efc, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
                     else:
                         y = -K0 / K1
@@ -154,6 +155,7 @@ def kernel_noslip(
                         old_force=old_force,
                         res=res,
                         dim=2,
+                        eps=EPS,
                     )
 
                     improvement -= cost_change
@@ -241,6 +243,7 @@ def func_cost_change(
     old_force,
     res,
     dim: int,
+    eps,
 ):
     change = gs.ti_float(0.0)
     if dim == 1:
@@ -254,7 +257,7 @@ def func_cost_change(
             for j in range(dim):
                 change += 0.5 * Ac[i * dim + j] * delta[i] * delta[j]
             change += delta[i] * res[i]
-    if change > gs.EPS:
+    if change > eps:
         for i in range(dim):
             force[force_start + i, i_b] = old_force[i]
         change = 0.0
