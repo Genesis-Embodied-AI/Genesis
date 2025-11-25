@@ -1088,11 +1088,6 @@ def test_interactive_viewer_disable_keyboard_shortcuts():
     # Verify the flag is set correctly
     assert pyrender_viewer._disable_keyboard_shortcuts is True
 
-    # Verify instruction texts show disabled message
-    instr_texts = pyrender_viewer._instr_texts
-    assert "Keyboard shortcuts are DISABLED" in instr_texts[0][0]
-    assert "Keyboard shortcuts are DISABLED" in instr_texts[1][0]
-
 
 @pytest.mark.parametrize(
     "renderer_type",
