@@ -914,6 +914,7 @@ class RigidSolver(Solver):
                 )
 
     def _kernel_detect_collision(self):
+        self.collider.reset(cache_only=True)
         self.collider.clear()
         self.collider.detection()
 
@@ -929,10 +930,12 @@ class RigidSolver(Solver):
         return collision_pairs
 
     def _func_constraint_force(self):
-        self.constraint_solver.clear(cache_only=not self._use_contact_island)
-
-        if not self._disable_constraint and not self._use_contact_island:
-            self.constraint_solver.add_equality_constraints()
+        if not self._disable_constraint:
+            if self._use_contact_island:
+                self.constraint_solver.clear()
+            else:
+                self.constraint_solver.clear(cache_only=True)
+                self.constraint_solver.add_equality_constraints()
 
         if self._enable_collision:
             self.collider.detection()
@@ -1294,11 +1297,10 @@ class RigidSolver(Solver):
             )
 
             self._errno[None] = 0
-            self.collider.reset(envs_idx)
+            self.collider.reset(envs_idx, cache_only=False)
             self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
-                self.constraint_solver.clear(envs_idx)
             self._links_state_cache.clear()
             self._cur_step = -1
 
@@ -1656,7 +1658,8 @@ class RigidSolver(Solver):
             mask = (0, *indices_to_mask(qs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, qs_idx)
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
             data[mask] = torch.as_tensor(qpos, dtype=gs.tc_float, device=gs.device)
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+            if mask and isinstance(mask[0], torch.Tensor):
+                envs_idx = mask[0]
         else:
             qpos, qs_idx, envs_idx = self._sanitize_1D_io_variables(
                 qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", skip_allocation=True, unsafe=unsafe
@@ -1666,10 +1669,16 @@ class RigidSolver(Solver):
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
         self._links_state_cache.clear()
-        self.collider.reset(envs_idx)
-        self.collider.clear(envs_idx, clear_contacts_info=not skip_forward)
-        self.constraint_solver.reset(envs_idx)
-        self.constraint_solver.clear(envs_idx)
+        self.collider.reset(envs_idx, cache_only=True)
+        if not isinstance(envs_idx, torch.Tensor):
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        if not skip_forward:
+            self.collider.clear(envs_idx)
+        if self.constraint_solver is not None:
+            if self._use_contact_island:
+                self.constraint_solver.reset(envs_idx)
+            else:
+                self.constraint_solver.reset(envs_idx, clear_contraints_info=not skip_forward)
         if not skip_forward:
             kernel_forward_kinematics_links_geoms(
                 envs_idx,
@@ -1847,10 +1856,16 @@ class RigidSolver(Solver):
 
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         if gs.use_zerocopy:
-            mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             vel = ti_to_torch(self.dofs_state.vel, transpose=True, copy=False)
-            vel[mask] = 0.0 if velocity is None else torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+            if velocity is None and isinstance(dofs_idx, slice) and isinstance(envs_idx, torch.Tensor):
+                (vel := vel[:, dofs_idx]).scatter_(0, envs_idx[:, None].expand((-1, vel.shape[1])), 0.0)
+            else:
+                mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
+                vel[mask] = 0.0 if velocity is None else torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+                if mask and isinstance(mask[0], torch.Tensor):
+                    envs_idx = mask[0]
+                elif not isinstance(envs_idx, torch.Tensor):
+                    envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
             velocity, dofs_idx, envs_idx = self._sanitize_1D_io_variables(
                 velocity, dofs_idx, self.n_dofs, envs_idx, skip_allocation=True, unsafe=unsafe
@@ -1894,11 +1909,10 @@ class RigidSolver(Solver):
         )
 
         self._links_state_cache.clear()
-        self.collider.reset(envs_idx)
+        self.collider.reset(envs_idx, cache_only=True)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
-            self.constraint_solver.clear(envs_idx)
         kernel_forward_kinematics_links_geoms(
             envs_idx,
             links_state=self.links_state,
@@ -2321,7 +2335,7 @@ class RigidSolver(Solver):
     def clear_external_force(self):
         if gs.use_zerocopy:
             for tensor in (self.links_state.cfrc_applied_ang, self.links_state.cfrc_applied_vel):
-                out = ti_to_python(tensor, copy=False)
+                out = ti_to_torch(tensor, copy=False)
                 out.zero_()
         else:
             kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
