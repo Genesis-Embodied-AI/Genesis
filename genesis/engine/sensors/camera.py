@@ -424,9 +424,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
-        from genesis.vis.rasterizer_context import RasterizerContext
-        from genesis.options.vis import VisOptions
-
         vis_options = VisOptions(
             show_world_frame=False,
             show_link_frame=False,
