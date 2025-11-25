@@ -1,6 +1,7 @@
 import ctypes
 import datetime
 import functools
+import io
 import logging
 import math
 import numbers
@@ -12,7 +13,7 @@ import types
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, NoReturn, Optional, Type
+from typing import Any, Callable, NoReturn, Optional, Type, cast
 
 import cpuinfo
 import gstaichi as ti
@@ -59,11 +60,13 @@ class redirect_libc_stderr:
         self.stderr_fileno = None
         self.original_stderr_fileno = None
 
-    # --------------------------------------------------
-    # Enter: duplicate stderr → tmp, dup2(target) → stderr
-    # --------------------------------------------------
     def __enter__(self):
-        self.stderr_fileno = sys.stderr.fileno()
+        try:
+            self.stderr_fileno = sys.stderr.fileno()
+        except io.UnsupportedOperation:
+            # Do nothing is not a real OS-level file descriptor but rather some IO buffer
+            return self
+
         self.original_stderr_fileno = os.dup(self.stderr_fileno)
         sys.stderr.flush()
 
@@ -89,9 +92,6 @@ class redirect_libc_stderr:
 
         return self
 
-    # --------------------------------------------------
-    # Exit: restore previous stderr, close the temp copy
-    # --------------------------------------------------
     def __exit__(self, exc_type, exc_value, traceback):
         if self.stderr_fileno is None:
             return
@@ -469,9 +469,9 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
             v_primal = v.arr
             v_grad = v.grad.arr if v.grad else None
             if v_grad is None:
-                launch_ctx.set_arg_ndarray((i - template_num,), v_primal)
+                launch_ctx.set_arg_ndarray(i - template_num, v_primal)
             else:
-                launch_ctx.set_arg_ndarray_with_grad((i - template_num,), v_primal, v_grad)
+                launch_ctx.set_arg_ndarray_with_grad(i - template_num, v_primal, v_grad)
             continue
 
         # ti.field
@@ -505,7 +505,7 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
             nbytes = v.element_size() * v.nelement()
             grad_ptr = int(v.grad.data_ptr()) if v.grad is not None else 0
 
-        launch_ctx.set_arg_external_array_with_shape((i - template_num,), arr_ptr, nbytes, array_shape, grad_ptr)
+        launch_ctx.set_arg_external_array_with_shape(i - template_num, arr_ptr, nbytes, array_shape, grad_ptr)
 
     try:
         prog = impl.get_runtime().prog
@@ -569,154 +569,189 @@ def _get_ti_metadata(value: ti.Field | ti.Ndarray) -> FieldMetadata:
 
 
 def ti_to_python(
-    value: ti.Field | ti.Ndarray, transpose: bool = False, to_torch: bool = True
+    value: ti.Field | ti.Ndarray,
+    transpose: bool = False,
+    copy: bool | None = True,
+    to_torch: bool = True,
 ) -> torch.Tensor | np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor / Numpy array.
 
     Args:
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.
         transpose (bool, optional): Whether to move the last batch dimension in front. Defaults to False.
+        copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
+        without raising an exception if not.
         to_torch (bool): Whether to convert to Torch tensor or Numpy array. Defaults to True.
     """
-    # Get metadata
-    ti_data_meta = _get_ti_metadata(value)
-
-    # Extract value as a whole.
-    # Note that this is usually much faster than using a custom kernel to extract a slice.
-    # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
-    is_metal = gs.device.type == "mps"
-    out_dtype = _to_torch_type_fast(ti_data_meta.dtype) if to_torch else _to_numpy_type_fast(ti_data_meta.dtype)
+    # Check if copy mode is supported while setting default mode if not specified.
+    # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
+    # See: https://github.com/pytorch/pytorch/pull/168193
+    # FIXME: Zero-copy is currently broken for ti.Field for some reason...
     data_type = type(value)
-    if issubclass(data_type, (ti.ScalarField, ti.ScalarNdarray)):
-        if to_torch:
-            out = torch.zeros(ti_data_meta.shape, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-        else:
-            out = np.zeros(ti_data_meta.shape, dtype=out_dtype)
-        TO_EXT_ARR_FAST_MAP[data_type](value, out)
-    elif issubclass(data_type, ti.MatrixField):
-        as_vector = value.m == 1
-        shape_ext = (value.n,) if as_vector else (value.n, value.m)
-        if to_torch:
-            out = torch.empty(ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-        else:
-            out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
-        TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
-    elif issubclass(data_type, (ti.VectorNdarray, ti.MatrixNdarray)):
-        layout_is_aos = 1
-        as_vector = issubclass(data_type, ti.VectorNdarray)
-        shape_ext = (value.n,) if as_vector else (value.n, value.m)
-        if to_torch:
-            out = torch.empty(ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-        else:
-            out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
-        TO_EXT_ARR_FAST_MAP[ti.MatrixNdarray](value, out, layout_is_aos, as_vector)
+    use_zerocopy = (
+        gs.use_zerocopy
+        and (to_torch or gs.backend == gs.cpu)
+        and not issubclass(data_type, ti.Field)
+        # and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
+    )
+    if not use_zerocopy:
+        if copy is False:
+            gs.raise_exception(
+                "Specifying 'copy=False' is not supported if 'gs.use_zerocopy=False' or ('to_torch=False' and "
+                "'gs.backend != gs.cpu')."
+            )
+        copy = True
+    elif copy is None:
+        copy = False
+
+    # Extract metadata if necessary
+    if transpose or not use_zerocopy:
+        ti_data_meta = _get_ti_metadata(value)
+
+    # Leverage zero-copy if enabled
+    if use_zerocopy:
+        try:
+            out = value._tc if to_torch or gs.backend != gs.cpu else value._np
+        except AttributeError:
+            out = value._tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
+            if gs.backend == gs.cpu:
+                value._np = value._tc.numpy()
+                if not to_torch:
+                    out = value._np
+        if copy:
+            if to_torch:
+                out = out.clone()
+            else:
+                out = tensor_to_array(out)
     else:
-        gs.raise_exception(f"Unsupported type '{type(value)}'.")
-    if to_torch and is_metal:
-        out = out.to(gs.device)
+        # Extract value as a whole.
+        # Note that this is usually much faster than using a custom kernel to extract a slice.
+        # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
+        is_metal = gs.device.type == "mps"
+        out_dtype = _to_torch_type_fast(ti_data_meta.dtype) if to_torch else _to_numpy_type_fast(ti_data_meta.dtype)
+        if issubclass(data_type, (ti.ScalarField, ti.ScalarNdarray)):
+            if to_torch:
+                out = torch.zeros(ti_data_meta.shape, dtype=out_dtype, device="cpu" if is_metal else gs.device)
+            else:
+                out = np.zeros(ti_data_meta.shape, dtype=out_dtype)
+            TO_EXT_ARR_FAST_MAP[data_type](value, out)
+        elif issubclass(data_type, ti.MatrixField):
+            as_vector = value.m == 1
+            shape_ext = (value.n,) if as_vector else (value.n, value.m)
+            if to_torch:
+                out = torch.empty(
+                    ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device
+                )
+            else:
+                out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
+            TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
+        elif issubclass(data_type, (ti.VectorNdarray, ti.MatrixNdarray)):
+            layout_is_aos = 1
+            as_vector = issubclass(data_type, ti.VectorNdarray)
+            shape_ext = (value.n,) if as_vector else (value.n, value.m)
+            if to_torch:
+                out = torch.empty(
+                    ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device
+                )
+            else:
+                out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
+            TO_EXT_ARR_FAST_MAP[ti.MatrixNdarray](value, out, layout_is_aos, as_vector)
+        else:
+            gs.raise_exception(f"Unsupported type '{type(value)}'.")
+        if to_torch and is_metal:
+            out = out.to(gs.device)
 
     # Transpose if necessary and requested.
     # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
     # advanced masking, which would spare computation later on if expected from the user.
-    if transpose and len(ti_data_meta.shape) > 1:
+    if transpose and (batch_ndim := len(ti_data_meta.shape)) > 1:
         if to_torch:
-            out = out.movedim(out.ndim - ti_data_meta.ndim - 1, 0)
+            out = out.movedim(batch_ndim - 1, 0)
         else:
-            out = np.moveaxis(out, out.ndim - ti_data_meta.ndim - 1, 0)
+            out = np.moveaxis(out, batch_ndim - 1, 0)
 
     return out
 
 
-def extract_slice(
-    value: torch.Tensor | np.ndarray,
-    row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None,
-    col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None,
-    keepdim,
-    unsafe,
-) -> torch.Tensor | np.ndarray:
-    """Converts a GsTaichi field / ndarray instance to a PyTorch tensor / Numpy array.
+def indices_to_mask(
+    *indices: Any, keepdim: bool = True, to_torch: bool = True, raise_if_fancy: bool = False
+) -> tuple[slice | int | torch.Tensor, ...]:
+    """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product.
 
     Args:
-        value (orch.Tensor | np.ndarray): Field or Ndarray to be converted.
-        row_mask (ArrayLike): Elements to extract from first dimension.
-        col_mask (ArrayLike): Columns to extract from second dimension.
-        keepdim (bool): Whether to keep all dimensions even if masks are integers.
-        unsafe (bool): Whether to skip validity check of the masks.
+        keepdim (bool): Whether to keep all dimensions even if masks are integers. Defaults to True.
+        to_torch (bool): Whether to force casting collections to torch.Tensor.
+        copy (bool, optional): Wether to raise an exception if the resulting mask requires advanced indexing (aka. fancy
+        indexing), which would trigger a copy when extracting slice.
     """
-    # Make sure that the user-arguments are valid if requested
-    if not unsafe:
-        if value.ndim == 1 and col_mask is not None:
-            gs.raise_exception("Cannot specify column mask for 1D tensor.")
-        for i, mask in enumerate((row_mask, col_mask)):
-            if mask is None or isinstance(mask, slice):
-                # Slices are always valid by default. Nothing to check.
-                is_out_of_bounds = False
-            elif isinstance(mask, (int, np.integer)):
-                # Do not allow negative indexing for consistency with Taichi
-                is_out_of_bounds = not (0 <= mask < value.shape[i])
-            elif isinstance(mask, torch.Tensor):
-                if not mask.ndim <= 1:
-                    gs.raise_exception("Expecting 1D tensor for masks.")
-                # Resort on post-mortem analysis for bounds check because runtime would be to costly
-                is_out_of_bounds = None
-            else:  # np.ndarray, list, tuple, range
-                try:
-                    mask_start, mask_end = min(mask), max(mask)
-                except ValueError:
-                    gs.raise_exception("Expecting 1D tensor for masks.")
-                is_out_of_bounds = not (0 <= mask_start <= mask_end < value.shape[i])
-            if is_out_of_bounds:
-                gs.raise_exception("Masks are out-of-range.")
+    mask: list[slice | int | torch.Tensor] = []
 
-    # Must convert masks to torch if not slice or int since torch will do it anyway.
-    # Note that being contiguous is not required and does not affect performance.
-    must_allocate = False
-    is_row_mask_tensor = not (row_mask is None or isinstance(row_mask, (slice, int, np.integer)))
-    if is_row_mask_tensor:
-        _row_mask = torch.as_tensor(row_mask, device=gs.device)
-        must_allocate = _row_mask is not row_mask
-        row_mask = _row_mask
-    is_col_mask_tensor = not (col_mask is None or isinstance(col_mask, (slice, int, np.integer)))
-    if is_col_mask_tensor:
-        _col_mask = torch.as_tensor(col_mask, device=gs.device)
-        must_allocate = _col_mask is not col_mask
-        col_mask = _col_mask
-    if must_allocate:
-        gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-
-    # Extract slice if necessary.
-    # Note that unsqueeze is MUCH faster than indexing with `[row_mask]` to keep batch dimensions, because this
-    # requires allocating memory.
-    out = value
-    is_single_col = (is_col_mask_tensor and col_mask.ndim == 0) or isinstance(col_mask, (int, np.integer))
-    is_single_row = (is_row_mask_tensor and row_mask.ndim == 0) or isinstance(row_mask, (int, np.integer))
-    try:
-        if is_col_mask_tensor and is_row_mask_tensor:
-            if not is_single_col and not is_single_row:
-                out = out[row_mask[:, None], col_mask]
-            else:
-                out = out[row_mask, col_mask]
+    has_warned = False
+    is_all_none = True
+    num_tensors = 0
+    is_tensor: list[bool] = [False] * len(indices)
+    for i in range(len(indices) - 1, -1, -1):
+        arg = indices[i]
+        if arg is None:
+            if is_all_none:
+                continue
+            arg = slice(None)
         else:
-            if col_mask is not None:
-                out = out[col_mask] if out.ndim == 1 else out[:, col_mask]
-            if row_mask is not None:
-                out = out[row_mask]
-    except IndexError as e:
-        if not unsafe and is_out_of_bounds is None:
-            for i, mask in enumerate((row_mask, col_mask)):
-                # Do bounds analysis at this point because it was initially skipped
-                if not (0 <= mask < value.shape[i]).all():
-                    gs.raise_exception_from("Masks are out-of-range.", e)
-        raise
+            is_all_none = False
+            if (arg_type := type(arg)) is slice:
+                pass
+            elif arg_type is range:
+                arg = slice(arg.start, arg.stop, arg.step)
+            elif arg_type is int:
+                if keepdim:
+                    arg = slice(arg, arg + 1)
+            else:  # np.ndarray, torch.tensor, list, tuple, np.int32...
+                try:
+                    is_torch_, is_numpy_ = False, False
+                    if isinstance(arg, torch.Tensor):
+                        is_scalar_ = arg.numel() == 1
+                        is_torch_ = True
+                    elif isinstance(arg, np.ndarray):
+                        is_scalar_ = arg.size == 1
+                        is_numpy_ = True
+                    else:
+                        is_scalar_ = len(arg) == 1
+                    if is_scalar_:
+                        arg = slice(idx := arg.item() if is_torch_ or is_numpy_ else arg[0], idx + 1)
+                    else:
+                        if raise_if_fancy:
+                            gs.raise_exception("This mask requires advanced indexing but 'raise_if_fancy=True'.")
+                        if not is_torch_ and to_torch:
+                            # Must convert masks to torch if not slice or int since torch will do it anyway.
+                            # Note that being contiguous is not required and does not affect performance.
+                            arg = torch.tensor(arg, dtype=gs.tc_int, device=gs.device)
+                            if has_warned:
+                                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+                                has_warned = True
+                        is_tensor[i] = True
+                        num_tensors += 1
+                except TypeError:
+                    # Try casting to int if 'len' is undefined.
+                    # Dealing with this fairly unusual use-case in try-except to avoid slowing down the hot path.
+                    arg = int(arg)
+                    if keepdim:
+                        arg = slice(arg, arg + 1)
+        mask.insert(0, arg)
 
-    # Make sure that masks are 1D if all dimensions must be kept
-    if keepdim:
-        if is_single_row:
-            out = out[None]
-        if is_single_col:
-            out = out[None] if value.ndim == 1 else out[:, None]
+    if num_tensors > 1:
+        tensor_idx = 0
+        for i in range(len(mask)):
+            if is_tensor[i]:
+                # assert isinstance(arg, torch.Tensor)
+                shape = [1] * num_tensors
+                shape[tensor_idx] = -1
+                try:
+                    mask[i] = mask[i].reshape(shape)
+                except AttributeError as e:
+                    gs.raise_exception_from("Multi-dimensional masking only supported for 'to_torch=True'.", e)
+                tensor_idx += 1
 
-    return out
+    return tuple(mask)
 
 
 def ti_to_torch(
@@ -726,7 +761,7 @@ def ti_to_torch(
     keepdim=True,
     transpose=False,
     *,
-    unsafe=False,
+    copy: bool | None = True,
 ) -> torch.Tensor:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor.
 
@@ -734,21 +769,28 @@ def ti_to_torch(
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.
         row_mask (optional): Rows to extract from batch dimension after transpose if requested.
         col_mask (optional): Columns to extract from batch dimension after transpose if requested.
-        keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
-        transpose (bool, optional): Whether move to front the first non-batch dimension.
-        unsafe (bool, optional): Whether to skip validity check of the masks.
+        keepdim (bool): Whether to keep all dimensions even if masks are integers.
+        transpose (bool): Whether move to front the first non-batch dimension.
+        copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
+        without raising an exception if not.
     """
-    tensor = ti_to_python(value, transpose, to_torch=True)
+    # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here
+    tensor = ti_to_python(value, transpose, copy=copy, to_torch=True)
+    # assert isinstance(ti_to_python, torch.Tensor)
+    if row_mask is None and col_mask is None:
+        return tensor
 
     ti_data_meta = _get_ti_metadata(value)
+    raise_if_fancy = copy is False
     if len(ti_data_meta.shape) < 2:
         if row_mask is not None and col_mask is not None:
-            gs.raise_exception("Cannot specify both row and colum masks for tensor with 1D batch.")
-        batch_shape = (row_mask if col_mask is None else col_mask, None)
+            gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
+        mask = indices_to_mask(
+            row_mask if col_mask is None else col_mask, to_torch=True, keepdim=keepdim, raise_if_fancy=raise_if_fancy
+        )
     else:
-        batch_shape = (row_mask, col_mask)
-
-    return extract_slice(tensor, *batch_shape, keepdim, unsafe=unsafe)
+        mask = indices_to_mask(row_mask, col_mask, to_torch=True, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
+    return tensor[mask]
 
 
 def ti_to_numpy(
@@ -758,7 +800,7 @@ def ti_to_numpy(
     keepdim=True,
     transpose=False,
     *,
-    unsafe=False,
+    copy: bool | None = True,
 ) -> np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a Numpy array.
 
@@ -768,16 +810,22 @@ def ti_to_numpy(
         col_mask (optional): Columns to extract from batch dimension after transpose if requested.
         keepdim (bool, optional): Whether to keep all dimensions even if masks are integers.
         transpose (bool, optional): Whether move to front the first non-batch dimension.
-        unsafe (bool, optional): Whether to skip validity check of the masks.
+        copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
+        without raising an exception if not.
     """
-    tensor = ti_to_python(value, transpose, to_torch=False)
+    tensor = ti_to_python(value, transpose, copy=copy, to_torch=False)
+    # assert isinstance(ti_to_python, np.ndarray)
+    if row_mask is None and col_mask is None:
+        return tensor
 
     ti_data_meta = _get_ti_metadata(value)
+    raise_if_fancy = copy is False
     if len(ti_data_meta.shape) < 2:
         if row_mask is not None and col_mask is not None:
-            gs.raise_exception("Cannot specify both row and colum masks for tensor with 1D batch.")
-        batch_shape = (row_mask if col_mask is None else col_mask, None)
+            gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
+        mask = indices_to_mask(
+            row_mask if col_mask is None else col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy
+        )
     else:
-        batch_shape = (row_mask, col_mask)
-
-    return extract_slice(tensor, *batch_shape, keepdim, unsafe=unsafe)
+        mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
+    return tensor[mask]

@@ -54,8 +54,8 @@ def main():
             link_idx_local=end_effector.idx_local,
             pos_offset=(0.0, 0.0, 0.15),
             # noise parameters
-            acc_axes_skew=(0.0, 0.01, 0.02),
-            gyro_axes_skew=(0.03, 0.04, 0.05),
+            acc_cross_axis_coupling=(0.0, 0.01, 0.02),
+            gyro_cross_axis_coupling=(0.03, 0.04, 0.05),
             acc_noise=(0.01, 0.01, 0.01),
             gyro_noise=(0.01, 0.01, 0.01),
             acc_random_walk=(0.001, 0.001, 0.001),

@@ -14,6 +14,7 @@ def func_gjk_contact(
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -53,6 +54,8 @@ def func_gjk_contact(
     Note that these terms can be computed from the non-differentiable contact data in a differentiable way. Therefore,
     we store the non-differentiable contact data along with the differentiable contact data for the backward pass.
     """
+    EPS = rigid_global_info.EPS[None]
+
     # Clear the cache to prepare for this GJK-EPA run.
     GJK.clear_cache(gjk_state, i_b)
 
@@ -88,7 +91,7 @@ def func_gjk_contact(
             # otherwise it would be more sensitive to ill-conditionning.
             axis = (2 * (i % 2) - 1) * axis_0 + (1 - 2 * ((i // 2) % 2)) * axis_1
             rotang = 1e-2 * (100 ** ((i - 1) // 4))
-            qrot = gu.ti_rotvec_to_quat(rotang * axis)
+            qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
             func_rotate_frame(i_ga, default_contact_pos, qrot, i_b, geoms_state, geoms_info)
             func_rotate_frame(i_gb, default_contact_pos, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
 
@@ -96,6 +99,7 @@ def func_gjk_contact(
             geoms_state,
             geoms_info,
             verts_info,
+            rigid_global_info,
             static_rigid_sim_config,
             collider_state,
             collider_static_config,
@@ -199,6 +203,7 @@ def func_gjk_contact(
                             geoms_state,
                             geoms_info,
                             geoms_init_AABB,
+                            rigid_global_info,
                         )
 
                         found_default_epa = True
@@ -217,6 +222,7 @@ def func_gjk_contact(
                     geoms_state,
                     geoms_info,
                     verts_info,
+                    rigid_global_info,
                     static_rigid_sim_config,
                     collider_state,
                     collider_static_config,
@@ -657,7 +663,10 @@ def func_contact_orthogonals(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
+    EPS = rigid_global_info.EPS[None]
+
     axis_0 = ti.Vector.zero(gs.ti_float, 3)
     axis_1 = ti.Vector.zero(gs.ti_float, 3)
 
@@ -674,7 +683,7 @@ def func_contact_orthogonals(
 
     # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
     i_l = geoms_info.link_idx[i_g]
-    rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b])
+    rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b], EPS)
     axis_idx = gs.ti_int(0)
     axis_angle_max = gs.ti_float(0.0)
     for i in ti.static(range(3)):
