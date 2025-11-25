@@ -5642,13 +5642,12 @@ def func_update_geoms(
     """
     NOTE: this only update geom pose, not its verts and else.
     """
-    n_geoms = geoms_info.pos.shape[0]
     for i_0 in (
         (
             # Dynamic inner loop for forward pass
             range(rigid_global_info.n_awake_entities[i_b])
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else range(n_geoms)
+            else range(geoms_info.pos.shape[0])
         )
         if ti.static(not is_backward)
         else (
