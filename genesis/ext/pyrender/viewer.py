@@ -205,6 +205,7 @@ class Viewer(pyglet.window.Window):
         plane_reflection=False,
         env_separate_rigid=False,
         enable_interaction=False,
+        disable_keyboard_shortcuts=False,
         **kwargs,
     ):
         #######################################################################
@@ -284,6 +285,8 @@ class Viewer(pyglet.window.Window):
         if registered_keys is not None:
             self._registered_keys = {ord(k.lower()): registered_keys[k] for k in registered_keys}
 
+        self._disable_keyboard_shortcuts = disable_keyboard_shortcuts
+
         #######################################################################
         # Save internal settings
         #######################################################################
@@ -294,24 +297,30 @@ class Viewer(pyglet.window.Window):
         self._message_opac = 1.0 + self._ticks_till_fade
 
         self._display_instr = False
-        self._instr_texts = [
-            ["> [i]: show keyboard instructions"],
-            [
-                "< [i]: hide keyboard instructions",
-                "     [r]: record video",
-                "     [s]: save image",
-                "     [z]: reset camera",
-                "     [a]: camera rotation",
-                "     [h]: shadow",
-                "     [f]: face normal",
-                "     [v]: vertex normal",
-                "     [w]: world frame",
-                "     [l]: link frame",
-                "     [d]: wireframe",
-                "     [c]: camera & frustrum",
-                "   [F11]: full-screen mode",
-            ],
-        ]
+        if self._disable_keyboard_shortcuts:
+            self._instr_texts = [
+                ["Keyboard shortcuts are DISABLED"],
+                ["Keyboard shortcuts are DISABLED"],
+            ]
+        else:
+            self._instr_texts = [
+                ["> [i]: show keyboard instructions"],
+                [
+                    "< [i]: hide keyboard instructions",
+                    "     [r]: record video",
+                    "     [s]: save image",
+                    "     [z]: reset camera",
+                    "     [a]: camera rotation",
+                    "     [h]: shadow",
+                    "     [f]: face normal",
+                    "     [v]: vertex normal",
+                    "     [w]: world frame",
+                    "     [l]: link frame",
+                    "     [d]: wireframe",
+                    "     [c]: camera & frustrum",
+                    "   [F11]: full-screen mode",
+                ],
+            ]
 
         # Set up raymond lights and direct lights
         self._raymond_lights = self._create_raymond_lights()
@@ -868,6 +877,10 @@ class Viewer(pyglet.window.Window):
                 if len(tup) == 3:
                     kwargs = tup[2]
             callback(self, *args, **kwargs)
+            return self.viewer_interaction.on_key_press(symbol, modifiers)
+
+        # If keyboard shortcuts are disabled, skip default key functions
+        if self._disable_keyboard_shortcuts:
             return self.viewer_interaction.on_key_press(symbol, modifiers)
 
         # Otherwise, use default key functions
