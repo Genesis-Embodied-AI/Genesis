@@ -136,19 +136,9 @@ jobs:
               # tmate -S /tmp/tmate.sock wait tmate-ready
               # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-              set -x
-              ps
-              which ps
-              /usr/bin/ps
-
               source /root/.venv/bin/activate
               pip install --no-input ".[dev,render]"
 
-
-              env
-              cat tests/conftest.py
-              md5sum tests/conftest.py
-              grep monitoring tests/conftest.py || true
               pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" --print -x -m "benchmarks" ./tests
               cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
