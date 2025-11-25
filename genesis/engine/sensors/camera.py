@@ -406,6 +406,14 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.sensors.append(self)
 
+        # Add lights from options to the shared metadata
+        for light_config in self._options.lights:
+            if self._shared_metadata.lights is not None:
+                # Convert light config to rasterizer format
+                light_dict = self._convert_light_config_to_rasterizer(light_config)
+                # self._shared_metadata.lights.append(light_dict)
+                self._shared_metadata.context.add_light(light_dict)
+
         self._add_camera_to_rasterizer()
 
         n_envs = max(self._manager._sim._B, 1)
@@ -430,6 +438,23 @@ class RasterizerCameraSensor(BaseCameraSensor):
         context.build(scene)
         context.reset()
         return context
+
+    def _convert_light_config_to_rasterizer(self, light_config):
+        """Convert a light config dict to rasterizer format."""
+        # Default values for rasterizer
+        light_type = light_config.get("type", "directional")
+        pos = light_config.get("pos", (0.0, 0.0, 5.0))
+        dir = light_config.get("dir", (0.0, 0.0, -1.0))
+        color = light_config.get("color", (1.0, 1.0, 1.0))
+        intensity = light_config.get("intensity", 1.0)
+
+        return {
+            "type": light_type,
+            "pos": pos,
+            "dir": dir,
+            "color": tuple(np.array(color) * intensity),
+            "intensity": intensity,
+        }
 
     def _add_camera_to_rasterizer(self):
         """Add this camera to the rasterizer."""
@@ -504,43 +529,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
                 "Use BatchRenderer camera sensors for batched rendering."
             )
 
-    def add_light(
-        self,
-        pos=(0.0, 0.0, 5.0),
-        dir=(0.0, 0.0, -1.0),
-        color=(1.0, 1.0, 1.0),
-        intensity=1.0,
-        type="directional",
-    ):
-        """
-        Add a light to the scene for all rasterizer cameras.
-
-        Parameters
-        ----------
-        pos : tuple[float, float, float]
-            Light position.
-        dir : tuple[float, float, float]
-            Light direction (for directional lights).
-        color : tuple[float, float, float]
-            Light color RGB.
-        intensity : float
-            Light intensity.
-        type : str
-            Light type: "directional" or "point".
-        """
-        if self._shared_metadata.lights is not None:
-            light_dict = {
-                "type": type,
-                "pos": pos,
-                "dir": dir,
-                "color": tuple(np.array(color) * intensity),
-                "intensity": intensity,
-            }
-            self._shared_metadata.lights.append(light_dict)
-
-            # Add to context
-            self._shared_metadata.context.add_light(light_dict)
-
 
 # ========================== Raytracer Camera Sensor ==========================
 @register_sensor(RaytracerCameraOptions, RaytracerCameraSharedMetadata, CameraData)
@@ -582,6 +570,13 @@ class RaytracerCameraSensor(BaseCameraSensor):
             self._shared_metadata.renderer = renderer
 
         self._shared_metadata.sensors.append(self)
+
+        # Add lights from options as mesh lights to the scene
+        scene = self._manager._sim.scene
+        for light_config in self._options.lights:
+            if not scene.is_built:
+                self._add_light_as_mesh_light(scene, light_config)
+
         opts = self._options
 
         # Compute world pose for the camera
@@ -652,6 +647,27 @@ class RaytracerCameraSensor(BaseCameraSensor):
             (n_envs, h, w, 3), dtype=torch.uint8, device=gs.device
         )
 
+    def _add_light_as_mesh_light(self, scene, light_config):
+        """Add a light as a mesh light to the scene."""
+        # Default values for raytracer mesh lights
+        color = light_config.get("color", (1.0, 1.0, 1.0))
+        intensity = light_config.get("intensity", 1.0)
+        radius = light_config.get("radius", 0.5)
+        pos = light_config.get("pos", (0.0, 0.0, 5.0))
+        revert_dir = light_config.get("revert_dir", False)
+        double_sided = light_config.get("double_sided", False)
+        cutoff = light_config.get("cutoff", 180.0)
+
+        morph = gs.morphs.Sphere(pos=pos, radius=radius)
+        scene.add_mesh_light(
+            morph=morph,
+            color=(*color, 1.0),
+            intensity=intensity,
+            revert_dir=revert_dir,
+            double_sided=double_sided,
+            cutoff=cutoff,
+        )
+
     def _on_attach_backend(self, rigid_link, offset_T):
         """Keep the underlying visualizer camera in sync when attaching."""
         if self._camera_obj is not None:
@@ -688,53 +704,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
                 f"Raytracer camera sensors do not support multi-environment rendering (n_envs={n_envs}). "
                 "Use BatchRenderer camera sensors for batched rendering."
             )
-
-    def add_light(
-        self,
-        color=(1.0, 1.0, 1.0),
-        intensity=1.0,
-        radius=0.5,
-        pos=(0.0, 0.0, 5.0),
-        revert_dir=False,
-        double_sided=False,
-        cutoff=180.0,
-    ):
-        """
-        Add a mesh light to the scene for all raytracer cameras.
-
-        Parameters
-        ----------
-        color : tuple[float, float, float]
-            Light color RGB.
-        intensity : float
-            Light intensity.
-        radius : float
-            Radius of the (spherical) light source.
-        pos : tuple[float, float, float]
-            Light position.
-        revert_dir : bool
-            Whether to revert normal direction for mesh light.
-        double_sided : bool
-            Whether the mesh light is double-sided.
-        cutoff : float
-            Light cutoff angle.
-        """
-        # Use the same mesh-light path as the high-level Scene API by creating
-        # a temporary sphere morph and letting the visualizer convert it.
-        scene = self._manager._sim.scene
-        if scene.is_built:
-            gs.logger.warning("RaytracerCameraSensor.add_light() should be called before scene.build(). Ignoring.")
-            return
-
-        morph = gs.morphs.Sphere(pos=pos, radius=radius)
-        scene.add_mesh_light(
-            morph=morph,
-            color=(*color, 1.0),
-            intensity=intensity,
-            revert_dir=revert_dir,
-            double_sided=double_sided,
-            cutoff=cutoff,
-        )
 
 
 # ========================== Batch Renderer Camera Sensor ==========================
@@ -800,6 +769,11 @@ class BatchRendererCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.sensors.append(self)
 
+        # Add lights from options to the renderer
+        for light_config in self._options.lights:
+            if self._shared_metadata.renderer is not None:
+                self._add_light_to_batch_renderer(light_config)
+
         self._camera_obj = BatchRendererCameraWrapper(self)
 
         if len(self._shared_metadata.sensors) == len(self._manager._sensors_by_type[type(self)]):
@@ -849,60 +823,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.last_render_timestep = self._manager._sim.scene.t
 
-    def add_light(
-        self,
-        pos=(0.0, 0.0, 5.0),
-        dir=(0.0, 0.0, -1.0),
-        color=(1.0, 1.0, 1.0),
-        intensity=1.0,
-        directional=True,
-        castshadow=True,
-        cutoff=45.0,
-        attenuation=(1.0, 0.0, 0.0),
-    ):
-        """
-        Add a light to the scene for all batch renderer cameras.
-
-        Parameters
-        ----------
-        pos : tuple[float, float, float]
-            Light position.
-        dir : tuple[float, float, float]
-            Light direction (for directional lights).
-        color : tuple[float, float, float]
-            Light color RGB.
-        intensity : float
-            Light intensity.
-        directional : bool
-            Whether the light is directional.
-        castshadow : bool
-            Whether the light casts shadows.
-        cutoff : float
-            Light cutoff angle in degrees.
-        attenuation : tuple[float, float, float]
-            Light attenuation coefficients (constant, linear, quadratic).
-        """
-        if self._shared_metadata.renderer is not None:
-            self._shared_metadata.renderer.add_light(
-                pos=pos,
-                dir=dir,
-                color=color,
-                intensity=intensity,
-                directional=directional,
-                castshadow=castshadow,
-                cutoff=cutoff,
-                attenuation=attenuation,
-            )
-            self._shared_metadata.lights.append(
-                {
-                    "pos": pos,
-                    "dir": dir,
-                    "color": color,
-                    "intensity": intensity,
-                    "directional": directional,
-                }
-            )
-
     def _apply_camera_transform(self, camera_T: torch.Tensor):
         """Update batch renderer camera from a world transform."""
         from genesis.utils.geom import T_to_trans_quat
@@ -911,3 +831,35 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         camera_pos, camera_quat = T_to_trans_quat(camera_T)
         self._camera_obj._pos = camera_pos
         # Note: BatchRenderer will pick up the updated transform on next render
+
+    def _add_light_to_batch_renderer(self, light_config):
+        """Add a light to the batch renderer."""
+        # Default values for batch renderer
+        pos = light_config.get("pos", (0.0, 0.0, 5.0))
+        dir = light_config.get("dir", (0.0, 0.0, -1.0))
+        color = light_config.get("color", (1.0, 1.0, 1.0))
+        intensity = light_config.get("intensity", 1.0)
+        directional = light_config.get("directional", True)
+        castshadow = light_config.get("castshadow", True)
+        cutoff = light_config.get("cutoff", 45.0)
+        attenuation = light_config.get("attenuation", (1.0, 0.0, 0.0))
+
+        self._shared_metadata.renderer.add_light(
+            pos=pos,
+            dir=dir,
+            color=color,
+            intensity=intensity,
+            directional=directional,
+            castshadow=castshadow,
+            cutoff=cutoff,
+            attenuation=attenuation,
+        )
+        # self._shared_metadata.lights.append(
+        #     {
+        #         "pos": pos,
+        #         "dir": dir,
+        #         "color": color,
+        #         "intensity": intensity,
+        #         "directional": directional,
+        #     }
+        # )

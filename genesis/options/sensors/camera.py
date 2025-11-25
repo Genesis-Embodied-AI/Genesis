@@ -29,6 +29,9 @@ class RasterizerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
         Near clipping plane distance. Default is 0.01.
     far : float
         Far clipping plane distance. Default is 100.0.
+    lights : list[dict], optional
+        List of lights to add for this camera backend. Each light is a dict with
+        backend-specific parameters. Default is empty list.
     entity_idx : int, optional
         The global entity index of the RigidEntity to which this sensor is attached.
         If None, the camera is static (not attached to any entity).
@@ -47,6 +50,7 @@ class RasterizerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     fov: float = 60.0
     near: float = 0.01
     far: float = 100.0
+    lights: list[dict] = []
     # Camera images are updated lazily on read(), so skip per-step measured-cache updates
     update_ground_truth_only: bool = True
 
@@ -61,6 +65,11 @@ class RasterizerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
             gs.raise_exception(f"near must be positive, got: {self.near}")
         if self.far <= self.near:
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
+        if not isinstance(self.lights, list):
+            gs.raise_exception(f"lights must be a list, got: {type(self.lights)}")
+        for i, light in enumerate(self.lights):
+            if not isinstance(light, dict):
+                gs.raise_exception(f"lights[{i}] must be a dict, got: {type(light)}")
 
 
 class RaytracerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
@@ -100,6 +109,9 @@ class RaytracerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
         Environment sphere position. Default is (0, 0, 0).
     env_quat : tuple[float, float, float, float]
         Environment sphere quaternion (w, x, y, z). Default is (1, 0, 0, 0).
+    lights : list[dict], optional
+        List of lights to add for this camera backend. Each light is a dict with
+        backend-specific parameters. Default is empty list.
     entity_idx : int, optional
         The global entity index of the RigidEntity to which this sensor is attached.
         If None, the camera is static (not attached to any entity).
@@ -126,6 +138,7 @@ class RaytracerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     env_radius: float = 15.0
     env_pos: Tuple3FType = (0.0, 0.0, 0.0)
     env_quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+    lights: list[dict] = []
     update_ground_truth_only: bool = True
 
     def model_post_init(self, _):
@@ -139,6 +152,11 @@ class RaytracerCameraOptions(RigidSensorOptionsMixin, SensorOptions):
             gs.raise_exception(f"model must be 'pinhole' or 'thinlens', got: {self.model}")
         if self.spp <= 0:
             gs.raise_exception(f"spp must be positive, got: {self.spp}")
+        if not isinstance(self.lights, list):
+            gs.raise_exception(f"lights must be a list, got: {type(self.lights)}")
+        for i, light in enumerate(self.lights):
+            if not isinstance(light, dict):
+                gs.raise_exception(f"lights[{i}] must be a dict, got: {type(light)}")
 
 
 class BatchRendererCameraOptions(RigidSensorOptionsMixin, SensorOptions):
@@ -166,6 +184,9 @@ class BatchRendererCameraOptions(RigidSensorOptionsMixin, SensorOptions):
         Far clipping plane distance. Default is 100.0.
     use_rasterizer : bool
         Whether to use rasterizer mode. Default is True.
+    lights : list[dict], optional
+        List of lights to add for this camera backend. Each light is a dict with
+        backend-specific parameters. Default is empty list.
     entity_idx : int, optional
         The global entity index of the RigidEntity to which this sensor is attached.
         If None, the camera is static (not attached to any entity).
@@ -185,6 +206,7 @@ class BatchRendererCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     near: float = 0.01
     far: float = 100.0
     use_rasterizer: bool = True
+    lights: list[dict] = []
     update_ground_truth_only: bool = True
 
     def model_post_init(self, _):
@@ -198,3 +220,8 @@ class BatchRendererCameraOptions(RigidSensorOptionsMixin, SensorOptions):
             gs.raise_exception(f"near must be positive, got: {self.near}")
         if self.far <= self.near:
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
+        if not isinstance(self.lights, list):
+            gs.raise_exception(f"lights must be a list, got: {type(self.lights)}")
+        for i, light in enumerate(self.lights):
+            if not isinstance(light, dict):
+                gs.raise_exception(f"lights[{i}] must be a dict, got: {type(light)}")

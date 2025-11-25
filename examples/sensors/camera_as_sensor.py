@@ -90,7 +90,7 @@ CAMERA_SENSORS_KWARGS = [
         (0.0, 0.0, 1.0),
         60.0,
         None,  # No attachment
-        [{"pos": (2.0, 2.0, 5.0), "color": (1.0, 1.0, 1.0), "intensity": 5.0}],
+        [{"pos": (2.0, 2.0, 5.0), "color": (1.0, 1.0, 1.0), "intensity": 1.0}],
     ),
     ("cam1", (0.0, 3.0, 2.0), (0.0, 0.0, 1.0), 60.0, None, []),
     (
@@ -203,9 +203,6 @@ for group_name, configs in config_groups:
     for config in configs:
         camera = scene.add_sensor(config["options"])
         cameras[config["name"]] = camera
-
-        for light_config in config["lights"]:
-            camera.add_light(**light_config)
 
     print(f"✓ Created {len(configs)} {group_name.lower()} cameras")
 
