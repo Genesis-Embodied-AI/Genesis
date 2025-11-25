@@ -136,6 +136,11 @@ jobs:
               # tmate -S /tmp/tmate.sock wait tmate-ready
               # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
+              set -x
+              ps
+              which ps
+              /usr/bin/ps
+
               source /root/.venv/bin/activate
               pip install --no-input ".[dev,render]"
 
