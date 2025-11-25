@@ -35,10 +35,12 @@ def kernel_build_efc_AR_b(
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
+                array_class.PLACEHOLDER,
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
             )
 
             # AR[r, c] = J[c, :] * tmp
@@ -191,10 +193,12 @@ def kernel_dual_finish(
         rigid_solver.func_solve_mass_batched(
             vec=constraint_state.qfrc_constraint,
             out=constraint_state.qacc,
+            out_bw=array_class.PLACEHOLDER,
             i_b=i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
         )
 
         for i_d in range(n_dofs):
@@ -283,10 +287,12 @@ def compute_A_diag(
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
+                array_class.PLACEHOLDER,
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
             )
 
             # Ai = Ji * tmp
