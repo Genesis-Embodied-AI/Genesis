@@ -115,7 +115,7 @@ class Collider:
 
     def _init_collision_fields(self) -> None:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
-        n_possible_pairs_, collision_pair_idx = self._compute_collision_pair_idx()
+        self._n_possible_pairs, collision_pair_idx = self._compute_collision_pair_idx()
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
 
@@ -133,15 +133,15 @@ class Collider:
         )
         self._init_collision_pair_idx(collision_pair_idx)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
-        self._init_max_contact_pairs(n_possible_pairs_)
+        self._init_max_contact_pairs(self._n_possible_pairs)
         self._init_terrain_state()
 
         # Initialize [state], which stores every data that are may be updated at every single simulation step
-        n_possible_pairs = max(n_possible_pairs_, 1)
+        n_possible_pairs_ = max(self._n_possible_pairs, 1)
         self._collider_state = array_class.get_collider_state(
             self._solver,
             self._solver._static_rigid_sim_config,
-            n_possible_pairs,
+            n_possible_pairs_,
             self._solver._options.multiplier_collision_broad_phase,
             self._collider_info,
             self._collider_static_config,
@@ -334,12 +334,16 @@ class Collider:
         )
 
     def detection(self) -> None:
-        self._contacts_info_cache.clear()
         rigid_solver.kernel_update_geom_aabbs(
             self._solver.geoms_state,
             self._solver.geoms_init_AABB,
             self._solver._static_rigid_sim_config,
         )
+
+        if self._n_possible_pairs == 0:
+            return
+
+        self._contacts_info_cache.clear()
         func_broad_phase(
             self._solver.links_state,
             self._solver.links_info,
