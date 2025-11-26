@@ -17,6 +17,11 @@ with redirect_stdout(_ti_outputs):
 
 try:
     import torch
+
+    if tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8):
+        raise ImportError(
+            "'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/"
+        )
 except ImportError as e:
     raise ImportError(
         "'torch' module not available. Please install pytorch manually: https://pytorch.org/get-started/locally/"
