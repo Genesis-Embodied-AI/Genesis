@@ -107,6 +107,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # relying on this mechanism is fragile.
     os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
+    # Disable GsTaichi dynamic array mode by default on MacOS because it is not supported by Metal
+    if sys.platform == "darwin":
+        os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
+
     # Enforce special environment variable before importing test modules if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
@@ -292,6 +296,25 @@ def pytest_xdist_auto_num_workers(config):
         )
 
     return int(num_workers)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    # Run slow tests first
+
+    slow = [item for item in items if "slow" in item.keywords]
+    fast = [item for item in items if "slow" not in item.keywords]
+
+    max_workers = config.option.numprocesses
+    if max_workers is None:
+        max_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+    max_workers = max(max_workers, 1)
+
+    buckets = [[] for _ in range(max_workers)]
+    for idx, item in enumerate(slow + fast):
+        bucket_idx = idx % max_workers
+        buckets[bucket_idx].append(item)
+    items[:] = [item for bucket in sorted(buckets, key=len) for item in bucket]
 
 
 def pytest_runtest_setup(item):

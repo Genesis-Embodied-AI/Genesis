@@ -1,4 +1,5 @@
 import os
+import platform
 import sys
 
 import numpy as np
@@ -7,11 +8,16 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
-import genesis.utils.usda as usda_utils
 import genesis.utils.mesh as mesh_utils
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
+try:
+    import genesis.utils.usda as usda_utils
+
+    HAS_USD_SUPPORT = True
+except ImportError:
+    HAS_USD_SUPPORT = False
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
 NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
@@ -251,6 +257,7 @@ def test_glb_parse_material(glb_file):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'usd-core' module not found.")
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
     asset_path = get_hf_dataset(pattern=f"{usd_filename}.glb")
@@ -300,6 +307,7 @@ def test_usd_parse(usd_filename):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'usd-core' module not found.")
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
 def test_usd_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
@@ -504,6 +512,7 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,

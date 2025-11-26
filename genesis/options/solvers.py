@@ -349,7 +349,8 @@ class RigidOptions(Options):
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     use_gjk_collision: bool, optional
-        Whether to use GJK for collision detection instead of MPR. Defaults to True.
+        Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
+        `sim_options.requires_grad`.
 
     Warning
     -------
@@ -363,7 +364,8 @@ class RigidOptions(Options):
     enable_self_collision: bool = True
     enable_adjacent_collision: bool = False
     disable_constraint: bool = False
-    max_collision_pairs: int = 300
+    max_collision_pairs: int = 150
+    multiplier_collision_broad_phase: int = 8
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: int = 6
 
@@ -384,7 +386,7 @@ class RigidOptions(Options):
     contact_resolve_time: Optional[float] = None
     constraint_timeconst: float = 0.01
     use_contact_island: bool = False
-    box_box_detection: Optional[bool] = None
+    box_box_detection: bool = False
 
     # hibernation threshold
     use_hibernation: bool = False
@@ -399,7 +401,7 @@ class RigidOptions(Options):
     enable_mujoco_compatibility: bool = False
 
     # GJK collision detection
-    use_gjk_collision: bool = True
+    use_gjk_collision: Optional[bool] = None
 
     def __init__(self, **data):
         super().__init__(**data)

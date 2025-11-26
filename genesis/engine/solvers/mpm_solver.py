@@ -369,6 +369,7 @@ class MPMSolver(Solver):
                                 sdf_normal_cell = sdf_decomp.sdf_func_normal_world(
                                     geoms_state=geoms_state,
                                     geoms_info=geoms_info,
+                                    rigid_global_info=rigid_global_info,
                                     collider_static_config=collider_static_config,
                                     sdf_info=sdf_info,
                                     pos_world=cell_pos,
@@ -442,7 +443,6 @@ class MPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].vel = new_vel
                 self.particles[f + 1, i_p, i_b].C = new_C
                 self.particles[f + 1, i_p, i_b].pos = new_pos
-
             else:
                 self.particles[f + 1, i_p, i_b].vel = self.particles[f, i_p, i_b].vel
                 self.particles[f + 1, i_p, i_b].pos = self.particles[f, i_p, i_b].pos
@@ -451,6 +451,14 @@ class MPMSolver(Solver):
                 self.particles[f + 1, i_p, i_b].Jp = self.particles[f, i_p, i_b].Jp
 
             self.particles_ng[f + 1, i_p, i_b].active = self.particles_ng[f, i_p, i_b].active
+
+    @ti.kernel
+    def _is_state_valid(self, f: ti.i32) -> ti.i32:
+        is_success = True
+        for i_p, i_b in ti.ndrange(self._n_particles, self._B):
+            if ti.math.isnan(self.particles[f, i_p, i_b].pos).any():
+                is_success = False
+        return is_success
 
     # ------------------------------------------------------------------------------------
     # ------------------------------------ stepping --------------------------------------
@@ -498,6 +506,10 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
+        if not self._is_state_valid(f):
+            gs.raise_exception(
+                "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+            )
 
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(

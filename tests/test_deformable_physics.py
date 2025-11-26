@@ -1,9 +1,12 @@
 import math
+import platform
+
 import numpy as np
 import pytest
 import torch
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose
 
@@ -73,7 +76,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
         pos = worm.get_state().pos[0, worm.get_el2v()].mean(1)
         n_units = worm.n_elements
 
-    pos = pos.cpu().numpy()
+    pos = tensor_to_array(pos)
     pos_max, pos_min = pos.max(0), pos.min(0)
     pos_range = pos_max - pos_min
     lu_thresh, fh_thresh = 0.3, 0.6
@@ -102,6 +105,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
     scene = gs.Scene(

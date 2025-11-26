@@ -32,8 +32,8 @@ class ConstraintSolverIsland:
         self.sparse_solve: bool = True
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
-        self.len_constraints = (
-            5 * self._collider._collider_info.max_contact_pairs[None]
+        self.len_constraints = int(
+            4 * self._collider._collider_info.max_contact_pairs[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)
@@ -49,7 +49,7 @@ class ConstraintSolverIsland:
             self.jac_n_relevant_dofs = ti.field(gs.ti_int, shape=(self.len_constraints_, self._B))
 
         self.n_constraints = ti.field(gs.ti_int, shape=(self._B,))
-        self.improved = ti.field(gs.ti_int, shape=(self._B,))
+        self.improved = ti.field(gs.ti_bool, shape=(self._B,))
 
         self.Jaref = ti.field(dtype=gs.ti_float, shape=(self.len_constraints_, self._B))
         self.Ma = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
@@ -60,8 +60,8 @@ class ConstraintSolverIsland:
 
         self.efc_D = ti.field(dtype=gs.ti_float, shape=(self.len_constraints_, self._B))
         self.efc_force = ti.field(dtype=gs.ti_float, shape=(self.len_constraints_, self._B))
-        self.active = ti.field(dtype=gs.ti_int, shape=(self.len_constraints_, self._B))
-        self.prev_active = ti.field(dtype=gs.ti_int, shape=(self.len_constraints_, self._B))
+        self.active = ti.field(dtype=gs.ti_bool, shape=(self.len_constraints_, self._B))
+        self.prev_active = ti.field(dtype=gs.ti_bool, shape=(self.len_constraints_, self._B))
         self.qfrc_constraint = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
         self.qacc = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
         self.qacc_ws = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
@@ -566,7 +566,7 @@ class ConstraintSolverIsland:
             tol_scaled = (self._solver.meaninertia[i_b] * ti.max(1, self._solver.n_dofs)) * self.tolerance
             for it in range(self.iterations):
                 self._func_solve_body(i_island, i_b)
-                if self.improved[i_b] < 1:
+                if not self.improved[i_b]:
                     break
 
                 gradient = gs.ti_float(0.0)
@@ -868,9 +868,9 @@ class ConstraintSolverIsland:
         alpha = self._func_linesearch(island, i_b)
 
         if ti.abs(alpha) < gs.EPS:
-            self.improved[i_b] = 0
+            self.improved[i_b] = False
         else:
-            self.improved[i_b] = 1
+            self.improved[i_b] = True
             for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
                 i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                 i_e = self.contact_island.entity_id[i_e_, i_b]

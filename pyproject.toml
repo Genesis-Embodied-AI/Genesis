@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.6"
+version = "0.3.7"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==3.1.1",
+    "gstaichi==4.2.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
@@ -35,12 +35,12 @@ dependencies = [
     "pycollada",
     # Used for parsing `.glb` mesh files
     "pygltflib==1.16.0",
-    # Used for parsing `.usd` mesh files
-    "usd-core<25.11",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
-    "tetgen>=0.6.4",
+    "tetgen>=0.6.4,<0.7.0; platform_machine!='aarch64'",
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
+    # Used to convert VTK output to numpy when converting volume to particles for PBS
+    "vtk",
     # Used here and there to load and export images
     # * 11.0 dramatically improves performance when exporting images to PNG
     "Pillow>11.0",
@@ -116,7 +116,7 @@ render = [
 ]
 usd = [
     # Used for parsing `.usd` mesh files
-    "usd-core",
+    "usd-core<25.11",
 ]
 
 [project.scripts]
@@ -150,8 +150,6 @@ addopts = [
     # "--exitfirst",
     "--numprocesses=auto",
     "--dist=worksteal",
-    "--random-order-bucket=global",
-    "--random-order-seed=0",
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",

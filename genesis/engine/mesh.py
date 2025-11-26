@@ -7,11 +7,12 @@ import numpy.typing as npt
 import trimesh
 
 import genesis as gs
-from genesis.options.surfaces import Surface
 import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
+from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
+from genesis.utils.misc import redirect_libc_stderr
 
 
 class Mesh(RBC):
@@ -125,7 +126,8 @@ class Mesh(RBC):
 
         if not is_cached_loaded:
             # Importing pymeshlab is very slow and not used very often. Let's delay import.
-            import pymeshlab
+            with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
+                import pymeshlab
 
             gs.logger.info("Remeshing for tetrahedralization...")
             ms = pymeshlab.MeshSet()
@@ -153,18 +155,7 @@ class Mesh(RBC):
         """
         Tetrahedralize the mesh.
         """
-        # Importing pyvista and tetgen are very slow and not used very often. Let's delay import.
-        import pyvista as pv
-        import tetgen
-
-        pv_obj = pv.PolyData(
-            self.verts, np.concatenate([np.full((self.faces.shape[0], 1), self.faces.shape[1]), self.faces], axis=1)
-        )
-        tet = tetgen.TetGen(pv_obj)
-        switches = mu.make_tetgen_switches(tet_cfg)
-        verts, elems = tet.tetrahedralize(switches=switches)
-        # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
-        return verts, elems
+        return mu.tetrahedralize_mesh(self._mesh, tet_cfg)
 
     def particlize(
         self,

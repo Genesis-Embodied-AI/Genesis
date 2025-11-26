@@ -6,14 +6,14 @@ import numpy as np
 import gstaichi as ti
 
 import genesis as gs
-from genesis.options.solvers import SAPCouplerOptions
-from genesis.repr_base import RBC
-from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum, EQUALITY_TYPE
+from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
+from genesis.options.solvers import SAPCouplerOptions
+from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -323,8 +323,8 @@ class SAPCoupler(RBC):
                 verts, elems = eu.split_all_surface_tets(*eu.mesh_to_elements(file=geom.get_trimesh(), tet_cfg=tet_cfg))
                 rigid_volume_verts.append(verts)
                 rigid_volume_elems.append(elems + offset)
-                rigid_volume_verts_geom_idx.append(np.full(len(verts), geom.idx, dtype=np.int32))
-                rigid_volume_elems_geom_idx.append(np.full(len(elems), geom.idx, dtype=np.int32))
+                rigid_volume_verts_geom_idx.append(np.full(len(verts), geom.idx, dtype=gs.np_int))
+                rigid_volume_elems_geom_idx.append(np.full(len(elems), geom.idx, dtype=gs.np_int))
                 signed_distance, *_ = igl.signed_distance(verts, geom.init_verts, geom.init_faces)
                 signed_distance = signed_distance.astype(gs.np_float, copy=False)
 
@@ -340,11 +340,11 @@ class SAPCoupler(RBC):
                 offset += len(verts)
         if not rigid_volume_verts:
             gs.raise_exception("No rigid collision geometries found.")
-        rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=np.float32)
-        rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0, dtype=np.float32)
-        rigid_volume_verts_geom_idx_np = np.concatenate(rigid_volume_verts_geom_idx, axis=0, dtype=np.float32)
-        rigid_volume_elems_geom_idx_np = np.concatenate(rigid_volume_elems_geom_idx, axis=0, dtype=np.float32)
-        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=np.float32)
+        rigid_volume_verts_np = np.concatenate(rigid_volume_verts, axis=0, dtype=gs.np_float)
+        rigid_volume_elems_np = np.concatenate(rigid_volume_elems, axis=0, dtype=gs.np_int)
+        rigid_volume_verts_geom_idx_np = np.concatenate(rigid_volume_verts_geom_idx, axis=0, dtype=gs.np_int)
+        rigid_volume_elems_geom_idx_np = np.concatenate(rigid_volume_elems_geom_idx, axis=0, dtype=gs.np_int)
+        rigid_pressure_field_np = np.concatenate(rigid_pressure_field, axis=0, dtype=gs.np_float)
 
         self.n_rigid_volume_verts = len(rigid_volume_verts_np)
         self.n_rigid_volume_elems = len(rigid_volume_elems_np)
@@ -357,10 +357,10 @@ class SAPCoupler(RBC):
         self.rigid_volume_verts_geom_idx.from_numpy(rigid_volume_verts_geom_idx_np)
         self.rigid_volume_elems_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_elems,))
         self.rigid_volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
-        # FIXME: Convert collision_pair_validity to field here because SAPCouler cannot support ndarray/field switch yet
-        np_collision_pair_validity = self.rigid_solver.collider._collider_info.collision_pair_validity.to_numpy()
-        self.rigid_collision_pair_validity = ti.field(gs.ti_int, shape=np_collision_pair_validity.shape)
-        self.rigid_collision_pair_validity.from_numpy(np_collision_pair_validity)
+        # FIXME: Convert collision_pair_idx to field here because SAPCoupler cannot support ndarray/field switch yet
+        np_collision_pair_idx = self.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+        self.rigid_collision_pair_idx = ti.field(gs.ti_int, shape=np_collision_pair_idx.shape)
+        self.rigid_collision_pair_idx.from_numpy(np_collision_pair_idx)
         self.rigid_pressure_field = ti.field(gs.ti_float, shape=(self.n_rigid_volume_verts,))
         self.rigid_pressure_field.from_numpy(rigid_pressure_field_np)
         self.rigid_pressure_gradient_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_elems,))
@@ -377,14 +377,14 @@ class SAPCoupler(RBC):
             i_g = self.rigid_volume_verts_geom_idx[i_v]
             pos = geoms_state.pos[i_g, i_b]
             quat = geoms_state.quat[i_g, i_b]
-            R = gu.ti_quat_to_R(quat)
+            R = gu.ti_quat_to_R(quat, gs.EPS)
             self.rigid_volume_verts[i_b, i_v] = R @ self.rigid_volume_verts_rest[i_v] + pos
 
         for i_b, i_e in ti.ndrange(self._B, self.n_rigid_volume_elems):
             i_g = self.rigid_volume_elems_geom_idx[i_e]
             pos = geoms_state.pos[i_g, i_b]
             quat = geoms_state.quat[i_g, i_b]
-            R = gu.ti_quat_to_R(quat)
+            R = gu.ti_quat_to_R(quat, gs.EPS)
             self.rigid_pressure_gradient[i_b, i_e] = R @ self.rigid_pressure_gradient_rest[i_e]
 
     @ti.kernel
@@ -601,6 +601,7 @@ class SAPCoupler(RBC):
 
         if self.rigid_solver.is_active:
             kernel_update_all_verts(
+                geoms_info=self.rigid_solver.geoms_info,
                 geoms_state=self.rigid_solver.geoms_state,
                 verts_info=self.rigid_solver.verts_info,
                 free_verts_state=self.rigid_solver.free_verts_state,

@@ -11,6 +11,7 @@ from datetime import datetime
 from functools import cache
 from itertools import chain
 from pathlib import Path
+from types import GeneratorType
 from typing import Literal, Sequence
 
 import cpuinfo
@@ -54,7 +55,7 @@ def get_hardware_fingerprint(include_gpu=True):
     # CPU info
     cpu_info = cpuinfo.get_cpu_info()
     infos = [
-        cpu_info.get("brand_raw", cpu_info.get("hardware_raw")),
+        next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw")))),
         cpu_info.get("arch"),
     ]
 
@@ -236,7 +237,7 @@ def get_hf_dataset(
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError):
+        except (HTTPError, FileNotFoundError, RuntimeError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
@@ -261,6 +262,8 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     # Convert input arguments as numpy arrays
     args = [actual, desired]
     for i, arg in enumerate(args):
+        if isinstance(arg, (GeneratorType, map)):
+            arg = tuple(arg)
         if isinstance(arg, (tuple, list)):
             arg = np.stack([tensor_to_array(val) for val in arg], axis=0)
         args[i] = tensor_to_array(arg)
