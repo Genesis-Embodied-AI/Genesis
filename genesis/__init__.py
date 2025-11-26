@@ -171,9 +171,9 @@ def init(
     tc_int = torch.int32
 
     # Bool
-    # Note that `ti.u1` is broken on Apple Metal and output garbage.
+    # Note that `ti.u1` is broken on Apple Metal and Vulkan.
     global ti_bool, np_bool, tc_bool
-    if backend == gs_backend.metal:
+    if backend in (gs_backend.metal, gs_backend.vulkan):
         ti_bool = ti.i32
         np_bool = np.int32
         tc_bool = torch.int32
