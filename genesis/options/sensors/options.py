@@ -68,7 +68,7 @@ class RigidSensorOptionsMixin:
         The rotational offset of the sensor from the RigidLink in degrees.
     """
 
-    entity_idx: int
+    entity_idx: int = -1
     link_idx_local: int = 0
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
@@ -77,10 +77,7 @@ class RigidSensorOptionsMixin:
         from genesis.engine.entities import RigidEntity
 
         super().validate(scene)
-        # Skip validation if entity_idx is None (static sensors)
-        if self.entity_idx is None:
-            return
-        if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
+        if self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
         entity = scene.entities[self.entity_idx]
         if not isinstance(entity, RigidEntity):
