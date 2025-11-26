@@ -28,16 +28,11 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     lights : list[dict], optional
         List of lights to add for this camera backend. Each light is a dict with
         backend-specific parameters. Default is empty list.
-    entity_idx : int, optional
-        The global entity index of the RigidEntity to which this sensor is attached.
-        If None, the camera is static (not attached to any entity).
+    entity_idx : int
+        The global entity index of the RigidEntity to which this sensor is attached. -1 or None for static sensors.
     link_idx_local : int, optional
         The local index of the RigidLink of the RigidEntity to which this sensor is attached.
-        Default is 0.
     """
-
-    # Override to make entity_idx optional for static cameras
-    entity_idx: Optional[int] = None
 
     res: tuple[int, int] = (512, 512)
     pos: Tuple3FType = (3.5, 0.0, 1.5)

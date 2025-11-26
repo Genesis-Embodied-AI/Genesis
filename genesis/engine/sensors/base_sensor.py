@@ -328,7 +328,7 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
         batch_size = self._manager._sim._B
 
         # If entity_idx is < 0, this is a static sensor (not attached to any link)
-        if self._options.entity_idx < 0:
+        if self._options.entity_idx is None or self._options.entity_idx < 0:
             self._link = None
             return
 
