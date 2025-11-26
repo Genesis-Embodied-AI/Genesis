@@ -69,7 +69,7 @@ class RigidSensorOptionsMixin:
     """
 
     entity_idx: int | None = -1
-    link_idx_local: int | None = 0
+    link_idx_local: int = 0
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
