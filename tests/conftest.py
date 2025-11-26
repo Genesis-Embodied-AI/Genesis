@@ -1,6 +1,7 @@
 import base64
 import ctypes
 import gc
+import logging
 import os
 import re
 import subprocess
@@ -495,7 +496,7 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         yield
         return
 
-    logging_level = request.config.getoption("--log-cli-level")
+    logging_level = request.config.getoption("--log-cli-level", logging.INFO)
     debug = request.config.getoption("--dev")
 
     if not taichi_offline_cache:
