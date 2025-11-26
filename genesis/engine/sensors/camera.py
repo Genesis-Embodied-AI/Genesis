@@ -793,26 +793,16 @@ class BatchRendererCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.renderer.update_scene(force_render=False)
 
-        render_result = self._shared_metadata.renderer.render(
+        rgb_arr, *_ = self._shared_metadata.renderer.render(
             rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=False
         )
-        rgb_arr = render_result[0]
 
         # rgb_arr might be a tuple of arrays (one per camera) or a single array
         # Handle both cases
         if isinstance(rgb_arr, (tuple, list)):
-            rgb_tensors = []
-            for arr in rgb_arr:
-                if isinstance(arr, torch.Tensor):
-                    rgb_tensors.append(arr.to(dtype=torch.uint8, device=gs.device))
-                else:
-                    rgb_tensors.append(torch.from_numpy(arr).to(dtype=torch.uint8, device=gs.device))
-            rgb_arr = torch.stack(rgb_tensors)
+            rgb_arr = torch.stack([torch.as_tensor(arr).to(dtype=torch.uint8, device=gs.device) for arr in rgb_arr])
         else:
-            if isinstance(rgb_arr, torch.Tensor):
-                rgb_arr = rgb_arr.to(dtype=torch.uint8, device=gs.device)
-            else:
-                rgb_arr = torch.from_numpy(rgb_arr).to(dtype=torch.uint8, device=gs.device)
+            rgb_arr = torch.as_tensor(rgb_arr).to(dtype=torch.uint8, device=gs.device)
 
         for cam_idx, sensor in enumerate(sensors):
             sensor._shared_metadata.image_cache[sensor._idx] = rgb_arr[cam_idx]
@@ -851,12 +841,3 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             cutoff=cutoff,
             attenuation=attenuation,
         )
-        # self._shared_metadata.lights.append(
-        #     {
-        #         "pos": pos,
-        #         "dir": dir,
-        #         "color": color,
-        #         "intensity": intensity,
-        #         "directional": directional,
-        #     }
-        # )

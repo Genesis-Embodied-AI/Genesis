@@ -85,7 +85,7 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         variance = np.var(rgb_np)
         assert variance > 1.0
     data_env0 = raster_cam0.read(envs_idx=0)
-    assert data_env0.rgb.shape == (512, 512, 3), f"Single env read shape mismatch: got {data_env0.rgb.shape}"
+    assert data_env0.rgb.shape == (512, 512, 3)
 
     def _get_camera_world_pos(sensor):
         renderer = sensor._shared_metadata.renderer
@@ -104,4 +104,4 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     data_attached_moved = raster_cam_attached.read()
     cam_pos_final = _get_camera_world_pos(raster_cam_attached)
     cam_move_dist = np.linalg.norm(cam_pos_final - cam_pos_initial)
-    assert cam_move_dist > 1e-2, f"Attached camera position didn't change after sphere moved (dist={cam_move_dist:.3e})"
+    assert cam_move_dist > 1e-2
