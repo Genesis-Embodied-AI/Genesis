@@ -875,6 +875,8 @@ class RigidSolver(Solver):
                     f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
                     "RigidSolver's option 'max_collision_pairs'."
                 )
+            case 3:
+                gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
 
     def _kernel_detect_collision(self):
         self.collider.reset(cache_only=True)
@@ -5534,50 +5536,135 @@ def func_integrate(
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
     n_links = links_info.root_idx.shape[0]
+
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
+            is_valid = True
             for i_d_ in range(rigid_global_info.n_awake_dofs[i_b]):
                 i_d = rigid_global_info.awake_dofs[i_d_, i_b]
-                dofs_state.vel[i_d, i_b] = (
-                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
-                )
+                if ti.math.isnan(dofs_state.acc[i_d, i_b]):
+                    is_valid = False
 
+            if is_valid:
+                for i_d_ in range(rigid_global_info.n_awake_dofs[i_b]):
+                    i_d = rigid_global_info.awake_dofs[i_d_, i_b]
+                    dofs_state.vel[i_d, i_b] = (
+                        dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
+                    )
+
+                for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
+                    i_l = rigid_global_info.awake_links[i_l_, i_b]
+                    I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+
+                    for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+                        I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+                        dof_start = joints_info.dof_start[I_j]
+                        q_start = joints_info.q_start[I_j]
+                        q_end = joints_info.q_end[I_j]
+
+                        joint_type = joints_info.type[I_j]
+
+                        if joint_type == gs.JOINT_TYPE.FREE:
+                            rot = ti.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start + 3, i_b],
+                                    rigid_global_info.qpos[q_start + 4, i_b],
+                                    rigid_global_info.qpos[q_start + 5, i_b],
+                                    rigid_global_info.qpos[q_start + 6, i_b],
+                                ]
+                            )
+                            ang = (
+                                ti.Vector(
+                                    [
+                                        dofs_state.vel[dof_start + 3, i_b],
+                                        dofs_state.vel[dof_start + 4, i_b],
+                                        dofs_state.vel[dof_start + 5, i_b],
+                                    ]
+                                )
+                                * rigid_global_info.substep_dt[None]
+                            )
+                            qrot = gu.ti_rotvec_to_quat(ang, EPS)
+                            rot = gu.ti_transform_quat_by_quat(qrot, rot)
+                            pos = ti.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start, i_b],
+                                    rigid_global_info.qpos[q_start + 1, i_b],
+                                    rigid_global_info.qpos[q_start + 2, i_b],
+                                ]
+                            )
+                            vel = ti.Vector(
+                                [
+                                    dofs_state.vel[dof_start, i_b],
+                                    dofs_state.vel[dof_start + 1, i_b],
+                                    dofs_state.vel[dof_start + 2, i_b],
+                                ]
+                            )
+                            pos = pos + vel * rigid_global_info.substep_dt[None]
+                            for j in ti.static(range(3)):
+                                rigid_global_info.qpos[q_start + j, i_b] = pos[j]
+                            for j in ti.static(range(4)):
+                                rigid_global_info.qpos[q_start + j + 3, i_b] = rot[j]
+                        elif joint_type == gs.JOINT_TYPE.FIXED:
+                            pass
+                        elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                            rot = ti.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start + 0, i_b],
+                                    rigid_global_info.qpos[q_start + 1, i_b],
+                                    rigid_global_info.qpos[q_start + 2, i_b],
+                                    rigid_global_info.qpos[q_start + 3, i_b],
+                                ]
+                            )
+                            ang = (
+                                ti.Vector(
+                                    [
+                                        dofs_state.vel[dof_start + 3, i_b],
+                                        dofs_state.vel[dof_start + 4, i_b],
+                                        dofs_state.vel[dof_start + 5, i_b],
+                                    ]
+                                )
+                                * rigid_global_info.substep_dt[None]
+                            )
+                            qrot = gu.ti_rotvec_to_quat(ang, EPS)
+                            rot = gu.ti_transform_quat_by_quat(qrot, rot)
+                            for j in ti.static(range(4)):
+                                rigid_global_info.qpos[q_start + j, i_b] = rot[j]
+
+                        else:
+                            for j in range(q_end - q_start):
+                                rigid_global_info.qpos[q_start + j, i_b] = (
+                                    rigid_global_info.qpos[q_start + j, i_b]
+                                    + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[None]
+                                )
+    else:
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
-            for i_l_ in range(rigid_global_info.n_awake_links[i_b]):
-                i_l = rigid_global_info.awake_links[i_l_, i_b]
-                I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+            is_valid = True
+            for i_d in range(n_dofs):
+                if ti.math.isnan(dofs_state.acc[i_d, i_b]):
+                    is_valid = False
 
-                for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
+            if is_valid:
+                for i_d in range(n_dofs):
+                    dofs_state.vel[i_d, i_b] = (
+                        dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
+                    )
+
+                for i_l in range(n_links):
+                    I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                    if links_info.n_dofs[I_l] == 0:
+                        continue
+
+                    dof_start = links_info.dof_start[I_l]
+                    q_start = links_info.q_start[I_l]
+                    q_end = links_info.q_end[I_l]
+
+                    i_j = links_info.joint_start[I_l]
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
-                    dof_start = joints_info.dof_start[I_j]
-                    q_start = joints_info.q_start[I_j]
-                    q_end = joints_info.q_end[I_j]
-
                     joint_type = joints_info.type[I_j]
 
                     if joint_type == gs.JOINT_TYPE.FREE:
-                        rot = ti.Vector(
-                            [
-                                rigid_global_info.qpos[q_start + 3, i_b],
-                                rigid_global_info.qpos[q_start + 4, i_b],
-                                rigid_global_info.qpos[q_start + 5, i_b],
-                                rigid_global_info.qpos[q_start + 6, i_b],
-                            ]
-                        )
-                        ang = (
-                            ti.Vector(
-                                [
-                                    dofs_state.vel[dof_start + 3, i_b],
-                                    dofs_state.vel[dof_start + 4, i_b],
-                                    dofs_state.vel[dof_start + 5, i_b],
-                                ]
-                            )
-                            * rigid_global_info.substep_dt[None]
-                        )
-                        qrot = gu.ti_rotvec_to_quat(ang, EPS)
-                        rot = gu.ti_transform_quat_by_quat(qrot, rot)
                         pos = ti.Vector(
                             [
                                 rigid_global_info.qpos[q_start, i_b],
@@ -5595,25 +5682,22 @@ def func_integrate(
                         pos = pos + vel * rigid_global_info.substep_dt[None]
                         for j in ti.static(range(3)):
                             rigid_global_info.qpos[q_start + j, i_b] = pos[j]
-                        for j in ti.static(range(4)):
-                            rigid_global_info.qpos[q_start + j + 3, i_b] = rot[j]
-                    elif joint_type == gs.JOINT_TYPE.FIXED:
-                        pass
-                    elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                    if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
+                        rot_offset = 3 if joint_type == gs.JOINT_TYPE.FREE else 0
                         rot = ti.Vector(
                             [
-                                rigid_global_info.qpos[q_start + 0, i_b],
-                                rigid_global_info.qpos[q_start + 1, i_b],
-                                rigid_global_info.qpos[q_start + 2, i_b],
-                                rigid_global_info.qpos[q_start + 3, i_b],
+                                rigid_global_info.qpos[q_start + rot_offset + 0, i_b],
+                                rigid_global_info.qpos[q_start + rot_offset + 1, i_b],
+                                rigid_global_info.qpos[q_start + rot_offset + 2, i_b],
+                                rigid_global_info.qpos[q_start + rot_offset + 3, i_b],
                             ]
                         )
                         ang = (
                             ti.Vector(
                                 [
-                                    dofs_state.vel[dof_start + 3, i_b],
-                                    dofs_state.vel[dof_start + 4, i_b],
-                                    dofs_state.vel[dof_start + 5, i_b],
+                                    dofs_state.vel[dof_start + rot_offset + 0, i_b],
+                                    dofs_state.vel[dof_start + rot_offset + 1, i_b],
+                                    dofs_state.vel[dof_start + rot_offset + 2, i_b],
                                 ]
                             )
                             * rigid_global_info.substep_dt[None]
@@ -5621,84 +5705,13 @@ def func_integrate(
                         qrot = gu.ti_rotvec_to_quat(ang, EPS)
                         rot = gu.ti_transform_quat_by_quat(qrot, rot)
                         for j in ti.static(range(4)):
-                            rigid_global_info.qpos[q_start + j, i_b] = rot[j]
-
+                            rigid_global_info.qpos[q_start + j + rot_offset, i_b] = rot[j]
                     else:
                         for j in range(q_end - q_start):
                             rigid_global_info.qpos[q_start + j, i_b] = (
                                 rigid_global_info.qpos[q_start + j, i_b]
                                 + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[None]
                             )
-
-    else:
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(n_dofs, _B):
-            dofs_state.vel[i_d, i_b] = (
-                dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
-            )
-
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_l, i_b in ti.ndrange(n_links, _B):
-            I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
-            if links_info.n_dofs[I_l] == 0:
-                continue
-
-            dof_start = links_info.dof_start[I_l]
-            q_start = links_info.q_start[I_l]
-            q_end = links_info.q_end[I_l]
-
-            i_j = links_info.joint_start[I_l]
-            I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
-            joint_type = joints_info.type[I_j]
-
-            if joint_type == gs.JOINT_TYPE.FREE:
-                pos = ti.Vector(
-                    [
-                        rigid_global_info.qpos[q_start, i_b],
-                        rigid_global_info.qpos[q_start + 1, i_b],
-                        rigid_global_info.qpos[q_start + 2, i_b],
-                    ]
-                )
-                vel = ti.Vector(
-                    [
-                        dofs_state.vel[dof_start, i_b],
-                        dofs_state.vel[dof_start + 1, i_b],
-                        dofs_state.vel[dof_start + 2, i_b],
-                    ]
-                )
-                pos = pos + vel * rigid_global_info.substep_dt[None]
-                for j in ti.static(range(3)):
-                    rigid_global_info.qpos[q_start + j, i_b] = pos[j]
-            if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
-                rot_offset = 3 if joint_type == gs.JOINT_TYPE.FREE else 0
-                rot = ti.Vector(
-                    [
-                        rigid_global_info.qpos[q_start + rot_offset + 0, i_b],
-                        rigid_global_info.qpos[q_start + rot_offset + 1, i_b],
-                        rigid_global_info.qpos[q_start + rot_offset + 2, i_b],
-                        rigid_global_info.qpos[q_start + rot_offset + 3, i_b],
-                    ]
-                )
-                ang = (
-                    ti.Vector(
-                        [
-                            dofs_state.vel[dof_start + rot_offset + 0, i_b],
-                            dofs_state.vel[dof_start + rot_offset + 1, i_b],
-                            dofs_state.vel[dof_start + rot_offset + 2, i_b],
-                        ]
-                    )
-                    * rigid_global_info.substep_dt[None]
-                )
-                qrot = gu.ti_rotvec_to_quat(ang, EPS)
-                rot = gu.ti_transform_quat_by_quat(qrot, rot)
-                for j in ti.static(range(4)):
-                    rigid_global_info.qpos[q_start + j + rot_offset, i_b] = rot[j]
-            else:
-                for j in range(q_end - q_start):
-                    rigid_global_info.qpos[q_start + j, i_b] = (
-                        rigid_global_info.qpos[q_start + j, i_b]
-                        + dofs_state.vel[dof_start + j, i_b] * rigid_global_info.substep_dt[None]
-                    )
 
 
 @ti.func
