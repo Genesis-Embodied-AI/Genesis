@@ -406,11 +406,11 @@ class StructContactCache(metaclass=BASE_METACLASS):
     normal: V_ANNOTATION
 
 
-def get_contact_cache(solver):
+def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
     return StructContactCache(
-        i_va_ws=V(dtype=gs.ti_int, shape=(solver.n_geoms_, solver.n_geoms_, _B)),
-        normal=V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, solver.n_geoms_, _B)),
+        i_va_ws=V(dtype=gs.ti_int, shape=(2, n_possible_pairs, _B)),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=(n_possible_pairs, _B)),
     )
 
 
@@ -548,7 +548,7 @@ def get_collider_state(
         n_contacts=V(dtype=gs.ti_int, shape=(_B,)),
         n_contacts_hibernated=V(dtype=gs.ti_int, shape=(_B,)),
         first_time=V(dtype=gs.ti_bool, shape=(_B,)),
-        contact_cache=get_contact_cache(solver),
+        contact_cache=get_contact_cache(solver, n_possible_pairs),
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
@@ -560,7 +560,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     vert_neighbors: V_ANNOTATION
     vert_neighbor_start: V_ANNOTATION
     vert_n_neighbors: V_ANNOTATION
-    collision_pair_validity: V_ANNOTATION
+    collision_pair_idx: V_ANNOTATION
     max_possible_pairs: V_ANNOTATION
     max_collision_pairs: V_ANNOTATION
     max_contact_pairs: V_ANNOTATION
@@ -591,7 +591,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         vert_neighbors=V(dtype=gs.ti_int, shape=(max(n_vert_neighbors, 1),)),
         vert_neighbor_start=V(dtype=gs.ti_int, shape=(solver.n_verts_,)),
         vert_n_neighbors=V(dtype=gs.ti_int, shape=(solver.n_verts_,)),
-        collision_pair_validity=V(dtype=gs.ti_int, shape=(solver.n_geoms_, solver.n_geoms_)),
+        collision_pair_idx=V(dtype=gs.ti_int, shape=(solver.n_geoms_, solver.n_geoms_)),
         max_possible_pairs=V(dtype=gs.ti_int, shape=()),
         max_collision_pairs=V(dtype=gs.ti_int, shape=()),
         max_contact_pairs=V(dtype=gs.ti_int, shape=()),
