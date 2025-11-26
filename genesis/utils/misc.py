@@ -571,7 +571,7 @@ def _get_ti_metadata(value: ti.Field | ti.Ndarray) -> FieldMetadata:
 def ti_to_python(
     value: ti.Field | ti.Ndarray,
     transpose: bool = False,
-    copy: bool | None = True,
+    copy: bool | None = None,
     to_torch: bool = True,
 ) -> torch.Tensor | np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor / Numpy array.
@@ -761,7 +761,7 @@ def ti_to_torch(
     keepdim=True,
     transpose=False,
     *,
-    copy: bool | None = True,
+    copy: bool | None = None,
 ) -> torch.Tensor:
     """Converts a GsTaichi field / ndarray instance to a PyTorch tensor.
 
@@ -800,7 +800,7 @@ def ti_to_numpy(
     keepdim=True,
     transpose=False,
     *,
-    copy: bool | None = True,
+    copy: bool | None = None,
 ) -> np.ndarray:
     """Converts a GsTaichi field / ndarray instance to a Numpy array.
 

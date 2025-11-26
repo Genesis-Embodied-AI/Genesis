@@ -11,6 +11,7 @@ from datetime import datetime
 from functools import cache
 from itertools import chain
 from pathlib import Path
+from types import GeneratorType
 from typing import Literal, Sequence
 
 import cpuinfo
@@ -261,6 +262,8 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     # Convert input arguments as numpy arrays
     args = [actual, desired]
     for i, arg in enumerate(args):
+        if isinstance(arg, (GeneratorType, map)):
+            arg = tuple(arg)
         if isinstance(arg, (tuple, list)):
             arg = np.stack([tensor_to_array(val) for val in arg], axis=0)
         args[i] = tensor_to_array(arg)

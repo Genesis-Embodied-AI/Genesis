@@ -14,15 +14,7 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
-from genesis.utils.misc import (
-    ALLOCATE_TENSOR_WARNING,
-    DeprecationError,
-    ti_to_torch,
-    ti_to_numpy,
-    ti_to_python,
-    indices_to_mask,
-    _get_ti_metadata,
-)
+from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch, ti_to_numpy, indices_to_mask
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
@@ -131,7 +123,6 @@ class RigidSolver(Solver):
         self._options = options
 
         self._cur_step = -1
-        self._links_state_cache = {}
 
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
@@ -819,37 +810,9 @@ class RigidSolver(Solver):
             else:
                 self.constraint_solver = ConstraintSolver(self)
 
-    def _get_links_data(
-        self,
-        field_name: str,
-        row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
-        col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
-        keepdim=True,
-        *,
-        to_torch=True,
-    ):
-        links_state_py = self._links_state_cache.setdefault((to_torch,), {})
-
-        field = getattr(self.links_state, field_name)
-        tensor = links_state_py.get(field_name)
-        if tensor is None:
-            tensor = links_state_py[field_name] = ti_to_python(field, transpose=True, to_torch=to_torch)
-
-        ti_data_meta = _get_ti_metadata(field)
-        if len(ti_data_meta.shape) < 2:
-            if row_mask is not None and col_mask is not None:
-                gs.raise_exception("Cannot specify both row and colum masks for tensor with 1D batch.")
-            mask = indices_to_mask(row_mask if col_mask is None else col_mask, keepdim=keepdim, to_torch=to_torch)
-        else:
-            mask = indices_to_mask(row_mask, col_mask, keepdim=keepdim, to_torch=to_torch)
-
-        return tensor[mask]
-
     def substep(self):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
-
-        self._links_state_cache.clear()
 
         kernel_step_1(
             links_state=self.links_state,
@@ -1301,7 +1264,6 @@ class RigidSolver(Solver):
             self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
-            self._links_state_cache.clear()
             self._cur_step = -1
 
     def process_input(self, in_backward=False):
@@ -1541,7 +1503,6 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-        self._links_state_cache.clear()
         kernel_forward_kinematics_links_geoms(
             envs_idx,
             links_state=self.links_state,
@@ -1590,7 +1551,6 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-        self._links_state_cache.clear()
         kernel_forward_kinematics_links_geoms(
             envs_idx,
             links_state=self.links_state,
@@ -1668,7 +1628,6 @@ class RigidSolver(Solver):
                 qpos = qpos.unsqueeze(0)
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
-        self._links_state_cache.clear()
         self.collider.reset(envs_idx, cache_only=True)
         if not isinstance(envs_idx, torch.Tensor):
             envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
@@ -1877,7 +1836,6 @@ class RigidSolver(Solver):
                     velocity = velocity.unsqueeze(0)
                 kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
-        self._links_state_cache.clear()
         if not skip_forward:
             kernel_forward_velocity(
                 envs_idx,
@@ -1908,7 +1866,6 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
-        self._links_state_cache.clear()
         self.collider.reset(envs_idx, cache_only=True)
         self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
@@ -2055,20 +2012,20 @@ class RigidSolver(Solver):
     ):
         ref = self._convert_ref_to_idx(ref)
         if ref == 0:
-            tensor = self._get_links_data("root_COM", envs_idx, links_idx, to_torch=to_torch)
+            tensor = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True)
         elif ref == 1:
-            i_pos = self._get_links_data("i_pos", envs_idx, links_idx, to_torch=to_torch)
-            root_COM = self._get_links_data("root_COM", envs_idx, links_idx, to_torch=to_torch)
+            i_pos = ti_to_torch(self.links_state.i_pos, envs_idx, links_idx, transpose=True)
+            root_COM = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True)
             tensor = i_pos + root_COM
         elif ref == 2:
-            tensor = self._get_links_data("pos", envs_idx, links_idx, to_torch=to_torch)
+            tensor = ti_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True)
         else:
             gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
 
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
-        tensor = self._get_links_data("quat", envs_idx, links_idx, to_torch=to_torch)
+        tensor = ti_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(
@@ -2103,7 +2060,7 @@ class RigidSolver(Solver):
         return _tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
-        tensor = self._get_links_data("cd_ang", envs_idx, links_idx, to_torch=to_torch)
+        tensor = ti_to_torch(self.links_state.cd_ang, envs_idx, links_idx, transpose=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None, *, unsafe=False):
@@ -2121,7 +2078,7 @@ class RigidSolver(Solver):
         return _tensor
 
     def get_links_acc_ang(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
-        tensor = self._get_links_data("cacc_ang", envs_idx, links_idx, to_torch=to_torch)
+        tensor = ti_to_torch(self.links_state.cacc_ang, envs_idx, links_idx, transpose=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_root_COM(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
@@ -2131,15 +2088,15 @@ class RigidSolver(Solver):
         This corresponds to the global COM of each entity, assuming a single-rooted structure - that is, as long as no
         two successive links are connected by a free-floating joint (ie a joint that allows all 6 degrees of freedom).
         """
-        tensor = self._get_links_data("root_COM", envs_idx, links_idx, to_torch=to_torch)
+        tensor = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
-        tensor = self._get_links_data("mass_shift", envs_idx, links_idx, to_torch=to_torch)
+        tensor = ti_to_torch(self.links_state.mass_shift, envs_idx, links_idx, transpose=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_COM_shift(self, links_idx=None, envs_idx=None, *, to_torch=True, unsafe=False):
-        tensor = self._get_links_data("i_pos_shift", envs_idx, links_idx, to_torch=to_torch)
+        tensor = ti_to_torch(self.links_state.i_pos_shift, envs_idx, links_idx, transpose=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_inertial_mass(self, links_idx=None, envs_idx=None, *, unsafe=False):
