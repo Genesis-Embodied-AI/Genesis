@@ -1747,47 +1747,98 @@ class RigidSolver(Solver):
         )
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None, *, unsafe=False):
-        tensor_list = list(tensor_list)
-        for j, tensor in enumerate(tensor_list):
-            tensor_list[j], dofs_idx, envs_idx_ = self._sanitize_1D_io_variables(
-                tensor,
-                dofs_idx,
-                self.n_dofs,
-                envs_idx,
-                batched=self._options.batch_dofs_info,
-                skip_allocation=True,
-                unsafe=unsafe,
-            )
-        if name == "kp":
-            kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
-        elif name == "kv":
-            kernel_set_dofs_kv(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
-        elif name == "force_range":
-            kernel_set_dofs_force_range(
-                tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
-            )
-        elif name == "stiffness":
-            kernel_set_dofs_stiffness(
-                tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
-            )
-        elif name == "armature":
-            kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
-            qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
-            qpos_cur = self.get_qpos(envs_idx=envs_idx, qs_idx=qs_idx, unsafe=unsafe)
-            self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True, unsafe=unsafe)
-            self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx, unsafe=unsafe)
-        elif name == "damping":
-            kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
-        elif name == "frictionloss":
-            kernel_set_dofs_frictionloss(
-                tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
-            )
-        elif name == "limit":
-            kernel_set_dofs_limit(
-                tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
-            )
+        if gs.use_zerocopy:
+            if self._static_rigid_sim_config.batch_dofs_info:
+                mask = indices_to_mask(envs_idx, dofs_idx)
+                if not mask:
+                    mask = (slice(None), slice(None))
+            else:
+                mask = indices_to_mask(dofs_idx)
+                if not mask:
+                    mask = (slice(None),)
+
+            if name == "kp":
+                kp = ti_to_torch(self.dofs_info.kp, transpose=True, copy=False)
+                kp[mask] = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+            elif name == "kv":
+                kv = ti_to_torch(self.dofs_info.kv, transpose=True, copy=False)
+                kv[mask] = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+            elif name == "force_range":
+                force_range = ti_to_torch(self.dofs_info.force_range, transpose=True, copy=False)
+                lower = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device).flatten()
+                upper = torch.as_tensor(tensor_list[1], dtype=gs.tc_float, device=gs.device).flatten()
+                force_range[(*mask, 0)] = lower
+                force_range[(*mask, 1)] = upper
+            elif name == "stiffness":
+                stiffness = ti_to_torch(self.dofs_info.stiffness, transpose=True, copy=False)
+                stiffness[mask] = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+            elif name == "armature":
+                armature = ti_to_torch(self.dofs_info.armature, transpose=True, copy=False)
+                armature[mask] = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+                qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
+                qpos_cur = self.get_qpos(envs_idx=envs_idx, qs_idx=qs_idx, unsafe=unsafe)
+                self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True, unsafe=unsafe)
+                self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx, unsafe=unsafe)
+            elif name == "damping":
+                damping = ti_to_torch(self.dofs_info.damping, transpose=True, copy=False)
+                damping[mask] = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+            elif name == "frictionloss":
+                frictionloss = ti_to_torch(self.dofs_info.frictionloss, transpose=True, copy=False)
+                frictionloss[mask] = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+            elif name == "limit":
+                limit = ti_to_torch(self.dofs_info.limit, transpose=True, copy=False)
+                lower = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device).flatten()
+                upper = torch.as_tensor(tensor_list[1], dtype=gs.tc_float, device=gs.device).flatten()
+                limit[(*mask, 0)] = lower
+                limit[(*mask, 1)] = upper
+            else:
+                gs.raise_exception(f"Invalid `name` {name}.")
         else:
-            gs.raise_exception(f"Invalid `name` {name}.")
+            tensor_list = list(tensor_list)
+            for j, tensor in enumerate(tensor_list):
+                tensor_list[j], dofs_idx, envs_idx_ = self._sanitize_1D_io_variables(
+                    tensor,
+                    dofs_idx,
+                    self.n_dofs,
+                    envs_idx,
+                    batched=self._options.batch_dofs_info,
+                    skip_allocation=True,
+                    unsafe=unsafe,
+                )
+            if name == "kp":
+                kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            elif name == "kv":
+                kernel_set_dofs_kv(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            elif name == "force_range":
+                kernel_set_dofs_force_range(
+                    tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                )
+            elif name == "stiffness":
+                kernel_set_dofs_stiffness(
+                    tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                )
+            elif name == "armature":
+                kernel_set_dofs_armature(
+                    tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                )
+                qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
+                qpos_cur = self.get_qpos(envs_idx=envs_idx, qs_idx=qs_idx, unsafe=unsafe)
+                self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True, unsafe=unsafe)
+                self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx, unsafe=unsafe)
+            elif name == "damping":
+                kernel_set_dofs_damping(
+                    tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                )
+            elif name == "frictionloss":
+                kernel_set_dofs_frictionloss(
+                    tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                )
+            elif name == "limit":
+                kernel_set_dofs_limit(
+                    tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                )
+            else:
+                gs.raise_exception(f"Invalid `name` {name}.")
 
     def set_dofs_kp(self, kp, dofs_idx=None, envs_idx=None, *, unsafe=False):
         self._set_dofs_info([kp], dofs_idx, "kp", envs_idx, unsafe=unsafe)
