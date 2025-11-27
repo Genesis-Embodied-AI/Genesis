@@ -433,6 +433,9 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
         reset_envs_idx = None
         qpos0 = ctrl
 
+    dofs_stiffness = franka.get_dofs_stiffness()
+    dofs_damping = franka.get_dofs_damping()
+
     num_steps = 0
     is_recording = False
     time_start = time.time()
@@ -441,6 +444,8 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
         if accessors:
             franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
             franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
+            franka.set_dofs_stiffness(dofs_stiffness)
+            franka.set_dofs_damping(dofs_damping)
             franka.get_ang()
             franka.get_vel()
             franka.get_dofs_position()
