@@ -193,7 +193,6 @@ def test_diff_solver(backend, monkeypatch):
     # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
     kernel_step_1(
-        f=0,
         links_state=rigid_solver.links_state,
         links_info=rigid_solver.links_info,
         joints_state=rigid_solver.joints_state,
@@ -205,7 +204,6 @@ def test_diff_solver(backend, monkeypatch):
         entities_state=rigid_solver.entities_state,
         entities_info=rigid_solver.entities_info,
         rigid_global_info=rigid_solver._rigid_global_info,
-        rigid_adjoint_cache=rigid_solver._rigid_adjoint_cache,
         static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
         contact_island_state=constraint_solver.contact_island.contact_island_state,
         is_backward=False,

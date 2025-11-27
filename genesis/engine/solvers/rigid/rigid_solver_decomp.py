@@ -921,8 +921,16 @@ class RigidSolver(Solver):
 
         self._links_state_cache.clear()
 
+        if self._requires_grad and f == 0:
+            kernel_save_adjoint_cache(
+                f=f,
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                rigid_adjoint_cache=self._rigid_adjoint_cache,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
         kernel_step_1(
-            f=f,
             links_state=self.links_state,
             links_info=self.links_info,
             joints_state=self.joints_state,
@@ -934,7 +942,6 @@ class RigidSolver(Solver):
             entities_state=self.entities_state,
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
-            rigid_adjoint_cache=self._rigid_adjoint_cache,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=False,
@@ -950,7 +957,6 @@ class RigidSolver(Solver):
         else:
             self._func_constraint_force()
             kernel_step_2(
-                f=f,
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
                 links_info=self.links_info,
@@ -963,11 +969,18 @@ class RigidSolver(Solver):
                 geoms_state=self.geoms_state,
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
-                rigid_adjoint_cache=self._rigid_adjoint_cache,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 is_backward=False,
             )
+            if self._requires_grad:
+                kernel_save_adjoint_cache(
+                    f=f + 1,
+                    dofs_state=self.dofs_state,
+                    rigid_global_info=self._rigid_global_info,
+                    rigid_adjoint_cache=self._rigid_adjoint_cache,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
 
     def check_errno(self):
         # Note that errno must be evaluated BEFORE match because otherwise it will be evaluated for each case...
@@ -1295,7 +1308,6 @@ class RigidSolver(Solver):
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
 
         kernel_step_2.grad(
-            f=f,
             dofs_state=self.dofs_state,
             dofs_info=self.dofs_info,
             links_info=self.links_info,
@@ -1308,7 +1320,6 @@ class RigidSolver(Solver):
             geoms_state=self.geoms_state,
             collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
-            rigid_adjoint_cache=self._rigid_adjoint_cache,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
             is_backward=True,
@@ -1384,7 +1395,6 @@ class RigidSolver(Solver):
                 is_backward=False,
             )
             kernel_step_2(
-                f=f,
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
                 links_info=self.links_info,
@@ -1397,7 +1407,6 @@ class RigidSolver(Solver):
                 geoms_state=self.geoms_state,
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
-                rigid_adjoint_cache=self._rigid_adjoint_cache,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 is_backward=False,
@@ -4566,7 +4575,6 @@ def func_update_cartesian_space(
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_step_1(
-    f: ti.int32,
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     joints_state: array_class.JointsState,
@@ -4578,21 +4586,10 @@ def kernel_step_1(
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    rigid_adjoint_cache: array_class.RigidAdjointCache,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
     is_backward: ti.template(),
 ):
-    if ti.static(static_rigid_sim_config.requires_grad):
-        if f == 0:
-            func_save_adjoint_cache(
-                f=f,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                rigid_adjoint_cache=rigid_adjoint_cache,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -4704,7 +4701,6 @@ def func_implicit_damping(
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_step_2(
-    f: ti.int32,
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
     links_info: array_class.LinksInfo,
@@ -4717,7 +4713,6 @@ def kernel_step_2(
     geoms_state: array_class.GeomsState,
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    rigid_adjoint_cache: array_class.RigidAdjointCache,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
     is_backward: ti.template(),
@@ -4804,15 +4799,6 @@ def kernel_step_2(
                     force_update_fixed_geoms=False,
                     is_backward=is_backward,
                 )
-
-        if ti.static(static_rigid_sim_config.requires_grad):
-            func_save_adjoint_cache(
-                f=f + 1,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                rigid_adjoint_cache=rigid_adjoint_cache,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6805,6 +6791,17 @@ def func_copy_next_to_curr_grad(
         rigid_global_info.qpos_next.grad[i_q, i_b] = rigid_global_info.qpos.grad[i_q, i_b]
         rigid_global_info.qpos.grad[i_q, i_b] = 0.0
         rigid_global_info.qpos[i_q, i_b] = rigid_adjoint_cache.qpos[f, i_q, i_b]
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_save_adjoint_cache(
+    f: ti.int32,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    rigid_adjoint_cache: array_class.RigidAdjointCache,
+    static_rigid_sim_config: ti.template(),
+):
+    func_save_adjoint_cache(f, dofs_state, rigid_global_info, rigid_adjoint_cache, static_rigid_sim_config)
 
 
 @ti.func
