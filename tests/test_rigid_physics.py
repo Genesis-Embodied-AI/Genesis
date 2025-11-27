@@ -2467,6 +2467,52 @@ def test_urdf_parsing(show_viewer, tol, gjk_collision):
 
 
 @pytest.mark.required
+def test_urdf_capsule(tmp_path, show_viewer, tol):
+    urdf_path = tmp_path / "capsule.urdf"
+    with open(urdf_path, "w") as f:
+        f.write(
+            """
+            <robot name="urdf_robot">
+                <link name="base_link">
+                    <inertial>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <mass value=".1"/>
+                        <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+                    </inertial>
+                    <collision>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule length="0.1" radius="0.02"/>
+                        </geometry>
+                    </collision>
+                </link>
+            </robot>
+            """
+        )
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+            pos=(0.0, 0.0, 0.3),
+        ),
+        vis_mode="collision",
+    )
+    scene.build()
+
+    (geom,) = robot.geoms
+    assert geom.type == gs.GEOM_TYPE.CAPSULE
+    assert_allclose(geom.data[:2], (0.02, 0.1), tol=gs.EPS)
+
+    for _ in range(40):
+        scene.step()
+    geom_verts = tensor_to_array(geom.get_verts())
+    assert np.linalg.norm(geom_verts - np.zeros(3), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(geom_verts - np.array((0.0, 0.0, 0.14)), axis=-1, ord=np.inf).min() < 1e-3
+
+
+@pytest.mark.required
 def test_mjcf_parsing_with_include():
     scene = gs.Scene()
     robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
