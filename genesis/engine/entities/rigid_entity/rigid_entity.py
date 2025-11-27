@@ -103,7 +103,7 @@ class RigidEntity(Entity):
         self._tgt = dict()
         self._tgt_buffer = list()
         self._ckpt = dict()
-        self._update_tgt_while_set = True
+        self._update_tgt_while_set = self._solver._requires_grad
 
     def _update_tgt(self, key, value):
         # Set [self._tgt] value while keeping the insertion order between keys. When a new key is inserted or an existing
@@ -1653,6 +1653,7 @@ class RigidEntity(Entity):
         else:
             self._tgt_buffer.append(self._tgt.copy())
 
+        update_tgt_while_set = self._update_tgt_while_set
         # Apply targets in the order of insertion
         for key in self._tgt.keys():
             data_kwargs = self._tgt[key]
@@ -1677,7 +1678,7 @@ class RigidEntity(Entity):
                     gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
 
         self._tgt = dict()
-        self._update_tgt_while_set = True
+        self._update_tgt_while_set = update_tgt_while_set
 
     def process_input_grad(self):
         index = self._sim.cur_step_local - self._sim._steps_local
