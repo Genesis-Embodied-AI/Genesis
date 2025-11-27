@@ -268,6 +268,7 @@ class RigidSolver(Solver):
                 sparse_solve=self._options.sparse_solve,
                 integrator=self._integrator,
                 solver_type=self._options.constraint_solver,
+                is_backward=False,
             )
         else:
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
@@ -285,6 +286,7 @@ class RigidSolver(Solver):
                 sparse_solve=False,
                 integrator=gs.integrator.approximate_implicitfast,
                 solver_type=gs.constraint_solver.CG,
+                is_backward=False,
             )
 
         if self._static_rigid_sim_config.requires_grad:
@@ -410,7 +412,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             decompose=True,
-            is_backward=False,
         )
 
         # Define some proxies for convenience
@@ -944,7 +945,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_backward=False,
         )
 
         if isinstance(self.sim.coupler, SAPCoupler):
@@ -952,7 +952,6 @@ class RigidSolver(Solver):
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
         else:
             self._func_constraint_force()
@@ -971,7 +970,6 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                is_backward=False,
             )
             if self._requires_grad:
                 kernel_save_adjoint_cache(
@@ -1048,7 +1046,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_backward=False,
         )
 
     def _func_update_acc(self):
@@ -1059,7 +1056,6 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=False,
         )
 
     def _func_forward_kinematics_entity(self, i_e, envs_idx):
@@ -1075,7 +1071,6 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=False,
         )
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
@@ -1092,7 +1087,7 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-    def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False, is_backward=False):
+    def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
         kernel_update_geoms(
             envs_idx,
             entities_info=self.entities_info,
@@ -1102,7 +1097,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             force_update_fixed_geoms=force_update_fixed_geoms,
-            is_backward=is_backward,
         )
 
     def _process_dim(self, tensor, envs_idx=None):
@@ -1244,6 +1238,9 @@ class RigidSolver(Solver):
             self.substep(f)
 
     def substep_pre_coupling_grad(self, f):
+        # Change to backward mode
+        self._static_rigid_sim_config.is_backward = True
+
         # Run forward substep again to restore this step's information, this is needed because we do not store info
         # of every substep.
         kernel_prepare_backward_substep(
@@ -1282,7 +1279,6 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 force_update_fixed_geoms=False,
-                is_backward=True,
             )
 
         is_grad_valid = kernel_begin_backward_substep(
@@ -1322,7 +1318,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_backward=True,
         )
 
         # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
@@ -1339,7 +1334,6 @@ class RigidSolver(Solver):
             entities_info=self.entities_info,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            is_backward=True,
         )
         kernel_copy_acc(
             f=f,
@@ -1360,7 +1354,6 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_backward=True,
         )
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
@@ -1378,8 +1371,10 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 force_update_fixed_geoms=False,
-                is_backward=True,
             )
+
+        # Change back to forward mode
+        self._static_rigid_sim_config.is_backward = False
 
     def substep_post_coupling(self, f):
         from genesis.engine.couplers import SAPCoupler, IPCCoupler
@@ -1392,7 +1387,6 @@ class RigidSolver(Solver):
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
             kernel_step_2(
                 dofs_state=self.dofs_state,
@@ -1409,7 +1403,6 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                is_backward=False,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
             # For IPCCoupler, perform full rigid body computation in post-coupling phase
@@ -1560,7 +1553,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
 
             self._errno[None] = 0
@@ -1613,7 +1605,6 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 force_update_fixed_geoms=False,
-                is_backward=False,
             )
 
         for entity in self._entities:
@@ -1879,7 +1870,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
 
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, unsafe, pos_grad):
@@ -1960,7 +1950,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
 
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, unsafe, quat_grad):
@@ -2068,7 +2057,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
 
     def set_global_sol_params(self, sol_params, *, unsafe=False):
@@ -2257,7 +2245,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
 
     def set_dofs_velocity_grad(self, dofs_idx, envs_idx, unsafe, velocity_grad):
@@ -2309,7 +2296,6 @@ class RigidSolver(Solver):
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=False,
             )
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None, *, unsafe=False):
@@ -2951,7 +2937,6 @@ def update_qacc_from_qvel_delta(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     n_dofs = dofs_state.ctrl_mode.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
@@ -2964,7 +2949,7 @@ def update_qacc_from_qvel_delta(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
@@ -2989,7 +2974,6 @@ def update_qvel(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     _B = dofs_state.vel.shape[1]
     n_dofs = dofs_state.vel.shape[0]
@@ -3003,7 +2987,7 @@ def update_qvel(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
@@ -3034,7 +3018,6 @@ def kernel_compute_mass_matrix(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     decompose: ti.template(),
-    is_backward: ti.template(),
 ):
     func_compute_mass_matrix(
         implicit_damping=False,
@@ -3045,7 +3028,6 @@ def kernel_compute_mass_matrix(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     if decompose:
         func_factor_mass(
@@ -3055,7 +3037,6 @@ def kernel_compute_mass_matrix(
             dofs_info=dofs_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=is_backward,
         )
 
 
@@ -3622,7 +3603,6 @@ def kernel_forward_dynamics(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    is_backward: ti.template(),
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -3636,7 +3616,6 @@ def kernel_forward_dynamics(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
         contact_island_state=contact_island_state,
-        is_backward=is_backward,
     )
 
 
@@ -3648,7 +3627,6 @@ def kernel_update_acc(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     func_update_acc(
         update_cacc=True,
@@ -3658,7 +3636,6 @@ def kernel_update_acc(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
 
@@ -3683,7 +3660,6 @@ def func_compute_mass_matrix(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     # crb initialize
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -3699,7 +3675,7 @@ def func_compute_mass_matrix(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -3735,7 +3711,7 @@ def func_compute_mass_matrix(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -3754,7 +3730,7 @@ def func_compute_mass_matrix(
 
                 for i in (
                     range(entities_info.n_links[i_e])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
                 ):
                     if i < entities_info.n_links[i_e]:
@@ -3782,7 +3758,7 @@ def func_compute_mass_matrix(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -3802,10 +3778,12 @@ def func_compute_mass_matrix(
 
                 for i_d_ in (
                     range(links_info.dof_start[I_l], links_info.dof_end[I_l])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
                 ):
-                    i_d = i_d_ if ti.static(not is_backward) else links_info.dof_start[I_l] + i_d_
+                    i_d = (
+                        i_d_ if ti.static(not static_rigid_sim_config.is_backward) else links_info.dof_start[I_l] + i_d_
+                    )
 
                     if i_d < links_info.dof_end[I_l]:
                         dofs_state.f_ang[i_d, i_b], dofs_state.f_vel[i_d, i_b] = gu.inertial_mul(
@@ -3829,7 +3807,7 @@ def func_compute_mass_matrix(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -3854,7 +3832,7 @@ def func_compute_mass_matrix(
                             (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
                         )
                     )
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else (
                         # Static inner loop for backward pass
                         ti.static(
@@ -3865,8 +3843,16 @@ def func_compute_mass_matrix(
                         )
                     )
                 ):
-                    i_d = i_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + i_d_
-                    j_d = j_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + j_d_
+                    i_d = (
+                        i_d_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else entities_info.dof_start[i_e] + i_d_
+                    )
+                    j_d = (
+                        j_d_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else entities_info.dof_start[i_e] + j_d_
+                    )
 
                     if i_d < entities_info.dof_end[i_e] and j_d < entities_info.dof_end[i_e]:
                         rigid_global_info.mass_mat[i_d, j_d, i_b] = (
@@ -3874,7 +3860,7 @@ def func_compute_mass_matrix(
                             + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
                         ) * rigid_global_info.mass_parent_mask[i_d, j_d]
 
-                if ti.static(not is_backward):
+                if ti.static(not static_rigid_sim_config.is_backward):
                     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                         for j_d in range(i_d + 1, entities_info.dof_end[i_e]):
                             rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
@@ -3919,12 +3905,11 @@ def func_factor_mass(
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     """
     Compute Cholesky decomposition (L^T @ D @ L) of mass matrix.
     """
-    if ti.static(not is_backward):
+    if ti.static(not static_rigid_sim_config.is_backward):
         _B = dofs_state.ctrl_mode.shape[1]
         n_entities = entities_info.n_links.shape[0]
 
@@ -3939,7 +3924,7 @@ def func_factor_mass(
                     if ti.static(static_rigid_sim_config.use_hibernation)
                     else range(1)
                 )
-                if ti.static(not is_backward)
+                if ti.static(not static_rigid_sim_config.is_backward)
                 else (
                     # Static inner loop for backward pass
                     ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -3963,18 +3948,26 @@ def func_factor_mass(
 
                         for i_d_ in (
                             range(entity_dof_start, entity_dof_end)
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                         ):
-                            i_d = i_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + i_d_
+                            i_d = (
+                                i_d_
+                                if ti.static(not static_rigid_sim_config.is_backward)
+                                else entities_info.dof_start[i_e] + i_d_
+                            )
 
                             if i_d < entity_dof_end:
                                 for j_d_ in (
                                     range(entity_dof_start, i_d + 1)
-                                    if ti.static(not is_backward)
+                                    if ti.static(not static_rigid_sim_config.is_backward)
                                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                                 ):
-                                    j_d = j_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + j_d_
+                                    j_d = (
+                                        j_d_
+                                        if ti.static(not static_rigid_sim_config.is_backward)
+                                        else entities_info.dof_start[i_e] + j_d_
+                                    )
 
                                     if j_d < i_d + 1:
                                         rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[
@@ -3996,7 +3989,7 @@ def func_factor_mass(
 
                         for i_d_ in (
                             range(n_dofs)
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                         ):
                             if i_d_ < n_dofs:
@@ -4007,7 +4000,7 @@ def func_factor_mass(
 
                                 for j_d_ in (
                                     range(i_d - entity_dof_start)
-                                    if ti.static(not is_backward)
+                                    if ti.static(not static_rigid_sim_config.is_backward)
                                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                                 ):
                                     if j_d_ < i_d - entity_dof_start:
@@ -4019,12 +4012,12 @@ def func_factor_mass(
 
                                         for k_d_ in (
                                             range(entity_dof_start, j_d + 1)
-                                            if ti.static(not is_backward)
+                                            if ti.static(not static_rigid_sim_config.is_backward)
                                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                                         ):
                                             k_d = (
                                                 k_d_
-                                                if ti.static(not is_backward)
+                                                if ti.static(not static_rigid_sim_config.is_backward)
                                                 else entities_info.dof_start[i_e] + k_d_
                                             )
                                             if k_d < j_d + 1:
@@ -4052,7 +4045,7 @@ def func_factor_mass(
 
                 for i_d0 in (
                     range(n_dofs)
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
                     if i_d0 < n_dofs:
@@ -4060,10 +4053,14 @@ def func_factor_mass(
                         i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
                         for j_d_ in (
                             range(entity_dof_start, i_d + 1)
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                         ):
-                            j_d = j_d_ if ti.static(not is_backward) else (j_d_ + entities_info.dof_start[i_e])
+                            j_d = (
+                                j_d_
+                                if ti.static(not static_rigid_sim_config.is_backward)
+                                else (j_d_ + entities_info.dof_start[i_e])
+                            )
                             j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
                             if j_d < i_d + 1:
                                 rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[
@@ -4091,12 +4088,12 @@ def func_factor_mass(
                 # https://en.wikipedia.org/wiki/Cholesky_decomposition
                 for p_i0 in (
                     range(n_dofs)
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
                     for p_j0 in (
                         range(p_i0 + 1)
-                        if ti.static(not is_backward)
+                        if ti.static(not static_rigid_sim_config.is_backward)
                         else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                     ):
                         if p_i0 < n_dofs and p_j0 < n_dofs and p_j0 <= p_i0:
@@ -4107,7 +4104,7 @@ def func_factor_mass(
                             sum = gs.ti_float(0.0)
                             for p_k0 in (
                                 range(p_j0)
-                                if ti.static(not is_backward)
+                                if ti.static(not static_rigid_sim_config.is_backward)
                                 else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                             ):
                                 # k_pr < j_pr
@@ -4129,12 +4126,12 @@ def func_factor_mass(
 
                 for i_d0 in (
                     range(n_dofs)
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
                     for i_d1 in (
                         range(i_d0 + 1)
-                        if ti.static(not is_backward)
+                        if ti.static(not static_rigid_sim_config.is_backward)
                         else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                     ):
                         if i_d0 < n_dofs and i_d1 < n_dofs and i_d1 <= i_d0:
@@ -4163,7 +4160,6 @@ def func_solve_mass_batched(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     # This loop is considered an inner loop
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -4174,7 +4170,7 @@ def func_solve_mass_batched(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(entities_info.n_links.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -4203,26 +4199,30 @@ def func_solve_mass_batched(
                 # Step 1: Solve w st. L^T @ w = y
                 for i_d_ in (
                     range(n_dofs)
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
                     if i_d_ < n_dofs:
                         i_d = entity_dof_end - i_d_ - 1
-                        if ti.static(is_backward):
+                        if ti.static(static_rigid_sim_config.is_backward):
                             out_bw[0, i_d, i_b] = vec[i_d, i_b]
                         else:
                             out[i_d, i_b] = vec[i_d, i_b]
 
                         for j_d_ in (
                             range(i_d + 1, entity_dof_end)
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                         ):
-                            j_d = j_d_ if ti.static(not is_backward) else (j_d_ + entities_info.dof_start[i_e])
+                            j_d = (
+                                j_d_
+                                if ti.static(not static_rigid_sim_config.is_backward)
+                                else (j_d_ + entities_info.dof_start[i_e])
+                            )
                             if j_d >= i_d + 1 and j_d < entity_dof_end:
                                 # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
                                 # finalized at this point, we don't need to care about AD mutation rule.
-                                if ti.static(is_backward):
+                                if ti.static(static_rigid_sim_config.is_backward):
                                     out_bw[0, i_d, i_b] += -(
                                         rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
                                     )
@@ -4232,12 +4232,16 @@ def func_solve_mass_batched(
                 # Step 2: z = D^{-1} w
                 for i_d_ in (
                     range(entity_dof_start, entity_dof_end)
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
-                    i_d = i_d_ if ti.static(not is_backward) else (i_d_ + entities_info.dof_start[i_e])
+                    i_d = (
+                        i_d_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else (i_d_ + entities_info.dof_start[i_e])
+                    )
                     if i_d < entity_dof_end:
-                        if ti.static(is_backward):
+                        if ti.static(static_rigid_sim_config.is_backward):
                             out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
                         else:
                             out[i_d, i_b] *= rigid_global_info.mass_mat_D_inv[i_d, i_b]
@@ -4245,21 +4249,29 @@ def func_solve_mass_batched(
                 # Step 3: Solve x st. L @ x = z
                 for i_d_ in (
                     range(entity_dof_start, entity_dof_end)
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
-                    i_d = i_d_ if ti.static(not is_backward) else (i_d_ + entities_info.dof_start[i_e])
+                    i_d = (
+                        i_d_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else (i_d_ + entities_info.dof_start[i_e])
+                    )
                     if i_d < entity_dof_end:
                         curr_out = out[i_d, i_b]
-                        if ti.static(is_backward):
+                        if ti.static(static_rigid_sim_config.is_backward):
                             curr_out = out_bw[1, i_d, i_b]
 
                         for j_d_ in (
                             range(entity_dof_start, i_d)
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                         ):
-                            j_d = j_d_ if ti.static(not is_backward) else (j_d_ + entities_info.dof_start[i_e])
+                            j_d = (
+                                j_d_
+                                if ti.static(not static_rigid_sim_config.is_backward)
+                                else (j_d_ + entities_info.dof_start[i_e])
+                            )
                             if j_d < i_d:
                                 curr_out += -(rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b])
 
@@ -4274,7 +4286,6 @@ def func_solve_mass(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     # This loop must be the outermost loop to be differentiable
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -4287,7 +4298,6 @@ def func_solve_mass(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=is_backward,
         )
 
 
@@ -4306,7 +4316,6 @@ def func_forward_dynamics(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    is_backward: ti.template(),
 ):
     func_compute_mass_matrix(
         implicit_damping=ti.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
@@ -4317,7 +4326,6 @@ def func_forward_dynamics(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_factor_mass(
         implicit_damping=False,
@@ -4326,7 +4334,6 @@ def func_forward_dynamics(
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_torque_and_passive_force(
         entities_state=entities_state,
@@ -4340,7 +4347,6 @@ def func_forward_dynamics(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
         contact_island_state=contact_island_state,
-        is_backward=is_backward,
     )
     func_update_acc(
         update_cacc=False,
@@ -4350,7 +4356,6 @@ def func_forward_dynamics(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_update_force(
         links_state=links_state,
@@ -4358,7 +4363,6 @@ def func_forward_dynamics(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     # self._func_actuation()
     func_bias_force(
@@ -4367,14 +4371,12 @@ def func_forward_dynamics(
         links_info=links_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_compute_qacc(
         dofs_state=dofs_state,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
 
@@ -4391,7 +4393,6 @@ def kernel_forward_dynamics_without_qacc(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    is_backward: ti.template(),
 ):
     func_compute_mass_matrix(
         implicit_damping=ti.static(static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast),
@@ -4402,7 +4403,6 @@ def kernel_forward_dynamics_without_qacc(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_factor_mass(
         implicit_damping=False,
@@ -4411,7 +4411,6 @@ def kernel_forward_dynamics_without_qacc(
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_torque_and_passive_force(
         entities_state=entities_state,
@@ -4425,7 +4424,6 @@ def kernel_forward_dynamics_without_qacc(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
         contact_island_state=contact_island_state,
-        is_backward=is_backward,
     )
     func_update_acc(
         update_cacc=False,
@@ -4435,7 +4433,6 @@ def kernel_forward_dynamics_without_qacc(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_update_force(
         links_state=links_state,
@@ -4443,7 +4440,6 @@ def kernel_forward_dynamics_without_qacc(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     # self._func_actuation()
     func_bias_force(
@@ -4452,7 +4448,6 @@ def kernel_forward_dynamics_without_qacc(
         links_info=links_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
 
@@ -4483,7 +4478,6 @@ def kernel_update_cartesian_space(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     force_update_fixed_geoms: ti.template(),
-    is_backward: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(links_state.pos.shape[1]):
@@ -4501,7 +4495,6 @@ def kernel_update_cartesian_space(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             force_update_fixed_geoms=force_update_fixed_geoms,
-            is_backward=is_backward,
         )
 
 
@@ -4520,7 +4513,6 @@ def func_update_cartesian_space(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     force_update_fixed_geoms: ti.template(),
-    is_backward: ti.template(),
 ):
     func_forward_kinematics(
         i_b,
@@ -4533,7 +4525,6 @@ def func_update_cartesian_space(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_COM_links(
         i_b,
@@ -4546,7 +4537,6 @@ def func_update_cartesian_space(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_forward_velocity(
         i_b,
@@ -4557,7 +4547,6 @@ def func_update_cartesian_space(
         dofs_state=dofs_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     func_update_geoms(
@@ -4569,7 +4558,6 @@ def func_update_cartesian_space(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
         force_update_fixed_geoms=force_update_fixed_geoms,
-        is_backward=is_backward,
     )
 
 
@@ -4588,7 +4576,6 @@ def kernel_step_1(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    is_backward: ti.template(),
 ):
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         _B = links_state.pos.shape[1]
@@ -4608,7 +4595,6 @@ def kernel_step_1(
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
-                is_backward=is_backward,
             )
 
     func_forward_dynamics(
@@ -4623,7 +4609,6 @@ def kernel_step_1(
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
         contact_island_state=contact_island_state,
-        is_backward=is_backward,
     )
 
 
@@ -4634,7 +4619,6 @@ def func_implicit_damping(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     EPS = rigid_global_info.EPS[None]
 
@@ -4656,10 +4640,12 @@ def func_implicit_damping(
             entity_dof_end = entities_info.dof_end[i_e]
             for i_d_ in (
                 range(entity_dof_start, entity_dof_end)
-                if ti.static(not is_backward)
+                if ti.static(not static_rigid_sim_config.is_backward)
                 else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
             ):
-                i_d = i_d_ if ti.static(not is_backward) else entities_info.dof_start[i_e] + i_d_
+                i_d = (
+                    i_d_ if ti.static(not static_rigid_sim_config.is_backward) else entities_info.dof_start[i_e] + i_d_
+                )
                 if i_d < entity_dof_end:
                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                     if dofs_info.damping[I_d] > EPS:
@@ -4678,7 +4664,6 @@ def func_implicit_damping(
         dofs_info=dofs_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
     func_solve_mass(
         vec=dofs_state.force,
@@ -4687,7 +4672,6 @@ def func_implicit_damping(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     # Disable pre-computed factorization mask right away
@@ -4715,7 +4699,6 @@ def kernel_step_2(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    is_backward: ti.template(),
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4730,7 +4713,6 @@ def kernel_step_2(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     if ti.static(static_rigid_sim_config.integrator != gs.integrator.approximate_implicitfast):
@@ -4740,7 +4722,6 @@ def kernel_step_2(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=is_backward,
         )
 
     func_integrate(
@@ -4749,7 +4730,6 @@ def kernel_step_2(
         joints_info=joints_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     if ti.static(static_rigid_sim_config.use_hibernation):
@@ -4772,7 +4752,7 @@ def kernel_step_2(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-    if ti.static(not is_backward):
+    if ti.static(not static_rigid_sim_config.is_backward):
         func_copy_next_to_curr(
             dofs_state=dofs_state,
             rigid_global_info=rigid_global_info,
@@ -4797,7 +4777,6 @@ def kernel_step_2(
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                     force_update_fixed_geoms=False,
-                    is_backward=is_backward,
                 )
 
 
@@ -4815,7 +4794,6 @@ def kernel_forward_kinematics_links_geoms(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -4834,7 +4812,6 @@ def kernel_forward_kinematics_links_geoms(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             force_update_fixed_geoms=True,
-            is_backward=is_backward,
         )
 
 
@@ -4850,7 +4827,6 @@ def func_COM_links(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_ in (
@@ -4860,7 +4836,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -4888,7 +4864,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -4929,7 +4905,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -4959,7 +4935,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -4988,7 +4964,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -5032,7 +5008,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -5076,13 +5052,13 @@ def func_COM_links(
 
                     for i_j_ in (
                         range(n_joints)
-                        if ti.static(not is_backward)
+                        if ti.static(not static_rigid_sim_config.is_backward)
                         else ti.static(range(static_rigid_sim_config.max_n_joints_per_link))
                     ):
                         i_j = i_j_ + links_info.joint_start[I_l]
 
-                        curr_i_j = 0 if ti.static(not is_backward) else i_j_
-                        next_i_j = 0 if ti.static(not is_backward) else i_j_ + 1
+                        curr_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_
+                        next_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_ + 1
 
                         if i_j < links_info.joint_end[I_l]:
                             I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
@@ -5097,7 +5073,7 @@ def func_COM_links(
                                 links_state.j_quat_bw[i_l, curr_i_j, i_b],
                             )
 
-                    i_j_ = 0 if ti.static(not is_backward) else n_joints
+                    i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
                     links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, i_j_, i_b]
                     links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
 
@@ -5109,7 +5085,7 @@ def func_COM_links(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(links_info.root_idx.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -5130,10 +5106,14 @@ def func_COM_links(
             if links_info.n_dofs[I_l] > 0:
                 for i_j_ in (
                     range(links_info.joint_start[I_l], links_info.joint_end[I_l])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_joints_per_link))
                 ):
-                    i_j = i_j_ if ti.static(not is_backward) else (i_j_ + links_info.joint_start[I_l])
+                    i_j = (
+                        i_j_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else (i_j_ + links_info.joint_start[I_l])
+                    )
 
                     if i_j < links_info.joint_end[I_l]:
                         offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
@@ -5167,10 +5147,10 @@ def func_COM_links(
 
                         for i_d_ in (
                             range(dof_start, joints_info.dof_end[I_j])
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
                         ):
-                            i_d = i_d_ if ti.static(not is_backward) else (i_d_ + dof_start)
+                            i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
                             if i_d < joints_info.dof_end[I_j]:
                                 dofs_state.cdofvel_ang[i_d, i_b] = (
                                     dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
@@ -5192,7 +5172,6 @@ def func_forward_kinematics(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     for i_e_ in (
         (
@@ -5200,7 +5179,7 @@ def func_forward_kinematics(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(entities_info.n_links.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
@@ -5230,7 +5209,6 @@ def func_forward_kinematics(
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
-                is_backward,
             )
 
 
@@ -5244,7 +5222,6 @@ def func_forward_velocity(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     n_entities = entities_info.n_links.shape[0]
     for i_e_ in (
@@ -5254,7 +5231,7 @@ def func_forward_velocity(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(n_entities)
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -5275,7 +5252,6 @@ def func_forward_velocity(
             dofs_state=dofs_state,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=is_backward,
         )
 
 
@@ -5292,7 +5268,6 @@ def kernel_forward_kinematics_entity(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -5309,7 +5284,6 @@ def kernel_forward_kinematics_entity(
             entities_info,
             rigid_global_info,
             static_rigid_sim_config,
-            is_backward,
         )
 
 
@@ -5326,16 +5300,15 @@ def func_forward_kinematics_entity(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     # Becomes static loop in backward pass, because we assume this loop is an inner loop
     for i_l_ in (
         range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
     ):
         EPS = rigid_global_info.EPS[None]
-        i_l = i_l_ if ti.static(not is_backward) else (i_l_ + entities_info.link_start[i_e])
+        i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
 
         if i_l < entities_info.link_end[i_e]:
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -5352,13 +5325,13 @@ def func_forward_kinematics_entity(
 
             for i_j_ in (
                 range(n_joints)
-                if ti.static(not is_backward)
+                if ti.static(not static_rigid_sim_config.is_backward)
                 else ti.static(range(static_rigid_sim_config.max_n_joints_per_link))
             ):
                 i_j = i_j_ + links_info.joint_start[I_l]
 
-                curr_i_j = 0 if ti.static(not is_backward) else i_j_
-                next_i_j = 0 if ti.static(not is_backward) else i_j_ + 1
+                curr_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_
+                next_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_ + 1
 
                 if i_j < links_info.joint_end[I_l]:
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
@@ -5459,7 +5432,7 @@ def func_forward_kinematics_entity(
                         )
 
             # Skip link pose update for fixed root links to let users manually overwrite them
-            i_j_ = 0 if ti.static(not is_backward) else n_joints
+            i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
             if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
                 links_state.pos[i_l, i_b] = links_state.pos_bw[i_l, i_j_, i_b]
                 links_state.quat[i_l, i_b] = links_state.quat_bw[i_l, i_j_, i_b]
@@ -5476,14 +5449,13 @@ def func_forward_velocity_entity(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     for i_l_ in (
         range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
     ):
-        i_l = i_l_ if ti.static(not is_backward) else (i_l_ + entities_info.link_start[i_e])
+        i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
 
         if i_l < entities_info.link_end[i_e]:
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -5498,7 +5470,7 @@ def func_forward_velocity_entity(
 
             for i_j_ in (
                 range(n_joints)
-                if ti.static(not is_backward)
+                if ti.static(not static_rigid_sim_config.is_backward)
                 else ti.static(range(static_rigid_sim_config.max_n_joints_per_link))
             ):
                 i_j = i_j_ + links_info.joint_start[I_l]
@@ -5509,8 +5481,8 @@ def func_forward_velocity_entity(
                     q_start = joints_info.q_start[I_j]
                     dof_start = joints_info.dof_start[I_j]
 
-                    curr_i_j = 0 if ti.static(not is_backward) else i_j_
-                    next_i_j = 0 if ti.static(not is_backward) else i_j_ + 1
+                    curr_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_
+                    next_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_ + 1
 
                     if joint_type == gs.JOINT_TYPE.FREE:
                         for i_3 in ti.static(range(3)):
@@ -5551,10 +5523,10 @@ def func_forward_velocity_entity(
                     else:
                         for i_d_ in (
                             range(dof_start, joints_info.dof_end[I_j])
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
                         ):
-                            i_d = i_d_ if ti.static(not is_backward) else (i_d_ + dof_start)
+                            i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
                             if i_d < joints_info.dof_end[I_j]:
                                 dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
                                     links_state.cd_ang_bw[i_l, curr_i_j, i_b],
@@ -5568,10 +5540,10 @@ def func_forward_velocity_entity(
 
                         for i_d_ in (
                             range(dof_start, joints_info.dof_end[I_j])
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
                         ):
-                            i_d = i_d_ if ti.static(not is_backward) else (i_d_ + dof_start)
+                            i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
                             if i_d < joints_info.dof_end[I_j]:
                                 links_state.cd_vel_bw[i_l, next_i_j, i_b] += (
                                     dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
@@ -5580,7 +5552,7 @@ def func_forward_velocity_entity(
                                     dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
                                 )
 
-            i_j_ = 0 if ti.static(not is_backward) else n_joints
+            i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
             links_state.cd_vel[i_l, i_b] = links_state.cd_vel_bw[i_l, i_j_, i_b]
             links_state.cd_ang[i_l, i_b] = links_state.cd_ang_bw[i_l, i_j_, i_b]
 
@@ -5595,7 +5567,6 @@ def kernel_update_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     force_update_fixed_geoms: ti.template(),
-    is_backward: ti.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -5609,7 +5580,6 @@ def kernel_update_geoms(
             rigid_global_info,
             static_rigid_sim_config,
             force_update_fixed_geoms,
-            is_backward,
         )
 
 
@@ -5623,7 +5593,6 @@ def func_update_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     force_update_fixed_geoms: ti.template(),
-    is_backward: ti.template(),
 ):
     """
     NOTE: this only update geom pose, not its verts and else.
@@ -5635,7 +5604,7 @@ def func_update_geoms(
             if ti.static(static_rigid_sim_config.use_hibernation)
             else range(geoms_info.pos.shape[0])
         )
-        if ti.static(not is_backward)
+        if ti.static(not static_rigid_sim_config.is_backward)
         else (
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -5653,7 +5622,7 @@ def func_update_geoms(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_geoms_per_entity))
@@ -6054,7 +6023,6 @@ def func_torque_and_passive_force(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
-    is_backward: ti.template(),
 ):
     # compute force based on each dof's ctrl mode
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -6064,10 +6032,10 @@ def func_torque_and_passive_force(
 
         for i_l_ in (
             range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         ):
-            i_l = i_l_ if ti.static(not is_backward) else (i_l_ + entities_info.link_start[i_e])
+            i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
 
             if i_l < entities_info.link_end[i_e]:
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -6078,10 +6046,14 @@ def func_torque_and_passive_force(
 
                     for i_d_ in (
                         range(links_info.dof_start[I_l], links_info.dof_end[I_l])
-                        if ti.static(not is_backward)
+                        if ti.static(not static_rigid_sim_config.is_backward)
                         else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
                     ):
-                        i_d = i_d_ if ti.static(not is_backward) else (i_d_ + links_info.dof_start[I_l])
+                        i_d = (
+                            i_d_
+                            if ti.static(not static_rigid_sim_config.is_backward)
+                            else (i_d_ + links_info.dof_start[I_l])
+                        )
 
                         if i_d < links_info.dof_end[I_l]:
                             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
@@ -6176,7 +6148,7 @@ def func_torque_and_passive_force(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
@@ -6207,7 +6179,7 @@ def func_torque_and_passive_force(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -6237,7 +6209,7 @@ def func_torque_and_passive_force(
 
                         for j_d in (
                             range(dof_end - dof_start)
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
                         ):
                             if j_d < dof_end:
@@ -6260,7 +6232,6 @@ def func_update_acc(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     # Assume this is the outermost loop
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -6276,7 +6247,7 @@ def func_update_acc(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -6295,10 +6266,14 @@ def func_update_acc(
 
                 for i_l_ in (
                     range(entities_info.link_start[i_e], entities_info.link_end[i_e])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
                 ):
-                    i_l = i_l_ if ti.static(not is_backward) else (i_l_ + entities_info.link_start[i_e])
+                    i_l = (
+                        i_l_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else (i_l_ + entities_info.link_start[i_e])
+                    )
 
                     if i_l < entities_info.link_end[i_e]:
                         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -6321,10 +6296,14 @@ def func_update_acc(
 
                         for i_d_ in (
                             range(links_info.dof_start[I_l], links_info.dof_end[I_l])
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
                         ):
-                            i_d = i_d_ if ti.static(not is_backward) else (i_d_ + links_info.dof_start[I_l])
+                            i_d = (
+                                i_d_
+                                if ti.static(not static_rigid_sim_config.is_backward)
+                                else (i_d_ + links_info.dof_start[I_l])
+                            )
 
                             if i_d < links_info.dof_end[I_l]:
                                 # cacc = cacc_parent + cdofdot * qvel + cdof * qacc
@@ -6348,7 +6327,6 @@ def func_update_force(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
@@ -6363,7 +6341,7 @@ def func_update_force(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -6418,7 +6396,7 @@ def func_update_force(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -6437,7 +6415,7 @@ def func_update_force(
 
                 for i_l_ in (
                     range(entities_info.n_links[i_e])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
                 ):
                     if i_l_ < entities_info.n_links[i_e]:
@@ -6486,7 +6464,6 @@ def func_bias_force(
     links_info: array_class.LinksInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
@@ -6501,7 +6478,7 @@ def func_bias_force(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -6521,10 +6498,14 @@ def func_bias_force(
 
                 for i_d_ in (
                     range(links_info.dof_start[I_l], links_info.dof_end[I_l])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
                 ):
-                    i_d = i_d_ if ti.static(not is_backward) else (i_d_ + links_info.dof_start[I_l])
+                    i_d = (
+                        i_d_
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else (i_d_ + links_info.dof_start[I_l])
+                    )
                     if i_d < links_info.dof_end[I_l]:
                         dofs_state.qf_bias[i_d, i_b] = dofs_state.cdof_ang[i_d, i_b].dot(
                             links_state.cfrc_ang[i_l, i_b]
@@ -6546,14 +6527,12 @@ def kernel_compute_qacc(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     func_compute_qacc(
         dofs_state=dofs_state,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
 
@@ -6563,7 +6542,6 @@ def func_compute_qacc(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     func_solve_mass(
         vec=dofs_state.force,
@@ -6572,7 +6550,6 @@ def func_compute_qacc(
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
     )
 
     # Assume this is the outermost loop
@@ -6589,7 +6566,7 @@ def func_compute_qacc(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_entities))
@@ -6608,7 +6585,7 @@ def func_compute_qacc(
 
                 for i_d1_ in (
                     range(entities_info.n_dofs[i_e])
-                    if ti.static(not is_backward)
+                    if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
                     i_d1 = entities_info.dof_start[i_e] + i_d1_
@@ -6623,7 +6600,6 @@ def func_integrate(
     joints_info: array_class.JointsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    is_backward: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
@@ -6638,7 +6614,7 @@ def func_integrate(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
@@ -6670,7 +6646,7 @@ def func_integrate(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else range(1)
             )
-            if ti.static(not is_backward)
+            if ti.static(not static_rigid_sim_config.is_backward)
             else (
                 # Static inner loop for backward pass
                 ti.static(range(static_rigid_sim_config.max_n_awake_links))
@@ -6742,7 +6718,7 @@ def func_integrate(
                     else:
                         for j_ in (
                             (range(q_end - q_start))
-                            if ti.static(not is_backward)
+                            if ti.static(not static_rigid_sim_config.is_backward)
                             else (ti.static(range(static_rigid_sim_config.max_n_qs_per_link)))
                         ):
                             j = q_start + j_
@@ -6896,7 +6872,6 @@ def kernel_prepare_backward_substep(
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
-                is_backward=False,
             )
         # Save results of [update_cartesian_space] to adjoint cache
         func_copy_cartesian_space(

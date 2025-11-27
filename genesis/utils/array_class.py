@@ -1799,6 +1799,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     sparse_solve: bool
     integrator: int
     solver_type: int
+    is_backward: bool
 
 
 # =========================================== DataManager ===========================================

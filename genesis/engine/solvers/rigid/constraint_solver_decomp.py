@@ -1994,7 +1994,6 @@ def func_update_gradient(
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=False,
         )
 
     elif ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
