@@ -798,7 +798,7 @@ class MJCF(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     parse_glb_with_zup : bool, optional
-        Whether to use zup to load glb files. Defaults to False. Mujoco currently does not support glb mesh.
+        Whether to use zup to load glb files. Defaults to False.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.

@@ -127,10 +127,8 @@ def parse_urdf(morph, surface):
                             mesh.convert_to_zup()
                         else:
                             gs.logger.warning(
-                                "This URDF file contains GLTF mesh, which is using y-up while Genesis uses z-up."
-                                " Please set parse_glb_with_zup=True in morph options if you find the mesh is"
-                                " 90-degree rotated. We will set parse_glb_with_zup=True and rotate glb mesh by"
-                                " default later and gradually enforce this option."
+                                "This file contains GLTF mesh, which is using y-up while Genesis uses z-up. Please set "
+                                "'parse_glb_with_zup=True' in morph options if you find the mesh is 90-degree rotated. "
                             )
 
                     if not geom_is_col and (morph.prioritize_urdf_material or not tmesh.visual.defined):
