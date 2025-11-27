@@ -14,8 +14,6 @@ class Hybrid(Material):
         The material of the rigid body.
     material_soft: gs.materials.base.Material
         The material of the soft body.
-    fixed: bool, optional
-        Whether the rigid entity is with a fixed base link. Default is False.
     use_default_coupling: bool, optional
         Whether to use default solver coupling. Default is False
     damping: float, optional
@@ -36,7 +34,6 @@ class Hybrid(Material):
         self,
         material_rigid,
         material_soft,
-        fixed=True,
         use_default_coupling=False,
         damping=0.0,
         thickness=0.05,
@@ -50,7 +47,6 @@ class Hybrid(Material):
         self._material_rigid = material_rigid
         self._material_soft = material_soft
         self._thickness = thickness
-        self._fixed = fixed
         self._use_default_coupling = use_default_coupling
         self._damping = damping
         self._soft_dv_coef = soft_dv_coef
@@ -72,11 +68,6 @@ class Hybrid(Material):
     def thickness(self):
         """The thickness to instantiate soft skin."""
         return self._thickness
-
-    @property
-    def fixed(self):
-        """Whether the rigid entity is with a fixed base link."""
-        return self._fixed
 
     @property
     def use_default_coupling(self):

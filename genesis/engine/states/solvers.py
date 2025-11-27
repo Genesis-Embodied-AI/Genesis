@@ -72,6 +72,7 @@ class RigidSolverState:
         self.scene = None
         self.qpos = self.qpos.detach()
         self.dofs_vel = self.dofs_vel.detach()
+        self.dofs_acc = self.dofs_acc.detach()
         self.links_pos = self.links_pos.detach()
         self.links_quat = self.links_quat.detach()
         self.i_pos_shift = self.i_pos_shift.detach()
