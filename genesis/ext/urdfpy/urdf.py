@@ -441,6 +441,87 @@ class Cylinder(URDFType):
         return c
 
 
+class Capsule(URDFType):
+    """A capsule whose center is at the local origin.
+
+    Parameters
+    ----------
+    radius : float
+        The radius of the capsule in meters.
+    length : float
+        The length of the capsule in meters.
+    """
+
+    _ATTRIBS = {
+        "radius": (float, True),
+        "length": (float, True),
+    }
+    _TAG = "capsule"
+
+    def __init__(self, radius, length):
+        self.radius = radius
+        self.length = length
+        self._meshes = []
+
+    @property
+    def radius(self):
+        """float : The radius of the capsule in meters."""
+        return self._radius
+
+    @radius.setter
+    def radius(self, value):
+        self._radius = float(value)
+        self._meshes = []
+
+    @property
+    def length(self):
+        """float : The length of the capsule in meters."""
+        return self._length
+
+    @length.setter
+    def length(self, value):
+        self._length = float(value)
+        self._meshes = []
+
+    @property
+    def meshes(self):
+        """list of :class:`~trimesh.base.Trimesh` : The triangular meshes
+        that represent this object.
+        """
+        if len(self._meshes) == 0:
+            self._meshes = [trimesh.creation.capsule(radius=self.radius, height=self.length)]
+        return self._meshes
+
+    def copy(self, prefix="", scale=None):
+        """Create a deep copy with the prefix applied to all names.
+
+        Parameters
+        ----------
+        prefix : str
+            A prefix to apply to all names.
+
+        Returns
+        -------
+        :class:`.Capsule`
+            A deep copy.
+        """
+        if scale is None:
+            scale = 1.0
+        if isinstance(scale, (list, np.ndarray)):
+            if scale[0] != scale[1]:
+                raise ValueError("Cannot rescale capsule geometry with asymmetry in x/y")
+            c = Capsule(
+                radius=self.radius * scale[0],
+                length=self.length * scale[2],
+            )
+        else:
+            c = Capsule(
+                radius=self.radius * scale,
+                length=self.length * scale,
+            )
+        return c
+
+
 class Sphere(URDFType):
     """A sphere whose center is at the local origin.
 
@@ -657,6 +738,8 @@ class Geometry(URDFType):
         Box geometry.
     cylinder : :class:`.Cylinder`
         Cylindrical geometry.
+    capsule : :class:`.Capsule`
+        Capsule geometry.
     sphere : :class:`.Sphere`
         Spherical geometry.
     mesh : :class:`.Mesh`
@@ -666,16 +749,18 @@ class Geometry(URDFType):
     _ELEMENTS = {
         "box": (Box, False, False),
         "cylinder": (Cylinder, False, False),
+        "capsule": (Capsule, False, False),
         "sphere": (Sphere, False, False),
         "mesh": (Mesh, False, False),
     }
     _TAG = "geometry"
 
-    def __init__(self, box=None, cylinder=None, sphere=None, mesh=None):
-        if box is None and cylinder is None and sphere is None and mesh is None:
+    def __init__(self, box=None, cylinder=None, capsule=None, sphere=None, mesh=None):
+        if box is None and cylinder is None and capsule is None and sphere is None and mesh is None:
             raise ValueError("At least one geometry element must be set")
         self.box = box
         self.cylinder = cylinder
+        self.capsule = capsule
         self.sphere = sphere
         self.mesh = mesh
 
@@ -700,6 +785,17 @@ class Geometry(URDFType):
         if value is not None and not isinstance(value, Cylinder):
             raise TypeError("Expected Cylinder type")
         self._cylinder = value
+
+    @property
+    def capsule(self):
+        """:class:`.Capsule` : Capsule geometry."""
+        return self._capsule
+
+    @capsule.setter
+    def capsule(self, value):
+        if value is not None and not isinstance(value, Capsule):
+            raise TypeError("Expected Capsule type")
+        self._capsule = value
 
     @property
     def sphere(self):
@@ -732,6 +828,8 @@ class Geometry(URDFType):
             return self.box
         if self.cylinder is not None:
             return self.cylinder
+        if self.capsule is not None:
+            return self.capsule
         if self.sphere is not None:
             return self.sphere
         if self.mesh is not None:
@@ -761,6 +859,7 @@ class Geometry(URDFType):
         v = Geometry(
             box=(self.box.copy(prefix=prefix, scale=scale) if self.box else None),
             cylinder=(self.cylinder.copy(prefix=prefix, scale=scale) if self.cylinder else None),
+            capsule=(self.capsule.copy(prefix=prefix, scale=scale) if self.capsule else None),
             sphere=(self.sphere.copy(prefix=prefix, scale=scale) if self.sphere else None),
             mesh=(self.mesh.copy(prefix=prefix, scale=scale) if self.mesh else None),
         )
