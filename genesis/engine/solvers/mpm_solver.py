@@ -182,14 +182,10 @@ class MPMSolver(Solver):
         self._coupler = self.sim._coupler
 
         if self.is_active:
-            if self._enable_CPIC:
-                gs.logger.warning(
-                    "Kernel compilation takes longer when running MPM solver in CPIC mode. Please be patient."
+            if self._enable_CPIC and self._sim.requires_grad:
+                gs.raise_exception(
+                    "CPIC is not supported in differentiable mode yet. Submit a feature request if you need it."
                 )
-                if self._sim.requires_grad:
-                    gs.raise_exception(
-                        "CPIC is not supported in differentiable mode yet. Submit a feature request if you need it."
-                    )
 
             self.init_particle_fields()
             self.init_grid_fields()
