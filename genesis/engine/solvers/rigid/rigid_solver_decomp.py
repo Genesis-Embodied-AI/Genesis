@@ -1197,22 +1197,10 @@ class RigidSolver(Solver):
         if self.is_active:
             state = RigidSolverState(self._scene)
 
-            # qpos: ti.types.ndarray(),
-            # vel: ti.types.ndarray(),
-            # links_pos: ti.types.ndarray(),
-            # links_quat: ti.types.ndarray(),
-            # i_pos_shift: ti.types.ndarray(),
-            # mass_shift: ti.types.ndarray(),
-            # friction_ratio: ti.types.ndarray(),
-            # links_state: array_class.LinksState,
-            # dofs_state: array_class.DofsState,
-            # geoms_state: array_class.GeomsState,
-            # rigid_global_info: array_class.RigidGlobalInfo,
-            # static_rigid_sim_config: ti.template(),
-
             kernel_get_state(
                 qpos=state.qpos,
                 vel=state.dofs_vel,
+                acc=state.dofs_acc,
                 links_pos=state.links_pos,
                 links_quat=state.links_quat,
                 i_pos_shift=state.i_pos_shift,
@@ -1234,6 +1222,7 @@ class RigidSolver(Solver):
             kernel_set_state(
                 qpos=state.qpos,
                 dofs_vel=state.dofs_vel,
+                dofs_acc=state.dofs_acc,
                 links_pos=state.links_pos,
                 links_quat=state.links_quat,
                 i_pos_shift=state.i_pos_shift,
@@ -5842,11 +5831,11 @@ def kernel_update_vgeoms_render_T(
             vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
-# FIXME: This kernel cannot use 'pure' because  'gs.Tensor' is currently not support by GsTaichi
-@ti.kernel(fastcache=False)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_state(
     qpos: ti.types.ndarray(),
     vel: ti.types.ndarray(),
+    acc: ti.types.ndarray(),
     links_pos: ti.types.ndarray(),
     links_quat: ti.types.ndarray(),
     i_pos_shift: ti.types.ndarray(),
@@ -5872,6 +5861,7 @@ def kernel_get_state(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         vel[i_b, i_d] = dofs_state.vel[i_d, i_b]
+        acc[i_b, i_d] = dofs_state.acc[i_d, i_b]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b in ti.ndrange(n_links, _B):
@@ -5887,11 +5877,11 @@ def kernel_get_state(
         friction_ratio[i_b, i_l] = geoms_state.friction_ratio[i_l, i_b]
 
 
-# FIXME: This kernel cannot use 'pure' because  'gs.Tensor' is currently not support by GsTaichi
-@ti.kernel(fastcache=False)
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_state(
     qpos: ti.types.ndarray(),
     dofs_vel: ti.types.ndarray(),
+    dofs_acc: ti.types.ndarray(),
     links_pos: ti.types.ndarray(),
     links_quat: ti.types.ndarray(),
     i_pos_shift: ti.types.ndarray(),
@@ -5917,6 +5907,7 @@ def kernel_set_state(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b_ in ti.ndrange(n_dofs, envs_idx.shape[0]):
         dofs_state.vel[i_d, envs_idx[i_b_]] = dofs_vel[envs_idx[i_b_], i_d]
+        dofs_state.acc[i_d, envs_idx[i_b_]] = dofs_acc[envs_idx[i_b_], i_d]
         dofs_state.ctrl_force[i_d, envs_idx[i_b_]] = gs.ti_float(0.0)
         dofs_state.ctrl_mode[i_d, envs_idx[i_b_]] = gs.CTRL_MODE.FORCE
 
