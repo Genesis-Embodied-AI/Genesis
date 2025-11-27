@@ -1149,7 +1149,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
+def test_batch_deformable_render(monkeypatch, png_snapshot):
     CAM_RES = (640, 480)
 
     # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
