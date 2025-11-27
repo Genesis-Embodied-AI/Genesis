@@ -3367,7 +3367,6 @@ def kernel_rigid_entity_inverse_kinematics(
                     entities_info,
                     rigid_global_info,
                     static_rigid_sim_config,
-                    False,
                 )
                 # compute error
                 solved = True
@@ -3496,7 +3495,6 @@ def kernel_rigid_entity_inverse_kinematics(
                     entities_info,
                     rigid_global_info,
                     static_rigid_sim_config,
-                    False,
                 )
                 solved = True
                 for i_ee in range(n_links):
@@ -3596,5 +3594,4 @@ def kernel_rigid_entity_inverse_kinematics(
             entities_info,
             rigid_global_info,
             static_rigid_sim_config,
-            False,
         )
