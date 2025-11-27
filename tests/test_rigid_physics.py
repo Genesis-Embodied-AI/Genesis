@@ -861,7 +861,7 @@ def test_box_box_dynamics(gs_sim):
         assert_allclose(qpos[8], 0.6, atol=2e-3)
 
 
-@pytest.mark.slow
+@pytest.mark.slow  # ~840s
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
     [
@@ -1361,6 +1361,7 @@ def test_set_sol_params(n_envs, batched, tol):
             assert_allclose(obj.sol_params, sol_params, tol=tol)
 
 
+@pytest.mark.slow  # ~160s
 @pytest.mark.required
 @pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
@@ -1457,6 +1458,7 @@ def test_multilink_inverse_kinematics(show_viewer):
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=TOL)
 
 
+@pytest.mark.slow  # ~180s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -1929,6 +1931,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
 
 
+@pytest.mark.slow  # ~160s
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
@@ -2547,6 +2550,7 @@ def test_gravity(show_viewer, tol):
     )
 
 
+@pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(tmp_path, show_viewer, tol):
@@ -2732,6 +2736,7 @@ def test_get_constraints_api(show_viewer, tol):
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
 
 
+@pytest.mark.slow  # ~100s
 @pytest.mark.parametrize(
     "n_envs, batched, backend",
     [
@@ -3210,6 +3215,7 @@ def test_mesh_primitive_COM(show_viewer, tol):
     assert_allclose(cube_COM[2], 0.25, atol=2e-3)
 
 
+@pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [0.1, 10.0])
 @pytest.mark.parametrize("box_box_detection", [False, True])
