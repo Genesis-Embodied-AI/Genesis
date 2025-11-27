@@ -196,6 +196,7 @@ class ConstraintSolver:
             dofs_state=solver.dofs_state,
             constraint_state=self.constraint_state,
             static_rigid_sim_config=solver._static_rigid_sim_config,
+            errno=solver._errno,
         )
 
         if solver._options.noslip_iterations > 0:
@@ -1403,6 +1404,7 @@ def func_update_qacc(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
@@ -1412,6 +1414,8 @@ def func_update_qacc(
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
+            errno[None] = 3
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
