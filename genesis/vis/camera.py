@@ -296,6 +296,9 @@ class Camera(RBC):
                     # Note that it is not possible to expand / tile because the batch size is unknown before build.
                     pos_rel = pos_rel.unsqueeze(0)
 
+        if (pos_rel.abs() < gs.EPS).all():
+            gs.raise_exception("Camera must not be co-located with base link of entity to which it is attached.")
+
         self._followed_entity = entity
         self._follow_pos_rel = pos_rel
         self._follow_fixed_axis = fixed_axis
@@ -346,8 +349,8 @@ class Camera(RBC):
                 camera_lookat[:] = self._follow_smoothing * camera_lookat + (1.0 - self._follow_smoothing) * entity_pos
         else:
             camera_pos[:] = entity_pos
-            camera_lookat[:] = entity_pos
-
+            if not self._follow_fix_orientation:
+                camera_lookat[:] = entity_pos
         camera_pos += follow_pos_rel
 
         # Fix the camera's position along the specified axis if requested
