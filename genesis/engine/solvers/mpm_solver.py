@@ -455,8 +455,8 @@ class MPMSolver(Solver):
     @ti.kernel
     def _is_state_valid(self, f: ti.i32) -> ti.i32:
         is_success = True
-        for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if ti.math.isnan(self.particles[f, i_p, i_b].pos).any():
+        for i_p, i_b, i_3 in ti.ndrange(self._n_particles, self._B, 3):
+            if ti.math.isnan(self.particles[f, i_p, i_b].pos[i_3]):
                 is_success = False
         return is_success
 
@@ -506,6 +506,7 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
+        # FIXME: Use existing errno mechanism for this.
         if not self._is_state_valid(f):
             gs.raise_exception(
                 "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."

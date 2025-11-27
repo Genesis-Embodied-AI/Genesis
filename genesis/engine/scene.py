@@ -1406,8 +1406,9 @@ class Scene(RBC):
         if _envs_idx.ndim != 1:
             gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")
 
-        if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
-            gs.raise_exception("`envs_idx` exceeds valid range.")
+        # FIXME: This check is too expensive
+        # if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
+        #     gs.raise_exception("`envs_idx` exceeds valid range.")
 
         return _envs_idx
 

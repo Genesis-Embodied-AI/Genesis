@@ -83,7 +83,7 @@ class PathPlanner(ABC):
     # ------------------------------------------------------------------------------------
 
     def _sanitize_qposs(self, qpos_goal, qpos_start, envs_idx):
-        qpos_cur = self._entity.get_qpos(envs_idx=envs_idx)
+        qpos_cur = self._entity.get_qpos(envs_idx=envs_idx).clone()
 
         qpos_goal, _, _ = self._solver._sanitize_1D_io_variables(
             qpos_goal, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True

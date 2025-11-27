@@ -5,6 +5,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from contextlib import nullcontext
+from copy import deepcopy
 from typing import cast
 from pathlib import Path
 
@@ -979,8 +980,8 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
     # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
     attr_orig = {}
     for scale, robot in zip(ROBOT_SCALES, scene.entities):
-        links_invweight = robot.get_links_invweight()
-        dofs_invweight = robot.get_dofs_invweight()
+        links_invweight = robot.get_links_invweight().clone()
+        dofs_invweight = robot.get_dofs_invweight().clone()
         robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
         assert torch.all(robot.get_dofs_invweight() < 1.0)
         with pytest.raises(AssertionError):
@@ -988,8 +989,8 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         with pytest.raises(AssertionError):
             assert_allclose(robot.get_links_invweight(), links_invweight, tol=tol)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-        links_invweight = robot.get_links_invweight()
-        dofs_invweight = robot.get_dofs_invweight()
+        links_invweight = robot.get_links_invweight().clone()
+        dofs_invweight = robot.get_dofs_invweight().clone()
         qpos = np.random.rand(robot.n_dofs)
         robot.set_dofs_position(qpos)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
@@ -2911,7 +2912,7 @@ def test_data_accessor(n_envs, batched, tol):
 
         # Check getter and setter without row or column masking
         if getter is not None:
-            datas = getter()
+            datas = deepcopy(getter())
             is_tuple = isinstance(datas, (tuple, list))
             if arg1_max > 0:
                 assert_allclose(getter(range(arg1_max)), datas, tol=tol)
@@ -2964,7 +2965,7 @@ def test_data_accessor(n_envs, batched, tol):
                         if arg1 is None and arg2 is not None:
                             unsafe = not must_cast(arg2)
                             if getter is not None:
-                                data = getter(arg2, unsafe=unsafe)
+                                data = deepcopy(getter(arg2, unsafe=unsafe))
                             else:
                                 if is_tuple:
                                     data = [torch.ones((1, *shape)) for shape in spec]
@@ -2982,7 +2983,7 @@ def test_data_accessor(n_envs, batched, tol):
                         elif arg1 is not None and arg2 is None:
                             unsafe = not must_cast(arg1)
                             if getter is not None:
-                                data = getter(arg1, unsafe=unsafe)
+                                data = deepcopy(getter(arg1, unsafe=unsafe))
                             else:
                                 if is_tuple:
                                     data = [torch.ones((1, *shape)) for shape in spec]
@@ -3000,7 +3001,7 @@ def test_data_accessor(n_envs, batched, tol):
                         else:
                             unsafe = not any(map(must_cast, (arg1, arg2)))
                             if getter is not None:
-                                data = getter(arg1, arg2, unsafe=unsafe)
+                                data = deepcopy(getter(arg1, arg2, unsafe=unsafe))
                             else:
                                 if is_tuple:
                                     data = [torch.ones((1, 1, *shape)) for shape in spec]

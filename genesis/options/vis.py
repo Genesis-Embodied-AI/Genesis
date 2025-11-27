@@ -33,6 +33,8 @@ class ViewerOptions(Options):
         The up vector of the camera's extrinsic pose.
     camera_fov : float
         The field of view (in degrees) of the camera.
+    disable_keyboard_shortcuts : bool
+        Whether to disable all keyboard shortcuts in the viewer. Defaults to False.
     """
 
     res: Optional[tuple] = None
@@ -44,6 +46,7 @@ class ViewerOptions(Options):
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
     enable_interaction: bool = False
+    disable_keyboard_shortcuts: bool = False
 
 
 class VisOptions(Options):
