@@ -104,6 +104,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
         scene.step()
 
 
+@pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("backend", [gs.gpu])
