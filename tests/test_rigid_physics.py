@@ -2508,8 +2508,8 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     for _ in range(40):
         scene.step()
     geom_verts = tensor_to_array(geom.get_verts())
-    assert np.linalg.norm(geom_verts - np.zeros(3), axis=-1, ord=np.inf).min() < 1e-3
-    assert np.linalg.norm(geom_verts - np.array((0.0, 0.0, 0.14)), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.0), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
 
 
 @pytest.mark.required
@@ -2875,19 +2875,35 @@ def test_data_accessor(n_envs, batched, tol):
     # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
     # * Compare first 'Get' output with last 'Get' output
     # * Compare last 'Get' output with corresponding slice of non-masking 'Get' output
-    def get_all_supported_masks(i):
+    def get_all_supported_masks(i, max_length):
+        if max_length <= 0 or i > max_length - 1:
+            return (None,)
+        if i == max_length - 1:
+            return (
+                i,
+                [i],
+                slice(i, i + 1),
+                range(i, i + 1),
+                np.array([i], dtype=np.int32),
+                torch.tensor([i], dtype=torch.int64),
+                torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+            )
         return (
-            i,
-            [i],
-            slice(i, i + 1),
-            range(i, i + 1),
-            np.array([i], dtype=np.int32),
-            torch.tensor([i], dtype=torch.int64),
-            torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+            [i, i + 1],
+            slice(i, i + 2),
+            range(i, i + 2),
+            np.array([i, i + 1], dtype=np.int32),
+            torch.tensor([i, i + 1], dtype=torch.int64),
+            torch.tensor([i, i + 1], dtype=gs.tc_int, device=gs.device),
         )
 
-    def must_cast(value):
-        return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
+    def must_cast(value, dtype):
+        return not (
+            isinstance(value, torch.Tensor)
+            and value.is_contiguous()
+            and value.dtype == dtype
+            and value.device == gs.device
+        )
 
     for arg1_max, arg2_max, getter_or_spec, setter, ti_data in (
         # SOLVER
@@ -3010,66 +3026,73 @@ def test_data_accessor(n_envs, batched, tol):
 
         # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
-            for arg1 in get_all_supported_masks(i) if arg1_max > 0 else (None,):
+            if i is not None:
+                mask_i = [i, i + 1] if i < arg1_max - 1 else [i]
+            for arg1 in get_all_supported_masks(i, arg1_max):
                 for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
-                    for arg2 in get_all_supported_masks(j) if arg2_max > 0 else (None,):
+                    if j is not None:
+                        mask_j = [j, j + 1] if j < arg2_max - 1 else [j]
+                    for arg2 in get_all_supported_masks(j, arg2_max):
                         if arg1 is None and arg2 is not None:
-                            unsafe = not must_cast(arg2)
+                            unsafe = not must_cast(arg2, gs.tc_int)
                             if getter is not None:
                                 data = deepcopy(getter(arg2, unsafe=unsafe))
                             else:
                                 if is_tuple:
-                                    data = [torch.ones((1, *shape)) for shape in spec]
+                                    data = [torch.ones((len(mask_j), *shape)) for shape in spec]
                                 else:
-                                    data = torch.ones((1, *spec))
+                                    data = torch.ones((len(mask_j), *spec))
                             if setter is not None:
+                                unsafe &= not must_cast(data, gs.tc_float)
                                 setter(data, arg2, unsafe=unsafe)
                             if n_envs:
                                 if is_tuple:
-                                    data_ = [val[[j]] for val in datas]
+                                    data_ = [val[mask_j] for val in datas]
                                 else:
-                                    data_ = datas[[j]]
+                                    data_ = datas[mask_j]
                             else:
                                 data_ = datas
                         elif arg1 is not None and arg2 is None:
-                            unsafe = not must_cast(arg1)
+                            unsafe = not must_cast(arg1, gs.tc_int)
                             if getter is not None:
                                 data = deepcopy(getter(arg1, unsafe=unsafe))
                             else:
                                 if is_tuple:
-                                    data = [torch.ones((1, *shape)) for shape in spec]
+                                    data = [torch.ones((len(mask_i), *shape)) for shape in spec]
                                 else:
-                                    data = torch.ones((1, *spec))
+                                    data = torch.ones((len(mask_i), *spec))
                             if setter is not None:
+                                unsafe &= not must_cast(data, gs.tc_float)
                                 if is_tuple:
                                     setter(*data, arg1, unsafe=unsafe)
                                 else:
                                     setter(data, arg1, unsafe=unsafe)
                             if is_tuple:
-                                data_ = [val[[i]] for val in datas]
+                                data_ = [val[mask_i] for val in datas]
                             else:
-                                data_ = datas[[i]]
+                                data_ = datas[mask_i]
                         else:
-                            unsafe = not any(map(must_cast, (arg1, arg2)))
+                            unsafe = not any(must_cast(arg, gs.tc_int) for arg in (arg1, arg2))
                             if getter is not None:
                                 data = deepcopy(getter(arg1, arg2, unsafe=unsafe))
                             else:
                                 if is_tuple:
-                                    data = [torch.ones((1, 1, *shape)) for shape in spec]
+                                    data = [torch.ones((len(mask_j), len(mask_i), *shape)) for shape in spec]
                                 else:
-                                    data = torch.ones((1, 1, *spec))
+                                    data = torch.ones((len(mask_j), len(mask_i), *spec))
                             if setter is not None:
+                                unsafe &= not must_cast(data, gs.tc_float)
                                 setter(data, arg1, arg2, unsafe=unsafe)
                             if is_tuple:
-                                data_ = [val[[j], :][:, [i]] for val in datas]
+                                data_ = [val[mask_j, :][:, mask_i] for val in datas]
                             else:
-                                data_ = datas[[j], :][:, [i]]
+                                data_ = datas[mask_j, :][:, mask_i]
                         # FIXME: Not sure why tolerance must be increased for tests to pass
                         assert_allclose(data_, data, tol=(5.0 * tol))
 
-    for dofs_idx in (*get_all_supported_masks(0), None):
-        for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
-            unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
+    for dofs_idx in (*get_all_supported_masks(0, gs_s.n_dofs), None):
+        for envs_idx in (*(get_all_supported_masks(0, gs_s.n_dofs) if n_envs > 0 else ()), None):
+            unsafe = not any(must_cast(arg, gs.tc_int) for arg in (dofs_idx, envs_idx))
             dofs_pos = gs_s.get_dofs_position(dofs_idx, envs_idx)
             dofs_vel = gs_s.get_dofs_velocity(dofs_idx, envs_idx)
             gs_s.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
