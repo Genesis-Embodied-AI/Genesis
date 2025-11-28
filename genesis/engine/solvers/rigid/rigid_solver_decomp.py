@@ -249,16 +249,7 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
                 para_level=self.sim._para_level,
                 requires_grad=self.sim.options.requires_grad,
-                use_hibernation=False,
-                batch_links_info=False,
-                batch_dofs_info=False,
-                batch_joints_info=False,
-                enable_mujoco_compatibility=False,
-                enable_multi_contact=True,
                 enable_collision=self._enable_collision,
-                enable_joint_limit=False,
-                box_box_detection=True,
-                sparse_solve=False,
                 integrator=gs.integrator.approximate_implicitfast,
                 solver_type=gs.constraint_solver.CG,
             )

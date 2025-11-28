@@ -1,6 +1,7 @@
 import math
 import dataclasses
 from functools import partial
+from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import gstaichi as ti
 import numpy as np
@@ -24,35 +25,38 @@ def maybe_shape(shape, is_on):
     return shape if is_on else ()
 
 
+@dataclass_transform(eq_default=True, order_default=True, kw_only_default=False, frozen_default=True)
 class AutoInitMeta(type):
     def __new__(cls, name, bases, namespace):
-        field_names = namespace["__annotations__"].keys()
+        names = tuple(namespace["__annotations__"].keys())
+        defaults = {k: namespace[k] for k in names if k in namespace}
 
         def __init__(self, *args, **kwargs):
-            assigned = {}
+            # Initialize assigned arguments from defaults
+            assigned = defaults.copy()
 
             # Assign positional arguments
-            if len(args) > len(field_names):
-                raise TypeError(f"{name}() takes {len(field_names)} positional arguments but {len(args)} were given")
-            for field, value in zip(field_names, args):
-                assigned[field] = value
+            if len(args) > len(names):
+                raise TypeError(f"{name}() takes {len(names)} positional arguments but {len(args)} were given")
+            for key, value in zip(names, args):
+                assigned[key] = value
 
             # Assign keyword arguments
             for key, value in kwargs.items():
-                if key not in field_names:
+                if key not in names:
                     raise TypeError(f"{name}() got unexpected keyword argument '{key}'")
-                if key in assigned:
+                if key in names[: len(args)]:
                     raise TypeError(f"{name}() got multiple values for argument '{key}'")
                 assigned[key] = value
 
             # Check for missing arguments
-            for field in field_names:
-                if field not in assigned:
-                    raise TypeError(f"{name}() missing required argument: '{field}'")
+            for key in names:
+                if key not in assigned:
+                    raise TypeError(f"{name}() missing required argument: '{key}'")
 
             # Set attributes
-            for field, value in assigned.items():
-                setattr(self, field, value)
+            for key, value in assigned.items():
+                setattr(self, key, value)
 
         namespace["__init__"] = __init__
 
@@ -1725,19 +1729,19 @@ def get_entities_state(solver):
 @ti.data_oriented
 class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     para_level: int
-    requires_grad: bool
-    use_hibernation: bool
-    batch_links_info: bool
-    batch_dofs_info: bool
-    batch_joints_info: bool
-    enable_mujoco_compatibility: bool
-    enable_multi_contact: bool
     enable_collision: bool
-    enable_joint_limit: bool
-    box_box_detection: bool
-    sparse_solve: bool
-    integrator: int
-    solver_type: int
+    use_hibernation: bool = False
+    batch_links_info: bool = False
+    batch_dofs_info: bool = False
+    batch_joints_info: bool = False
+    enable_mujoco_compatibility: bool = False
+    enable_multi_contact: bool = False
+    enable_joint_limit: bool = False
+    box_box_detection: bool = True
+    sparse_solve: bool = False
+    integrator: int = gs.integrator.approximate_implicitfast
+    solver_type: int = gs.constraint_solver.CG
+    requires_grad: bool = False
 
 
 # =========================================== DataManager ===========================================
