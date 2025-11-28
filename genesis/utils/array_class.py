@@ -100,7 +100,7 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
     noslip_iterations: V_ANNOTATION
     noslip_tolerance: V_ANNOTATION
     n_equalities: V_ANNOTATION
-    n_equalities_candidate: V_ANNOTATION
+    n_candidate_equalities: V_ANNOTATION
     hibernation_thresh_acc: V_ANNOTATION
     hibernation_thresh_vel: V_ANNOTATION
     EPS: V_ANNOTATION
@@ -142,7 +142,7 @@ def get_rigid_global_info(solver):
         noslip_iterations=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._options.noslip_iterations),
         noslip_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._options.noslip_tolerance),
         n_equalities=V_SCALAR_FROM(dtype=gs.ti_int, value=solver._n_equalities),
-        n_equalities_candidate=V_SCALAR_FROM(dtype=gs.ti_int, value=solver.n_equalities_candidate),
+        n_candidate_equalities=V_SCALAR_FROM(dtype=gs.ti_int, value=solver.n_candidate_equalities_),
         hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._hibernation_thresh_acc),
         hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.ti_float, value=solver._hibernation_thresh_vel),
         EPS=V_SCALAR_FROM(dtype=gs.ti_float, value=gs.EPS),
@@ -1658,7 +1658,7 @@ class StructEqualitiesInfo(metaclass=BASE_METACLASS):
 
 
 def get_equalities_info(solver):
-    shape = (solver.n_equalities_candidate, solver._B)
+    shape = (solver.n_candidate_equalities_, solver._B)
 
     return StructEqualitiesInfo(
         eq_obj1id=V(dtype=gs.ti_int, shape=shape),

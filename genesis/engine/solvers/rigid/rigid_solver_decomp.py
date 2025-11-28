@@ -224,8 +224,7 @@ class RigidSolver(Solver):
         self.n_entities_ = max(1, self.n_entities)
         self.n_free_verts_ = max(1, self.n_free_verts)
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
-
-        self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
+        self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
         # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
         is_rigid_solver = type(self) is RigidSolver
