@@ -276,8 +276,11 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     # First, try to broadcast both matrices. Then it is does not work, squeeze them before trying again.
     try:
         args = np.broadcast_arrays(*args)
-    except ValueError:
-        args = np.broadcast_arrays(*map(np.squeeze, args))
+    except ValueError as e:
+        try:
+            args = np.broadcast_arrays(*map(np.squeeze, args))
+        except ValueError:
+            raise e
 
     np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 

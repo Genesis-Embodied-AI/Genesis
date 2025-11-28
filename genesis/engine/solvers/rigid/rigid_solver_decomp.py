@@ -1600,7 +1600,7 @@ class RigidSolver(Solver):
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
             data[mask] = torch.as_tensor(qpos, dtype=gs.tc_float, device=gs.device)
             if mask and isinstance(mask[0], torch.Tensor):
-                envs_idx = mask[0]
+                envs_idx = mask[0].reshape((-1,))
         else:
             qpos, qs_idx, envs_idx = self._sanitize_1D_io_variables(
                 qpos, qs_idx, self.n_qs, envs_idx, idx_name="qs_idx", skip_allocation=True, unsafe=unsafe
@@ -1811,7 +1811,7 @@ class RigidSolver(Solver):
                 mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
                 vel[mask] = 0.0 if velocity is None else torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
                 if mask and isinstance(mask[0], torch.Tensor):
-                    envs_idx = mask[0]
+                    envs_idx = mask[0].reshape((-1,))
                 elif not isinstance(envs_idx, torch.Tensor):
                     envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
         else:
