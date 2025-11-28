@@ -224,8 +224,7 @@ class RigidSolver(Solver):
         self.n_entities_ = max(1, self.n_entities)
         self.n_free_verts_ = max(1, self.n_free_verts)
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
-
-        self.n_equalities_candidate = max(1, self.n_equalities + self._options.max_dynamic_constraints)
+        self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
         # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
         is_rigid_solver = type(self) is RigidSolver
@@ -250,16 +249,7 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
                 para_level=self.sim._para_level,
                 requires_grad=self.sim.options.requires_grad,
-                use_hibernation=False,
-                batch_links_info=False,
-                batch_dofs_info=False,
-                batch_joints_info=False,
-                enable_mujoco_compatibility=False,
-                enable_multi_contact=True,
                 enable_collision=self._enable_collision,
-                enable_joint_limit=False,
-                box_box_detection=True,
-                sparse_solve=False,
                 integrator=gs.integrator.approximate_implicitfast,
                 solver_type=gs.constraint_solver.CG,
             )

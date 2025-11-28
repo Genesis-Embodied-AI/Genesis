@@ -41,7 +41,7 @@ class ConstraintSolver:
             4 * rigid_solver.collider._collider_info.max_contact_pairs[None]
             + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
             + self._solver.n_dofs
-            + self._solver.n_equalities_candidate * 6
+            + self._solver.n_candidate_equalities_ * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
 
@@ -351,7 +351,7 @@ class ConstraintSolver:
         if overflow:
             gs.logger.warning(
                 "Ignoring dynamically registered weld constraint to avoid exceeding max number of equality constraints"
-                f"({self.rigid_global_info.n_equalities_candidate.to_numpy()}). Please increase the value of "
+                f"({self.rigid_global_info.n_candidate_equalities.to_numpy()}). Please increase the value of "
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
@@ -2190,7 +2190,7 @@ def kernel_add_weld_constraint(
     for i_b_ in ti.ndrange(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == rigid_global_info.n_equalities_candidate[None]:
+        if i_e == rigid_global_info.n_candidate_equalities[None]:
             overflow = True
         else:
             shared_pos = links_state.pos[link1_idx, i_b]

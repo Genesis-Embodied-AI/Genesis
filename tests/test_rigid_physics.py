@@ -2508,8 +2508,8 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     for _ in range(40):
         scene.step()
     geom_verts = tensor_to_array(geom.get_verts())
-    assert np.linalg.norm(geom_verts - np.zeros(3), axis=-1, ord=np.inf).min() < 1e-3
-    assert np.linalg.norm(geom_verts - np.array((0.0, 0.0, 0.14)), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.0), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
 
 
 @pytest.mark.required

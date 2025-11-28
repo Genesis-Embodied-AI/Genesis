@@ -1998,7 +1998,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
-    def set_pos(self, pos, envs_idx=None, *, relative=False, unsafe=False):
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False, unsafe=False):
         """
         Set position of the entity's base link.
 
@@ -2020,13 +2020,14 @@ class RigidEntity(Entity):
             if _pos is not pos:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             pos = _pos
-        self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
+        if zero_velocity:
+            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
         self._solver.set_base_links_pos(
             pos.unsqueeze(-2), self._base_links_idx_, envs_idx, relative=relative, unsafe=unsafe
         )
 
     @gs.assert_built
-    def set_quat(self, quat, envs_idx=None, *, relative=False, unsafe=False):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False, unsafe=False):
         """
         Set quaternion of the entity's base link.
 
@@ -2048,7 +2049,8 @@ class RigidEntity(Entity):
             if _quat is not quat:
                 gs.logger.debug(ALLOCATE_TENSOR_WARNING)
             quat = _quat
-        self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
+        if zero_velocity:
+            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
         self._solver.set_base_links_quat(
             quat.unsqueeze(-2), self._base_links_idx_, envs_idx, relative=relative, unsafe=unsafe
         )
