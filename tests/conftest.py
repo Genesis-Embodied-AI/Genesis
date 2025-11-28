@@ -10,6 +10,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import setproctitle
 import psutil
 import pyglet
 import pytest
@@ -65,11 +66,39 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-@pytest.hookimpl
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # Include test name in process title
+    test_name = item.nodeid.replace(" ", "")
+    setproctitle.setproctitle(f"pytest: {test_name}")
+
+
+def validate_mem_option() -> None:
+    try:
+        assert sys.platform.startswith("linux")
+        nvidia_out = subprocess.check_output(["nvidia-smi"]).decode("utf-8")
+    except Exception as e:
+        print("--mem not supported on this platform", e)
+        raise e
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     # Force disabling forked for non-linux systems
     if not sys.platform.startswith("linux"):
         config.option.forked = False
+
+    if config.getoption("--mem-monitoring-filepath"):
+        validate_mem_option()
+        subprocess.Popen(
+            [
+                sys.executable,
+                "tests/monitor_test_mem.py",
+                "--die-with-parent",
+                "--out-csv-filepath",
+                config.getoption("--mem-monitoring-filepath"),
+            ]
+        )
 
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
@@ -329,15 +358,6 @@ def pytest_runtest_setup(item):
             os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
         except Exception:
             pass
-
-
-def pytest_addoption(parser):
-    parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
-    parser.addoption(
-        "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
-    )
-    parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
-    parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
 
 
 @pytest.fixture(scope="session")
