@@ -1297,7 +1297,10 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
             # Use quaternion for comparison to avoid gymbal lock issue in euler angles
             quat = entity.get_quat()
-            assert_allclose(quat, quat_zero, tol=tol)
+            for i in range(2):
+                assert_allclose(
+                    gu.quat_to_rotvec(gu.transform_quat_by_quat(gu.inv_quat(quat[i]), quat_zero).numpy()), 0.0, tol=tol
+                )
             base_aabb = entity.geoms[0].get_AABB()
             assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
             assert_allclose(base_aabb, base_aabb_init, tol=tol)
@@ -1319,7 +1322,12 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
                 quat_ref = gu.transform_quat_by_quat(quat_zero, quat_delta)
             else:
                 quat_ref = quat_delta
-            assert_allclose(quat, quat_ref, tol=tol)
+            for i in range(2):
+                assert_allclose(
+                    gu.quat_to_rotvec(gu.transform_quat_by_quat(gu.inv_quat(quat[i]), quat_ref[i]).numpy()),
+                    0.0,
+                    tol=tol,
+                )
 
 
 @pytest.mark.required

@@ -266,7 +266,7 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward=False):
-        if self._rigid_only and (not self._requires_grad):  # "Only Advance!" --Thomas Wade :P
+        if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
                 self.rigid_solver.substep(self.cur_substep_local)
                 self._cur_substep_global += 1

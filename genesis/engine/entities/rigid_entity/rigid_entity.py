@@ -1,6 +1,8 @@
 from copy import copy
 from itertools import chain
 from typing import TYPE_CHECKING, Literal
+from functools import wraps
+import inspect
 
 import gstaichi as ti
 import numpy as np
@@ -30,6 +32,22 @@ from .rigid_link import RigidLink
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+
+
+# Wrapper to track the arguments of a function and save them in the target buffer
+def tracked(fun):
+    sig = inspect.signature(fun)
+
+    @wraps(fun)
+    def wrapper(self, *args, **kwargs):
+        if self._update_tgt_while_set:
+            bound = sig.bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            args_dict = dict(tuple(bound.arguments.items())[1:])
+            self._update_tgt(fun.__name__, args_dict)
+        return fun(self, *args, **kwargs)
+
+    return wrapper
 
 
 @ti.data_oriented
@@ -99,7 +117,7 @@ class RigidEntity(Entity):
         self._load_model()
 
         # Initialize target variables and checkpoint
-        self._tgt_keys = ["pos", "quat", "qpos", "dofs_velocity"]
+        self._tgt_keys = ("pos", "quat", "qpos", "dofs_velocity")
         self._tgt = dict()
         self._tgt_buffer = list()
         self._ckpt = dict()
@@ -1666,13 +1684,11 @@ class RigidEntity(Entity):
             self._update_tgt_while_set = False
 
             match key:
-                case "pos":
+                case "set_pos":
                     self.set_pos(**data_kwargs)
-                case "quat":
+                case "set_quat":
                     self.set_quat(**data_kwargs)
-                case "qpos":
-                    self.set_qpos(**data_kwargs)
-                case "dofs_velocity":
+                case "set_dofs_velocity":
                     self.set_dofs_velocity(**data_kwargs)
                 case _:
                     gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
@@ -1687,26 +1703,21 @@ class RigidEntity(Entity):
 
             match key:
                 # We need to unpack the data_kwargs because [_backward_from_ti] only supports positional arguments
-                case "pos":
+                case "set_pos":
                     pos = data_kwargs.pop("pos")
                     if pos.requires_grad:
                         pos._backward_from_ti(
                             self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"], data_kwargs["unsafe"]
                         )
 
-                case "quat":
+                case "set_quat":
                     quat = data_kwargs.pop("quat")
                     if quat.requires_grad:
                         quat._backward_from_ti(
                             self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"], data_kwargs["unsafe"]
                         )
 
-                case "qpos":
-                    qpos = data_kwargs.pop("qpos")
-                    if qpos.requires_grad:
-                        raise NotImplementedError("Backward pass for set_qpos_grad is not implemented yet.")
-
-                case "dofs_velocity":
+                case "set_dofs_velocity":
                     velocity = data_kwargs.pop("velocity")
                     # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
                     if velocity is not None and velocity.requires_grad:
@@ -1739,8 +1750,6 @@ class RigidEntity(Entity):
         pos = solver_state.links_pos[:, self.base_link_idx]
         quat = solver_state.links_quat[:, self.base_link_idx]
 
-        assert state._pos.shape == pos.shape
-        assert state._quat.shape == quat.shape
         state._pos = pos
         state._quat = quat
 
@@ -2116,6 +2125,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_invweight(links_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
+    @tracked
     def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False, unsafe=False):
         """
         Set position of the entity's base link.
@@ -2133,18 +2143,6 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        # Save in [tgt] for backward pass
-        if self._update_tgt_while_set:
-            self._update_tgt(
-                "pos",
-                {
-                    "pos": pos,
-                    "envs_idx": envs_idx,
-                    "relative": relative,
-                    "unsafe": unsafe,
-                },
-            )
-
         if not unsafe:
             _pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).contiguous()
             if _pos is not pos:
@@ -2167,6 +2165,7 @@ class RigidEntity(Entity):
         )
 
     @gs.assert_built
+    @tracked
     def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False, unsafe=False):
         """
         Set quaternion of the entity's base link.
@@ -2184,18 +2183,6 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        # Save in [tgt] for backward pass
-        if self._update_tgt_while_set:
-            self._update_tgt(
-                "quat",
-                {
-                    "quat": quat,
-                    "envs_idx": envs_idx,
-                    "zero_velocity": zero_velocity,
-                    "relative": relative,
-                    "unsafe": unsafe,
-                },
-            )
         if not unsafe:
             _quat = torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device).contiguous()
             if _quat is not quat:
@@ -2389,6 +2376,7 @@ class RigidEntity(Entity):
         self._solver.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx, unsafe=unsafe)
 
     @gs.assert_built
+    @tracked
     def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False, unsafe=False):
         """
         Set the entity's dofs' velocity.
@@ -2402,18 +2390,6 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        # Save in [tgt] for backward pass
-        if self._update_tgt_while_set:
-            self._update_tgt(
-                "dofs_velocity",
-                {
-                    "velocity": velocity,
-                    "dofs_idx_local": dofs_idx_local,
-                    "envs_idx": envs_idx,
-                    "skip_forward": skip_forward,
-                    "unsafe": unsafe,
-                },
-            )
         dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward, unsafe=unsafe)
 

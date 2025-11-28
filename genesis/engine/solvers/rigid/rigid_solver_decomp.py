@@ -199,13 +199,13 @@ class RigidSolver(Solver):
         self._n_entities = self.n_entities
         self._n_equalities = self.n_equalities
 
-        self._max_n_links_per_entity = self.max_n_links_per_entity
-        self._max_n_joints_per_link = self.max_n_joints_per_link
-        self._max_n_dofs_per_joint = self.max_n_dofs_per_joint
-        self._max_n_qs_per_link = self.max_n_qs_per_link
-        self._max_n_dofs_per_entity = self.max_n_dofs_per_entity
-        self._max_n_dofs_per_link = self.max_n_dofs_per_link
-        self._max_n_geoms_per_entity = self.max_n_geoms_per_entity
+        self._max_n_links_per_entity = max(len(entity.links) for entity in self._entities) if self._entities else 0
+        self._max_n_joints_per_link = max(len(link.joints) for link in self.links) if self.links else 0
+        self._max_n_dofs_per_joint = max(joint.n_dofs for joint in self.joints) if self.joints else 0
+        self._max_n_qs_per_link = max(link.n_qs for link in self.links) if self.links else 0
+        self._max_n_dofs_per_entity = max(entity.n_dofs for entity in self._entities) if self._entities else 0
+        self._max_n_dofs_per_link = max(link.n_dofs for link in self.links) if self.links else 0
+        self._max_n_geoms_per_entity = max(len(link.geoms) for link in self.links) if self.links else 0
 
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
@@ -2766,34 +2766,16 @@ class RigidSolver(Solver):
         return len(self.links)
 
     @property
-    def max_n_links_per_entity(self):
-        if self.is_built:
-            return self._max_n_links_per_entity
-        return max(len(entity.links) for entity in self._entities) if self._entities else 0
-
-    @property
     def n_joints(self):
         if self.is_built:
             return self._n_joints
         return len(self.joints)
 
     @property
-    def max_n_joints_per_link(self):
-        if self.is_built:
-            return self._max_n_joints_per_link
-        return max(len(link.joints) for link in self.links) if self.links else 0
-
-    @property
     def n_geoms(self):
         if self.is_built:
             return self._n_geoms
         return len(self.geoms)
-
-    @property
-    def max_n_geoms_per_entity(self):
-        if self.is_built:
-            return self._max_n_geoms_per_entity
-        return max(len(link.joints) for link in self.links) if self.links else 0
 
     @property
     def n_cells(self):
@@ -2856,34 +2838,10 @@ class RigidSolver(Solver):
         return sum([entity.n_qs for entity in self._entities])
 
     @property
-    def max_n_qs_per_link(self):
-        if self.is_built:
-            return self._max_n_qs_per_link
-        return max(link.n_qs for link in self.links) if self.links else 0
-
-    @property
     def n_dofs(self):
         if self.is_built:
             return self._n_dofs
         return sum(entity.n_dofs for entity in self._entities)
-
-    @property
-    def max_n_dofs_per_entity(self):
-        if self.is_built:
-            return self._max_n_dofs_per_entity
-        return max(entity.n_dofs for entity in self._entities) if self._entities else 0
-
-    @property
-    def max_n_dofs_per_link(self):
-        if self.is_built:
-            return self._max_n_dofs_per_link
-        return max(link.n_dofs for link in self.links) if self.links else 0
-
-    @property
-    def max_n_dofs_per_joint(self):
-        if self.is_built:
-            return self._max_n_dofs_per_joint
-        return max(joint.n_dofs for joint in self.joints) if self.joints else 0
 
     @property
     def init_qpos(self):
