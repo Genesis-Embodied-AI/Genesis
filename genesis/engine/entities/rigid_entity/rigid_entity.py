@@ -18,7 +18,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
+from genesis.utils.misc import DeprecationError, ti_to_torch
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -1660,15 +1660,14 @@ class RigidEntity(Entity):
             return idx_global
 
         # Perform a bunch of sanity checks
-        _idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _idx_global is not idx_global:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        idx_global = torch.atleast_1d(_idx_global)
+        idx_global = torch.atleast_1d(torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous())
 
         if idx_global.ndim != 1:
             gs.raise_exception("Expecting a 1D tensor for `idx_local`.")
-        if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
-            gs.raise_exception("`idx_local` exceeds valid range.")
+
+        # FIXME: This check is too expensive
+        # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
+        #     gs.raise_exception("`idx_local` exceeds valid range.")
 
         return idx_global
 
@@ -2016,10 +2015,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if not unsafe:
-            _pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _pos is not pos:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            pos = _pos
+            pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).contiguous()
         if zero_velocity:
             self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
         self._solver.set_base_links_pos(
@@ -2045,10 +2041,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if not unsafe:
-            _quat = torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _quat is not quat:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            quat = _quat
+            quat = torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device).contiguous()
         if zero_velocity:
             self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
         self._solver.set_base_links_quat(
@@ -2556,7 +2549,7 @@ class RigidEntity(Entity):
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose, unsafe=unsafe)
 
     @gs.assert_built
-    def zero_all_dofs_velocity(self, envs_idx=None, *, unsafe=False):
+    def zero_all_dofs_velocity(self, envs_idx=None, *, skip_forward=False, unsafe=False):
         """
         Zero the velocity of all the entity's dofs.
 
@@ -2565,7 +2558,7 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        self.set_dofs_velocity(None, self._dofs_idx, envs_idx, unsafe=unsafe)
+        self.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=skip_forward, unsafe=unsafe)
 
     @gs.assert_built
     def detect_collision(self, env_idx=0):

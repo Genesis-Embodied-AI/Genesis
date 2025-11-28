@@ -409,11 +409,6 @@ def has_display() -> bool:
 
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
 
-ALLOCATE_TENSOR_WARNING = (
-    "Tensor had to be re-allocated because of incorrect dtype/device or non-contiguous memory. This may "
-    "impede performance if it occurs in the critical path of your application."
-)
-
 TI_PROG_WEAKREF: weakref.ReferenceType | None = None
 TI_DATA_CACHE: OrderedDict[int, "FieldMetadata"] = OrderedDict()
 MAX_CACHE_SIZE = 1000
@@ -686,7 +681,6 @@ def indices_to_mask(
     """
     mask: list[slice | int | torch.Tensor] = []
 
-    has_warned = False
     is_all_none = True
     num_tensors = 0
     is_tensor: list[bool] = [False] * len(indices)
@@ -725,9 +719,6 @@ def indices_to_mask(
                             # Must convert masks to torch if not slice or int since torch will do it anyway.
                             # Note that being contiguous is not required and does not affect performance.
                             arg = torch.tensor(arg, dtype=gs.tc_int, device=gs.device)
-                            if has_warned:
-                                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-                                has_warned = True
                         is_tensor[i] = True
                         num_tensors += 1
                 except TypeError:

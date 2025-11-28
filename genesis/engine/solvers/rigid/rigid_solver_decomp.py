@@ -14,7 +14,7 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch, ti_to_numpy, indices_to_mask
+from genesis.utils.misc import DeprecationError, ti_to_torch, ti_to_numpy, indices_to_mask
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
@@ -1309,27 +1309,23 @@ class RigidSolver(Solver):
             return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
-        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _inputs_idx is not inputs_idx:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        _inputs_ndim = _inputs_idx.ndim
-        if _inputs_ndim == 0:
-            _inputs_idx = _inputs_idx[None]
-        elif _inputs_ndim > 1:
+        inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
+        inputs_ndim = inputs_idx.ndim
+        if inputs_ndim == 0:
+            inputs_idx = inputs_idx[None]
+        elif inputs_ndim > 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        if not ((0 <= _inputs_idx).all() or (_inputs_idx < input_size).all()):
-            gs.raise_exception(f"`{idx_name}` is out-of-range.")
+
+        # FIXME: This check is too expensive
+        # if not ((0 <= inputs_idx).all() or (inputs_idx < input_size).all()):
+        #     gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
-            _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _tensor is not tensor:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor_ndim = _tensor.ndim
+            tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
+            tensor_ndim = tensor.ndim
             if batched and self.n_envs and tensor_ndim == 1:
-                tensor = _tensor.unsqueeze(0)
+                tensor = tensor.unsqueeze(0)
                 tensor_ndim += 1
-            else:
-                tensor = _tensor
             if tensor.shape[-1] != len(inputs_idx):
                 gs.raise_exception(f"Last dimension of the input tensor does not match length of `{idx_name}`.")
 
@@ -1353,7 +1349,7 @@ class RigidSolver(Solver):
             else:
                 if tensor_ndim != 1:
                     gs.raise_exception("Expecting 1D output tensor.")
-        return tensor, _inputs_idx, envs_idx
+        return tensor, inputs_idx, envs_idx
 
     def _sanitize_2D_io_variables(
         self,
@@ -1398,28 +1394,24 @@ class RigidSolver(Solver):
             return tensor, inputs_idx, envs_idx
 
         # Perform a bunch of sanity checks
-        _inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _inputs_idx is not inputs_idx:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        _inputs_idx = torch.atleast_1d(_inputs_idx)
-        if _inputs_idx.ndim != 1:
+        inputs_idx = torch.as_tensor(inputs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
+        inputs_idx = torch.atleast_1d(inputs_idx)
+        if inputs_idx.ndim != 1:
             gs.raise_exception(f"Expecting 1D tensor for `{idx_name}`.")
-        # FIXME: Disabling these checks between them are too expensive
+
+        # FIXME: This check is too expensive
         # inputs_start, inputs_end = min(inputs_idx), max(inputs_idx)
         # if inputs_start < 0 or input_size <= inputs_end:
         #     gs.raise_exception(f"`{idx_name}` is out-of-range.")
 
         if is_preallocated:
-            _tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _tensor is not tensor:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            tensor = _tensor.unsqueeze(0) if batched and self.n_envs and _tensor.ndim == 2 else _tensor
+            tensor = torch.as_tensor(tensor, dtype=gs.tc_float, device=gs.device).contiguous()
+            tensor = tensor.unsqueeze(0) if batched and self.n_envs and tensor.ndim == 2 else tensor
 
             if tensor.shape[-2] != len(inputs_idx):
                 gs.raise_exception(f"Second last dimension of the input tensor does not match length of `{idx_name}`.")
             if tensor.shape[-1] != vec_size:
                 gs.raise_exception(f"Last dimension of the input tensor must be {vec_size}.")
-
             if batched:
                 if self.n_envs == 0:
                     if tensor.ndim != 2:
@@ -1441,7 +1433,7 @@ class RigidSolver(Solver):
             else:
                 if tensor.ndim != 2:
                     gs.raise_exception("Expecting 2D input tensor.")
-        return tensor, _inputs_idx, envs_idx
+        return tensor, inputs_idx, envs_idx
 
     def _get_qs_idx(self, qs_idx_local=None):
         return self._get_qs_idx_local(qs_idx_local) + self._q_start
@@ -1649,10 +1641,7 @@ class RigidSolver(Solver):
         """
         # Sanitize input arguments
         if not unsafe:
-            _sol_params = torch.as_tensor(sol_params, dtype=gs.tc_float, device=gs.device).contiguous()
-            if _sol_params is not sol_params:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-            sol_params = _sol_params
+            sol_params = torch.as_tensor(sol_params, dtype=gs.tc_float, device=gs.device).contiguous()
 
         # Make sure that the constraints parameters are within range
         _sanitize_sol_params(sol_params, self._sol_min_timeconst)

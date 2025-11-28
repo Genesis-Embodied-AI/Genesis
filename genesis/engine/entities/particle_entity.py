@@ -10,7 +10,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 from genesis.engine.states.cache import QueriedStates
 from genesis.utils.misc import to_gs_tensor
 
@@ -121,37 +120,35 @@ class ParticleEntity(Entity):
                 particles_idx_local.stop if particles_idx_local.stop is not None else self._n_particles,
                 particles_idx_local.step or 1,
             )
-        elif isinstance(particles_idx_local, (int, np.integer)):
-            particles_idx_local = [particles_idx_local]
 
         if unsafe:
             return particles_idx_local
 
-        _particles_idx_local = torch.as_tensor(particles_idx_local, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _particles_idx_local is not particles_idx_local or (envs_idx is not None and _particles_idx_local.ndim < 2):
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        particles_idx_local = torch.as_tensor(particles_idx_local, dtype=gs.tc_int, device=gs.device)
         if envs_idx is not None:
-            if _particles_idx_local.ndim < 2:
-                _particles_idx_local = _particles_idx_local.reshape((1, -1)).tile((len(envs_idx), 1))
-                if _particles_idx_local.ndim != 2:
-                    gs.raise_exception("Expecting 0D, 1D or 2D tensor for `particles_idx_local`.")
-        else:
-            _particles_idx_local = torch.atleast_1d(_particles_idx_local)
-            if _particles_idx_local.ndim != 1:
-                gs.raise_exception("Expecting 0D or 1D tensor for `particles_idx_local`.")
-        if not ((0 <= _particles_idx_local).all() or (_particles_idx_local < input_size).all()):
-            gs.raise_exception("Elements of `particles_idx_local' are out-of-range.")
+            if particles_idx_local.ndim < 2:
+                particles_idx_local = particles_idx_local.reshape((1, -1)).expand(
+                    (len(envs_idx), particles_idx_local.numel())
+                )
+            elif particles_idx_local.ndim != 2:
+                gs.raise_exception("Expecting 0D, 1D or 2D tensor for `particles_idx_local`.")
 
-        return _particles_idx_local
+        else:
+            particles_idx_local = torch.atleast_1d(particles_idx_local)
+            if particles_idx_local.ndim != 1:
+                gs.raise_exception("Expecting 0D or 1D tensor for `particles_idx_local`.")
+
+        # FIXME: This check is too expensive
+        # if not ((0 <= particles_idx_local).all() or (particles_idx_local < input_size).all()):
+        #     gs.raise_exception("Elements of `particles_idx_local' are out-of-range.")
+
+        return particles_idx_local.contiguous()
 
     def _sanitize_particles_tensor(
         self, element_shape, dtype, tensor, particles_idx=None, envs_idx=None, *, batched=True
     ):
         n_particles = particles_idx.shape[-1] if particles_idx is not None else self._n_particles
-        if batched:
-            batch_shape = (len(envs_idx), n_particles)
-        else:
-            batch_shape = (n_particles,)
+        batch_shape = (len(envs_idx), n_particles) if batched else (n_particles,)
         tensor_shape = (*batch_shape, *element_shape)
 
         tensor = to_gs_tensor(tensor, dtype)
@@ -165,10 +162,7 @@ class ParticleEntity(Entity):
         if tensor.shape != tensor_shape:
             gs.raise_exception(f"Invalid tensor shape {tensor.shape} (expected {tensor_shape}).")
 
-        _tensor = tensor.contiguous()
-        if _tensor is not tensor:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        return _tensor
+        return tensor.contiguous()
 
     def init_sampler(self):
         """
@@ -753,9 +747,6 @@ class ParticleEntity(Entity):
             pos = pos.reshape((1, 3)).expand((self._scene._B, 3))
         if pos.shape != (self._scene._B, 3):
             gs.raise_exception(f"Invalid tensor shape {pos.shape} (expected {pos}).")
-        _pos = pos.contiguous()
-        if _pos is not pos:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
 
         cur_particles = self.get_particles_pos(envs_idx)
         distances = torch.linalg.norm(cur_particles - pos.unsqueeze(1), dim=-1)

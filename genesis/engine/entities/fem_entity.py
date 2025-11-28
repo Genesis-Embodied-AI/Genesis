@@ -13,7 +13,7 @@ from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, to_gs_tensor, tensor_to_array
+from genesis.utils.misc import to_gs_tensor, tensor_to_array
 
 from .base_entity import Entity
 
@@ -815,24 +815,17 @@ class FEMEntity(Entity):
         )
 
     def _sanitize_input_tensor(self, tensor, dtype, unbatched_ndim=1):
-        _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
+        tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
+        if tensor.ndim < unbatched_ndim + 1:
+            tensor = tensor.expand((self._sim._B, *tensor.shape))
+        tensor = tensor.contiguous()
 
-        if _tensor.ndim < unbatched_ndim + 1:
-            _tensor = _tensor.repeat((self._sim._B, *((1,) * max(1, _tensor.ndim))))
-            if self._sim._B > 1:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        else:
-            _tensor = _tensor.contiguous()
-            if _tensor is not tensor:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
+        if len(tensor) != self._sim._B:
+            gs.raise_exception("Input tensor batch size must match the number of environments.")
+        if tensor.ndim != unbatched_ndim + 1:
+            gs.raise_exception(f"Input tensor ndim is {tensor.ndim}, should be {unbatched_ndim + 1}.")
 
-            if len(_tensor) != self._sim._B:
-                gs.raise_exception("Input tensor batch size must match the number of environments.")
-
-        if _tensor.ndim != unbatched_ndim + 1:
-            gs.raise_exception(f"Input tensor ndim is {_tensor.ndim}, should be {unbatched_ndim + 1}.")
-
-        return _tensor
+        return tensor
 
     def _sanitize_input_verts_idx(self, verts_idx_local):
         verts_idx = self._sanitize_input_tensor(verts_idx_local, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start
