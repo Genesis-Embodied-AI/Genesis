@@ -138,17 +138,23 @@ def parse_urdf(morph, surface):
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)
             else:
-                # Each geometry primitive is one RigidGeom in genesis.
+                # Each geometry primitive is one RigidGeom in genesis
                 if isinstance(geom.geometry.geometry, urdfpy.Box):
                     tmesh = trimesh.creation.box(extents=geom.geometry.geometry.size)
                     geom_type = gs.GEOM_TYPE.BOX
                     geom_data = np.array(geom.geometry.geometry.size)
+                elif isinstance(geom.geometry.geometry, urdfpy.Capsule):
+                    tmesh = trimesh.creation.capsule(
+                        radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
+                    )
+                    geom_type = gs.GEOM_TYPE.CAPSULE
+                    geom_data = np.array([geom.geometry.geometry.radius, geom.geometry.geometry.length])
                 elif isinstance(geom.geometry.geometry, urdfpy.Cylinder):
                     tmesh = trimesh.creation.cylinder(
                         radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
                     )
                     geom_type = gs.GEOM_TYPE.CYLINDER
-                    geom_data = None
+                    geom_data = np.array([geom.geometry.geometry.radius, geom.geometry.geometry.length])
                 elif isinstance(geom.geometry.geometry, urdfpy.Sphere):
                     if geom_is_col:
                         tmesh = trimesh.creation.icosphere(radius=geom.geometry.geometry.radius, subdivisions=2)
