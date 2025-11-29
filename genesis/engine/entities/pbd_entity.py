@@ -57,7 +57,7 @@ class PBDBaseEntity(ParticleEntity):
 
     def get_particles_active(self, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        actives = self._sanitize_particles_tensor(None, gs.ti_bool, None, envs_idx)
+        actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)
         if self._scene.n_envs == 0:
             actives = actives[0]

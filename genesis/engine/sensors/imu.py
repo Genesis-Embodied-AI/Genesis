@@ -159,14 +159,19 @@ class IMUSensor(
         assert shared_metadata.solver is not None
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
-        acc = torch.atleast_2d(shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx))
-        ang = torch.atleast_2d(shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx))
+        acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
+        ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
+        if acc.ndim == 2:  # n_envs = 0
+            acc = acc[None]
+            ang = ang[None]
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
         # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
         if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
-            ang_acc = torch.atleast_2d(shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx))
+            ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
+            if ang_acc.ndim == 2:  # n_envs = 0
+                ang_acc = ang_acc[None]
             offset_pos_world = transform_by_quat(shared_metadata.offsets_pos, quats)
             tangential_acc = torch.cross(ang_acc, offset_pos_world, dim=-1)
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)

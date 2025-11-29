@@ -39,7 +39,7 @@ from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import tensor_to_array, sanitize_index, sanitize_indexed_tensor
+from genesis.utils.misc import tensor_to_array, sanitize_index
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
@@ -1394,44 +1394,6 @@ class Scene(RBC):
             return self._envs_idx[envs_idx : envs_idx + 1]
 
         return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
-
-    def _sanitize_io_variables(
-        self,
-        tensor: np.typing.ArrayLike | None,
-        inputs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
-        input_size: int,
-        idx_name: str,
-        envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
-        element_shape: tuple[int, ...] | list[int] = (),
-        *,
-        batched: bool = True,
-        skip_allocation: bool = False,
-    ) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor]:
-        # Handling default arguments
-        envs_idx_ = self._sanitize_envs_idx(envs_idx) if batched else self._envs_idx[:0]
-
-        if self.n_envs == 0 or not batched:
-            tensor_, (inputs_idx_,) = sanitize_indexed_tensor(
-                tensor,
-                gs.tc_float,
-                (inputs_idx,),
-                (-1, *element_shape),
-                (input_size, *element_shape),
-                (idx_name, *("" for _ in element_shape)),
-                skip_allocation=skip_allocation,
-            )
-        else:
-            tensor_, (envs_idx_, inputs_idx_) = sanitize_indexed_tensor(
-                tensor,
-                gs.tc_float,
-                (envs_idx_, inputs_idx),
-                (-1, -1, *element_shape),
-                (self.n_envs, input_size, *element_shape),
-                ("envs_idx", idx_name, *("" for _ in element_shape)),
-                skip_allocation=skip_allocation,
-            )
-
-        return tensor_, inputs_idx_, envs_idx_
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -65,7 +65,7 @@ class DroneEntity(RigidEntity):
         self._prev_prop_t = self.sim.cur_step_global
 
         assert propellels_rpm is not None
-        propellels_rpm, *_ = self._scene._sanitize_io_variables(
+        propellels_rpm, *_ = self._solver._sanitize_io_variables(
             propellels_rpm, self._propellers_link_idx, self._n_propellers, "propellers_link_idx"
         )
         if self._scene.n_envs == 0:

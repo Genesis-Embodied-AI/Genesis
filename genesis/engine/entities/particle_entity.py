@@ -118,7 +118,9 @@ class ParticleEntity(Entity):
         if envs_idx is None:
             particles_idx_local_ = broadcast_tensor(particles_idx_local, gs.tc_int, (-1,), ("envs_idx",))
         else:
-            particles_idx_local_ = broadcast_tensor(particles_idx_local, gs.tc_int, (envs_idx, -1), ("envs_idx", ""))
+            particles_idx_local_ = broadcast_tensor(
+                particles_idx_local, gs.tc_int, (len(envs_idx), -1), ("envs_idx", "")
+            )
 
         # FIXME: This check is too expensive
         # if not (0 <= particles_idx_local_ & particles_idx_local_ < self._n_particles).all():
@@ -495,7 +497,8 @@ class ParticleEntity(Entity):
                 f"Manually setting particle '{name}'. This is not recommended because it breaks gradient flow."
             )
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        self._tgt[key] = self._sanitize_particles_tensor(tensor, dtype, None, envs_idx, element_shape)
+        vel_ = self._sanitize_particles_tensor(tensor, dtype, None, envs_idx, element_shape)
+        self._tgt[key] = to_gs_tensor(vel_)
 
     def set_position(self, value, envs_idx=None):
         """

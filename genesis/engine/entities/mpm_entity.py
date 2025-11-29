@@ -391,7 +391,7 @@ class MPMEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
-        actives = self._sanitize_particles_tensor(actives, gs.ti_bool, particles_idx, envs_idx)
+        actives = self._sanitize_particles_tensor(actives, gs.tc_bool, particles_idx, envs_idx)
 
         # FIXME: This check is too expensive
         # if not torch.isin(actives, torch.Tensor([False, True], dtype=gs.tc_bool, device=gs.device)).all():
@@ -401,7 +401,7 @@ class MPMEntity(ParticleEntity):
 
     def get_particles_active(self, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        actives = self._sanitize_particles_tensor(None, gs.ti_bool, None, envs_idx)
+        actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, actives
         )
@@ -444,7 +444,7 @@ class MPMEntity(ParticleEntity):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
-        actus = self._sanitize_particles_tensor(actus, gs.tc_float, particles_idx, envs_idx)
+        actus = self._sanitize_particles_tensor(actus, gs.tc_float, particles_idx, envs_idx, (self.material.n_groups,))
         self.solver._kernel_set_particles_actu(
             self._sim.cur_substep_local, self.material.n_groups, particles_idx, envs_idx, actus
         )
@@ -465,7 +465,7 @@ class MPMEntity(ParticleEntity):
 
     def get_particles_actu(self, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        actus = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx)
+        actus = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (self.material.n_groups,))
         self.solver._kernel_get_particles_actu(
             self._sim.cur_substep_local, self._particle_start, self.n_particles, envs_idx, actus
         )
@@ -522,7 +522,7 @@ class MPMEntity(ParticleEntity):
         particles_idx_local = self._sanitize_particles_idx_local(None)
         particles_idx = particles_idx_local + self._particle_start
         muscle_direction = self._sanitize_particles_tensor(
-            muscle_direction, gs.tc_float, particles_idx, (3,), batched=False
+            muscle_direction, gs.tc_float, particles_idx, None, (3,), batched=False
         )
 
         # FIXME: This check is too expensive

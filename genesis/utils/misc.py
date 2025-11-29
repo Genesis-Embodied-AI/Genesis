@@ -902,8 +902,11 @@ def broadcast_tensor(
     expected_ndim = len(expected_shape)
 
     # Expand current tensor shape with extra dims of size 1 if necessary before expanding to expected shape
-    if tensor_ndim < expected_ndim:
-        for dims_valid in combinations(range(expected_ndim), tensor_ndim):
+    if tensor_ndim < 2:
+        tensor_ = torch.atleast_1d(tensor_)
+    elif tensor_ndim < expected_ndim:
+        # Try expanding first dimensions if priority
+        for dims_valid in tuple(combinations(range(expected_ndim), tensor_ndim))[::-1]:
             curr_idx = 0
             expanded_shape = []
             for i in range(expected_ndim):
@@ -920,11 +923,13 @@ def broadcast_tensor(
                 if curr_idx == tensor_ndim:
                     tensor_ = tensor_.reshape(expanded_shape)
                     break
+    elif tensor_ndim > expected_ndim:
+        gs.raise_exception(f"Invalid input shape: {tensor_shape}. Expecting at most {expected_ndim}D tensor.")
 
     try:
         tensor_ = tensor_.expand(expected_shape)
     except RuntimeError as e:
-        msg_err = f"Invalid input shape: {tuple(tensor_.shape)}. "
+        msg_err = f"Invalid input shape: {tuple(tensor_.shape)}."
         msg_infos: list[str] = []
         for i, name in enumerate(dim_names):
             dim, size = tensor_.shape[i], expected_shape[i]
@@ -933,7 +938,9 @@ def broadcast_tensor(
                     msg_infos.append(f"Dimension {i} consistent with len({name})(={size})")
                 else:
                     msg_infos.append(f"Dimension {i} consistent with required size {size}")
-        gs.raise_exception_from(f"{msg_err}{' & '.join(msg_infos)}.", e)
+        if msg_infos:
+            msg_err += f" {' & '.join(msg_infos)}."
+        gs.raise_exception_from(msg_err, e)
 
     return tensor_
 

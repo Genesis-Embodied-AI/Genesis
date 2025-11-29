@@ -20,6 +20,7 @@ from genesis.utils.misc import (
     ti_to_numpy,
     indices_to_mask,
     broadcast_tensor,
+    sanitize_indexed_tensor,
     assign_indexed_tensor,
 )
 from genesis.utils.sdf_decomp import SDF
@@ -1004,7 +1005,7 @@ class RigidSolver(Solver):
             Whether the force is expressed in the local coordinates associated with the reference frame instead of
             world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
         """
-        force, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        force, links_idx, envs_idx = self._sanitize_io_variables(
             force, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1054,7 +1055,7 @@ class RigidSolver(Solver):
             Whether the torque is expressed in the local coordinates associated with the reference frame instead of
             world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
         """
-        torque, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        torque, links_idx, envs_idx = self._sanitize_io_variables(
             torque, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1246,13 +1247,51 @@ class RigidSolver(Solver):
     # ------------------------------------ control ---------------------------------------
     # ------------------------------------------------------------------------------------
 
+    def _sanitize_io_variables(
+        self,
+        tensor: np.typing.ArrayLike | None,
+        inputs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
+        input_size: int,
+        idx_name: str,
+        envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+        element_shape: tuple[int, ...] | list[int] = (),
+        *,
+        batched: bool = True,
+        skip_allocation: bool = False,
+    ) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor]:
+        # Handling default arguments
+        envs_idx_ = self._scene._sanitize_envs_idx(envs_idx) if batched else self._scene._envs_idx[:0]
+
+        if self.n_envs == 0 or not batched:
+            tensor_, (inputs_idx_,) = sanitize_indexed_tensor(
+                tensor,
+                gs.tc_float,
+                (inputs_idx,),
+                (-1, *element_shape),
+                (input_size, *element_shape),
+                (idx_name, *("" for _ in element_shape)),
+                skip_allocation=skip_allocation,
+            )
+        else:
+            tensor_, (envs_idx_, inputs_idx_) = sanitize_indexed_tensor(
+                tensor,
+                gs.tc_float,
+                (envs_idx_, inputs_idx),
+                (-1, -1, *element_shape),
+                (self.n_envs, input_size, *element_shape),
+                ("envs_idx", idx_name, *("" for _ in element_shape)),
+                skip_allocation=skip_allocation,
+            )
+
+        return tensor_, inputs_idx_, envs_idx_
+
     def set_links_pos(self, pos, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False):
         if links_idx is None:
             links_idx = self._base_links_idx
-        pos, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        pos, links_idx, envs_idx = self._sanitize_io_variables(
             pos, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1307,7 +1346,7 @@ class RigidSolver(Solver):
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False):
         if links_idx is None:
             links_idx = self._base_links_idx
-        quat, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        quat, links_idx, envs_idx = self._sanitize_io_variables(
             quat, links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1352,7 +1391,7 @@ class RigidSolver(Solver):
         )
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None):
-        mass, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        mass, links_idx, envs_idx = self._sanitize_io_variables(
             mass, links_idx, self.n_links, "links_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1366,7 +1405,7 @@ class RigidSolver(Solver):
         )
 
     def set_links_COM_shift(self, com, links_idx=None, envs_idx=None):
-        com, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        com, links_idx, envs_idx = self._sanitize_io_variables(
             com, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1374,7 +1413,7 @@ class RigidSolver(Solver):
         kernel_set_links_COM_shift(com, links_idx, envs_idx, self.links_state, self._static_rigid_sim_config)
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None):
-        mass, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        mass, links_idx, envs_idx = self._sanitize_io_variables(
             mass,
             links_idx,
             self.n_links,
@@ -1388,7 +1427,7 @@ class RigidSolver(Solver):
         kernel_set_links_inertial_mass(mass, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
-        friction_ratio, geoms_idx, envs_idx = self._scene._sanitize_io_variables(
+        friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
             friction_ratio, geoms_idx, self.n_geoms, "geoms_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1405,7 +1444,7 @@ class RigidSolver(Solver):
             if mask and isinstance(mask[0], torch.Tensor):
                 envs_idx = mask[0].reshape((-1,))
         else:
-            qpos, qs_idx, envs_idx = self._scene._sanitize_io_variables(
+            qpos, qs_idx, envs_idx = self._sanitize_io_variables(
                 qpos, qs_idx, self.n_qs, "qs_idx", envs_idx, skip_allocation=True
             )
             if self.n_envs == 0:
@@ -1493,7 +1532,7 @@ class RigidSolver(Solver):
             batched = False
 
         # Sanitize input arguments
-        sol_params_, inputs_idx, envs_idx = self._scene._sanitize_io_variables(
+        sol_params_, inputs_idx, envs_idx = self._sanitize_io_variables(
             sol_params, inputs_idx, inputs_length, idx_name, envs_idx, (7,), batched=batched, skip_allocation=True
         )
         sol_params_ = _sanitize_sol_params(sol_params_.clone(), self._sol_min_timeconst)
@@ -1522,7 +1561,7 @@ class RigidSolver(Solver):
 
         tensor_list = list(tensor_list)
         for j, tensor in enumerate(tensor_list):
-            tensor, dofs_idx, envs_idx_ = self._scene._sanitize_io_variables(
+            tensor, dofs_idx, envs_idx_ = self._sanitize_io_variables(
                 tensor,
                 dofs_idx,
                 self.n_dofs,
@@ -1605,7 +1644,7 @@ class RigidSolver(Solver):
                 elif not isinstance(envs_idx, torch.Tensor):
                     envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         else:
-            velocity, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
+            velocity, dofs_idx, envs_idx = self._sanitize_io_variables(
                 velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
             )
             if velocity is None:
@@ -1628,7 +1667,7 @@ class RigidSolver(Solver):
             )
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
-        position, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
+        position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1673,7 +1712,7 @@ class RigidSolver(Solver):
             assign_indexed_tensor(ctrl_force, mask, force, gs.tc_float)
             return
 
-        force, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
+        force, dofs_idx, envs_idx = self._sanitize_io_variables(
             force, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1692,7 +1731,7 @@ class RigidSolver(Solver):
             assign_indexed_tensor(ctrl_vel, mask, velocity, gs.tc_float)
             return
 
-        velocity, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
+        velocity, dofs_idx, envs_idx = self._sanitize_io_variables(
             velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1711,7 +1750,7 @@ class RigidSolver(Solver):
             ctrl_vel[mask] = 0.0
             return
 
-        position, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
+        position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1730,10 +1769,10 @@ class RigidSolver(Solver):
             assign_indexed_tensor(ctrl_vel, mask, velocity, gs.tc_float)
             return
 
-        position, dofs_idx, _ = self._scene._sanitize_io_variables(
+        position, dofs_idx, _ = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
-        velocity, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
+        velocity, dofs_idx, envs_idx = self._sanitize_io_variables(
             velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
         if self.n_envs == 0:
@@ -1822,7 +1861,7 @@ class RigidSolver(Solver):
                 delta = pos[mask] - root_COM[mask]
             return cd_vel[mask] + cd_ang[mask].cross(delta, dim=-1)
 
-        _tensor, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
@@ -1835,7 +1874,7 @@ class RigidSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None):
-        _tensor, links_idx, envs_idx = self._scene._sanitize_io_variables(
+        _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
@@ -1895,9 +1934,7 @@ class RigidSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None):
-        _tensor, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
-            None, dofs_idx, self.n_dofs, "dofs_idx", envs_idx
-        )
+        _tensor, dofs_idx, envs_idx = self._sanitize_io_variables(None, dofs_idx, self.n_dofs, "dofs_idx", envs_idx)
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
         kernel_get_dofs_control_force(
             tensor, dofs_idx, envs_idx, self.dofs_state, self.dofs_info, self._static_rigid_sim_config
@@ -2036,7 +2073,7 @@ class RigidSolver(Solver):
         kernel_set_geom_friction(geoms_idx, friction, self.geoms_info)
 
     def set_geoms_friction(self, friction, geoms_idx=None):
-        friction, geoms_idx, _ = self._scene._sanitize_io_variables(
+        friction, geoms_idx, _ = self._sanitize_io_variables(
             friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction(friction, geoms_idx, self.geoms_info, self._static_rigid_sim_config)
@@ -2094,7 +2131,7 @@ class RigidSolver(Solver):
         )
 
     def update_verts_for_geoms(self, geoms_idx):
-        _, geoms_idx, _ = self._scene._sanitize_io_variables(
+        _, geoms_idx, _ = self._sanitize_io_variables(
             None, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, skip_allocation=True
         )
         kernel_update_verts_for_geoms(
