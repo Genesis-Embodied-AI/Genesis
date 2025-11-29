@@ -150,8 +150,8 @@ class ContactSensor(Sensor):
         """
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        pos = self._link.get_pos(envs_idx=env_idx)[0]
-        is_contact = self.read(envs_idx=env_idx).item()
+        pos = self._link.get_pos(env_idx).reshape((3,))
+        is_contact = self.read(env_idx)
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)
@@ -292,13 +292,13 @@ class ContactForceSensor(
 
         Only draws for first rendered environment.
         """
-        env_idx = context.rendered_envs_idx[0]
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        pos = self._link.get_pos(envs_idx=env_idx)[0]
-        quat = self._link.get_quat(envs_idx=env_idx)[0]
+        pos = self._link.get_pos(env_idx).reshape((3,))
+        quat = self._link.get_quat(env_idx).reshape((4,))
 
-        force = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
-        vec = tensor_to_array(transform_by_quat(force[0] * self._options.debug_scale, quat))
+        force = self.read(env_idx).reshape((3,))
+        vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)

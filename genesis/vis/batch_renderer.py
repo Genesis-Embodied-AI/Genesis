@@ -293,8 +293,10 @@ class BatchRenderer(RBC):
             use_rasterizer=self._use_rasterizer,
         )
         self._renderer.init(
-            cam_pos_tensor=torch.stack([camera.get_pos() for camera in self._cameras], dim=1),
-            cam_rot_tensor=_transform_camera_quat(torch.stack([camera.get_quat() for camera in self._cameras], dim=1)),
+            cam_pos_tensor=torch.stack([torch.atleast_2d(camera.get_pos()) for camera in self._cameras], dim=1),
+            cam_rot_tensor=_transform_camera_quat(
+                torch.stack([torch.atleast_2d(camera.get_quat()) for camera in self._cameras], dim=1)
+            ),
             lights_pos_tensor=_make_tensor([light.pos for light in self._lights]).reshape((-1, 3)),
             lights_dir_tensor=_make_tensor([light.dir for light in self._lights]).reshape((-1, 3)),
             lights_rgb_tensor=_make_tensor([light.color for light in self._lights]).reshape((-1, 3)),
@@ -359,8 +361,8 @@ class BatchRenderer(RBC):
         self.update_scene(force_render)
 
         # Render only what is needed (flags still passed to renderer)
-        cameras_pos = torch.stack([camera.get_pos() for camera in self._cameras], dim=1)
-        cameras_quat = torch.stack([camera.get_quat() for camera in self._cameras], dim=1)
+        cameras_pos = torch.stack([torch.atleast_2d(camera.get_pos()) for camera in self._cameras], dim=1)
+        cameras_quat = torch.stack([torch.atleast_2d(camera.get_quat()) for camera in self._cameras], dim=1)
         cameras_quat = _transform_camera_quat(cameras_quat)
         render_flags = np.array(
             (

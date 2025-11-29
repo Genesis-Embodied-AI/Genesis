@@ -1825,6 +1825,11 @@ class RigidSolver(Solver):
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
         to_torch: bool = True,
     ):
+        if not gs.use_zerocopy:
+            _, links_idx, envs_idx = self._sanitize_io_variables(
+                None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
+            )
+
         ref = self._convert_ref_to_idx(ref)
         if ref == 0:
             tensor = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True)

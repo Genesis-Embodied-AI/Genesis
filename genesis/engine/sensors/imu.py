@@ -139,7 +139,7 @@ class IMUSensor(
         )
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
-            self.pos_offset = self._shared_metadata.offsets_pos[:1, self._idx]
+            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,)
@@ -223,20 +223,20 @@ class IMUSensor(
 
         Only draws for first rendered environment.
         """
-        env_idx = context.rendered_envs_idx[0]
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        quat = self._link.get_quat(envs_idx=env_idx)
-        pos = self._link.get_pos(envs_idx=env_idx) + transform_by_quat(self.pos_offset, quat)
+        quat = self._link.get_quat(env_idx).reshape((4,))
+        pos = self._link.get_pos(env_idx).reshape((3,)) + transform_by_quat(self.pos_offset, quat)
 
         # cannot specify envs_idx for read() when n_envs=0
-        data = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
-        acc_vec = data.lin_acc * self._options.debug_acc_scale
-        gyro_vec = data.ang_vel * self._options.debug_gyro_scale
+        data = self.read(env_idx)
+        acc_vec = data.lin_acc.reshape((3,)) * self._options.debug_acc_scale
+        gyro_vec = data.ang_vel.reshape((3,)) * self._options.debug_gyro_scale
 
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
-        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat)).flatten()
-        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat)).flatten()
+        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
+        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat))
 
         for debug_object in self.debug_objects:
             context.clear_debug_object(debug_object)
@@ -245,7 +245,7 @@ class IMUSensor(
         self.debug_objects += filter(
             None,
             (
-                context.draw_debug_arrow(pos=pos[0], vec=acc_vec, color=self._options.debug_acc_color),
-                context.draw_debug_arrow(pos=pos[0], vec=gyro_vec, color=self._options.debug_gyro_color),
+                context.draw_debug_arrow(pos=pos, vec=acc_vec, color=self._options.debug_acc_color),
+                context.draw_debug_arrow(pos=pos, vec=gyro_vec, color=self._options.debug_gyro_color),
             ),
         )
