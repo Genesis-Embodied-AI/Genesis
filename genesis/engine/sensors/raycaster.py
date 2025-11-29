@@ -437,8 +437,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         links_pos = shared_metadata.solver.get_links_pos(links_idx=shared_metadata.links_idx)
         links_quat = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         if shared_metadata.solver.n_envs == 0:
-            links_pos = links_pos.unsqueeze(0)
-            links_quat = links_quat.unsqueeze(0)
+            links_pos = links_pos[None]
+            links_quat = links_quat[None]
 
         kernel_cast_rays(
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,

@@ -173,13 +173,13 @@ class GenesisGeomRetriever(GeomRetriever):
         geom_rgb_torch = ti_to_torch(self.rigid_solver.vgeoms_info.color)
         geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)
         geom_rgb_uint = (geom_rgb_int[:, 0] << 16) | (geom_rgb_int[:, 1] << 8) | geom_rgb_int[:, 2]
-        geom_rgb = geom_rgb_uint.unsqueeze(0).repeat(num_worlds, 1)
+        geom_rgb = geom_rgb_uint[None].repeat(num_worlds, 1)
 
         geom_mat_ids = torch.full((self.n_vgeoms,), -1, dtype=torch.int32, device=gs.device)
-        geom_mat_ids = geom_mat_ids.unsqueeze(0).repeat(num_worlds, 1)
+        geom_mat_ids = geom_mat_ids[None].repeat(num_worlds, 1)
 
         geom_sizes = torch.ones((self.n_vgeoms, 3), dtype=torch.float32, device=gs.device)
-        geom_sizes = geom_sizes.unsqueeze(0).repeat(num_worlds, 1, 1)
+        geom_sizes = geom_sizes[None].repeat(num_worlds, 1, 1)
         return geom_mat_ids, geom_rgb, geom_sizes
 
     # FIXME: Use a kernel to do it efficiently

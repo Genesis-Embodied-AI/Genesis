@@ -283,9 +283,9 @@ class Camera(RBC):
 
         if self._is_built:
             env_idx = self._env_idx if self._is_batched and self._env_idx is not None else ()
-            pos_rel = self._pos[env_idx] - entity.get_pos(self._env_idx, unsafe=True)
+            pos_rel = self._pos[env_idx] - entity.get_pos(self._env_idx)
             if self._env_idx is not None:
-                pos_rel = pos_rel.squeeze(0)
+                pos_rel = pos_rel[0]
         else:
             pos_rel = self._initial_pos - torch.tensor(entity.base_link.pos, dtype=gs.tc_float, device=gs.device)
             if self._env_idx is None:
@@ -294,7 +294,7 @@ class Camera(RBC):
                 else:
                     # Falling back to adding batch dimension to allow broadcasting.
                     # Note that it is not possible to expand / tile because the batch size is unknown before build.
-                    pos_rel = pos_rel.unsqueeze(0)
+                    pos_rel = pos_rel[None]
 
         if (pos_rel.abs() < gs.EPS).all():
             gs.raise_exception("Camera must not be co-located with base link of entity to which it is attached.")
@@ -336,10 +336,10 @@ class Camera(RBC):
             camera_pos = self._pos[env_idx].clone()
 
         # Query entity and relative camera positions
-        entity_pos = self._followed_entity.get_pos(self._env_idx, unsafe=True)
+        entity_pos = self._followed_entity.get_pos(self._env_idx)
         follow_pos_rel = self._follow_pos_rel
         if not self._is_batched:
-            follow_pos_rel = follow_pos_rel.squeeze(0)
+            follow_pos_rel = follow_pos_rel[0]
 
         # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
         camera_pos -= follow_pos_rel

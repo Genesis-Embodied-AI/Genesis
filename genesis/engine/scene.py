@@ -39,7 +39,7 @@ from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
+from genesis.utils.misc import tensor_to_array, sanitize_index, sanitize_indexed_tensor
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
@@ -1379,33 +1379,76 @@ class Scene(RBC):
     # ----------------------------------- utilities --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_envs_idx(self, envs_idx, *, unsafe=False):
-        # Handling default argument and special cases
-        if envs_idx is None:
-            return self._envs_idx
-
+    def _sanitize_envs_idx(
+        self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None
+    ) -> torch.Tensor:
         if self.n_envs == 0:
             gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
 
-        if isinstance(envs_idx, slice):
+        if envs_idx is None:
+            return self._envs_idx
+
+        if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
         if isinstance(envs_idx, (int, np.integer)):
             return self._envs_idx[envs_idx : envs_idx + 1]
 
-        # Early return if unsafe
-        if unsafe:
-            return envs_idx
+        return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
 
-        # Perform a bunch of sanity checks
-        envs_idx = torch.atleast_1d(torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device).contiguous())
-        if envs_idx.ndim != 1:
-            gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")
+    def _sanitize_io_variables(
+        self,
+        tensor: np.typing.ArrayLike | None,
+        inputs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
+        input_size: int,
+        idx_name: str,
+        envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+        data_shape: tuple[int, ...] | list[int] = (),
+        *,
+        batched: bool = True,
+        skip_allocation: bool = False,
+    ) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor]:
+        # Handling default arguments
+        if batched:
+            envs_idx_ = self._sanitize_envs_idx(envs_idx)
+        else:
+            envs_idx_ = torch.empty((), dtype=gs.tc_int, device=gs.device)
 
-        # FIXME: This check is too expensive
-        # if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
-        #     gs.raise_exception("`envs_idx` exceeds valid range.")
+        if self.n_envs == 0:
+            tensor_, (inputs_idx_,) = sanitize_indexed_tensor(
+                tensor,
+                gs.tc_float,
+                (inputs_idx,),
+                (-1, *data_shape),
+                (input_size, *data_shape),
+                (idx_name, *("" for _ in data_shape)),
+                skip_allocation=skip_allocation,
+            )
+        else:
+            tensor_, (envs_idx_, inputs_idx_) = sanitize_indexed_tensor(
+                tensor,
+                gs.tc_float,
+                (envs_idx_, inputs_idx),
+                (-1, -1, *data_shape),
+                (self.n_envs, input_size, *data_shape),
+                ("envs_idx", idx_name, *("" for _ in data_shape)),
+                skip_allocation=skip_allocation,
+            )
 
-        return envs_idx
+        if tensor is not None:
+            data_ndim = len(data_shape)
+            if self.n_envs == 0:
+                if tensor_.ndim != data_ndim:
+                    gs.raise_exception(
+                        f"Invalid input shape: {tensor_.shape}. Expecting a {data_ndim}D tensor for non-parallelized "
+                        "scene."
+                    )
+            elif tensor_.ndim not in (data_ndim, data_ndim + 1):
+                gs.raise_exception(
+                    f"Invalid input shape: {tensor_.shape}. Expecting a {data_ndim}D or {data_ndim + 1}D tensor for "
+                    "scene with parallelized envs."
+                )
+
+        return tensor_, inputs_idx_, envs_idx_
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -13,7 +13,7 @@ import types
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Callable, NoReturn, Optional, Type, cast
+from typing import Any, Callable, NoReturn, Optional, Type, Sequence
 
 import cpuinfo
 import gstaichi as ti
@@ -747,10 +747,10 @@ def indices_to_mask(
 
 def ti_to_torch(
     value: ti.Field | ti.Ndarray,
-    row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
-    col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
-    keepdim=True,
-    transpose=False,
+    row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    keepdim: bool = True,
+    transpose: bool = False,
     *,
     copy: bool | None = None,
 ) -> torch.Tensor:
@@ -767,7 +767,6 @@ def ti_to_torch(
     """
     # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here
     tensor = ti_to_python(value, transpose, copy=copy, to_torch=True)
-    # assert isinstance(ti_to_python, torch.Tensor)
     if row_mask is None and col_mask is None:
         return tensor
 
@@ -786,10 +785,10 @@ def ti_to_torch(
 
 def ti_to_numpy(
     value: ti.Field | ti.Ndarray,
-    row_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
-    col_mask: slice | int | range | list | torch.Tensor | np.ndarray | None = None,
-    keepdim=True,
-    transpose=False,
+    row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    keepdim: bool = True,
+    transpose: bool = False,
     *,
     copy: bool | None = None,
 ) -> np.ndarray:
@@ -805,7 +804,6 @@ def ti_to_numpy(
         without raising an exception if not.
     """
     tensor = ti_to_python(value, transpose, copy=copy, to_torch=False)
-    # assert isinstance(ti_to_python, np.ndarray)
     if row_mask is None and col_mask is None:
         return tensor
 
@@ -820,3 +818,111 @@ def ti_to_numpy(
     else:
         mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
     return tensor[mask]
+
+
+def sanitize_index(
+    index: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
+    expected_size: int,
+    max_size: int,
+    dim: int,
+    name: str,
+) -> torch.Tensor:
+    if index is None:
+        index = range(max_size)
+    elif isinstance(index, slice):
+        index = range(
+            index.start or 0,
+            index.stop if index.stop is not None else max_size,
+            index.step or 1,
+        )
+    elif isinstance(index, (int, np.integer)):
+        index = [index]
+    elif isinstance(index, torch.Tensor) and index.dtype == torch.bool:
+        index, *_ = torch.where(index)
+
+    index = torch.as_tensor(index, dtype=gs.tc_int, device=gs.device)
+
+    ndim = index.ndim
+    if ndim == 0:
+        index = index[None]
+    elif ndim > 1:
+        dim_info = f" `{name}`" if name else ""
+        gs.raise_exception(f"Invalid shape: {index.shape}. Expecting 0D or 1D tensor for {dim}-th index{dim_info}.")
+
+    if expected_size != -1 and expected_size != len(index):
+        dim_info = f" `{name}`" if name else ""
+        gs.raise_exception(
+            f"Invalid shape: {index.shape}. Expecting 1D tensor of length {expected_size} for {dim}-th index{dim_info}."
+        )
+
+    # FIXME: This check is too expensive
+    # if not (0 <= dim_idx & dim_idx < size).all():
+    #     dim_info = f" `{name}`" if name else ""
+    #     gs.raise_exception(f"Indices out-of-range for {i}-th index{dim_info}.")
+
+    return index.contiguous()
+
+
+def sanitize_indices(
+    indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
+    expected_shape: Sequence[int],
+    max_shape: Sequence[int],
+    dim_names: tuple[str, ...] | list[str],
+) -> tuple[torch.Tensor, ...]:
+    indices_: list[torch.Tensor] = []
+    expected_shape = list(expected_shape)
+    for i, dim_idx in enumerate(indices):
+        dim_idx = sanitize_index(dim_idx, expected_shape[i], max_shape[i], i, dim_names[i])
+        expected_shape[i] = len(dim_idx)
+        indices_.append(dim_idx)
+    return tuple(indices_)
+
+
+def sanitize_tensor(
+    tensor: np.typing.ArrayLike | None,
+    dtype: torch.dtype,
+    expected_shape: tuple[int, ...] | list[int],
+    dim_names: tuple[str, ...] | list[str] | None = None,
+) -> torch.Tensor:
+    if dim_names is None:
+        dim_names = ("",) * len(expected_shape)
+
+    if tensor is None:
+        if any(size == -1 for size in expected_shape):
+            gs.raise_exception(
+                "Tensor not pre-allocated and expected shape not fully specified but allocation is not skipped."
+            )
+        return torch.empty(expected_shape, dtype=dtype, device=gs.device)
+
+    tensor_ = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
+    try:
+        tensor_ = tensor_.expand(expected_shape)
+    except RuntimeError as e:
+        msg_err = f"Invalid input shape: {tensor_.shape}. "
+        msg_infos: list[str] = []
+        for i, name in enumerate(dim_names):
+            size = expected_shape[i]
+            if size > 0 and tensor_.shape[i] != size:
+                dim_spec = "=".join((*filter(None, (name,)), str(size)))
+                msg_infos.append(f"{i}-th dim does not match `{dim_spec}`")
+        gs.raise_exception_from(msg_err + " & ".join(msg_infos), e)
+    return tensor_.contiguous()
+
+
+def sanitize_indexed_tensor(
+    tensor: np.typing.ArrayLike | None,
+    dtype: torch.dtype,
+    indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
+    expected_shape: tuple[int, ...] | list[int],
+    max_shape: tuple[int, ...] | list[int],
+    dim_names: tuple[str, ...] | list[str],
+    skip_allocation: bool = False,
+) -> tuple[torch.Tensor | None, tuple[torch.Tensor, ...]]:
+    indices_ = sanitize_indices(indices, expected_shape, max_shape, dim_names)
+
+    is_preallocated = tensor is not None
+    if is_preallocated or not skip_allocation:
+        expected_shape = [*map(len, indices_), *expected_shape[len(indices_) :]]
+        tensor = sanitize_tensor(tensor, dtype, expected_shape, dim_names)
+
+    return tensor, tuple(indices_)

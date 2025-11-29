@@ -128,7 +128,7 @@ class ContactSensor(Sensor):
             shared_ground_truth_cache.fill_(False)
         else:
             contact_links = torch.cat([all_contacts["link_a"], all_contacts["link_b"]], dim=-1)
-            is_contact = (contact_links.unsqueeze(-2) == shared_metadata.expanded_links_idx.unsqueeze(-1)).any(-1)
+            is_contact = (contact_links[..., None, :] == shared_metadata.expanded_links_idx.unsqueeze(-1)).any(-1)
             shared_ground_truth_cache.copy_(is_contact)
 
     @classmethod
@@ -150,7 +150,7 @@ class ContactSensor(Sensor):
         """
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        pos = self._link.get_pos(envs_idx=env_idx).squeeze(0)
+        pos = self._link.get_pos(envs_idx=env_idx)[0]
         is_contact = self.read(envs_idx=env_idx).item()
 
         if self.debug_object is not None:
@@ -247,11 +247,9 @@ class ContactForceSensor(
 
         links_quat = shared_metadata.solver.get_links_quat()
         if shared_metadata.solver.n_envs == 0:
-            force = force.unsqueeze(0)
-            link_a = link_a.unsqueeze(0)
-            link_b = link_b.unsqueeze(0)
-            links_quat = links_quat.unsqueeze(0)
+            force, link_a, link_b, links_quat = force[None], link_a[None], link_b[None], links_quat[None]
 
+        # FIXME: Refactor memory layout to ensure contiguity by design
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),
@@ -296,11 +294,11 @@ class ContactForceSensor(
         """
         env_idx = context.rendered_envs_idx[0]
 
-        pos = self._link.get_pos(envs_idx=env_idx).squeeze(0)
-        quat = self._link.get_quat(envs_idx=env_idx).squeeze(0)
+        pos = self._link.get_pos(envs_idx=env_idx)[0]
+        quat = self._link.get_quat(envs_idx=env_idx)[0]
 
         force = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
-        vec = tensor_to_array(transform_by_quat(force.squeeze(0) * self._options.debug_scale, quat))
+        vec = tensor_to_array(transform_by_quat(force[0] * self._options.debug_scale, quat))
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)

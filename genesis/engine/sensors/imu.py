@@ -139,7 +139,7 @@ class IMUSensor(
         )
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
-            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx].unsqueeze(0)
+            self.pos_offset = self._shared_metadata.offsets_pos[:1, self._idx]
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,)
@@ -159,19 +159,14 @@ class IMUSensor(
         assert shared_metadata.solver is not None
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
-        acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
-        ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
-        if acc.ndim == 2:
-            acc = acc.unsqueeze(0)
-            ang = ang.unsqueeze(0)
+        acc = torch.atleast_2d(shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx))
+        ang = torch.atleast_2d(shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx))
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
         # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
         if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
-            ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
-            if ang_acc.ndim == 2:
-                ang_acc = ang_acc.unsqueeze(0)
+            ang_acc = torch.atleast_2d(shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx))
             offset_pos_world = transform_by_quat(shared_metadata.offsets_pos, quats)
             tangential_acc = torch.cross(ang_acc, offset_pos_world, dim=-1)
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
@@ -179,7 +174,7 @@ class IMUSensor(
 
         # Subtract gravity then move to local frame
         # acc/ang shape: (B, n_imus, 3)
-        local_acc = inv_transform_by_quat(acc - gravity.unsqueeze(-2), offset_quats)
+        local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
 
         # cache shape: (B, n_imus * 6)
