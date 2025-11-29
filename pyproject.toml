@@ -164,6 +164,7 @@ markers = [
     "examples: example scripts.",
     "benchmarks: benchmarks for profiling and monitoring.",
     "required: minimal test set that must pass systematically on any environment before merging.",
-    "field_only: tests that are not compatible with gstaichi ndarrays."
+    "field_only: tests that are not compatible with gstaichi ndarrays.",
+    "slow: tests that are slow to run (> 100s).",
 ]
 log_cli_level = "WARNING"
