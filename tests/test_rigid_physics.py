@@ -3034,17 +3034,15 @@ def test_data_accessor(n_envs, batched, tol):
                         mask_j = [j, j + 1] if j < arg2_max - 1 else [j]
                     for arg2 in get_all_supported_masks(j, arg2_max):
                         if arg1 is None and arg2 is not None:
-                            unsafe = not must_cast(arg2, gs.tc_int)
                             if getter is not None:
-                                data = deepcopy(getter(arg2, unsafe=unsafe))
+                                data = deepcopy(getter(arg2))
                             else:
                                 if is_tuple:
                                     data = [torch.ones((len(mask_j), *shape)) for shape in spec]
                                 else:
                                     data = torch.ones((len(mask_j), *spec))
                             if setter is not None:
-                                unsafe &= not must_cast(data, gs.tc_float)
-                                setter(data, arg2, unsafe=unsafe)
+                                setter(data, arg2)
                             if n_envs:
                                 if is_tuple:
                                     data_ = [val[mask_j] for val in datas]
@@ -3053,36 +3051,32 @@ def test_data_accessor(n_envs, batched, tol):
                             else:
                                 data_ = datas
                         elif arg1 is not None and arg2 is None:
-                            unsafe = not must_cast(arg1, gs.tc_int)
                             if getter is not None:
-                                data = deepcopy(getter(arg1, unsafe=unsafe))
+                                data = deepcopy(getter(arg1))
                             else:
                                 if is_tuple:
                                     data = [torch.ones((len(mask_i), *shape)) for shape in spec]
                                 else:
                                     data = torch.ones((len(mask_i), *spec))
                             if setter is not None:
-                                unsafe &= not must_cast(data, gs.tc_float)
                                 if is_tuple:
-                                    setter(*data, arg1, unsafe=unsafe)
+                                    setter(*data, arg1)
                                 else:
-                                    setter(data, arg1, unsafe=unsafe)
+                                    setter(data, arg1)
                             if is_tuple:
                                 data_ = [val[mask_i] for val in datas]
                             else:
                                 data_ = datas[mask_i]
                         else:
-                            unsafe = not any(must_cast(arg, gs.tc_int) for arg in (arg1, arg2))
                             if getter is not None:
-                                data = deepcopy(getter(arg1, arg2, unsafe=unsafe))
+                                data = deepcopy(getter(arg1, arg2))
                             else:
                                 if is_tuple:
                                     data = [torch.ones((len(mask_j), len(mask_i), *shape)) for shape in spec]
                                 else:
                                     data = torch.ones((len(mask_j), len(mask_i), *spec))
                             if setter is not None:
-                                unsafe &= not must_cast(data, gs.tc_float)
-                                setter(data, arg1, arg2, unsafe=unsafe)
+                                setter(data, arg1, arg2)
                             if is_tuple:
                                 data_ = [val[mask_j, :][:, mask_i] for val in datas]
                             else:
@@ -3092,7 +3086,6 @@ def test_data_accessor(n_envs, batched, tol):
 
     for dofs_idx in (*get_all_supported_masks(0, gs_s.n_dofs), None):
         for envs_idx in (*(get_all_supported_masks(0, gs_s.n_dofs) if n_envs > 0 else ()), None):
-            unsafe = not any(must_cast(arg, gs.tc_int) for arg in (dofs_idx, envs_idx))
             dofs_pos = gs_s.get_dofs_position(dofs_idx, envs_idx)
             dofs_vel = gs_s.get_dofs_velocity(dofs_idx, envs_idx)
             gs_s.control_dofs_position(dofs_pos, dofs_idx, envs_idx)

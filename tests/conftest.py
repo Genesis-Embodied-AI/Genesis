@@ -16,7 +16,6 @@ import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
-from syrupy.location import PyTestLocation
 
 has_display = True
 try:

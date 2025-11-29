@@ -1382,11 +1382,11 @@ class Scene(RBC):
     def _sanitize_envs_idx(
         self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None
     ) -> torch.Tensor:
-        if self.n_envs == 0:
-            gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
-
         if envs_idx is None:
             return self._envs_idx
+
+        if self.n_envs == 0:
+            gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
 
         if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
@@ -1402,7 +1402,7 @@ class Scene(RBC):
         input_size: int,
         idx_name: str,
         envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
-        data_shape: tuple[int, ...] | list[int] = (),
+        element_shape: tuple[int, ...] | list[int] = (),
         *,
         batched: bool = True,
         skip_allocation: bool = False,
@@ -1418,9 +1418,9 @@ class Scene(RBC):
                 tensor,
                 gs.tc_float,
                 (inputs_idx,),
-                (-1, *data_shape),
-                (input_size, *data_shape),
-                (idx_name, *("" for _ in data_shape)),
+                (-1, *element_shape),
+                (input_size, *element_shape),
+                (idx_name, *("" for _ in element_shape)),
                 skip_allocation=skip_allocation,
             )
         else:
@@ -1428,14 +1428,14 @@ class Scene(RBC):
                 tensor,
                 gs.tc_float,
                 (envs_idx_, inputs_idx),
-                (-1, -1, *data_shape),
-                (self.n_envs, input_size, *data_shape),
-                ("envs_idx", idx_name, *("" for _ in data_shape)),
+                (-1, -1, *element_shape),
+                (self.n_envs, input_size, *element_shape),
+                ("envs_idx", idx_name, *("" for _ in element_shape)),
                 skip_allocation=skip_allocation,
             )
 
         if tensor is not None:
-            data_ndim = len(data_shape)
+            data_ndim = len(element_shape) + 1
             if self.n_envs == 0:
                 if tensor_.ndim != data_ndim:
                     gs.raise_exception(

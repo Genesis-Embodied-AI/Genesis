@@ -1840,8 +1840,6 @@ class RigidEntity(Entity):
             Whether to allow fast approximation for efficiency if supported, i.e. 'LegacyCoupler' is enabled. In this
             case, each collision geometry is approximated by their pre-computed AABB in geometry-local frame, which is
             more efficiency but inaccurate.
-        unsafe : bool, optional
-            Whether to skip input validation. Defaults to False.
 
         Returns
         -------
@@ -1984,11 +1982,9 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        if not unsafe:
-            pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device).contiguous()
         if zero_velocity:
             self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
-        self._solver.set_base_links_pos(pos[..., None, :], self._base_links_idx_, envs_idx, relative=relative)
+        self._solver.set_base_links_pos(pos, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
     def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False):
@@ -2008,11 +2004,9 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        if not unsafe:
-            quat = torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device).contiguous()
         if zero_velocity:
             self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
-        self._solver.set_base_links_quat(quat[..., None, :], self._base_links_idx_, envs_idx, relative=relative)
+        self._solver.set_base_links_quat(quat, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
     def get_verts(self):
