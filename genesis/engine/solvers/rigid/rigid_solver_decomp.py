@@ -14,7 +14,14 @@ from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states.solvers import RigidSolverState
 from genesis.options.solvers import RigidOptions
 from genesis.utils import linalg as lu
-from genesis.utils.misc import DeprecationError, ti_to_torch, ti_to_numpy, indices_to_mask, sanitize_tensor
+from genesis.utils.misc import (
+    DeprecationError,
+    ti_to_torch,
+    ti_to_numpy,
+    indices_to_mask,
+    broadcast_tensor,
+    assign_indexed_tensor,
+)
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
@@ -63,6 +70,7 @@ def _sanitize_sol_params(
     mid[:] = mid.clip(IMP_MIN, IMP_MAX)
     width[:] = width.clip(0.0)
     power[:] = power.clip(1)
+    return sol_params
 
 
 class RigidSolver(Solver):
@@ -1393,7 +1401,7 @@ class RigidSolver(Solver):
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(qs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, qs_idx)
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
-            data[mask] = torch.as_tensor(qpos, dtype=gs.tc_float, device=gs.device)
+            assign_indexed_tensor(data, mask, qpos, gs.tc_float)
             if mask and isinstance(mask[0], torch.Tensor):
                 envs_idx = mask[0].reshape((-1,))
         else:
@@ -1442,12 +1450,10 @@ class RigidSolver(Solver):
             array of length 7 in which each element corresponds to
             (timeconst, dampratio, dmin, dmax, width, mid, power)
         """
-        # Make sure that the constraints parameters are within range
-        sol_params = sanitize_tensor(sol_params, gs.tc_float, (7,), ("",))
-        _sanitize_sol_params(sol_params, self._sol_min_timeconst)
-
+        sol_params_ = broadcast_tensor(sol_params, gs.tc_float, (7,), ("",))
+        sol_params_ = _sanitize_sol_params(sol_params_.clone(), self._sol_min_timeconst)
         kernel_set_global_sol_params(
-            sol_params, self.geoms_info, self.joints_info, self.equalities_info, self._static_rigid_sim_config
+            sol_params_, self.geoms_info, self.joints_info, self.equalities_info, self._static_rigid_sim_config
         )
 
     def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None):
@@ -1490,15 +1496,13 @@ class RigidSolver(Solver):
         sol_params_, inputs_idx, envs_idx = self._scene._sanitize_io_variables(
             sol_params, inputs_idx, inputs_length, idx_name, envs_idx, (7,), batched=batched, skip_allocation=True
         )
+        sol_params_ = _sanitize_sol_params(sol_params_.clone(), self._sol_min_timeconst)
+        if self.n_envs == 0 and batched:
+            sol_params_ = sol_params_[None]
 
-        # Make sure that the constraints parameters are within range
-        _sanitize_sol_params(sol_params, self._sol_min_timeconst)
-
-        if batched and self.n_envs == 0:
-            sol_params = sol_params[None]
         kernel_set_sol_params(
             constraint_type,
-            sol_params,
+            sol_params_,
             inputs_idx,
             envs_idx,
             geoms_info=self.geoms_info,
@@ -1513,12 +1517,12 @@ class RigidSolver(Solver):
             data = ti_to_torch(getattr(self.dofs_info, name), transpose=True, copy=False)
             num_values = len(tensor_list)
             for j, mask_j in enumerate(((*mask, ..., j) for j in range(num_values)) if num_values > 1 else (mask,)):
-                data[mask_j] = torch.as_tensor(tensor_list[j], dtype=gs.tc_float, device=gs.device)
+                assign_indexed_tensor(data, mask_j, tensor_list[j], gs.tc_float)
             return
 
         tensor_list = list(tensor_list)
         for j, tensor in enumerate(tensor_list):
-            tensor_list[j], dofs_idx, envs_idx_ = self._scene._sanitize_io_variables(
+            tensor, dofs_idx, envs_idx_ = self._scene._sanitize_io_variables(
                 tensor,
                 dofs_idx,
                 self.n_dofs,
@@ -1527,6 +1531,9 @@ class RigidSolver(Solver):
                 batched=self._options.batch_dofs_info,
                 skip_allocation=True,
             )
+            if self.n_envs == 0 and self._options.batch_dofs_info:
+                tensor = tensor[None]
+            tensor_list[j] = tensor
         if name == "kp":
             kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "kv":
@@ -1589,7 +1596,10 @@ class RigidSolver(Solver):
                 (vel := vel[:, dofs_idx]).scatter_(0, envs_idx[:, None].expand((-1, vel.shape[1])), 0.0)
             else:
                 mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
-                vel[mask] = 0.0 if velocity is None else torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+                if velocity is None:
+                    vel[mask] = 0.0
+                else:
+                    assign_indexed_tensor(vel, mask, velocity, gs.tc_float)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
                 elif not isinstance(envs_idx, torch.Tensor):
@@ -1660,7 +1670,7 @@ class RigidSolver(Solver):
             ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.FORCE
             ctrl_force = ti_to_torch(self.dofs_state.ctrl_force, transpose=True, copy=False)
-            ctrl_force[mask] = torch.as_tensor(force, dtype=gs.tc_float, device=gs.device)
+            assign_indexed_tensor(ctrl_force, mask, force, gs.tc_float)
             return
 
         force, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
@@ -1679,7 +1689,7 @@ class RigidSolver(Solver):
             ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
             ctrl_pos[mask] = 0.0
             ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
-            ctrl_vel[mask] = torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+            assign_indexed_tensor(ctrl_vel, mask, velocity, gs.tc_float)
             return
 
         velocity, dofs_idx, envs_idx = self._scene._sanitize_io_variables(
@@ -1696,7 +1706,7 @@ class RigidSolver(Solver):
             ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.POSITION
             ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
-            ctrl_pos[mask] = torch.as_tensor(position, dtype=gs.tc_float, device=gs.device)
+            assign_indexed_tensor(ctrl_pos, mask, position, gs.tc_float)
             ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
             ctrl_vel[mask] = 0.0
             return
@@ -1715,9 +1725,9 @@ class RigidSolver(Solver):
             ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.POSITION
             ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
-            ctrl_pos[mask] = torch.as_tensor(position, dtype=gs.tc_float, device=gs.device)
+            assign_indexed_tensor(ctrl_pos, mask, position, gs.tc_float)
             ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
-            ctrl_vel[mask] = torch.as_tensor(velocity, dtype=gs.tc_float, device=gs.device)
+            assign_indexed_tensor(ctrl_vel, mask, velocity, gs.tc_float)
             return
 
         position, dofs_idx, _ = self._scene._sanitize_io_variables(
@@ -6318,7 +6328,7 @@ def kernel_set_drone_rpm(
 
     This method should only be called by drone entities.
     """
-    _B = propellers_rpm.shape[1]
+    _B = propellers_rpm.shape[0]
     for i_b in range(_B):
         for i_prop in range(n_propellers):
             i_l = propellers_link_idx[i_prop]

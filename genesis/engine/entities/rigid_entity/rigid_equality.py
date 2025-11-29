@@ -45,7 +45,7 @@ class RigidEquality(RBC):
         Set the solver parameters of this equality constraint.
         """
         if self.is_built:
-            self._solver.set_sol_params(sol_params[..., None, :], eqs_idx=self._idx, envs_idx=None)
+            self._solver.set_sol_params(sol_params, eqs_idx=self._idx, envs_idx=None)
         else:
             self._sol_params = sol_params
 

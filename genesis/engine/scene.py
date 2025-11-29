@@ -1408,12 +1408,9 @@ class Scene(RBC):
         skip_allocation: bool = False,
     ) -> tuple[torch.Tensor | None, torch.Tensor, torch.Tensor]:
         # Handling default arguments
-        if batched:
-            envs_idx_ = self._sanitize_envs_idx(envs_idx)
-        else:
-            envs_idx_ = torch.empty((), dtype=gs.tc_int, device=gs.device)
+        envs_idx_ = self._sanitize_envs_idx(envs_idx) if batched else self._envs_idx[:0]
 
-        if self.n_envs == 0:
+        if self.n_envs == 0 or not batched:
             tensor_, (inputs_idx_,) = sanitize_indexed_tensor(
                 tensor,
                 gs.tc_float,
@@ -1433,20 +1430,6 @@ class Scene(RBC):
                 ("envs_idx", idx_name, *("" for _ in element_shape)),
                 skip_allocation=skip_allocation,
             )
-
-        if tensor is not None:
-            data_ndim = len(element_shape) + 1
-            if self.n_envs == 0:
-                if tensor_.ndim != data_ndim:
-                    gs.raise_exception(
-                        f"Invalid input shape: {tensor_.shape}. Expecting a {data_ndim}D tensor for non-parallelized "
-                        "scene."
-                    )
-            elif tensor_.ndim not in (data_ndim, data_ndim + 1):
-                gs.raise_exception(
-                    f"Invalid input shape: {tensor_.shape}. Expecting a {data_ndim}D or {data_ndim + 1}D tensor for "
-                    "scene with parallelized envs."
-                )
 
         return tensor_, inputs_idx_, envs_idx_
 

@@ -13,6 +13,7 @@ import types
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Any, Callable, NoReturn, Optional, Type, Sequence
 
 import cpuinfo
@@ -878,7 +879,7 @@ def sanitize_indices(
     return tuple(indices_)
 
 
-def sanitize_tensor(
+def broadcast_tensor(
     tensor: np.typing.ArrayLike | None,
     dtype: torch.dtype,
     expected_shape: tuple[int, ...] | list[int],
@@ -895,18 +896,46 @@ def sanitize_tensor(
         return torch.empty(expected_shape, dtype=dtype, device=gs.device)
 
     tensor_ = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
+
+    tensor_shape = tensor_.shape
+    tensor_ndim = len(tensor_shape)
+    expected_ndim = len(expected_shape)
+
+    # Expand current tensor shape with extra dims of size 1 if necessary before expanding to expected shape
+    if tensor_ndim < expected_ndim:
+        for dims_valid in combinations(range(expected_ndim), tensor_ndim):
+            curr_idx = 0
+            expanded_shape = []
+            for i in range(expected_ndim):
+                if i in dims_valid:
+                    dim, size = tensor_.shape[curr_idx], expected_shape[i]
+                    if dim == size or dim == 1:
+                        expanded_shape.append(dim)
+                        curr_idx += 1
+                    else:
+                        break
+                else:
+                    expanded_shape.append(1)
+            else:
+                if curr_idx == tensor_ndim:
+                    tensor_ = tensor_.reshape(expanded_shape)
+                    break
+
     try:
         tensor_ = tensor_.expand(expected_shape)
     except RuntimeError as e:
-        msg_err = f"Invalid input shape: {tensor_.shape}. "
+        msg_err = f"Invalid input shape: {tuple(tensor_.shape)}. "
         msg_infos: list[str] = []
         for i, name in enumerate(dim_names):
-            size = expected_shape[i]
-            if size > 0 and tensor_.shape[i] != size:
-                dim_spec = "=".join((*filter(None, (name,)), str(size)))
-                msg_infos.append(f"{i}-th dim does not match `{dim_spec}`")
-        gs.raise_exception_from(msg_err + " & ".join(msg_infos), e)
-    return tensor_.contiguous()
+            dim, size = tensor_.shape[i], expected_shape[i]
+            if size > 0 and i < tensor_.ndim and dim != 1 and dim != size:
+                if name:
+                    msg_infos.append(f"Dimension {i} consistent with len({name})(={size})")
+                else:
+                    msg_infos.append(f"Dimension {i} consistent with required size {size}")
+        gs.raise_exception_from(f"{msg_err}{' & '.join(msg_infos)}.", e)
+
+    return tensor_
 
 
 def sanitize_indexed_tensor(
@@ -923,6 +952,57 @@ def sanitize_indexed_tensor(
     is_preallocated = tensor is not None
     if is_preallocated or not skip_allocation:
         expected_shape = [*map(len, indices_), *expected_shape[len(indices_) :]]
-        tensor = sanitize_tensor(tensor, dtype, expected_shape, dim_names)
+        tensor = broadcast_tensor(tensor, dtype, expected_shape, dim_names).contiguous()
 
     return tensor, tuple(indices_)
+
+
+def get_indexed_shape(tensor_shape, indices):
+    """Compute the resulting shape after advanced indexing without performing the operation."""
+    ndim = len(tensor_shape)
+
+    # Expand ellipsis if present
+    ellipsis_count = sum(1 for idx in indices if idx is Ellipsis)
+    if ellipsis_count == 1:
+        idx = indices.index(Ellipsis)
+        indices = (*indices[:idx], *(slice(None),) * (ndim - len(indices) + 1), *indices[idx + 1 :])
+    elif ellipsis_count > 1:
+        raise IndexError("Only one ellipsis (...) is allowed")
+
+    # Compute the broadcasted shape of all tensor indices
+    broadcast_shape = torch.broadcast_shapes(*[idx.shape for idx in indices if isinstance(idx, torch.Tensor)])
+
+    # Build output shape
+    output_shape = []
+    curr_idx = 0
+    inserted_broadcast = False
+    for idx in indices:
+        if isinstance(idx, int):
+            curr_idx += 1
+        elif isinstance(idx, slice):
+            start, stop, step = idx.indices(tensor_shape[curr_idx])
+            if step > 0:
+                size = max(0, (stop - start + step - 1) // step)
+            else:
+                size = max(0, (stop - start + step + 1) // step)
+            output_shape.append(size)
+            curr_idx += 1
+        else:  # isinstance(idx, torch.Tensor):
+            if not inserted_broadcast:
+                output_shape.extend(broadcast_shape)
+                inserted_broadcast = True
+            curr_idx += 1
+    output_shape += tensor_shape[curr_idx:]
+
+    return tuple(output_shape)
+
+
+def assign_indexed_tensor(
+    out: torch.Tensor,
+    indices: tuple[int | slice | torch.Tensor, ...],
+    in_: np.typing.ArrayLike,
+    dtype: torch.dtype,
+    dim_names: tuple[str, ...] | list[str] | None = None,
+) -> None:
+    indexed_shape = get_indexed_shape(out.shape, indices) if indices else out.shape
+    out[indices] = broadcast_tensor(in_, dtype, indexed_shape, dim_names)

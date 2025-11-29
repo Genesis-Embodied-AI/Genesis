@@ -9,7 +9,7 @@ import torch
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, sanitize_tensor
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
@@ -304,7 +304,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
             # per sensor field structure
             index_slice = self._idx
 
-        field[:, index_slice] = sanitize_tensor(value, field.dtype, (len(envs_idx), field_size), ("envs_idx", ""))
+        field[:, index_slice] = broadcast_tensor(value, field.dtype, (len(envs_idx), field_size), ("envs_idx", ""))
 
 
 @dataclass

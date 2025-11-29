@@ -1352,13 +1352,8 @@ def test_set_sol_params(n_envs, batched, tol):
             obj.set_sol_params(sol_params)
             with pytest.raises(AssertionError):
                 assert_allclose(obj.sol_params, sol_params, tol=tol)
-            sol_params = np.zeros(((scene.n_envs,) if scene.n_envs > 0 and batched else ()) + (7,))
-            obj.set_sol_params(sol_params)
-            sol_params = np.tile(
-                [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0],
-                ((scene.n_envs,) if scene.n_envs > 0 and batched else ()) + (1,),
-            )
-            assert_allclose(obj.sol_params, sol_params, tol=tol)
+            obj.set_sol_params(0.0)
+            assert_allclose(obj.sol_params, [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
 
 
 @pytest.mark.slow  # ~160s

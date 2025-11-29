@@ -11,7 +11,7 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
-from genesis.utils.misc import to_gs_tensor, sanitize_tensor
+from genesis.utils.misc import to_gs_tensor, broadcast_tensor
 
 from .base_entity import Entity
 
@@ -116,15 +116,15 @@ class ParticleEntity(Entity):
             particles_idx_local = range(self._n_particles)
 
         if envs_idx is None:
-            particles_idx_local_ = sanitize_tensor(particles_idx_local, gs.tc_int, (-1,), ("envs_idx",))
+            particles_idx_local_ = broadcast_tensor(particles_idx_local, gs.tc_int, (-1,), ("envs_idx",))
         else:
-            particles_idx_local_ = sanitize_tensor(particles_idx_local, gs.tc_int, (envs_idx, -1), ("envs_idx", ""))
+            particles_idx_local_ = broadcast_tensor(particles_idx_local, gs.tc_int, (envs_idx, -1), ("envs_idx", ""))
 
         # FIXME: This check is too expensive
         # if not (0 <= particles_idx_local_ & particles_idx_local_ < self._n_particles).all():
         #     gs.raise_exception("Elements of `particles_idx_local' are out-of-range.")
 
-        return particles_idx_local_
+        return particles_idx_local_.contiguous()
 
     def _sanitize_particles_tensor(
         self, tensor, dtype, particles_idx=None, envs_idx=None, element_shape=(), *, batched=True
@@ -139,7 +139,7 @@ class ParticleEntity(Entity):
             dim_names = ("particles_idx", *("" for _ in element_shape))
         tensor_shape = (*batch_shape, *element_shape)
 
-        return sanitize_tensor(tensor, dtype, tensor_shape, dim_names)
+        return broadcast_tensor(tensor, dtype, tensor_shape, dim_names).contiguous()
 
     def init_sampler(self):
         """

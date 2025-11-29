@@ -5,7 +5,7 @@ import torch
 import gstaichi as ti
 
 import genesis as gs
-from genesis.utils.misc import get_assets_dir, sanitize_tensor
+from genesis.utils.misc import get_assets_dir, broadcast_tensor
 
 from .rigid_entity import RigidEntity
 
@@ -68,6 +68,8 @@ class DroneEntity(RigidEntity):
         propellels_rpm, *_ = self._scene._sanitize_io_variables(
             propellels_rpm, self._propellers_link_idx, self._n_propellers, "propellers_link_idx"
         )
+        if self._scene.n_envs == 0:
+            propellels_rpm = propellels_rpm[None]
 
         # FIXME: This check is too expensive
         # if (propellels_rpm < 0.0).any():

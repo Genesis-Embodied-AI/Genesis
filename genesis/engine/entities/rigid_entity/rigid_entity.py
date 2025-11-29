@@ -18,7 +18,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, sanitize_tensor, sanitize_index, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -1251,22 +1251,24 @@ class RigidEntity(Entity):
             if pos is None and quat is None:
                 gs.raise_exception("At least one of `poss` or `quats` must be provided.")
             link_pos_mask.append(pos is not None)
-            poss[i] = sanitize_tensor(pos, gs.tc_float, (len(envs_idx), 3), ("envs_idx", ""))
+            poss[i] = broadcast_tensor(pos, gs.tc_float, (len(envs_idx), 3), ("envs_idx", "")).contiguous()
             link_rot_mask.append(quat is not None)
             if quat is None:
                 quat = gu.identity_quat()
-            quats[i] = sanitize_tensor(quat, gs.tc_float, (len(envs_idx), 4), ("envs_idx", ""))
+            quats[i] = broadcast_tensor(quat, gs.tc_float, (len(envs_idx), 4), ("envs_idx", "")).contiguous()
         link_pos_mask = torch.tensor(link_pos_mask, dtype=gs.tc_int, device=gs.device)
         link_rot_mask = torch.tensor(link_rot_mask, dtype=gs.tc_int, device=gs.device)
         poss = torch.stack(poss, dim=0)
         quats = torch.stack(quats, dim=0)
 
         custom_init_qpos = init_qpos is not None
-        init_qpos = sanitize_tensor(init_qpos, gs.tc_float, (len(envs_idx), self.n_qs), ("envs_idx", "qs_idx"))
+        init_qpos = broadcast_tensor(
+            init_qpos, gs.tc_float, (len(envs_idx), self.n_qs), ("envs_idx", "qs_idx")
+        ).contiguous()
 
         # pos and rot mask
-        pos_mask = sanitize_tensor(pos_mask, gs.tc_bool, (3,))
-        rot_mask = sanitize_tensor(rot_mask, gs.tc_bool, (3,))
+        pos_mask = broadcast_tensor(pos_mask, gs.tc_bool, (3,)).contiguous()
+        rot_mask = broadcast_tensor(rot_mask, gs.tc_bool, (3,)).contiguous()
         if sum(rot_mask) == 1:
             rot_mask = 1 - rot_mask
         elif sum(rot_mask) == 2:
