@@ -63,7 +63,7 @@ def main():
         target_poss = cube.init_positions[verts_idx] + torch.tensor(
             (0.15 * (math.cos(0.04 * i) - 1.0), 0.15 * math.sin(0.04 * i), 0.0)
         )
-        cube.set_vertex_constraints(verts_idx=verts_idx, target_poss=target_poss)
+        cube.set_vertex_constraints(verts_idx, target_poss)
         scene.step(update_visualizer=False)
         if args.vis:
             scene.visualizer.context.draw_debug_sphere(

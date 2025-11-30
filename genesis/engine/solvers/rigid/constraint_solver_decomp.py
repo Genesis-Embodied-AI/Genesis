@@ -324,18 +324,17 @@ class ConstraintSolver:
 
         return weld_const_info
 
-    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+    def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         link1_idx, link2_idx = int(link1_idx), int(link2_idx)
 
-        if not unsafe:
-            assert link1_idx >= 0 and link2_idx >= 0
-            weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
-            link_a = weld_const_info["link_a"]
-            link_b = weld_const_info["link_b"]
-            assert not (
-                ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
-            ).any()
+        assert link1_idx >= 0 and link2_idx >= 0
+        weld_const_info = self.get_weld_constraints(as_tensor=True, to_torch=True)
+        link_a = weld_const_info["link_a"]
+        link_b = weld_const_info["link_b"]
+        assert not (
+            ((link_a == link1_idx) | (link_b == link1_idx)) & ((link_a == link2_idx) | (link_b == link2_idx))
+        ).any()
 
         self._eq_const_info_cache.clear()
         overflow = kernel_add_weld_constraint(
@@ -355,8 +354,8 @@ class ConstraintSolver:
                 "RigidSolver's option 'max_dynamic_constraints'."
             )
 
-    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None, *, unsafe=False):
-        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+    def delete_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(
             int(link1_idx),

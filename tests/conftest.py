@@ -16,7 +16,6 @@ import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
-from syrupy.location import PyTestLocation
 
 has_display = True
 try:
@@ -67,9 +66,12 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl
 def pytest_cmdline_main(config: pytest.Config) -> None:
-    # Force disabling forked for non-linux systems
-    if not sys.platform.startswith("linux"):
-        config.option.forked = False
+    # Make sure that no unsupported markers have been specified in CLI
+    declared_markers = set(name for spec in config.getini("markers") if (name := spec.split(":")[0]) != "forked")
+    try:
+        eval(config.option.markexpr, {"__builtins__": {}}, {key: None for key in declared_markers})
+    except NameError as e:
+        raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
@@ -80,6 +82,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         if backend == "cpu":
             raise ValueError("Running benchmarks on CPU is not supported.")
         config.option.backend = "gpu"
+
+    # Force disabling forked for non-linux systems
+    if not sys.platform.startswith("linux"):
+        config.option.forked = False
 
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
