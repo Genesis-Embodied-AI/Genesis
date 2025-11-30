@@ -2265,19 +2265,6 @@ class RigidEntity(Entity):
         zero_velocity : bool, optional
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
         """
-        # Save in [tgt] for backward pass
-        if self._update_tgt_while_set:
-            self._update_tgt(
-                "qpos",
-                {
-                    "qpos": qpos,
-                    "qs_idx_local": qs_idx_local,
-                    "envs_idx": envs_idx,
-                    "zero_velocity": zero_velocity,
-                    "unsafe": unsafe,
-                },
-            )
-
         qs_idx = self._get_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
             self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True, unsafe=unsafe)
