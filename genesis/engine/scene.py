@@ -449,21 +449,11 @@ class Scene(RBC):
 
     @gs.assert_unbuilt
     def add_stage(self, file: str):
-        try:
-            from ..utils import usd_stage_importer
-            entities = usd_stage_importer.import_from_usd_stage(self, file)
-            return entities
-        except ImportError:
-            gs.raise_exception("usd_stage_importer module not found. Please install it with `pip install genesis[usd]`.")
+        from ..utils.usd import import_from_usd
+        return import_from_usd(self, file)
 
     @gs.assert_unbuilt
-    def link_entities(
-        self,
-        parent_entity: "Entity",
-        child_entity: "Entity",
-        parent_link_name="",
-        child_link_name="",
-    ):
+    def link_entities(self, parent_entity: "Entity", child_entity: "Entity", parent_link_name="", child_link_name=""):
         """
         links two entities to act as single entity.
 

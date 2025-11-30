@@ -18,7 +18,8 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils import usd_physics
+from genesis.utils.usd.usd_articulation_parser import parse_usd_articulation
+from genesis.utils.usd.usd_rigid_body_parser import parse_usd_rigid_body
 from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, DeprecationError, ti_to_torch
 
 from ..base_entity import Entity
@@ -299,7 +300,7 @@ class RigidEntity(Entity):
         Load a USD rigid body, similar to _load_mesh but parsing from USD file.
         """
         # Parse USD rigid body to get l_info, j_infos, and g_infos
-        l_info, j_infos, g_infos = usd_physics.parse_usd_rigid_body(morph, surface)
+        l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
         
         # Create link and joint using _add_by_info
         link, (joint,) = self._add_by_info(
@@ -584,7 +585,7 @@ class RigidEntity(Entity):
         elif isinstance(morph, gs.morphs.URDF):
             l_infos, links_j_infos, links_g_infos, eqs_info = self._collect_urdf_articulation_info(morph, surface)
         elif isinstance(morph, gs.morphs.USDArticulation):
-            l_infos, links_j_infos, links_g_infos, eqs_info = usd_physics.parse_usd_articulation(morph, surface)
+            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
         else:
             gs.raise_exception(f"Unsupported morph type: {type(morph)}")
         

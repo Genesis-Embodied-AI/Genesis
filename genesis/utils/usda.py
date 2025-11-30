@@ -16,7 +16,6 @@ from . import mesh as mu
 
 try:
     from pxr import Usd, UsdGeom, UsdShade, Sdf
-    from . import usd_parser_utils as usd_utils
 except ImportError as e:
     raise ImportError(
         "Failed to import USD dependencies. Try installing Genesis with 'usd' optional dependencies."
@@ -481,41 +480,3 @@ def parse_instance_usd(path):
                     instance_list.append((matrix.T, instance_spec.layer.identifier))
 
     return instance_list
-
-def parse_materials_to_context(ctx: usd_utils.UsdParserContext, surface: gs.surfaces.Surface):
-    """
-    Find all materials in the USD stage and parse them, storing the results in the context.
-    
-    This function traverses the stage to find all Material prims, parses them using
-    parse_usd_material, and stores them in the context's materials dictionary for later use.
-    
-    Parameters
-    ----------
-    ctx
-        The UsdParserContext containing the stage. Materials will be stored in ctx.materials.
-    surface : gs.surfaces.Surface
-        The base surface to use for material parsing.
-    
-    Returns
-    -------
-    dict
-        The materials dictionary (same as ctx.materials).
-        Key: material_id (str) - unique identifier for the material
-        Value: tuple of (material_surface, uv_name) - parsed material surface and UV name
-    """
-    stage = ctx.stage
-    materials = ctx.materials
-    
-    # Parse materials from the stage
-    for prim in stage.Traverse():
-        if prim.IsA(UsdShade.Material):
-            material_usd = UsdShade.Material(prim)
-            material_spec = prim.GetPrimStack()[-1]
-            material_id = material_spec.layer.identifier + material_spec.path.pathString
-            
-            # Only parse if not already in the context
-            if material_id not in materials:
-                material, uv_name, require_bake = parse_usd_material(material_usd, surface)
-                materials[material_id] = (material, uv_name)
-                if require_bake:
-                    gs.logger.debug(f"Material {material_id} requires baking (not yet implemented in context-based parsing)")
