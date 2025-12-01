@@ -411,23 +411,15 @@ def has_display() -> bool:
 # -------------------------------------- TAICHI SPECIALIZATION --------------------------------------
 
 TI_PROG_WEAKREF: weakref.ReferenceType | None = None
-TI_DATA_CACHE: OrderedDict[int, "FieldMetadata"] = OrderedDict()
+TI_MAPPING_KEY_CACHE: OrderedDict[int, Any] = OrderedDict()
 MAX_CACHE_SIZE = 1000
-
-
-@dataclass
-class FieldMetadata:
-    ndim: int
-    shape: tuple[int, ...]
-    dtype: ti._lib.core.DataTypeCxx
-    mapping_key: Any
 
 
 def _ensure_compiled(self, *args):
     # Note that the field is enough to determine the key because all the other arguments depends on it.
     # This may not be the case anymore if the output is no longer dynamically allocated at some point.
-    ti_data_meta = TI_DATA_CACHE[id(args[0])]
-    key = ti_data_meta.mapping_key
+    cache_id = id(args[0])
+    key = TI_MAPPING_KEY_CACHE.get(cache_id)
     if key is None:
         extracted = []
         for arg, kernel_arg in zip(args, self.mapper.arguments):
@@ -439,7 +431,7 @@ def _ensure_compiled(self, *args):
                 subkey = (arg.dtype, len(arg.shape), needs_grad, anno.boundary)
             extracted.append(subkey)
         key = tuple(extracted)
-        ti_data_meta.mapping_key = key
+        TI_MAPPING_KEY_CACHE[cache_id] = key
     instance_id = self.mapper.mapping.get(key)
     if instance_id is None:
         key = ti.lang.kernel_impl.Kernel.ensure_compiled(self, *args)
@@ -518,7 +510,7 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
 
 def _destroy_callback(ref: weakref.ReferenceType):
     global TI_PROG_WEAKREF
-    TI_DATA_CACHE.clear()
+    TI_MAPPING_KEY_CACHE.clear()
     for kernel in TO_EXT_ARR_FAST_MAP.values():
         kernel._primal.mapper.mapping.clear()
     TI_PROG_WEAKREF = None
@@ -537,31 +529,6 @@ for data_type, func in (
     func._primal.launch_kernel = types.MethodType(_launch_kernel, func._primal)
     func._primal.ensure_compiled = types.MethodType(_ensure_compiled, func._primal)
     TO_EXT_ARR_FAST_MAP[data_type] = func
-
-
-def _get_ti_metadata(value: ti.Field | ti.Ndarray) -> FieldMetadata:
-    global TI_PROG_WEAKREF
-
-    # Keep track of taichi runtime to automatically clear cache if destroyed
-    if TI_PROG_WEAKREF is None:
-        TI_PROG_WEAKREF = weakref.ref(impl.get_runtime().prog, _destroy_callback)
-
-    # Get metadata
-    ti_data_id = id(value)
-    ti_data_meta = TI_DATA_CACHE.get(ti_data_id)
-    if ti_data_meta is None:
-        if isinstance(value, ti.MatrixField):
-            ndim = value.ndim
-        elif isinstance(value, ti.Ndarray):
-            ndim = len(value.element_shape)
-        else:
-            ndim = 0
-        ti_data_meta = FieldMetadata(ndim, value.shape, value.dtype, None)
-        if len(TI_DATA_CACHE) == MAX_CACHE_SIZE:
-            TI_DATA_CACHE.popitem(last=False)
-        TI_DATA_CACHE[ti_data_id] = ti_data_meta
-
-    return ti_data_meta
 
 
 def ti_to_python(
@@ -600,67 +567,73 @@ def ti_to_python(
     elif copy is None:
         copy = False
 
-    # Extract metadata if necessary
-    if transpose or not use_zerocopy:
-        ti_data_meta = _get_ti_metadata(value)
-
     # Leverage zero-copy if enabled
+    batch_shape = value.shape
     if use_zerocopy:
         try:
-            out = value._tc if to_torch or gs.backend != gs.cpu else value._np
+            if to_torch or gs.backend != gs.cpu:
+                out = value._T_tc if transpose else value._tc
+            else:
+                out = value._T_np if transpose else value._np
         except AttributeError:
-            out = value._tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
+            value._tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
+            value._T_tc = value._tc.movedim(batch_ndim - 1, 0) if (batch_ndim := len(batch_shape)) > 1 else value._tc
+            if to_torch:
+                out = value._T_tc if transpose else value._tc
             if gs.backend == gs.cpu:
                 value._np = value._tc.numpy()
+                value._T_np = value._T_tc.numpy()
                 if not to_torch:
-                    out = value._np
+                    out = value._T_np if transpose else value._np
         if copy:
             if to_torch:
                 out = out.clone()
             else:
                 out = tensor_to_array(out)
-    else:
-        # Extract value as a whole.
-        # Note that this is usually much faster than using a custom kernel to extract a slice.
-        # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
-        is_metal = gs.device.type == "mps"
-        out_dtype = _to_torch_type_fast(ti_data_meta.dtype) if to_torch else _to_numpy_type_fast(ti_data_meta.dtype)
-        if issubclass(data_type, (ti.ScalarField, ti.ScalarNdarray)):
-            if to_torch:
-                out = torch.zeros(ti_data_meta.shape, dtype=out_dtype, device="cpu" if is_metal else gs.device)
-            else:
-                out = np.zeros(ti_data_meta.shape, dtype=out_dtype)
-            TO_EXT_ARR_FAST_MAP[data_type](value, out)
-        elif issubclass(data_type, ti.MatrixField):
-            as_vector = value.m == 1
-            shape_ext = (value.n,) if as_vector else (value.n, value.m)
-            if to_torch:
-                out = torch.empty(
-                    ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device
-                )
-            else:
-                out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
-            TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
-        elif issubclass(data_type, (ti.VectorNdarray, ti.MatrixNdarray)):
-            layout_is_aos = 1
-            as_vector = issubclass(data_type, ti.VectorNdarray)
-            shape_ext = (value.n,) if as_vector else (value.n, value.m)
-            if to_torch:
-                out = torch.empty(
-                    ti_data_meta.shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device
-                )
-            else:
-                out = np.zeros(ti_data_meta.shape + shape_ext, dtype=out_dtype)
-            TO_EXT_ARR_FAST_MAP[ti.MatrixNdarray](value, out, layout_is_aos, as_vector)
+        return out
+
+    # Keep track of taichi runtime to automatically clear cache if destroyed
+    global TI_PROG_WEAKREF
+    if TI_PROG_WEAKREF is None:
+        TI_PROG_WEAKREF = weakref.ref(impl.get_runtime().prog, _destroy_callback)
+
+    # Extract value as a whole.
+    # Note that this is usually much faster than using a custom kernel to extract a slice.
+    # The implementation is based on `taichi.lang.(ScalarField | MatrixField).to_torch`.
+    is_metal = gs.device.type == "mps"
+    out_dtype = _to_torch_type_fast(value.dtype) if to_torch else _to_numpy_type_fast(value.dtype)
+    if issubclass(data_type, (ti.ScalarField, ti.ScalarNdarray)):
+        if to_torch:
+            out = torch.zeros(batch_shape, dtype=out_dtype, device="cpu" if is_metal else gs.device)
         else:
-            gs.raise_exception(f"Unsupported type '{type(value)}'.")
-        if to_torch and is_metal:
-            out = out.to(gs.device)
+            out = np.zeros(batch_shape, dtype=out_dtype)
+        TO_EXT_ARR_FAST_MAP[data_type](value, out)
+    elif issubclass(data_type, ti.MatrixField):
+        as_vector = value.m == 1
+        shape_ext = (value.n,) if as_vector else (value.n, value.m)
+        if to_torch:
+            out = torch.empty(batch_shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device)
+        else:
+            out = np.zeros(batch_shape + shape_ext, dtype=out_dtype)
+        TO_EXT_ARR_FAST_MAP[data_type](value, out, as_vector)
+    elif issubclass(data_type, (ti.VectorNdarray, ti.MatrixNdarray)):
+        layout_is_aos = 1
+        as_vector = issubclass(data_type, ti.VectorNdarray)
+        shape_ext = (value.n,) if as_vector else (value.n, value.m)
+        if to_torch:
+            out = torch.empty(batch_shape + shape_ext, dtype=out_dtype, device="cpu" if is_metal else gs.device)
+        else:
+            out = np.zeros(batch_shape + shape_ext, dtype=out_dtype)
+        TO_EXT_ARR_FAST_MAP[ti.MatrixNdarray](value, out, layout_is_aos, as_vector)
+    else:
+        gs.raise_exception(f"Unsupported type '{type(value)}'.")
+    if to_torch and is_metal:
+        out = out.to(gs.device)
 
     # Transpose if necessary and requested.
     # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
     # advanced masking, which would spare computation later on if expected from the user.
-    if transpose and (batch_ndim := len(ti_data_meta.shape)) > 1:
+    if transpose and (batch_ndim := len(batch_shape)) > 1:
         if to_torch:
             out = out.movedim(batch_ndim - 1, 0)
         else:
@@ -766,14 +739,23 @@ def ti_to_torch(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
-    # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here
-    tensor = ti_to_python(value, transpose, copy=copy, to_torch=True)
+    # Try efficient shortcut first and only fallback to standard branching if necessary.
+    # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here.
+    if gs.use_zerocopy:
+        try:
+            tensor = value._T_tc if transpose else value._tc
+            if copy:
+                tensor = tensor.clone()
+        except AttributeError:
+            tensor = ti_to_python(value, transpose, copy=copy, to_torch=True)
+    else:
+        tensor = ti_to_python(value, transpose, copy=copy, to_torch=True)
+
     if row_mask is None and col_mask is None:
         return tensor
 
-    ti_data_meta = _get_ti_metadata(value)
     raise_if_fancy = copy is False
-    if len(ti_data_meta.shape) < 2:
+    if len(value.shape) < 2:
         if row_mask is not None and col_mask is not None:
             gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
         mask = indices_to_mask(
@@ -808,9 +790,8 @@ def ti_to_numpy(
     if row_mask is None and col_mask is None:
         return tensor
 
-    ti_data_meta = _get_ti_metadata(value)
     raise_if_fancy = copy is False
-    if len(ti_data_meta.shape) < 2:
+    if len(value.shape) < 2:
         if row_mask is not None and col_mask is not None:
             gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
         mask = indices_to_mask(
@@ -902,9 +883,9 @@ def broadcast_tensor(
     expected_ndim = len(expected_shape)
 
     # Expand current tensor shape with extra dims of size 1 if necessary before expanding to expected shape
-    if tensor_ndim < 2:
-        tensor_ = torch.atleast_1d(tensor_)
-    elif tensor_ndim < expected_ndim:
+    if tensor_ndim == 0:
+        tensor_ = tensor_[None]
+    elif 2 <= tensor_ndim < expected_ndim:
         # Try expanding first dimensions if priority
         for dims_valid in tuple(combinations(range(expected_ndim), tensor_ndim))[::-1]:
             curr_idx = 0
@@ -1005,11 +986,14 @@ def get_indexed_shape(tensor_shape, indices):
 
 
 def assign_indexed_tensor(
-    out: torch.Tensor,
+    tensor: torch.Tensor,
     indices: tuple[int | slice | torch.Tensor, ...],
-    in_: np.typing.ArrayLike,
-    dtype: torch.dtype,
+    value: np.typing.ArrayLike,
     dim_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
-    indexed_shape = get_indexed_shape(out.shape, indices) if indices else out.shape
-    out[indices] = broadcast_tensor(in_, dtype, indexed_shape, dim_names)
+    try:
+        tensor[indices] = value
+    except (TypeError, RuntimeError):
+        # Try extended broadcasting as a fallback to avoid slowing down the hot path
+        indexed_shape = get_indexed_shape(tensor.shape, indices) if indices else tensor.shape
+        tensor[indices] = broadcast_tensor(value, tensor.dtype, indexed_shape, dim_names)
