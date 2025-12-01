@@ -894,6 +894,58 @@ class RasterizerContext:
             self.add_dynamic_node(None, node)
         return node
 
+    def draw_debug_pyramid(self, T, base_width=0.05, base_height=0.05, height=0.05, color=(1.0, 1.0, 1.0, 0.5)):
+        """
+        Draw a debug pyramid representing a camera frustum.
+        Parameters
+        ----------
+        T: array-like, shape (4, 4), optional
+            The transformation matrix.
+        base_width: float
+            The width of the pyramid base.
+        base_height: float
+            The height of the pyramid base.
+        height: float
+            The height of the pyramid (distance from apex to base).
+        color: RGBA color tuple
+        """
+        T = tensor_to_array(T, dtype=np.float32)
+        right = T[:3, 0]
+        up = T[:3, 1]
+        forward = -T[:3, 2]
+
+        base_center = forward * height
+        half_width = base_width / 2
+        half_height = base_height / 2
+        vertices = np.array(
+            [
+                [0, 0, 0],  # apex
+                base_center + half_width * right + half_height * up,  # top-right
+                base_center - half_width * right + half_height * up,  # top-left
+                base_center - half_width * right - half_height * up,  # bottom-left
+                base_center + half_width * right - half_height * up,  # bottom-right
+            ]
+        )
+        faces = np.array(
+            [
+                # Base (2 triangles) - facing away from apex
+                [1, 2, 3],
+                [1, 3, 4],
+                # Sides (4 triangles from apex to base edges)
+                [0, 2, 1],  # left side
+                [0, 3, 2],  # back side
+                [0, 4, 3],  # right side
+                [0, 1, 4],  # front side
+            ]
+        )
+
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        mesh.visual.face_colors = np.tile(np.array(color) * 255, (len(faces), 1)).astype(np.uint8)
+
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_pyramid_{gs.UID()}", smooth=False, is_marker=True)
+        self.add_external_node(node)
+        return node
+
     def draw_debug_spheres(self, poss, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
         poses = gu.trans_to_T(tensor_to_array(poss))

@@ -302,10 +302,7 @@ class Collider:
             envs_idx = slice(None) if envs_idx is None else envs_idx
             if not cache_only:
                 first_time = ti_to_torch(self._collider_state.first_time, copy=False)
-                if isinstance(envs_idx, torch.Tensor):
-                    first_time.scatter_(0, envs_idx, True)
-                else:
-                    first_time[envs_idx] = True
+                first_time[envs_idx] = True
 
             i_va_ws = ti_to_torch(self._collider_state.contact_cache.i_va_ws, copy=False)
             normal = ti_to_torch(self._collider_state.contact_cache.normal, copy=False)
@@ -313,6 +310,9 @@ class Collider:
                 max_possible_pairs = normal.shape[0]
                 i_va_ws.scatter_(2, envs_idx[None, None].expand((2, max_possible_pairs, -1)), -1)
                 normal.scatter_(1, envs_idx[None, :, None].expand((max_possible_pairs, -1, 3)), 0.0)
+            elif envs_idx is None:
+                i_va_ws.fill_(-1)
+                normal.zero_()
             else:
                 i_va_ws[:, :, envs_idx] = -1
                 normal[:, envs_idx] = 0.0
