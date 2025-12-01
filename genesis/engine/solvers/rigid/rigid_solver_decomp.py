@@ -1440,7 +1440,7 @@ class RigidSolver(Solver):
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(qs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, qs_idx)
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
-            assign_indexed_tensor(data, mask, qpos, gs.tc_float)
+            assign_indexed_tensor(data, mask, qpos)
             if mask and isinstance(mask[0], torch.Tensor):
                 envs_idx = mask[0].reshape((-1,))
         else:
@@ -1556,7 +1556,7 @@ class RigidSolver(Solver):
             data = ti_to_torch(getattr(self.dofs_info, name), transpose=True, copy=False)
             num_values = len(tensor_list)
             for j, mask_j in enumerate(((*mask, ..., j) for j in range(num_values)) if num_values > 1 else (mask,)):
-                assign_indexed_tensor(data, mask_j, tensor_list[j], gs.tc_float)
+                assign_indexed_tensor(data, mask_j, tensor_list[j])
             return
 
         tensor_list = list(tensor_list)
@@ -1638,7 +1638,7 @@ class RigidSolver(Solver):
                 if velocity is None:
                     vel[mask] = 0.0
                 else:
-                    assign_indexed_tensor(vel, mask, velocity, gs.tc_float)
+                    assign_indexed_tensor(vel, mask, velocity)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
                 elif not isinstance(envs_idx, torch.Tensor):
@@ -1709,7 +1709,7 @@ class RigidSolver(Solver):
             ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.FORCE
             ctrl_force = ti_to_torch(self.dofs_state.ctrl_force, transpose=True, copy=False)
-            assign_indexed_tensor(ctrl_force, mask, force, gs.tc_float)
+            assign_indexed_tensor(ctrl_force, mask, force)
             return
 
         force, dofs_idx, envs_idx = self._sanitize_io_variables(
@@ -1728,7 +1728,7 @@ class RigidSolver(Solver):
             ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
             ctrl_pos[mask] = 0.0
             ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
-            assign_indexed_tensor(ctrl_vel, mask, velocity, gs.tc_float)
+            assign_indexed_tensor(ctrl_vel, mask, velocity)
             return
 
         velocity, dofs_idx, envs_idx = self._sanitize_io_variables(
@@ -1745,7 +1745,7 @@ class RigidSolver(Solver):
             ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.POSITION
             ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
-            assign_indexed_tensor(ctrl_pos, mask, position, gs.tc_float)
+            assign_indexed_tensor(ctrl_pos, mask, position)
             ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
             ctrl_vel[mask] = 0.0
             return
@@ -1764,9 +1764,9 @@ class RigidSolver(Solver):
             ctrl_mode = ti_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.POSITION
             ctrl_pos = ti_to_torch(self.dofs_state.ctrl_pos, transpose=True, copy=False)
-            assign_indexed_tensor(ctrl_pos, mask, position, gs.tc_float)
+            assign_indexed_tensor(ctrl_pos, mask, position)
             ctrl_vel = ti_to_torch(self.dofs_state.ctrl_vel, transpose=True, copy=False)
-            assign_indexed_tensor(ctrl_vel, mask, velocity, gs.tc_float)
+            assign_indexed_tensor(ctrl_vel, mask, velocity)
             return
 
         position, dofs_idx, _ = self._sanitize_io_variables(
