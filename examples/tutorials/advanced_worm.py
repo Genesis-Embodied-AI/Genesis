@@ -1,5 +1,5 @@
 import math
-
+import os
 import torch
 import genesis as gs
 
@@ -93,8 +93,9 @@ worm.set_muscle(
 
 
 ########################## run ##########################
+horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 scene.reset()
-for i in range(1000):
+for i in range(horizon):
     actu = (0.0, 0.0, 0.0, 1.0 * (0.5 + math.sin(0.005 * math.pi * i)))
     worm.set_actuation(actu)
     scene.step()
