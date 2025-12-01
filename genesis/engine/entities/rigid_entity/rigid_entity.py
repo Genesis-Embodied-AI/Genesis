@@ -1306,7 +1306,7 @@ class RigidEntity(Entity):
         pos_mask = broadcast_tensor(pos_mask, gs.tc_bool, (3,)).contiguous()
         rot_mask = broadcast_tensor(rot_mask, gs.tc_bool, (3,)).contiguous()
         if sum(rot_mask) == 1:
-            rot_mask = 1 - rot_mask
+            rot_mask = ~rot_mask
         elif sum(rot_mask) == 2:
             gs.raise_exception("You can only align 0, 1 axis or all 3 axes.")
 
