@@ -207,14 +207,6 @@ class RigidSolver(Solver):
         self._n_entities = self.n_entities
         self._n_equalities = self.n_equalities
 
-        self._max_n_links_per_entity = max(len(entity.links) for entity in self._entities) if self._entities else 0
-        self._max_n_joints_per_link = max(len(link.joints) for link in self.links) if self.links else 0
-        self._max_n_dofs_per_joint = max(joint.n_dofs for joint in self.joints) if self.joints else 0
-        self._max_n_qs_per_link = max(link.n_qs for link in self.links) if self.links else 0
-        self._max_n_dofs_per_entity = max(entity.n_dofs for entity in self._entities) if self._entities else 0
-        self._max_n_dofs_per_link = max(link.n_dofs for link in self.links) if self.links else 0
-        self._max_n_geoms_per_entity = max(len(link.geoms) for link in self.links) if self.links else 0
-
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
         self._links = self.links
@@ -251,7 +243,7 @@ class RigidSolver(Solver):
         # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
         is_rigid_solver = type(self) is RigidSolver
         if is_rigid_solver:
-            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
+            static_rigid_sim_config = dict(
                 para_level=self.sim._para_level,
                 requires_grad=self.sim.options.requires_grad,
                 use_hibernation=self._use_hibernation,
@@ -268,6 +260,20 @@ class RigidSolver(Solver):
                 solver_type=self._options.constraint_solver,
                 is_backward=False,
             )
+            # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
+            if self.sim.options.requires_grad:
+                static_rigid_sim_config.update(
+                    max_n_geoms_per_entity=max(len(entity.geoms) for entity in self.entities) if self.links else 0,
+                    max_n_links_per_entity=max(len(entity.links) for entity in self.entities) if self.entities else 0,
+                    max_n_joints_per_link=max(len(link.joints) for link in self.links) if self.links else 0,
+                    max_n_dofs_per_joint=max(joint.n_dofs for joint in self.joints) if self.joints else 0,
+                    max_n_dofs_per_entity=max(entity.n_dofs for entity in self.entities) if self.entities else 0,
+                    max_n_dofs_per_link=max(link.n_dofs for link in self.links) if self.links else 0,
+                    max_n_qs_per_link=max(link.n_qs for link in self.links) if self.links else 0,
+                    n_links=self._n_links,
+                    n_geoms=self._n_geoms,
+                )
+            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
         else:
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
                 para_level=self.sim._para_level,
@@ -294,38 +300,6 @@ class RigidSolver(Solver):
 
             if getattr(self._options, "noslip_iterations", 0) > 0:
                 gs.raise_exception("Noslip is not supported yet when requires_grad is True.")
-
-        # Add terms for static inner loops, use 0 if not requires_grad to avoid re-compilation
-        self._static_rigid_sim_config.max_n_links_per_entity = (
-            self._max_n_links_per_entity if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_joints_per_link = (
-            self._max_n_joints_per_link if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_dofs_per_joint = (
-            self._max_n_dofs_per_joint if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_qs_per_link = (
-            self._max_n_qs_per_link if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_dofs_per_entity = (
-            self._max_n_dofs_per_entity if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_dofs_per_link = (
-            self._max_n_dofs_per_link if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_geoms_per_entity = (
-            self._max_n_geoms_per_entity if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_awake_links = (
-            self._n_links if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_awake_entities = (
-            self._n_entities if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_awake_dofs = (
-            self._n_dofs if self._static_rigid_sim_config.requires_grad else 0
-        )
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -3930,7 +3904,7 @@ def func_solve_mass_batched(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(entities_info.n_links.shape[0]))
+            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
     ):
         if func_check_index_range(i_0, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.is_backward):
@@ -4645,7 +4619,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4671,7 +4645,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4710,7 +4684,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4738,7 +4712,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4765,7 +4739,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4807,7 +4781,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4887,7 +4861,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4982,7 +4956,7 @@ def func_forward_kinematics(
         else (
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(entities_info.n_links.shape[0]))
+            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
     ):
         if func_check_index_range(
@@ -5032,7 +5006,7 @@ def func_forward_velocity(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(entities_info.n_links.shape[0]))
+            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
     ):
         if func_check_index_range(
@@ -5454,7 +5428,7 @@ def func_update_geoms(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(geoms_info.pos.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_geoms))
         )
     ):
         i_e = rigid_global_info.awake_entities[i_0, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 0
@@ -6775,6 +6749,7 @@ def kernel_prepare_backward_substep(
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
             )
+
         # Save results of [update_cartesian_space] to adjoint cache
         func_copy_cartesian_space(
             src_dofs_state=dofs_state,
@@ -6824,15 +6799,16 @@ def kernel_begin_backward_substep(
         )
 
         if not static_rigid_sim_config.enable_mujoco_compatibility:
+            # Save results of [update_cartesian_space] to adjoint cache
             func_copy_cartesian_space(
-                src_dofs_state=dofs_state_adjoint_cache,
-                src_links_state=links_state_adjoint_cache,
-                src_joints_state=joints_state_adjoint_cache,
-                src_geoms_state=geoms_state_adjoint_cache,
-                dst_dofs_state=dofs_state,
-                dst_links_state=links_state,
-                dst_joints_state=joints_state,
-                dst_geoms_state=geoms_state,
+                src_dofs_state=dofs_state,
+                src_links_state=links_state,
+                src_joints_state=joints_state,
+                src_geoms_state=geoms_state,
+                dst_dofs_state=dofs_state_adjoint_cache,
+                dst_links_state=links_state_adjoint_cache,
+                dst_joints_state=joints_state_adjoint_cache,
+                dst_geoms_state=geoms_state_adjoint_cache,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 

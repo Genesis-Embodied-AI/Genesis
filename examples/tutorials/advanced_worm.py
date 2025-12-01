@@ -72,7 +72,7 @@ elif isinstance(worm.material, gs.materials.FEM.Muscle):
 else:
     raise NotImplementedError
 
-pos_max, pos_min = pos.max(dim=0), pos.min(dim=0)
+pos_max, pos_min = pos.max(dim=0).values, pos.min(dim=0).values
 pos_range = pos_max - pos_min
 
 lu_thr, fh_thr = 0.3, 0.6

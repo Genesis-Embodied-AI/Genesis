@@ -882,12 +882,17 @@ class FEMEntity(Entity):
             self._kernel_get_verts_pos(self._sim.cur_substep_local, target_poss, verts_idx)
 
         if link is None:
+            link_idx = -1
             link_init_pos = torch.zeros((self._sim._B, 3), dtype=gs.tc_float, device=gs.device)
             link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
-            link_idx = -1
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
-            link_init_pos, link_init_quat, link_idx = link.get_pos(), link.get_quat(), link.idx
+            link_idx = link.idx
+            link_init_pos = link.get_pos()
+            link_init_quat = link.get_quat()
+            if self._scene.n_envs == 0:
+                link_init_pos = link_init_pos[None]
+                link_init_quat = link_init_quat[None]
 
         self._solver._kernel_set_vertex_constraints(
             self._sim.cur_substep_local,

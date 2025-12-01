@@ -51,4 +51,4 @@ for i in range(horizon):
     scene.step()
 
 # get particle positions
-particles = liquid.get_particles()
+particles = liquid.get_particles_pos()

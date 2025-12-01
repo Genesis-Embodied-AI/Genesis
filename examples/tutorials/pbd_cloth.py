@@ -1,3 +1,5 @@
+import os
+
 import genesis as gs
 
 ########################## init ##########################
@@ -54,13 +56,12 @@ cloth_2 = scene.add_entity(
 ########################## build ##########################
 scene.build()
 
-cloth_1.fix_particle(cloth_1.find_closest_particle((-1, -1, 1.0)), 0)
-cloth_1.fix_particle(cloth_1.find_closest_particle((1, 1, 1.0)), 0)
-cloth_1.fix_particle(cloth_1.find_closest_particle((-1, 1, 1.0)), 0)
-cloth_1.fix_particle(cloth_1.find_closest_particle((1, -1, 1.0)), 0)
+cloth_1.fix_particles(cloth_1.find_closest_particle((-1, -1, 1.0)))
+cloth_1.fix_particles(cloth_1.find_closest_particle((1, 1, 1.0)))
+cloth_1.fix_particles(cloth_1.find_closest_particle((-1, 1, 1.0)))
+cloth_1.fix_particles(cloth_1.find_closest_particle((1, -1, 1.0)))
+cloth_2.fix_particles(cloth_2.find_closest_particle((-1, -1, 1.0)))
 
-cloth_2.fix_particle(cloth_2.find_closest_particle((-1, -1, 1.0)), 0)
-
-horizon = 1000
+horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 for i in range(horizon):
     scene.step()

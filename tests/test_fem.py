@@ -237,7 +237,7 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         assert_allclose(state.vel, 0.0, tol=2e-2)
 
         # Landed vertically
-        pos = tensor_to_array(state.pos.squeeze(0))
+        pos = tensor_to_array(state.pos[0])
         BV, *_ = igl.bounding_box(pos)
         entity_center = 0.5 * (BV[0] + BV[-1])
         if coupler_type == gs.options.SAPCouplerOptions:
@@ -320,7 +320,7 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
         assert_allclose(state.vel, 0.0, tol=0.05)
 
         # More or less at the initial position
-        pos = tensor_to_array(state.pos.squeeze(0))
+        pos = tensor_to_array(state.pos[0])
         BV, *_ = igl.bounding_box(pos)
         entity_center = 0.5 * (BV[0] + BV[-1])
         assert_allclose(entity_center[:2], 0.0, tol=0.02)
