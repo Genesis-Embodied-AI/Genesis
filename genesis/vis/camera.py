@@ -146,30 +146,34 @@ class Camera(RBC):
             self._batch_renderer = self._visualizer.batch_renderer
 
         if self._batch_renderer is not None:
-            self._is_batched = True
+            self._is_batched = self._visualizer.scene.n_envs > 0
             if self._env_idx is not None:
                 gs.raise_exception("Binding a camera to one specific environment index not supported by BatchRender.")
         else:
             self._rasterizer.add_camera(self)
             if self._raytracer is not None:
-                self._raytracer.add_camera(self)
                 self._is_batched = False
+                self._raytracer.add_camera(self)
             else:
-                self._is_batched = self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid
-                if self._is_batched:
+                self._is_batched = False
+                if self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid:
                     gs.logger.warning(
                         "Batched rendering via 'VisOptions.env_separate_rigid=True' is only partially supported by "
                         "Rasterizer for now. The same camera transform will be used for all the environments."
                     )
-            if self._env_idx is None:
-                self._env_idx = int(self._visualizer._context.rendered_envs_idx[0])
-                if self._visualizer.scene.n_envs > 0:
-                    gs.logger.info(
-                        "Raytracer and Rasterizer requires binding to the camera with a specific environment index. "
-                        "Defaulting to 'rendered_envs_idx[0]'. Please specify 'env_idx' if necessary."
-                    )
-            if self._env_idx not in self._visualizer._context.rendered_envs_idx:
-                gs.raise_exception("Environment index bound to the camera not in 'VisOptions.rendered_envs_idx'.")
+            if self._visualizer.scene.n_envs > 0:
+                if self._env_idx is None:
+                    if not self._is_batched:
+                        self._env_idx = int(self._visualizer._context.rendered_envs_idx[0])
+                        if self._visualizer.scene.n_envs > 0:
+                            gs.logger.info(
+                                "Raytracer and Rasterizer requires binding to the camera with a specific environment "
+                                "index. Defaulting to 'rendered_envs_idx[0]'. Please specify 'env_idx' if necessary."
+                            )
+                elif self._env_idx not in self._visualizer._context.rendered_envs_idx:
+                    gs.raise_exception("Environment index bound to the camera not in 'VisOptions.rendered_envs_idx'.")
+            else:
+                assert self._env_idx is None
 
         if self._is_batched and self._env_idx is None:
             batch_size = (len(self._visualizer._context.rendered_envs_idx),)
@@ -181,19 +185,16 @@ class Camera(RBC):
         self._transform = torch.empty((*batch_size, 4, 4), dtype=gs.tc_float, device=gs.device)
         self._quat = torch.empty((*batch_size, 4), dtype=gs.tc_float, device=gs.device)
 
-        self._envs_offset = torch.as_tensor(
-            self._visualizer._scene.envs_offset[() if self._env_idx is None else self._env_idx],
-            dtype=gs.tc_float,
-            device=gs.device,
-        )
+        if self._is_batched and self._env_idx is None:
+            envs_offset = self._visualizer._scene.envs_offset[self._visualizer._context.rendered_envs_idx]
+        else:
+            envs_offset = self._visualizer._scene.envs_offset[self._env_idx or 0]
+        self._envs_offset = torch.as_tensor(envs_offset, dtype=gs.tc_float, device=gs.device)
 
         # Must consider the building process done before setting initial pose, otherwise it will fail
         self._is_built = True
         self.set_pose(
-            transform=self._initial_transform,
-            pos=self._initial_pos,
-            lookat=self._initial_lookat,
-            up=self._initial_up,
+            transform=self._initial_transform, pos=self._initial_pos, lookat=self._initial_lookat, up=self._initial_up
         )
 
         # FIXME: For some reason, it is necessary to update the camera twice...
@@ -249,10 +250,12 @@ class Camera(RBC):
         if self._attached_link is None:
             gs.raise_exception("Camera not attached to any rigid link.")
 
-        link_pos = self._attached_link.get_pos(self._env_idx)
-        link_quat = self._attached_link.get_quat(self._env_idx)
-        if self._env_idx is not None and self._visualizer.scene.n_envs > 0:
-            link_pos, link_quat = link_pos[0], link_quat[0]
+        if self._is_batched and self._env_idx is None:
+            link_pos = self._attached_link.get_pos(self._visualizer._context.rendered_envs_idx)
+            link_quat = self._attached_link.get_quat(self._visualizer._context.rendered_envs_idx)
+        else:
+            link_pos = self._attached_link.get_pos(self._env_idx).reshape((-1,))
+            link_quat = self._attached_link.get_quat(self._env_idx).reshape((-1,))
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = torch.matmul(link_T, self._attached_offset_T)
         self.set_pose(transform=transform)
@@ -282,19 +285,13 @@ class Camera(RBC):
             gs.raise_exception("Impossible to following an entity with a camera that is already attached.")
 
         if self._is_built:
-            env_idx = self._env_idx if self._is_batched and self._env_idx is not None else ()
-            pos_rel = self._pos[env_idx] - entity.get_pos(self._env_idx, unsafe=True)
-            if self._env_idx is not None:
-                pos_rel = pos_rel.squeeze(0)
+            if self._is_batched and self._env_idx is None:
+                entity_pos = entity.get_pos(self._visualizer._context.rendered_envs_idx)
+            else:
+                entity_pos = entity.get_pos(self._env_idx).reshape((-1,))
+            pos_rel = self._pos - entity_pos
         else:
             pos_rel = self._initial_pos - torch.tensor(entity.base_link.pos, dtype=gs.tc_float, device=gs.device)
-            if self._env_idx is None:
-                if self._visualizer._context.rendered_envs_idx is not None:
-                    pos_rel = pos_rel.expand((len(self._visualizer._context.rendered_envs_idx), 3))
-                else:
-                    # Falling back to adding batch dimension to allow broadcasting.
-                    # Note that it is not possible to expand / tile because the batch size is unknown before build.
-                    pos_rel = pos_rel.unsqueeze(0)
 
         if (pos_rel.abs() < gs.EPS).all():
             gs.raise_exception("Camera must not be co-located with base link of entity to which it is attached.")
@@ -336,10 +333,11 @@ class Camera(RBC):
             camera_pos = self._pos[env_idx].clone()
 
         # Query entity and relative camera positions
-        entity_pos = self._followed_entity.get_pos(self._env_idx, unsafe=True)
+        if self._is_batched and self._env_idx is None:
+            entity_pos = self._followed_entity.get_pos(self._visualizer._context.rendered_envs_idx)
+        else:
+            entity_pos = self._followed_entity.get_pos(self._env_idx).reshape((-1,))
         follow_pos_rel = self._follow_pos_rel
-        if not self._is_batched:
-            follow_pos_rel = follow_pos_rel.squeeze(0)
 
         # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested
         camera_pos -= follow_pos_rel

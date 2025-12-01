@@ -104,7 +104,7 @@ class RigidJoint(RBC):
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
         _kernel_get_anchor_pos(self._idx, tensor, self._solver.joints_state)
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     @gs.assert_built
@@ -117,7 +117,7 @@ class RigidJoint(RBC):
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
         _kernel_get_anchor_axis(self._idx, tensor, self._solver.joints_state)
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     def set_sol_params(self, sol_params):
@@ -125,7 +125,7 @@ class RigidJoint(RBC):
         Set the solver parameters of this joint.
         """
         if self.is_built:
-            self._solver.set_sol_params(sol_params[..., None, :], joints_idx=self._idx, envs_idx=None, unsafe=False)
+            self._solver.set_sol_params(sol_params, joints_idx=self._idx, envs_idx=None)
         else:
             self._sol_params = sol_params
 
@@ -135,7 +135,7 @@ class RigidJoint(RBC):
         Retruns the solver parameters of the joint.
         """
         if self.is_built:
-            return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None, unsafe=True)[..., 0, :]
+            return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None)[..., 0, :]
         return self._sol_params
 
     # ------------------------------------------------------------------------------------

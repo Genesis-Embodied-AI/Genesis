@@ -1279,7 +1279,7 @@ def _tc_z_up_to_R(z, up=None, out=None):
     zero_x_num = zero_x_mask.sum()
     if zero_x_num:
         # For zero x norm, set identity matrix
-        R[zero_x_mask] = torch.eye(3, device=z.device, dtype=z.dtype).unsqueeze(0).expand((zero_x_num, 3, 3))
+        R[zero_x_mask] = torch.eye(3, device=z.device, dtype=z.dtype)[None].expand((zero_x_num, 3, 3))
 
         # Continue with non-zero cases
         valid_mask = ~zero_x_mask
@@ -1473,6 +1473,17 @@ def axis_angle_to_R(axis: np.ndarray, theta: np.ndarray) -> np.ndarray:
 
 def rotvec_to_R(rotvec: np.ndarray) -> np.ndarray:
     return axis_angle_to_R(rotvec, np.linalg.norm(rotvec, axis=-1))
+
+
+@nb.jit(nopython=True, cache=True)
+def R_to_rotvec(R: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
+    """Compute the angle-axis representation of a single or a batch of 3D rotation matrices.
+
+    :param R: N-dimensional array whose last 2 dimensions gathers individual 3D rotation matrices.
+    :param out: Pre-allocated array into which to store the result. If not provided, a new array is freshly-allocated
+                and returned, which is slower.
+    """
+    return quat_to_rotvec(_np_R_to_quat(R), out=out)
 
 
 @nb.jit(nopython=True, cache=True)

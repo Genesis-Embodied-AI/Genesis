@@ -262,7 +262,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the position. If None, get the position of all environments. Default is None.
         """
-        return self._solver.get_links_pos(self._idx, envs_idx).squeeze(-2)
+        return self._solver.get_links_pos(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_quat(self, envs_idx=None):
@@ -274,7 +274,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
         """
-        return self._solver.get_links_quat(self._idx, envs_idx).squeeze(-2)
+        return self._solver.get_links_quat(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_vel(self, envs_idx=None) -> torch.Tensor:
@@ -286,7 +286,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
         """
-        return self._solver.get_links_vel(self._idx, envs_idx).squeeze(-2)
+        return self._solver.get_links_vel(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_ang(self, envs_idx=None) -> torch.Tensor:
@@ -298,7 +298,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the angular velocity. If None, get the angular velocity of all environments. Default is None.
         """
-        return self._solver.get_links_ang(self._idx, envs_idx).squeeze(-2)
+        return self._solver.get_links_ang(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_verts(self):
@@ -314,7 +314,7 @@ class RigidLink(RBC):
             tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
-                tensor = tensor.squeeze(0)
+                tensor = tensor[0]
         return tensor
 
     @gs.assert_built

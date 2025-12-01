@@ -33,7 +33,6 @@ from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
 from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device
-from .utils.misc import ALLOCATE_TENSOR_WARNING
 
 
 # Global state
@@ -108,9 +107,6 @@ def init(
     logger.info(f"~<╭{'─'*(bar_width)}╮>~")
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─'*(bar_width)}╯>~")
-
-    # FIXME: Disable this warning for now, because it is not useful without printing the entire traceback
-    logger.addFilter(lambda record: record.msg != ALLOCATE_TENSOR_WARNING)
 
     # Get concrete device and backend
     global device

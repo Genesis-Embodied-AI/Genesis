@@ -316,7 +316,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         show_viewer=False,
         show_FPS=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
@@ -389,11 +389,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 
     # Attach cameras
     for i in range(0, len(cameras), 3):
-        cam_0, cam_1, cam_2 = cameras[i : (i + 3)]
-        R = np.eye(3)
-        trans = np.array([0.1, 0.0, 0.2])
-        cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
-        cam_1.follow_entity(robot)
+        cameras[i + 1].follow_entity(robot)
+        pose_rel = gu.trans_R_to_T(np.array([0.1, 0.0, 0.2]), np.eye(3))
+        cameras[i + 2].attach(robot.get_link("Head_upper"), pose_rel)
 
     # Create image exporter
     exporter = FrameImageExporter(tmp_path)

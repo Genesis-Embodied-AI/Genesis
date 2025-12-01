@@ -115,10 +115,7 @@ def main():
 
         print("cube init pos", cube.init_positions)
         pin_idx = [1, 5]
-        cube.set_vertex_constraints(
-            verts_idx=pin_idx,
-            link=end_joint.link,
-        )
+        cube.set_vertex_constraints(verts_idx_local=pin_idx, link=end_joint.link)
         print("Cube initial positions:", cube.init_positions[pin_idx])
         scene.draw_debug_spheres(poss=cube.init_positions[pin_idx], radius=0.02, color=(1.0, 0.0, 1.0, 0.8))
 

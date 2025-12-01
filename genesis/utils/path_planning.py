@@ -85,17 +85,16 @@ class PathPlanner(ABC):
     def _sanitize_qposs(self, qpos_goal, qpos_start, envs_idx):
         qpos_cur = self._entity.get_qpos(envs_idx=envs_idx).clone()
 
-        qpos_goal, _, _ = self._solver._sanitize_1D_io_variables(
-            qpos_goal, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True
-        )
+        assert qpos_goal is not None
+        qpos_goal, *_ = self._solver._sanitize_io_variables(qpos_goal, None, self._entity.n_qs, "qpos_idx", envs_idx)
         if qpos_start is None:
             qpos_start = qpos_cur
-        qpos_start, _, envs_idx = self._solver._sanitize_1D_io_variables(
-            qpos_start, None, self._entity.n_qs, envs_idx, idx_name="qpos_idx", skip_allocation=True
+        qpos_start, _, envs_idx = self._solver._sanitize_io_variables(
+            qpos_start, None, self._entity.n_qs, "qpos_idx", envs_idx
         )
         if self._solver.n_envs == 0:
-            qpos_goal = qpos_goal.unsqueeze(0)
-            qpos_start = qpos_start.unsqueeze(0)
+            qpos_goal = qpos_goal[None]
+            qpos_start = qpos_start[None]
 
         return qpos_cur, qpos_goal, qpos_start, envs_idx
 
@@ -1079,7 +1078,7 @@ def align_waypoints_length(path: torch.Tensor, mask: torch.Tensor, num_points: i
             continue
         interpolated_path = torch.nn.functional.interpolate(
             t_path[i_b : i_b + 1, :, mask[:, i_b]], size=num_points, mode="linear", align_corners=True
-        ).squeeze(0)
+        )[0]
         res[:, i_b] = interpolated_path.T
     return res
 
@@ -1094,7 +1093,7 @@ def rrt_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
         path tensor in [N, B]
     """
     mask = (tensor > 0.0).to(gs.tc_float)  # N, B
-    mask_float = mask.T.unsqueeze(1)  # B 1, N
+    mask_float = mask.T[:, None]  # B 1, N
     kernel = torch.ones((1, 1, 3), device=tensor.device, dtype=gs.tc_float)
     dilated_mask_float = F.conv1d(mask_float, kernel.to(mask_float.dtype), padding="same")
     dilated_mask = (dilated_mask_float > 0.0).squeeze(1).T
@@ -1111,7 +1110,7 @@ def rrt_connect_valid_mask(tensor: torch.Tensor) -> torch.Tensor:
         path tensor in [N, B]
     """
     mask = (tensor > 0.0).to(gs.tc_float)  # N, B
-    mask_float = mask.T.unsqueeze(1)  # B 1, N
+    mask_float = mask.T[:, None]  # B 1, N
     kernel = torch.ones(1, 1, 3, device=tensor.device, dtype=gs.tc_float)
     dilated_mask_float = F.conv1d(mask_float, kernel.to(mask_float.dtype), padding="same")
     dilated_mask = (dilated_mask_float > 0).squeeze(1).T
