@@ -3673,25 +3673,22 @@ def func_compute_mass_matrix(
                         i_p = links_info.parent_idx[I_l]
 
                         if i_p != -1:
-                            # Backward pass requires atomic add
-                            if ti.static(static_rigid_sim_config.is_backward):
-                                links_state.crb_inertial[i_p, i_b] += links_state.crb_inertial[i_l, i_b]
-                                links_state.crb_mass[i_p, i_b] += links_state.crb_mass[i_l, i_b]
-                                links_state.crb_pos[i_p, i_b] += links_state.crb_pos[i_l, i_b]
-                                links_state.crb_quat[i_p, i_b] += links_state.crb_quat[i_l, i_b]
-                            else:
-                                links_state.crb_inertial[i_p, i_b] = (
-                                    links_state.crb_inertial[i_p, i_b] + links_state.crb_inertial[i_l, i_b]
-                                )
-                                links_state.crb_mass[i_p, i_b] = (
-                                    links_state.crb_mass[i_p, i_b] + links_state.crb_mass[i_l, i_b]
-                                )
-                                links_state.crb_pos[i_p, i_b] = (
-                                    links_state.crb_pos[i_p, i_b] + links_state.crb_pos[i_l, i_b]
-                                )
-                                links_state.crb_quat[i_p, i_b] = (
-                                    links_state.crb_quat[i_p, i_b] + links_state.crb_quat[i_l, i_b]
-                                )
+                            func_atomic_add_if_backward_2d(
+                                links_state.crb_inertial,
+                                i_p,
+                                i_b,
+                                links_state.crb_inertial[i_l, i_b],
+                                static_rigid_sim_config,
+                            )
+                            func_atomic_add_if_backward_2d(
+                                links_state.crb_mass, i_p, i_b, links_state.crb_mass[i_l, i_b], static_rigid_sim_config
+                            )
+                            func_atomic_add_if_backward_2d(
+                                links_state.crb_pos, i_p, i_b, links_state.crb_pos[i_l, i_b], static_rigid_sim_config
+                            )
+                            func_atomic_add_if_backward_2d(
+                                links_state.crb_quat, i_p, i_b, links_state.crb_quat[i_l, i_b], static_rigid_sim_config
+                            )
 
     # mass_mat
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -3830,13 +3827,9 @@ def func_compute_mass_matrix(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
         I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-        # Backward pass requires atomic add
-        if ti.static(static_rigid_sim_config.is_backward):
-            rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.armature[I_d]
-        else:
-            rigid_global_info.mass_mat[i_d, i_d, i_b] = (
-                rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.armature[I_d]
-            )
+        func_atomic_add_if_backward_3d(
+            rigid_global_info.mass_mat, i_d, i_d, i_b, dofs_info.armature[I_d], static_rigid_sim_config
+        )
 
     # Take into account first-order correction terms for implicit integration scheme right away
     if ti.static(implicit_damping):
@@ -5502,23 +5495,22 @@ def func_forward_velocity_entity(
 
                     if joint_type == gs.JOINT_TYPE.FREE:
                         for i_3 in ti.static(range(3)):
-                            # Backward pass requires atomic add
-                            if ti.static(static_rigid_sim_config.is_backward):
-                                links_state.cd_vel_bw[i_l, curr_i_j, i_b] += (
-                                    dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
-                                )
-                                links_state.cd_ang_bw[i_l, curr_i_j, i_b] += (
-                                    dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
-                                )
-                            else:
-                                links_state.cd_vel_bw[i_l, curr_i_j, i_b] = (
-                                    links_state.cd_vel_bw[i_l, curr_i_j, i_b]
-                                    + dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
-                                )
-                                links_state.cd_ang_bw[i_l, curr_i_j, i_b] = (
-                                    links_state.cd_ang_bw[i_l, curr_i_j, i_b]
-                                    + dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
-                                )
+                            func_atomic_add_if_backward_3d(
+                                links_state.cd_vel_bw,
+                                i_l,
+                                curr_i_j,
+                                i_b,
+                                dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b],
+                                static_rigid_sim_config,
+                            )
+                            func_atomic_add_if_backward_3d(
+                                links_state.cd_ang_bw,
+                                i_l,
+                                curr_i_j,
+                                i_b,
+                                dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b],
+                                static_rigid_sim_config,
+                            )
 
                         for i_3 in ti.static(range(3)):
                             (
@@ -5540,27 +5532,24 @@ def func_forward_velocity_entity(
                         links_state.cd_ang_bw[i_l, next_i_j, i_b] = links_state.cd_ang_bw[i_l, curr_i_j, i_b]
 
                         for i_3 in ti.static(range(3)):
-                            # Backward pass requires atomic add
-                            if ti.static(static_rigid_sim_config.is_backward):
-                                links_state.cd_vel_bw[i_l, next_i_j, i_b] += (
-                                    dofs_state.cdof_vel[dof_start + i_3 + 3, i_b]
-                                    * dofs_state.vel[dof_start + i_3 + 3, i_b]
-                                )
-                                links_state.cd_ang_bw[i_l, next_i_j, i_b] += (
-                                    dofs_state.cdof_ang[dof_start + i_3 + 3, i_b]
-                                    * dofs_state.vel[dof_start + i_3 + 3, i_b]
-                                )
-                            else:
-                                links_state.cd_vel_bw[i_l, next_i_j, i_b] = (
-                                    links_state.cd_vel_bw[i_l, next_i_j, i_b]
-                                    + dofs_state.cdof_vel[dof_start + i_3 + 3, i_b]
-                                    * dofs_state.vel[dof_start + i_3 + 3, i_b]
-                                )
-                                links_state.cd_ang_bw[i_l, next_i_j, i_b] = (
-                                    links_state.cd_ang_bw[i_l, next_i_j, i_b]
-                                    + dofs_state.cdof_ang[dof_start + i_3 + 3, i_b]
-                                    * dofs_state.vel[dof_start + i_3 + 3, i_b]
-                                )
+                            func_atomic_add_if_backward_3d(
+                                links_state.cd_vel_bw,
+                                i_l,
+                                next_i_j,
+                                i_b,
+                                dofs_state.cdof_vel[dof_start + i_3 + 3, i_b]
+                                * dofs_state.vel[dof_start + i_3 + 3, i_b],
+                                static_rigid_sim_config,
+                            )
+                            func_atomic_add_if_backward_3d(
+                                links_state.cd_ang_bw,
+                                i_l,
+                                next_i_j,
+                                i_b,
+                                dofs_state.cdof_ang[dof_start + i_3 + 3, i_b]
+                                * dofs_state.vel[dof_start + i_3 + 3, i_b],
+                                static_rigid_sim_config,
+                            )
 
                     else:
                         for i_d_ in (
@@ -5587,23 +5576,22 @@ def func_forward_velocity_entity(
                         ):
                             i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
                             if i_d < joints_info.dof_end[I_j]:
-                                # Backward pass requires atomic add
-                                if ti.static(static_rigid_sim_config.is_backward):
-                                    links_state.cd_vel_bw[i_l, next_i_j, i_b] += (
-                                        dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                    )
-                                    links_state.cd_ang_bw[i_l, next_i_j, i_b] += (
-                                        dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                    )
-                                else:
-                                    links_state.cd_vel_bw[i_l, next_i_j, i_b] = (
-                                        links_state.cd_vel_bw[i_l, next_i_j, i_b]
-                                        + dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                    )
-                                    links_state.cd_ang_bw[i_l, next_i_j, i_b] = (
-                                        links_state.cd_ang_bw[i_l, next_i_j, i_b]
-                                        + dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                    )
+                                func_atomic_add_if_backward_3d(
+                                    links_state.cd_vel_bw,
+                                    i_l,
+                                    next_i_j,
+                                    i_b,
+                                    dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b],
+                                    static_rigid_sim_config,
+                                )
+                                func_atomic_add_if_backward_3d(
+                                    links_state.cd_ang_bw,
+                                    i_l,
+                                    next_i_j,
+                                    i_b,
+                                    dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b],
+                                    static_rigid_sim_config,
+                                )
 
             i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
             links_state.cd_vel[i_l, i_b] = links_state.cd_vel_bw[i_l, i_j_, i_b]
@@ -6362,27 +6350,28 @@ def func_update_acc(
                                 # cacc = cacc_parent + cdofdot * qvel + cdof * qacc
                                 local_cdd_vel = dofs_state.cdofd_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
                                 local_cdd_ang = dofs_state.cdofd_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
-                                # Backward pass requires atomic add
-                                if ti.static(static_rigid_sim_config.is_backward):
-                                    links_state.cdd_vel[i_l, i_b] += local_cdd_vel
-                                    links_state.cdd_ang[i_l, i_b] += local_cdd_ang
-                                    if ti.static(update_cacc):
-                                        links_state.cacc_lin[i_l, i_b] += (
-                                            local_cdd_vel + dofs_state.cdof_vel[i_d, i_b] * dofs_state.acc[i_d, i_b]
-                                        )
-                                        links_state.cacc_ang[i_l, i_b] += (
-                                            local_cdd_ang + dofs_state.cdof_ang[i_d, i_b] * dofs_state.acc[i_d, i_b]
-                                        )
-                                else:
-                                    links_state.cdd_vel[i_l, i_b] = links_state.cdd_vel[i_l, i_b] + local_cdd_vel
-                                    links_state.cdd_ang[i_l, i_b] = links_state.cdd_ang[i_l, i_b] + local_cdd_ang
-                                    if ti.static(update_cacc):
-                                        links_state.cacc_lin[i_l, i_b] = links_state.cacc_lin[i_l, i_b] + (
-                                            local_cdd_vel + dofs_state.cdof_vel[i_d, i_b] * dofs_state.acc[i_d, i_b]
-                                        )
-                                        links_state.cacc_ang[i_l, i_b] = links_state.cacc_ang[i_l, i_b] + (
-                                            local_cdd_ang + dofs_state.cdof_ang[i_d, i_b] * dofs_state.acc[i_d, i_b]
-                                        )
+
+                                func_atomic_add_if_backward_2d(
+                                    links_state.cdd_vel, i_l, i_b, local_cdd_vel, static_rigid_sim_config
+                                )
+                                func_atomic_add_if_backward_2d(
+                                    links_state.cdd_ang, i_l, i_b, local_cdd_ang, static_rigid_sim_config
+                                )
+                                if ti.static(update_cacc):
+                                    func_atomic_add_if_backward_2d(
+                                        links_state.cacc_lin,
+                                        i_l,
+                                        i_b,
+                                        local_cdd_vel + dofs_state.cdof_vel[i_d, i_b] * dofs_state.acc[i_d, i_b],
+                                        static_rigid_sim_config,
+                                    )
+                                    func_atomic_add_if_backward_2d(
+                                        links_state.cacc_ang,
+                                        i_l,
+                                        i_b,
+                                        local_cdd_ang + dofs_state.cdof_ang[i_d, i_b] * dofs_state.acc[i_d, i_b],
+                                        static_rigid_sim_config,
+                                    )
 
 
 @ti.func
@@ -6488,16 +6477,12 @@ def func_update_force(
                         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                         i_p = links_info.parent_idx[I_l]
                         if i_p != -1:
-                            if ti.static(static_rigid_sim_config.is_backward):
-                                links_state.cfrc_vel[i_p, i_b] += links_state.cfrc_vel[i_l, i_b]
-                                links_state.cfrc_ang[i_p, i_b] += links_state.cfrc_ang[i_l, i_b]
-                            else:
-                                links_state.cfrc_vel[i_p, i_b] = (
-                                    links_state.cfrc_vel[i_p, i_b] + links_state.cfrc_vel[i_l, i_b]
-                                )
-                                links_state.cfrc_ang[i_p, i_b] = (
-                                    links_state.cfrc_ang[i_p, i_b] + links_state.cfrc_ang[i_l, i_b]
-                                )
+                            func_atomic_add_if_backward_2d(
+                                links_state.cfrc_vel, i_p, i_b, links_state.cfrc_vel[i_l, i_b], static_rigid_sim_config
+                            )
+                            func_atomic_add_if_backward_2d(
+                                links_state.cfrc_ang, i_p, i_b, links_state.cfrc_ang[i_l, i_b], static_rigid_sim_config
+                            )
 
     # Clear coupling forces after use
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -8135,3 +8120,27 @@ def kernel_set_geoms_friction(
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_get_errno(errno: array_class.V_ANNOTATION) -> ti.i32:
     return errno[None]
+
+
+@ti.func
+def func_atomic_add_if_backward_2d(
+    field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, value, static_rigid_sim_config: ti.template()
+):
+    # Use (expensive) atomic add in backward for differentiability
+    # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
+    if ti.static(static_rigid_sim_config.is_backward):
+        field[i, j] += value
+    else:
+        field[i, j] = field[i, j] + value
+
+
+@ti.func
+def func_atomic_add_if_backward_3d(
+    field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, k: ti.i32, value, static_rigid_sim_config: ti.template()
+):
+    # Use (expensive) atomic add in backward for differentiability
+    # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
+    if ti.static(static_rigid_sim_config.is_backward):
+        field[i, j, k] += value
+    else:
+        field[i, j, k] = field[i, j, k] + value
