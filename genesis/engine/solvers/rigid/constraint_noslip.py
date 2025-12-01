@@ -35,6 +35,7 @@ def kernel_build_efc_AR_b(
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
+                array_class.PLACEHOLDER,
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
@@ -191,6 +192,7 @@ def kernel_dual_finish(
         rigid_solver.func_solve_mass_batched(
             vec=constraint_state.qfrc_constraint,
             out=constraint_state.qacc,
+            out_bw=array_class.PLACEHOLDER,
             i_b=i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
@@ -283,6 +285,7 @@ def compute_A_diag(
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
+                array_class.PLACEHOLDER,
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,

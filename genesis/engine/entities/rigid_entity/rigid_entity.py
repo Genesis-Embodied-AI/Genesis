@@ -1,6 +1,8 @@
 from copy import copy
 from itertools import chain
 from typing import TYPE_CHECKING, Literal
+from functools import wraps
+import inspect
 
 import gstaichi as ti
 import numpy as np
@@ -19,6 +21,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
+from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -29,6 +32,22 @@ from .rigid_link import RigidLink
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+
+
+# Wrapper to track the arguments of a function and save them in the target buffer
+def tracked(fun):
+    sig = inspect.signature(fun)
+
+    @wraps(fun)
+    def wrapper(self, *args, **kwargs):
+        if self._update_tgt_while_set:
+            bound = sig.bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            args_dict = dict(tuple(bound.arguments.items())[1:])
+            self._update_tgt(fun.__name__, args_dict)
+        return fun(self, *args, **kwargs)
+
+    return wrapper
 
 
 @ti.data_oriented
@@ -96,6 +115,23 @@ class RigidEntity(Entity):
         self._is_built: bool = False
 
         self._load_model()
+
+        # Initialize target variables and checkpoint
+        self._tgt_keys = ("pos", "quat", "qpos", "dofs_velocity")
+        self._tgt = dict()
+        self._tgt_buffer = list()
+        self._ckpt = dict()
+        self._update_tgt_while_set = self._solver._requires_grad
+
+    def _update_tgt(self, key, value):
+        # Set [self._tgt] value while keeping the insertion order between keys. When a new key is inserted or an existing
+        # key is updated, the new element should be inserted at the end of the dict. This is because we need to keep
+        # the insertion order to correctly pass the gradients in the backward pass.
+        self._tgt.pop(key, None)
+        self._tgt[key] = value
+
+    def init_ckpt(self):
+        pass
 
     def _load_model(self):
         self._links = gs.List()
@@ -1598,6 +1634,92 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
     # ------------------------------------------------------------------------------------
+    def process_input(self, in_backward=False):
+        if in_backward:
+            # use negative index because buffer length might not be full
+            index = self._sim.cur_step_local - self._sim._steps_local
+            self._tgt = self._tgt_buffer[index].copy()
+        else:
+            self._tgt_buffer.append(self._tgt.copy())
+
+        update_tgt_while_set = self._update_tgt_while_set
+        # Apply targets in the order of insertion
+        for key in self._tgt.keys():
+            data_kwargs = self._tgt[key]
+
+            # We do not need zero velocity here because if it was true, [set_dofs_velocity] from zero_velocity would
+            # be in [tgt]
+            if "zero_velocity" in data_kwargs:
+                data_kwargs["zero_velocity"] = False
+            # Do not update [tgt], as input information is finalized at this point
+            self._update_tgt_while_set = False
+
+            match key:
+                case "set_pos":
+                    self.set_pos(**data_kwargs)
+                case "set_quat":
+                    self.set_quat(**data_kwargs)
+                case "set_dofs_velocity":
+                    self.set_dofs_velocity(**data_kwargs)
+                case _:
+                    gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
+
+        self._tgt = dict()
+        self._update_tgt_while_set = update_tgt_while_set
+
+    def process_input_grad(self):
+        index = self._sim.cur_step_local - self._sim._steps_local
+        for key in reversed(self._tgt_buffer[index].keys()):
+            data_kwargs = self._tgt_buffer[index][key]
+
+            match key:
+                # We need to unpack the data_kwargs because [_backward_from_ti] only supports positional arguments
+                case "set_pos":
+                    pos = data_kwargs.pop("pos")
+                    if pos.requires_grad:
+                        pos._backward_from_ti(self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
+
+                case "set_quat":
+                    quat = data_kwargs.pop("quat")
+                    if quat.requires_grad:
+                        quat._backward_from_ti(self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
+
+                case "set_dofs_velocity":
+                    velocity = data_kwargs.pop("velocity")
+                    # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
+                    if velocity is not None and velocity.requires_grad:
+                        velocity._backward_from_ti(
+                            self.set_dofs_velocity_grad,
+                            data_kwargs["dofs_idx_local"],
+                            data_kwargs["envs_idx"],
+                        )
+                case _:
+                    gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
+
+    def save_ckpt(self, ckpt_name):
+        if ckpt_name not in self._ckpt:
+            self._ckpt[ckpt_name] = {}
+        self._ckpt[ckpt_name]["_tgt_buffer"] = self._tgt_buffer.copy()
+        self._tgt_buffer.clear()
+
+    def load_ckpt(self, ckpt_name):
+        self._tgt_buffer = self._ckpt[ckpt_name]["_tgt_buffer"].copy()
+
+    def reset_grad(self):
+        self._tgt_buffer.clear()
+
+    @gs.assert_built
+    def get_state(self):
+        state = RigidEntityState(self, self._sim.cur_step_global)
+
+        solver_state = self._solver.get_state()
+        pos = solver_state.links_pos[:, self.base_link_idx]
+        quat = solver_state.links_quat[:, self.base_link_idx]
+
+        state._pos = pos
+        state._quat = quat
+
+        return state
 
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         # Handling default argument and special cases
@@ -1967,6 +2089,7 @@ class RigidEntity(Entity):
         return self._solver.get_links_invweight(links_idx, envs_idx)
 
     @gs.assert_built
+    @tracked
     def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False):
         """
         Set position of the entity's base link.
@@ -1989,6 +2112,16 @@ class RigidEntity(Entity):
         self._solver.set_base_links_pos(pos, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
+    def set_pos_grad(self, envs_idx, relative, pos_grad):
+        self._solver.set_base_links_pos_grad(
+            self._base_links_idx_,
+            envs_idx,
+            relative,
+            pos_grad.data,
+        )
+
+    @gs.assert_built
+    @tracked
     def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False):
         """
         Set quaternion of the entity's base link.
@@ -2009,6 +2142,15 @@ class RigidEntity(Entity):
         if zero_velocity:
             self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
         self._solver.set_base_links_quat(quat, self._base_links_idx_, envs_idx, relative=relative)
+
+    @gs.assert_built
+    def set_quat_grad(self, envs_idx, relative, quat_grad):
+        self._solver.set_base_links_quat_grad(
+            self._base_links_idx_,
+            envs_idx,
+            relative,
+            quat_grad.data,
+        )
 
     @gs.assert_built
     def get_verts(self):
@@ -2169,6 +2311,7 @@ class RigidEntity(Entity):
         self._solver.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx)
 
     @gs.assert_built
+    @tracked
     def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False):
         """
         Set the entity's dofs' velocity.
@@ -2184,6 +2327,11 @@ class RigidEntity(Entity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
+
+    @gs.assert_built
+    def set_dofs_velocity_grad(self, dofs_idx_local, envs_idx, velocity_grad):
+        dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
 
     @gs.assert_built
     def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True):

@@ -48,8 +48,10 @@ class RigidSolverState:
     Dynamic state queried from a RigidSolver.
     """
 
-    def __init__(self, scene):
+    def __init__(self, scene, s_global):
         self.scene = scene
+
+        self._s_global = s_global
 
         _B = scene.sim.rigid_solver._B
         args = {
@@ -76,6 +78,10 @@ class RigidSolverState:
         self.i_pos_shift = self.i_pos_shift.detach()
         self.mass_shift = self.mass_shift.detach()
         self.friction_ratio = self.friction_ratio.detach()
+
+    @property
+    def s_global(self):
+        return self._s_global
 
 
 class AvatarSolverState:
