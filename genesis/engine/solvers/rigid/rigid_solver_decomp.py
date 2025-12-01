@@ -3617,8 +3617,8 @@ def func_compute_mass_matrix(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_links[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_l = (
                     rigid_global_info.awake_links[i_1, i_b]
@@ -3653,8 +3653,8 @@ def func_compute_mass_matrix(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_entities[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_e = (
                     rigid_global_info.awake_entities[i_1, i_b]
@@ -3667,7 +3667,7 @@ def func_compute_mass_matrix(
                     if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
                 ):
-                    if i < entities_info.n_links[i_e]:
+                    if func_check_index_range(i, 0, entities_info.n_links[i_e], static_rigid_sim_config.is_backward):
                         i_l = entities_info.link_end[i_e] - 1 - i
                         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                         i_p = links_info.parent_idx[I_l]
@@ -3712,8 +3712,8 @@ def func_compute_mass_matrix(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_links[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_l = (
                     rigid_global_info.awake_links[i_1, i_b]
@@ -3731,7 +3731,9 @@ def func_compute_mass_matrix(
                         i_d_ if ti.static(not static_rigid_sim_config.is_backward) else links_info.dof_start[I_l] + i_d_
                     )
 
-                    if i_d < links_info.dof_end[I_l]:
+                    if func_check_index_range(
+                        i_d, links_info.dof_start[I_l], links_info.dof_end[I_l], static_rigid_sim_config.is_backward
+                    ):
                         dofs_state.f_ang[i_d, i_b], dofs_state.f_vel[i_d, i_b] = gu.inertial_mul(
                             links_state.crb_pos[i_l, i_b],
                             links_state.crb_inertial[i_l, i_b],
@@ -3761,8 +3763,8 @@ def func_compute_mass_matrix(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_entities[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_e = (
                     rigid_global_info.awake_entities[i_1, i_b]
@@ -3800,7 +3802,17 @@ def func_compute_mass_matrix(
                         else entities_info.dof_start[i_e] + j_d_
                     )
 
-                    if i_d < entities_info.dof_end[i_e] and j_d < entities_info.dof_end[i_e]:
+                    if func_check_index_range(
+                        i_d,
+                        entities_info.dof_start[i_e],
+                        entities_info.dof_end[i_e],
+                        static_rigid_sim_config.is_backward,
+                    ) and func_check_index_range(
+                        j_d,
+                        entities_info.dof_start[i_e],
+                        entities_info.dof_end[i_e],
+                        static_rigid_sim_config.is_backward,
+                    ):
                         rigid_global_info.mass_mat[i_d, j_d, i_b] = (
                             dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
                             + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
@@ -3880,8 +3892,8 @@ def func_factor_mass(
                     else ti.static(range(1))
                 )
             ):
-                if i_1 < (
-                    rigid_global_info.n_awake_entities[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+                if func_check_index_range(
+                    i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
                 ):
                     i_e = (
                         rigid_global_info.awake_entities[i_1, i_b]
@@ -3905,7 +3917,9 @@ def func_factor_mass(
                                 else entities_info.dof_start[i_e] + i_d_
                             )
 
-                            if i_d < entity_dof_end:
+                            if func_check_index_range(
+                                i_d, entity_dof_start, entity_dof_end, static_rigid_sim_config.is_backward
+                            ):
                                 for j_d_ in (
                                     range(entity_dof_start, i_d + 1)
                                     if ti.static(not static_rigid_sim_config.is_backward)
@@ -3917,7 +3931,9 @@ def func_factor_mass(
                                         else entities_info.dof_start[i_e] + j_d_
                                     )
 
-                                    if j_d < i_d + 1:
+                                    if func_check_index_range(
+                                        j_d, entity_dof_start, i_d + 1, static_rigid_sim_config.is_backward
+                                    ):
                                         rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[
                                             i_d, j_d, i_b
                                         ]
@@ -3940,7 +3956,7 @@ def func_factor_mass(
                             if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                         ):
-                            if i_d_ < n_dofs:
+                            if func_check_index_range(i_d_, 0, n_dofs, static_rigid_sim_config.is_backward):
                                 i_d = entity_dof_end - i_d_ - 1
                                 rigid_global_info.mass_mat_D_inv[i_d, i_b] = (
                                     1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
@@ -3951,7 +3967,9 @@ def func_factor_mass(
                                     if ti.static(not static_rigid_sim_config.is_backward)
                                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                                 ):
-                                    if j_d_ < i_d - entity_dof_start:
+                                    if func_check_index_range(
+                                        j_d_, 0, i_d - entity_dof_start, static_rigid_sim_config.is_backward
+                                    ):
                                         j_d = i_d - j_d_ - 1
                                         a = (
                                             rigid_global_info.mass_mat_L[i_d, j_d, i_b]
@@ -3968,7 +3986,9 @@ def func_factor_mass(
                                                 if ti.static(not static_rigid_sim_config.is_backward)
                                                 else entities_info.dof_start[i_e] + k_d_
                                             )
-                                            if k_d < j_d + 1:
+                                            if func_check_index_range(
+                                                k_d, entity_dof_start, j_d + 1, static_rigid_sim_config.is_backward
+                                            ):
                                                 rigid_global_info.mass_mat_L[j_d, k_d, i_b] -= (
                                                     a * rigid_global_info.mass_mat_L[i_d, k_d, i_b]
                                                 )
@@ -3996,7 +4016,7 @@ def func_factor_mass(
                     if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
-                    if i_d0 < n_dofs:
+                    if func_check_index_range(i_d0, 0, n_dofs, static_rigid_sim_config.is_backward):
                         i_d = entity_dof_start + i_d0
                         i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
                         for j_d_ in (
@@ -4010,7 +4030,9 @@ def func_factor_mass(
                                 else (j_d_ + entities_info.dof_start[i_e])
                             )
                             j_pr = (entity_dof_start + entity_dof_end - 1) - j_d
-                            if j_d < i_d + 1:
+                            if func_check_index_range(
+                                j_d, entity_dof_start, i_d + 1, static_rigid_sim_config.is_backward
+                            ):
                                 rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[
                                     i_d, j_d, i_b
                                 ]
@@ -4044,7 +4066,9 @@ def func_factor_mass(
                         if ti.static(not static_rigid_sim_config.is_backward)
                         else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                     ):
-                        if p_i0 < n_dofs and p_j0 < n_dofs and p_j0 <= p_i0:
+                        if func_check_index_range(
+                            p_i0, 0, n_dofs, static_rigid_sim_config.is_backward
+                        ) and func_check_index_range(p_j0, 0, p_i0 + 1, static_rigid_sim_config.is_backward):
                             # j_pr <= i_pr
                             i_pr = entity_dof_start + p_i0
                             j_pr = entity_dof_start + p_j0
@@ -4056,7 +4080,7 @@ def func_factor_mass(
                                 else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                             ):
                                 # k_pr < j_pr
-                                if p_k0 < p_j0:
+                                if func_check_index_range(p_k0, 0, p_j0, static_rigid_sim_config.is_backward):
                                     k_pr = entity_dof_start + p_k0
                                     sum += (
                                         rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
@@ -4082,7 +4106,9 @@ def func_factor_mass(
                         if ti.static(not static_rigid_sim_config.is_backward)
                         else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                     ):
-                        if i_d0 < n_dofs and i_d1 < n_dofs and i_d1 <= i_d0:
+                        if func_check_index_range(
+                            i_d0, 0, n_dofs, static_rigid_sim_config.is_backward
+                        ) and func_check_index_range(i_d1, 0, i_d0 + 1, static_rigid_sim_config.is_backward):
                             i_d = entity_dof_start + i_d0
                             j_d = entity_dof_start + i_d1
                             i_pr = (entity_dof_start + entity_dof_end - 1) - i_d
@@ -4126,16 +4152,7 @@ def func_solve_mass_batched(
             else ti.static(range(entities_info.n_links.shape[0]))
         )
     ):
-        n_entities = entities_info.n_links.shape[0]
-        i_0_valid = True
-        if ti.static(static_rigid_sim_config.is_backward):
-            i_0_valid = i_0 < (
-                rigid_global_info.n_awake_entities[i_b]
-                if ti.static(static_rigid_sim_config.use_hibernation)
-                else n_entities
-            )
-
-        if i_0_valid:
+        if func_check_index_range(i_0, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.is_backward):
             i_e = (
                 rigid_global_info.awake_entities[i_0, i_b]
                 if ti.static(static_rigid_sim_config.use_hibernation)
@@ -4153,8 +4170,7 @@ def func_solve_mass_batched(
                     if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
-                    i_d_valid = True if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ < n_dofs)
-                    if i_d_valid:
+                    if func_check_index_range(i_d_, 0, n_dofs, static_rigid_sim_config.is_backward):
                         i_d = entity_dof_end - i_d_ - 1
                         if ti.static(static_rigid_sim_config.is_backward):
                             out_bw[0, i_d, i_b] = vec[i_d, i_b]
@@ -4171,12 +4187,9 @@ def func_solve_mass_batched(
                                 if ti.static(not static_rigid_sim_config.is_backward)
                                 else (j_d_ + entities_info.dof_start[i_e])
                             )
-                            j_d_valid = (
-                                True
-                                if ti.static(not static_rigid_sim_config.is_backward)
-                                else (j_d >= i_d + 1 and j_d < entity_dof_end)
-                            )
-                            if j_d_valid:
+                            if func_check_index_range(
+                                j_d, i_d + 1, entity_dof_end, static_rigid_sim_config.is_backward
+                            ):
                                 # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
                                 # finalized at this point, we don't need to care about AD mutation rule.
                                 if ti.static(static_rigid_sim_config.is_backward):
@@ -4197,8 +4210,9 @@ def func_solve_mass_batched(
                         if ti.static(not static_rigid_sim_config.is_backward)
                         else (i_d_ + entities_info.dof_start[i_e])
                     )
-                    i_d_valid = True if ti.static(not static_rigid_sim_config.is_backward) else (i_d < entity_dof_end)
-                    if i_d_valid:
+                    if func_check_index_range(
+                        i_d, entity_dof_start, entity_dof_end, static_rigid_sim_config.is_backward
+                    ):
                         if ti.static(static_rigid_sim_config.is_backward):
                             out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
                         else:
@@ -4215,8 +4229,9 @@ def func_solve_mass_batched(
                         if ti.static(not static_rigid_sim_config.is_backward)
                         else (i_d_ + entities_info.dof_start[i_e])
                     )
-                    i_d_valid = True if ti.static(not static_rigid_sim_config.is_backward) else (i_d < entity_dof_end)
-                    if i_d_valid:
+                    if func_check_index_range(
+                        i_d, entity_dof_start, entity_dof_end, static_rigid_sim_config.is_backward
+                    ):
                         curr_out = out[i_d, i_b]
                         if ti.static(static_rigid_sim_config.is_backward):
                             curr_out = out_bw[1, i_d, i_b]
@@ -4231,8 +4246,7 @@ def func_solve_mass_batched(
                                 if ti.static(not static_rigid_sim_config.is_backward)
                                 else (j_d_ + entities_info.dof_start[i_e])
                             )
-                            j_d_valid = True if ti.static(not static_rigid_sim_config.is_backward) else (j_d < i_d)
-                            if j_d_valid:
+                            if func_check_index_range(j_d, entity_dof_start, i_d, static_rigid_sim_config.is_backward):
                                 if ti.static(static_rigid_sim_config.is_backward):
                                     curr_out += -(rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b])
                                 else:
@@ -4853,10 +4867,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -4881,10 +4893,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -4922,10 +4932,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -4952,10 +4960,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -4981,10 +4987,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -5025,10 +5029,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -5069,7 +5071,12 @@ def func_COM_links(
                         curr_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_
                         next_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_ + 1
 
-                        if i_j < links_info.joint_end[I_l]:
+                        if func_check_index_range(
+                            i_j,
+                            links_info.joint_start[I_l],
+                            links_info.joint_end[I_l],
+                            static_rigid_sim_config.is_backward,
+                        ):
                             I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
 
                             (
@@ -5102,10 +5109,8 @@ def func_COM_links(
             else ti.static(range(links_info.root_idx.shape[0]))
         )
     ):
-        if i_l_ < (
-            rigid_global_info.n_awake_links[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else links_info.root_idx.shape[0]
+        if func_check_index_range(
+            i_l_, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_l = (
                 rigid_global_info.awake_links[i_l_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_l_
@@ -5124,7 +5129,9 @@ def func_COM_links(
                         else (i_j_ + links_info.joint_start[I_l])
                     )
 
-                    if i_j < links_info.joint_end[I_l]:
+                    if func_check_index_range(
+                        i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], static_rigid_sim_config.is_backward
+                    ):
                         offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
                         I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                         joint_type = joints_info.type[I_j]
@@ -5160,7 +5167,9 @@ def func_COM_links(
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
                         ):
                             i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
-                            if i_d < joints_info.dof_end[I_j]:
+                            if func_check_index_range(
+                                i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
+                            ):
                                 dofs_state.cdofvel_ang[i_d, i_b] = (
                                     dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
                                 )
@@ -5195,10 +5204,8 @@ def func_forward_kinematics(
             else ti.static(range(entities_info.n_links.shape[0]))
         )
     ):
-        if i_e_ < (
-            rigid_global_info.n_awake_entities[i_b]
-            if ti.static(static_rigid_sim_config.use_hibernation)
-            else entities_info.n_links.shape[0]
+        if func_check_index_range(
+            i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
         ):
             i_e = (
                 rigid_global_info.awake_entities[i_e_, i_b]
@@ -5232,13 +5239,12 @@ def func_forward_velocity(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    n_entities = entities_info.n_links.shape[0]
     for i_e_ in (
         (
             # Dynamic inner loop for forward pass
             range(rigid_global_info.n_awake_entities[i_b])
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else range(n_entities)
+            else range(entities_info.n_links.shape[0])
         )
         if ti.static(not static_rigid_sim_config.is_backward)
         else (
@@ -5248,20 +5254,25 @@ def func_forward_velocity(
             else ti.static(range(entities_info.n_links.shape[0]))
         )
     ):
-        i_e = (
-            rigid_global_info.awake_entities[i_e_, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_e_
-        )
-        func_forward_velocity_entity(
-            i_e=i_e,
-            i_b=i_b,
-            entities_info=entities_info,
-            links_info=links_info,
-            links_state=links_state,
-            joints_info=joints_info,
-            dofs_state=dofs_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
+        if func_check_index_range(
+            i_e_, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+        ):
+            i_e = (
+                rigid_global_info.awake_entities[i_e_, i_b]
+                if ti.static(static_rigid_sim_config.use_hibernation)
+                else i_e_
+            )
+            func_forward_velocity_entity(
+                i_e=i_e,
+                i_b=i_b,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -5319,7 +5330,9 @@ def func_forward_kinematics_entity(
         EPS = rigid_global_info.EPS[None]
         i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
 
-        if i_l < entities_info.link_end[i_e]:
+        if func_check_index_range(
+            i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], static_rigid_sim_config.is_backward
+        ):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
             links_state.pos_bw[i_l, 0, i_b] = links_info.pos[I_l]
@@ -5342,7 +5355,9 @@ def func_forward_kinematics_entity(
                 curr_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_
                 next_i_j = 0 if ti.static(not static_rigid_sim_config.is_backward) else i_j_ + 1
 
-                if i_j < links_info.joint_end[I_l]:
+                if func_check_index_range(
+                    i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], static_rigid_sim_config.is_backward
+                ):
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     joint_type = joints_info.type[I_j]
                     q_start = joints_info.q_start[I_j]
@@ -5466,7 +5481,9 @@ def func_forward_velocity_entity(
     ):
         i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
 
-        if i_l < entities_info.link_end[i_e]:
+        if func_check_index_range(
+            i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], static_rigid_sim_config.is_backward
+        ):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
             n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
@@ -5484,7 +5501,9 @@ def func_forward_velocity_entity(
             ):
                 i_j = i_j_ + links_info.joint_start[I_l]
 
-                if i_j < links_info.joint_end[I_l]:
+                if func_check_index_range(
+                    i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], static_rigid_sim_config.is_backward
+                ):
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     joint_type = joints_info.type[I_j]
                     q_start = joints_info.q_start[I_j]
@@ -5558,7 +5577,9 @@ def func_forward_velocity_entity(
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
                         ):
                             i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
-                            if i_d < joints_info.dof_end[I_j]:
+                            if func_check_index_range(
+                                i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
+                            ):
                                 dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
                                     links_state.cd_ang_bw[i_l, curr_i_j, i_b],
                                     links_state.cd_vel_bw[i_l, curr_i_j, i_b],
@@ -5575,7 +5596,9 @@ def func_forward_velocity_entity(
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
                         ):
                             i_d = i_d_ if ti.static(not static_rigid_sim_config.is_backward) else (i_d_ + dof_start)
-                            if i_d < joints_info.dof_end[I_j]:
+                            if func_check_index_range(
+                                i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
+                            ):
                                 func_atomic_add_if_backward_3d(
                                     links_state.cd_vel_bw,
                                     i_l,
@@ -5672,7 +5695,9 @@ def func_update_geoms(
             )
         ):
             i_g = i_1 + entities_info.geom_start[i_e] if ti.static(static_rigid_sim_config.use_hibernation) else i_0
-            if i_1 < (n_geoms if ti.static(static_rigid_sim_config.use_hibernation) else 1):
+            if func_check_index_range(
+                i_g, entities_info.geom_start[i_e], entities_info.geom_end[i_e], static_rigid_sim_config.is_backward
+            ):
                 if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
                     (
                         geoms_state.pos[i_g, i_b],
@@ -6078,7 +6103,9 @@ def func_torque_and_passive_force(
         ):
             i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
 
-            if i_l < entities_info.link_end[i_e]:
+            if func_check_index_range(
+                i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], static_rigid_sim_config.is_backward
+            ):
                 I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                 if links_info.n_dofs[I_l] > 0:
                     i_j = links_info.joint_start[I_l]
@@ -6096,7 +6123,9 @@ def func_torque_and_passive_force(
                             else (i_d_ + links_info.dof_start[I_l])
                         )
 
-                        if i_d < links_info.dof_end[I_l]:
+                        if func_check_index_range(
+                            i_d, links_info.dof_start[I_l], links_info.dof_end[I_l], static_rigid_sim_config.is_backward
+                        ):
                             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                             force = gs.ti_float(0.0)
                             if dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.FORCE:
@@ -6197,7 +6226,9 @@ def func_torque_and_passive_force(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (rigid_global_info.n_awake_dofs[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1):
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_dofs[i_b], static_rigid_sim_config.use_hibernation
+            ):
                 i_d = (
                     rigid_global_info.awake_dofs[i_1, i_b]
                     if ti.static(static_rigid_sim_config.use_hibernation)
@@ -6228,8 +6259,8 @@ def func_torque_and_passive_force(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_links[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_l = (
                     rigid_global_info.awake_links[i_1, i_b]
@@ -6253,14 +6284,18 @@ def func_torque_and_passive_force(
                             if ti.static(not static_rigid_sim_config.is_backward)
                             else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
                         ):
-                            if j_d < dof_end:
+                            if func_check_index_range(j_d, 0, dof_end - dof_start, static_rigid_sim_config.is_backward):
                                 I_d = (
                                     [dof_start + j_d, i_b]
                                     if ti.static(static_rigid_sim_config.batch_dofs_info)
                                     else dof_start + j_d
                                 )
-                                dofs_state.qf_passive[dof_start + j_d, i_b] += (
-                                    -rigid_global_info.qpos[q_start + j_d, i_b] * dofs_info.stiffness[I_d]
+                                func_atomic_add_if_backward_2d(
+                                    dofs_state.qf_passive,
+                                    dof_start + j_d,
+                                    i_b,
+                                    -rigid_global_info.qpos[q_start + j_d, i_b] * dofs_info.stiffness[I_d],
+                                    static_rigid_sim_config,
                                 )
 
 
@@ -6296,8 +6331,8 @@ def func_update_acc(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_entities[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_e = (
                     rigid_global_info.awake_entities[i_1, i_b]
@@ -6316,7 +6351,12 @@ def func_update_acc(
                         else (i_l_ + entities_info.link_start[i_e])
                     )
 
-                    if i_l < entities_info.link_end[i_e]:
+                    if func_check_index_range(
+                        i_l,
+                        entities_info.link_start[i_e],
+                        entities_info.link_end[i_e],
+                        static_rigid_sim_config.is_backward,
+                    ):
                         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                         i_p = links_info.parent_idx[I_l]
 
@@ -6346,7 +6386,12 @@ def func_update_acc(
                                 else (i_d_ + links_info.dof_start[I_l])
                             )
 
-                            if i_d < links_info.dof_end[I_l]:
+                            if func_check_index_range(
+                                i_d,
+                                links_info.dof_start[I_l],
+                                links_info.dof_end[I_l],
+                                static_rigid_sim_config.is_backward,
+                            ):
                                 # cacc = cacc_parent + cdofdot * qvel + cdof * qacc
                                 local_cdd_vel = dofs_state.cdofd_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
                                 local_cdd_ang = dofs_state.cdofd_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
@@ -6403,8 +6448,8 @@ def func_update_force(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_links[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_l = (
                     rigid_global_info.awake_links[i_1, i_b]
@@ -6458,8 +6503,8 @@ def func_update_force(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_entities[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_e = (
                     rigid_global_info.awake_entities[i_1, i_b]
@@ -6472,7 +6517,7 @@ def func_update_force(
                     if ti.static(not static_rigid_sim_config.is_backward)
                     else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
                 ):
-                    if i_l_ < entities_info.n_links[i_e]:
+                    if func_check_index_range(i_l_, 0, entities_info.n_links[i_e], static_rigid_sim_config.is_backward):
                         i_l = entities_info.link_end[i_e] - 1 - i_l_
                         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
                         i_p = links_info.parent_idx[I_l]
@@ -6544,8 +6589,8 @@ def func_bias_force(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_links[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_l = (
                     rigid_global_info.awake_links[i_1, i_b]
@@ -6564,7 +6609,9 @@ def func_bias_force(
                         if ti.static(not static_rigid_sim_config.is_backward)
                         else (i_d_ + links_info.dof_start[I_l])
                     )
-                    if i_d < links_info.dof_end[I_l]:
+                    if func_check_index_range(
+                        i_d, links_info.dof_start[I_l], links_info.dof_end[I_l], static_rigid_sim_config.is_backward
+                    ):
                         dofs_state.qf_bias[i_d, i_b] = dofs_state.cdof_ang[i_d, i_b].dot(
                             links_state.cfrc_ang[i_l, i_b]
                         ) + dofs_state.cdof_vel[i_d, i_b].dot(links_state.cfrc_vel[i_l, i_b])
@@ -6632,8 +6679,8 @@ def func_compute_qacc(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_entities[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_e = (
                     rigid_global_info.awake_entities[i_1, i_b]
@@ -6647,7 +6694,12 @@ def func_compute_qacc(
                     else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
                 ):
                     i_d1 = entities_info.dof_start[i_e] + i_d1_
-                    if i_d1 < entities_info.dof_end[i_e]:
+                    if func_check_index_range(
+                        i_d1,
+                        entities_info.dof_start[i_e],
+                        entities_info.dof_end[i_e],
+                        static_rigid_sim_config.is_backward,
+                    ):
                         dofs_state.acc[i_d1, i_b] = dofs_state.acc_smooth[i_d1, i_b]
 
 
@@ -6680,7 +6732,9 @@ def func_integrate(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (rigid_global_info.n_awake_dofs[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1):
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_dofs[i_b], static_rigid_sim_config.use_hibernation
+            ):
                 i_d = (
                     rigid_global_info.awake_dofs[i_1, i_b]
                     if ti.static(static_rigid_sim_config.use_hibernation)
@@ -6717,8 +6771,8 @@ def func_integrate(
                 else ti.static(range(1))
             )
         ):
-            if i_1 < (
-                rigid_global_info.n_awake_links[i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 1
+            if func_check_index_range(
+                i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
             ):
                 i_l = (
                     rigid_global_info.awake_links[i_1, i_b]
@@ -8126,7 +8180,8 @@ def kernel_get_errno(errno: array_class.V_ANNOTATION) -> ti.i32:
 def func_atomic_add_if_backward_2d(
     field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, value, static_rigid_sim_config: ti.template()
 ):
-    # Use (expensive) atomic add in backward for differentiability
+    # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to write,
+    # use atomic add directly.
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
     if ti.static(static_rigid_sim_config.is_backward):
         field[i, j] += value
@@ -8138,9 +8193,16 @@ def func_atomic_add_if_backward_2d(
 def func_atomic_add_if_backward_3d(
     field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, k: ti.i32, value, static_rigid_sim_config: ti.template()
 ):
-    # Use (expensive) atomic add in backward for differentiability
+    # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to write,
+    # use atomic add directly.
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
     if ti.static(static_rigid_sim_config.is_backward):
         field[i, j, k] += value
     else:
         field[i, j, k] = field[i, j, k] + value
+
+
+@ti.func
+def func_check_index_range(idx: ti.i32, min: ti.i32, max: ti.i32, cond: ti.template()):
+    # Conditionally check if the index is in the range [min, max) to save computational cost
+    return (idx >= min and idx < max) if ti.static(cond) else True
