@@ -68,8 +68,6 @@ jobs:
       PY_COLORS: "1"
       GS_CACHE_FILE_PATH: ".cache/genesis"
       GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
-      # FIXME: Disabling fastcache because it causes crashes for some reason...
-      GS_ENABLE_FASTCACHE: "0"
       GS_TORCH_FORCE_CPU_DEVICE: ${{ startsWith(matrix.OS, 'macos-') && '1' || '0' }}
       TI_OFFLINE_CACHE: "1"
       TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
