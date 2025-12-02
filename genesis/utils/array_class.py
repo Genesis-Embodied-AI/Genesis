@@ -1269,7 +1269,7 @@ class StructLinksState(metaclass=BASE_METACLASS):
 def get_links_state(solver):
     max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = (solver.n_links_, solver._B)
-    shape_bw = (solver.n_links_, max_n_joints_per_link + 1, solver._B)
+    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
 
     requires_grad = solver._requires_grad
 
@@ -1803,7 +1803,16 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int = gs.integrator.approximate_implicitfast
     solver_type: int = gs.constraint_solver.CG
     requires_grad: bool = False
-    is_backward: bool
+    is_backward: bool = False
+    max_n_links_per_entity: int = -1
+    max_n_joints_per_link: int = -1
+    max_n_dofs_per_joint: int = -1
+    max_n_qs_per_link: int = -1
+    max_n_dofs_per_entity: int = -1
+    max_n_dofs_per_link: int = -1
+    max_n_geoms_per_entity: int = -1
+    n_links: int = -1
+    n_geoms: int = -1
 
 
 # =========================================== DataManager ===========================================

@@ -17,10 +17,8 @@ def main():
         "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
     )
     parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-c", "--cpu", action="store_true", default="PYTEST_VERSION" in os.environ)
     args = parser.parse_args()
-
-    args.cpu = args.cpu if "PYTEST_VERSION" not in os.environ else True
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)
 

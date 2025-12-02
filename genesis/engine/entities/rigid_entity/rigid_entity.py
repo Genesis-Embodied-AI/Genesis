@@ -1305,9 +1305,9 @@ class RigidEntity(Entity):
         # pos and rot mask
         pos_mask = broadcast_tensor(pos_mask, gs.tc_bool, (3,)).contiguous()
         rot_mask = broadcast_tensor(rot_mask, gs.tc_bool, (3,)).contiguous()
-        if sum(rot_mask) == 1:
-            rot_mask = 1 - rot_mask
-        elif sum(rot_mask) == 2:
+        if (num_axis := rot_mask.sum()) == 1:
+            rot_mask = ~rot_mask if gs.tc_bool == torch.bool else 1 - rot_mask
+        elif num_axis == 2:
             gs.raise_exception("You can only align 0, 1 axis or all 3 axes.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs)

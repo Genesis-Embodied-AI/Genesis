@@ -259,6 +259,7 @@ def init(
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
+            unrolling_limit=100,  # This threshold needs to be increased to accommodate gradient computation
             **taichi_kwargs,
         )
 

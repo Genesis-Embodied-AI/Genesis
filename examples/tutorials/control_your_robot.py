@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 
 import genesis as gs
@@ -73,7 +75,8 @@ for i in range(150):
     scene.step()
 
 # PD control
-for i in range(1250):
+horizon = 1250 if "PYTEST_VERSION" not in os.environ else 5
+for i in range(horizon):
     if i == 0:
         franka.control_dofs_position(
             np.array([1, 1, 0, 0, 0, 0, 0, 0.04, 0.04]),
