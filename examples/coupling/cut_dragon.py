@@ -1,7 +1,5 @@
+import os
 import argparse
-
-import numpy as np
-
 import genesis as gs
 
 
@@ -32,36 +30,36 @@ def main():
             camera_fov=35,
             max_FPS=120,
         ),
-        show_viewer=args.vis,
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
             # rendered_envs_idx=[2],
         ),
+        show_viewer=args.vis,
     )
 
     plane = scene.add_entity(
-        material=gs.materials.Rigid(),
         morph=gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
+        material=gs.materials.Rigid(),
     )
     cutter = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/cross_cutter.obj",
-            euler=(90, 0, 0),
             scale=0.8,
             pos=(0.0, 0.0, 0.3),
+            euler=(90, 0, 0),
             fixed=True,
             convexify=False,
         ),
         surface=gs.surfaces.Iron(),
     )
     dragon = scene.add_entity(
-        material=gs.materials.MPM.Elastic(sampler="pbs-64"),
         morph=gs.morphs.Mesh(
             file="meshes/dragon/dragon.obj",
             scale=0.007,
             euler=(0, 0, 90),
             pos=(0.3, -0.0, 1.3),
         ),
+        material=gs.materials.MPM.Elastic(sampler="pbs-64"),
         surface=gs.surfaces.Rough(
             color=(0.6, 1.0, 0.8, 1.0),
             vis_mode="particle",
@@ -69,8 +67,8 @@ def main():
     )
     scene.build(n_envs=2)
 
-    horizon = 400
-    for i in range(horizon):
+    horizon = 400 if "PYTEST_VERSION" not in os.environ else 5
+    for _ in range(horizon):
         scene.step()
 
 

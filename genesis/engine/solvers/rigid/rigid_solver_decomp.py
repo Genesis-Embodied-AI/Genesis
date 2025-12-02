@@ -207,14 +207,6 @@ class RigidSolver(Solver):
         self._n_entities = self.n_entities
         self._n_equalities = self.n_equalities
 
-        self._max_n_links_per_entity = max(len(entity.links) for entity in self._entities) if self._entities else 0
-        self._max_n_joints_per_link = max(len(link.joints) for link in self.links) if self.links else 0
-        self._max_n_dofs_per_joint = max(joint.n_dofs for joint in self.joints) if self.joints else 0
-        self._max_n_qs_per_link = max(link.n_qs for link in self.links) if self.links else 0
-        self._max_n_dofs_per_entity = max(entity.n_dofs for entity in self._entities) if self._entities else 0
-        self._max_n_dofs_per_link = max(link.n_dofs for link in self.links) if self.links else 0
-        self._max_n_geoms_per_entity = max(len(link.geoms) for link in self.links) if self.links else 0
-
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
         self._links = self.links
@@ -251,7 +243,7 @@ class RigidSolver(Solver):
         # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
         is_rigid_solver = type(self) is RigidSolver
         if is_rigid_solver:
-            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
+            static_rigid_sim_config = dict(
                 para_level=self.sim._para_level,
                 requires_grad=self.sim.options.requires_grad,
                 use_hibernation=self._use_hibernation,
@@ -268,6 +260,20 @@ class RigidSolver(Solver):
                 solver_type=self._options.constraint_solver,
                 is_backward=False,
             )
+            # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
+            if self.sim.options.requires_grad:
+                static_rigid_sim_config.update(
+                    max_n_geoms_per_entity=max(len(entity.geoms) for entity in self.entities) if self.links else 0,
+                    max_n_links_per_entity=max(len(entity.links) for entity in self.entities) if self.entities else 0,
+                    max_n_joints_per_link=max(len(link.joints) for link in self.links) if self.links else 0,
+                    max_n_dofs_per_joint=max(joint.n_dofs for joint in self.joints) if self.joints else 0,
+                    max_n_dofs_per_entity=max(entity.n_dofs for entity in self.entities) if self.entities else 0,
+                    max_n_dofs_per_link=max(link.n_dofs for link in self.links) if self.links else 0,
+                    max_n_qs_per_link=max(link.n_qs for link in self.links) if self.links else 0,
+                    n_links=self._n_links,
+                    n_geoms=self._n_geoms,
+                )
+            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
         else:
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
                 para_level=self.sim._para_level,
@@ -294,38 +300,6 @@ class RigidSolver(Solver):
 
             if getattr(self._options, "noslip_iterations", 0) > 0:
                 gs.raise_exception("Noslip is not supported yet when requires_grad is True.")
-
-        # Add terms for static inner loops, use 0 if not requires_grad to avoid re-compilation
-        self._static_rigid_sim_config.max_n_links_per_entity = (
-            self._max_n_links_per_entity if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_joints_per_link = (
-            self._max_n_joints_per_link if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_dofs_per_joint = (
-            self._max_n_dofs_per_joint if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_qs_per_link = (
-            self._max_n_qs_per_link if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_dofs_per_entity = (
-            self._max_n_dofs_per_entity if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_dofs_per_link = (
-            self._max_n_dofs_per_link if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_geoms_per_entity = (
-            self._max_n_geoms_per_entity if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_awake_links = (
-            self._n_links if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_awake_entities = (
-            self._n_entities if self._static_rigid_sim_config.requires_grad else 0
-        )
-        self._static_rigid_sim_config.max_n_awake_dofs = (
-            self._n_dofs if self._static_rigid_sim_config.requires_grad else 0
-        )
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -3930,7 +3904,7 @@ def func_solve_mass_batched(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(entities_info.n_links.shape[0]))
+            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
     ):
         if func_check_index_range(i_0, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.is_backward):
@@ -4645,7 +4619,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4671,7 +4645,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4710,7 +4684,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4738,7 +4712,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4765,7 +4739,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4807,7 +4781,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4887,7 +4861,7 @@ def func_COM_links(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_links))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(links_info.root_idx.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_links))
         )
     ):
         if func_check_index_range(
@@ -4982,7 +4956,7 @@ def func_forward_kinematics(
         else (
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(entities_info.n_links.shape[0]))
+            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
     ):
         if func_check_index_range(
@@ -5032,7 +5006,7 @@ def func_forward_velocity(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(entities_info.n_links.shape[0]))
+            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
     ):
         if func_check_index_range(
@@ -5454,7 +5428,7 @@ def func_update_geoms(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(geoms_info.pos.shape[0]))
+            else ti.static(range(static_rigid_sim_config.n_geoms))
         )
     ):
         i_e = rigid_global_info.awake_entities[i_0, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else 0
@@ -6775,18 +6749,66 @@ def kernel_prepare_backward_substep(
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
             )
+
+        # FIXME: Parameter pruning for ndarray is buggy on this one. Inlining this function is "fixing" this issue.
         # Save results of [update_cartesian_space] to adjoint cache
-        func_copy_cartesian_space(
-            src_dofs_state=dofs_state,
-            src_links_state=links_state,
-            src_joints_state=joints_state,
-            src_geoms_state=geoms_state,
-            dst_dofs_state=dofs_state_adjoint_cache,
-            dst_links_state=links_state_adjoint_cache,
-            dst_joints_state=joints_state_adjoint_cache,
-            dst_geoms_state=geoms_state_adjoint_cache,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
+        # func_copy_cartesian_space(
+        #     src_dofs_state=dofs_state,
+        #     src_links_state=links_state,
+        #     src_joints_state=joints_state,
+        #     src_geoms_state=geoms_state,
+        #     dst_dofs_state=dofs_state_adjoint_cache,
+        #     dst_links_state=links_state_adjoint_cache,
+        #     dst_joints_state=joints_state_adjoint_cache,
+        #     dst_geoms_state=geoms_state_adjoint_cache,
+        #     static_rigid_sim_config=static_rigid_sim_config,
+        # )
+
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for I in ti.grouped(ti.ndrange(*dofs_state.pos.shape)):
+            # pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
+            dofs_state_adjoint_cache.pos[I] = dofs_state.pos[I]
+            dofs_state_adjoint_cache.cdof_ang[I] = dofs_state.cdof_ang[I]
+            dofs_state_adjoint_cache.cdof_vel[I] = dofs_state.cdof_vel[I]
+            dofs_state_adjoint_cache.cdofvel_ang[I] = dofs_state.cdofvel_ang[I]
+            dofs_state_adjoint_cache.cdofvel_vel[I] = dofs_state.cdofvel_vel[I]
+            dofs_state_adjoint_cache.cdofd_ang[I] = dofs_state.cdofd_ang[I]
+            dofs_state_adjoint_cache.cdofd_vel[I] = dofs_state.cdofd_vel[I]
+
+        # links state
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for I in ti.grouped(ti.ndrange(*links_state.pos.shape)):
+            # pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat,
+            # cd_vel, cd_ang
+            links_state_adjoint_cache.pos[I] = links_state.pos[I]
+            links_state_adjoint_cache.quat[I] = links_state.quat[I]
+            links_state_adjoint_cache.root_COM[I] = links_state.root_COM[I]
+            links_state_adjoint_cache.mass_sum[I] = links_state.mass_sum[I]
+            links_state_adjoint_cache.i_pos[I] = links_state.i_pos[I]
+            links_state_adjoint_cache.i_quat[I] = links_state.i_quat[I]
+            links_state_adjoint_cache.cinr_inertial[I] = links_state.cinr_inertial[I]
+            links_state_adjoint_cache.cinr_pos[I] = links_state.cinr_pos[I]
+            links_state_adjoint_cache.cinr_quat[I] = links_state.cinr_quat[I]
+            links_state_adjoint_cache.cinr_mass[I] = links_state.cinr_mass[I]
+            links_state_adjoint_cache.j_pos[I] = links_state.j_pos[I]
+            links_state_adjoint_cache.j_quat[I] = links_state.j_quat[I]
+            links_state_adjoint_cache.cd_vel[I] = links_state.cd_vel[I]
+            links_state_adjoint_cache.cd_ang[I] = links_state.cd_ang[I]
+
+        # joints state
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for I in ti.grouped(ti.ndrange(*joints_state.xanchor.shape)):
+            # xanchor, xaxis
+            joints_state_adjoint_cache.xanchor[I] = joints_state.xanchor[I]
+            joints_state_adjoint_cache.xaxis[I] = joints_state.xaxis[I]
+
+        # geoms state
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for I in ti.grouped(ti.ndrange(*geoms_state.pos.shape)):
+            # pos, quat, verts_updated
+            geoms_state_adjoint_cache.pos[I] = geoms_state.pos[I]
+            geoms_state_adjoint_cache.quat[I] = geoms_state.quat[I]
+            geoms_state_adjoint_cache.verts_updated[I] = geoms_state.verts_updated[I]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6824,17 +6846,65 @@ def kernel_begin_backward_substep(
         )
 
         if not static_rigid_sim_config.enable_mujoco_compatibility:
-            func_copy_cartesian_space(
-                src_dofs_state=dofs_state_adjoint_cache,
-                src_links_state=links_state_adjoint_cache,
-                src_joints_state=joints_state_adjoint_cache,
-                src_geoms_state=geoms_state_adjoint_cache,
-                dst_dofs_state=dofs_state,
-                dst_links_state=links_state,
-                dst_joints_state=joints_state,
-                dst_geoms_state=geoms_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+            # FIXME: Parameter pruning for ndarray is buggy on this one. Inlining this function is "fixing" this issue.
+            # Save results of [update_cartesian_space] to adjoint cache
+            # func_copy_cartesian_space(
+            #     src_dofs_state=dofs_state,
+            #     src_links_state=links_state,
+            #     src_joints_state=joints_state,
+            #     src_geoms_state=geoms_state,
+            #     dst_dofs_state=dofs_state_adjoint_cache,
+            #     dst_links_state=links_state_adjoint_cache,
+            #     dst_joints_state=joints_state_adjoint_cache,
+            #     dst_geoms_state=geoms_state_adjoint_cache,
+            #     static_rigid_sim_config=static_rigid_sim_config,
+            # )
+
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for I in ti.grouped(ti.ndrange(*dofs_state.pos.shape)):
+                # pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
+                dofs_state_adjoint_cache.pos[I] = dofs_state.pos[I]
+                dofs_state_adjoint_cache.cdof_ang[I] = dofs_state.cdof_ang[I]
+                dofs_state_adjoint_cache.cdof_vel[I] = dofs_state.cdof_vel[I]
+                dofs_state_adjoint_cache.cdofvel_ang[I] = dofs_state.cdofvel_ang[I]
+                dofs_state_adjoint_cache.cdofvel_vel[I] = dofs_state.cdofvel_vel[I]
+                dofs_state_adjoint_cache.cdofd_ang[I] = dofs_state.cdofd_ang[I]
+                dofs_state_adjoint_cache.cdofd_vel[I] = dofs_state.cdofd_vel[I]
+
+            # links state
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for I in ti.grouped(ti.ndrange(*links_state.pos.shape)):
+                # pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat,
+                # cd_vel, cd_ang
+                links_state_adjoint_cache.pos[I] = links_state.pos[I]
+                links_state_adjoint_cache.quat[I] = links_state.quat[I]
+                links_state_adjoint_cache.root_COM[I] = links_state.root_COM[I]
+                links_state_adjoint_cache.mass_sum[I] = links_state.mass_sum[I]
+                links_state_adjoint_cache.i_pos[I] = links_state.i_pos[I]
+                links_state_adjoint_cache.i_quat[I] = links_state.i_quat[I]
+                links_state_adjoint_cache.cinr_inertial[I] = links_state.cinr_inertial[I]
+                links_state_adjoint_cache.cinr_pos[I] = links_state.cinr_pos[I]
+                links_state_adjoint_cache.cinr_quat[I] = links_state.cinr_quat[I]
+                links_state_adjoint_cache.cinr_mass[I] = links_state.cinr_mass[I]
+                links_state_adjoint_cache.j_pos[I] = links_state.j_pos[I]
+                links_state_adjoint_cache.j_quat[I] = links_state.j_quat[I]
+                links_state_adjoint_cache.cd_vel[I] = links_state.cd_vel[I]
+                links_state_adjoint_cache.cd_ang[I] = links_state.cd_ang[I]
+
+            # joints state
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for I in ti.grouped(ti.ndrange(*joints_state.xanchor.shape)):
+                # xanchor, xaxis
+                joints_state_adjoint_cache.xanchor[I] = joints_state.xanchor[I]
+                joints_state_adjoint_cache.xaxis[I] = joints_state.xaxis[I]
+
+            # geoms state
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for I in ti.grouped(ti.ndrange(*geoms_state.pos.shape)):
+                # pos, quat, verts_updated
+                geoms_state_adjoint_cache.pos[I] = geoms_state.pos[I]
+                geoms_state_adjoint_cache.quat[I] = geoms_state.quat[I]
+                geoms_state_adjoint_cache.verts_updated[I] = geoms_state.verts_updated[I]
 
     return is_grad_valid
 

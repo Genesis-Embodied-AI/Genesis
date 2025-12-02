@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import torch
 
@@ -89,7 +90,7 @@ def main():
     scene.build(n_envs=2)
 
     ########################## forward + backward twice ##########################
-    horizon = 150
+    horizon = 150 if "PYTEST_VERSION" not in os.environ else 5
     v_list = [gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True) for _ in range(horizon)]
     for _ in range(2):
         scene.reset()

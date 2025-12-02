@@ -10,28 +10,27 @@ EXAMPLES_DIR = Path(__file__).parents[1] / "examples"
 
 ALLOW_PATTERNS = {
     "*.py",
-    "rigid/**/*.py",
-    "coupling/**/*.py",
     "collision/**/*.py",
-    "sap_coupling/**/*.py",
-    "sensors/**/*.py",
-    "tutorial/**/*.py",
+    "coupling/**/*.py",
     "drone/interactive_drone.py",
     "drone/fly_route.py",
+    # "IPC_Solver/**/*.py",  # TODO: wait for IPC's wheel to be released
+    "rigid/**/*.py",
+    "render_async/**/*.py",
+    "sap_coupling/**/*.py",
+    "sensors/**/*.py",
+    "tutorials/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
-    "differentiable_push.py",
     "multi_gpu.py",
-    "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit
     "single_franka_batch_render.py",  # FIXME: segfault on exit
-    "cut_dragon.py",  # FIXME: Only supported on Linux
-    "ipc_arm_cloth.py",  # TODO: wait for IPC's wheel to be released
-    "ipc_cloth.py",  # TODO: wait for IPC's wheel to be released
-    "ipc_grasp.py",  # TODO: wait for IPC's wheel to be released
-    "ipc_twist_cloth_band.py",  # TODO: wait for IPC's wheel to be released
-    "genesis_ipc_motion_test.py",  # TODO: wait for IPC's wheel to be released
+    "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit (corrupted double-linked list)
 }
+if sys.platform != "linux":
+    IGNORE_SCRIPT_NAMES |= {
+        "cut_dragon.py",
+    }
 
 TIMEOUT = 450.0
 

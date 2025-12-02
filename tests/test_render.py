@@ -9,6 +9,7 @@ import numpy as np
 import pyglet
 import pytest
 import torch
+import OpenGL.error
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -989,7 +990,7 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snapshot, show_viewer):
+def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
     # Mock 'get_save_filename' to avoid poping up an interactive dialog
@@ -1069,6 +1070,7 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
 def test_interactive_viewer_disable_keyboard_shortcuts():
     """Test that keyboard shortcuts can be disabled in the interactive viewer."""
 

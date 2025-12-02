@@ -12,15 +12,96 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
-pytestmark = [
-    pytest.mark.field_only,
-]
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_differentiable_push(precision, show_viewer):
+    if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
+        pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
+
+    HORIZON = 10
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=2e-3,
+            substeps=10,
+            requires_grad=True,
+        ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(0.0, -1.0, 0.0),
+            upper_bound=(1.0, 1.0, 0.55),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, -0.15, 2.42),
+            camera_lookat=(0.5, 0.5, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+            fixed=True,
+        )
+    )
+    stick = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/stirrer.obj",
+            scale=0.6,
+            pos=(0.5, 0.5, 0.05),
+            euler=(90.0, 0.0, 0.0),
+        ),
+        material=gs.materials.Tool(
+            friction=8.0,
+        ),
+    )
+    obj = scene.add_entity(
+        morph=gs.morphs.Box(
+            lower=(0.2, 0.1, 0.05),
+            upper=(0.4, 0.3, 0.15),
+        ),
+        material=gs.materials.MPM.Elastic(
+            rho=500,
+        ),
+    )
+    scene.build(n_envs=2)
+
+    init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)
+    stick.set_position(init_pos)
+    pos_obj_init = gs.tensor([0.3, 0.3, 0.1], requires_grad=True)
+    obj.set_position(pos_obj_init)
+    v_obj_init = gs.tensor([0.0, -1.0, 0.0], requires_grad=True)
+    obj.set_velocity(v_obj_init)
+    goal = gs.tensor([0.5, 0.8, 0.05])
+
+    loss = 0.0
+    v_list = []
+    for i in range(HORIZON):
+        v_i = gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True)
+        stick.set_velocity(vel=v_i)
+        v_list.append(v_i)
+
+        scene.step()
+
+        if i == HORIZON // 2:
+            mpm_particles = scene.get_state().solvers_state[3]
+            loss += torch.pow(mpm_particles.pos[mpm_particles.active == 1] - goal, 2).sum()
+
+        if i == HORIZON - 2:
+            state = obj.get_state()
+            loss += torch.pow(state.pos - goal, 2).sum()
+    loss.backward()
+
+    # TODO: It would be great to compare the gradient to its analytical or numerical value.
+    for v_i in v_list[:-1]:
+        assert (v_i.grad.abs() > gs.EPS).any()
+    assert (v_list[-1].grad.abs() < gs.EPS).all()
 
 
 @pytest.mark.required
+@pytest.mark.field_only  # FIXME: Parameter pruning for ndarray is buggy...
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_contact(backend):
+def test_diff_contact():
     RTOL = 1e-4
 
     scene = gs.Scene(
@@ -89,7 +170,7 @@ def test_diff_contact(backend):
         box0_input_quat = box0_init_quat
         box1_input_quat = box1_init_quat
 
-        for trial in range(TRIALS):
+        for _ in range(TRIALS):
             rand_dx = torch.randn_like(dL_dx)
             rand_dx = torch.nn.functional.normalize(rand_dx, dim=-1)
 
@@ -132,15 +213,16 @@ def test_diff_contact(backend):
     dL_dpos_error_rel = compute_dL_error(dL_dpos, "pos")
     assert_allclose(dL_dpos_error_rel, 0.0, atol=RTOL)
     dL_dquat_error_rel = compute_dL_error(dL_dquat, "quat")
-    assert_allclose(dL_dpos_error_rel, 0.0, atol=RTOL)
+    assert_allclose(dL_dquat_error_rel, 0.0, atol=RTOL)
 
 
 # We need to use 64-bit precision for this test because we need to use sufficiently small perturbation to get reliable
 # gradient estimates through finite difference method. This small perturbation is not supported by 32-bit precision in
 # stable way.
 @pytest.mark.required
+@pytest.mark.field_only  # FIXME: Parameter pruning for ndarray is buggy...
 @pytest.mark.precision("64")
-def test_diff_solver(backend, monkeypatch):
+def test_diff_solver(monkeypatch):
     from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
@@ -327,91 +409,6 @@ def test_diff_solver(backend, monkeypatch):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_differentiable_push(precision, show_viewer):
-    if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
-        pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
-
-    HORIZON = 10
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=2e-3,
-            substeps=10,
-            requires_grad=True,
-        ),
-        mpm_options=gs.options.MPMOptions(
-            lower_bound=(0.0, -1.0, 0.0),
-            upper_bound=(1.0, 1.0, 0.55),
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.5, -0.15, 2.42),
-            camera_lookat=(0.5, 0.5, 0.1),
-        ),
-        show_viewer=show_viewer,
-    )
-
-    plane = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/plane/plane.urdf",
-            fixed=True,
-        )
-    )
-    stick = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/stirrer.obj",
-            scale=0.6,
-            pos=(0.5, 0.5, 0.05),
-            euler=(90.0, 0.0, 0.0),
-        ),
-        material=gs.materials.Tool(
-            friction=8.0,
-        ),
-    )
-    obj = scene.add_entity(
-        morph=gs.morphs.Box(
-            lower=(0.2, 0.1, 0.05),
-            upper=(0.4, 0.3, 0.15),
-        ),
-        material=gs.materials.MPM.Elastic(
-            rho=500,
-        ),
-    )
-    scene.build(n_envs=2)
-
-    init_pos = gs.tensor([[0.3, 0.1, 0.28], [0.3, 0.1, 0.5]], requires_grad=True)
-    stick.set_position(init_pos)
-    pos_obj_init = gs.tensor([0.3, 0.3, 0.1], requires_grad=True)
-    obj.set_position(pos_obj_init)
-    v_obj_init = gs.tensor([0.0, -1.0, 0.0], requires_grad=True)
-    obj.set_velocity(v_obj_init)
-    goal = gs.tensor([0.5, 0.8, 0.05])
-
-    loss = 0.0
-    v_list = []
-    for i in range(HORIZON):
-        v_i = gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True)
-        stick.set_velocity(vel=v_i)
-        v_list.append(v_i)
-
-        scene.step()
-
-        if i == HORIZON // 2:
-            mpm_particles = scene.get_state().solvers_state[3]
-            loss += torch.pow(mpm_particles.pos[mpm_particles.active == 1] - goal, 2).sum()
-
-        if i == HORIZON - 2:
-            state = obj.get_state()
-            loss += torch.pow(state.pos - goal, 2).sum()
-    loss.backward()
-
-    # TODO: It would be great to compare the gradient to its analytical or numerical value.
-    for v_i in v_list[:-1]:
-        assert (v_i.grad.abs() > gs.EPS).any()
-    assert (v_list[-1].grad.abs() < gs.EPS).all()
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_rigid(show_viewer):
     dt = 1e-2
     horizon = 100
@@ -469,14 +466,14 @@ def test_differentiable_rigid(show_viewer):
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_iter, eta_min=1e-3)
 
-    for iter in range(num_iter):
+    for _ in range(num_iter):
         scene.reset()
 
         box.set_pos(init_pos)
         box.set_quat(init_quat)
 
         loss = 0
-        for i in range(horizon):
+        for _ in range(horizon):
             scene.step()
             if show_viewer:
                 target.set_pos(goal_pos)
