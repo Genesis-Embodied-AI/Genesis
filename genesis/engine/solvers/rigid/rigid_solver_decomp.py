@@ -5116,13 +5116,13 @@ def func_forward_kinematics_entity(
         ):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
-            links_state.pos_bw[i_l, 0, i_b] = links_info.pos[I_l]
-            links_state.quat_bw[i_l, 0, i_b] = links_info.quat[I_l]
+            pos = func_write_field_if_backward(links_state.pos_bw, i_l, 0, i_b, links_info.pos[I_l], static_rigid_sim_config)
+            quat = func_write_field_if_backward(links_state.quat_bw, i_l, 0, i_b, links_info.quat[I_l], static_rigid_sim_config)
             if links_info.parent_idx[I_l] != -1:
                 parent_pos = links_state.pos[links_info.parent_idx[I_l], i_b]
                 parent_quat = links_state.quat[links_info.parent_idx[I_l], i_b]
-                links_state.pos_bw[i_l, 0, i_b] = parent_pos + gu.ti_transform_by_quat(links_info.pos[I_l], parent_quat)
-                links_state.quat_bw[i_l, 0, i_b] = gu.ti_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
+                pos = func_write_field_if_backward(links_state.pos_bw, i_l, 0, i_b, parent_pos + gu.ti_transform_by_quat(links_info.pos[I_l], parent_quat), static_rigid_sim_config)
+                quat = func_write_field_if_backward(links_state.quat_bw, i_l, 0, i_b, gu.ti_transform_quat_by_quat(links_info.quat[I_l], parent_quat), static_rigid_sim_config)
 
             n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
@@ -5164,35 +5164,77 @@ def func_forward_kinematics_entity(
                         elif joint_type == gs.JOINT_TYPE.PRISMATIC:
                             axis = dofs_info.motion_vel[I_d]
 
-                        joints_state.xanchor[i_j, i_b] = (
-                            gu.ti_transform_by_quat(joints_info.pos[I_j], links_state.quat_bw[i_l, curr_i_j, i_b])
-                            + links_state.pos_bw[i_l, curr_i_j, i_b]
+                        pos_ = func_read_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            curr_i_j,
+                            i_b,
+                            pos,
+                            static_rigid_sim_config
                         )
-                        joints_state.xaxis[i_j, i_b] = gu.ti_transform_by_quat(
-                            axis, links_state.quat_bw[i_l, curr_i_j, i_b]
+                        quat_ = func_read_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            curr_i_j,
+                            i_b,
+                            quat,
+                            static_rigid_sim_config
                         )
 
+                        joints_state.xanchor[i_j, i_b] = (gu.ti_transform_by_quat(joints_info.pos[I_j], quat_) + pos_)
+                        joints_state.xaxis[i_j, i_b] = gu.ti_transform_by_quat(axis, quat_)
+
                     if joint_type == gs.JOINT_TYPE.FREE:
-                        links_state.pos_bw[i_l, next_i_j, i_b] = ti.Vector(
-                            [
-                                rigid_global_info.qpos[q_start, i_b],
-                                rigid_global_info.qpos[q_start + 1, i_b],
-                                rigid_global_info.qpos[q_start + 2, i_b],
-                            ],
-                            dt=gs.ti_float,
+                        pos = func_write_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            ti.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start, i_b],
+                                    rigid_global_info.qpos[q_start + 1, i_b],
+                                    rigid_global_info.qpos[q_start + 2, i_b],
+                                ],
+                                dt=gs.ti_float,
+                            ),
+                            static_rigid_sim_config
                         )
-                        links_state.quat_bw[i_l, next_i_j, i_b] = ti.Vector(
-                            [
-                                rigid_global_info.qpos[q_start + 3, i_b],
-                                rigid_global_info.qpos[q_start + 4, i_b],
-                                rigid_global_info.qpos[q_start + 5, i_b],
-                                rigid_global_info.qpos[q_start + 6, i_b],
-                            ],
-                            dt=gs.ti_float,
+                        quat = func_write_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            ti.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start + 3, i_b],
+                                    rigid_global_info.qpos[q_start + 4, i_b],
+                                    rigid_global_info.qpos[q_start + 5, i_b],
+                                    rigid_global_info.qpos[q_start + 6, i_b],
+                                ],
+                                dt=gs.ti_float,
+                            ),
+                            static_rigid_sim_config
                         )
-                        xyz = gu.ti_quat_to_xyz(links_state.quat_bw[i_l, next_i_j, i_b], EPS)
+                        pos_ = func_read_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            pos,
+                            static_rigid_sim_config
+                        )
+                        quat_ = func_read_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            quat,
+                            static_rigid_sim_config
+                        )
+                        xyz = gu.ti_quat_to_xyz(quat_, EPS)
                         for j in ti.static(range(3)):
-                            dofs_state.pos[dof_start + j, i_b] = links_state.pos_bw[i_l, next_i_j, i_b][j]
+                            dofs_state.pos[dof_start + j, i_b] = pos_[j]
                             dofs_state.pos[dof_start + 3 + j, i_b] = xyz[j]
                     elif joint_type == gs.JOINT_TYPE.FIXED:
                         pass
@@ -5209,38 +5251,116 @@ def func_forward_kinematics_entity(
                         xyz = gu.ti_quat_to_xyz(qloc, EPS)
                         for j in ti.static(range(3)):
                             dofs_state.pos[dof_start + j, i_b] = xyz[j]
-                        links_state.quat_bw[i_l, next_i_j, i_b] = gu.ti_transform_quat_by_quat(
-                            qloc, links_state.quat_bw[i_l, curr_i_j, i_b]
+                        quat_0 = func_read_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            curr_i_j,
+                            i_b,
+                            quat,
+                            static_rigid_sim_config
                         )
-                        links_state.pos_bw[i_l, next_i_j, i_b] = joints_state.xanchor[
-                            i_j, i_b
-                        ] - gu.ti_transform_by_quat(joints_info.pos[I_j], links_state.quat_bw[i_l, next_i_j, i_b])
+                        quat = func_write_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            gu.ti_transform_quat_by_quat(qloc, quat_0),
+                            static_rigid_sim_config
+                        )
+                        quat_1 = func_read_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            quat,
+                            static_rigid_sim_config
+                        )
+                        pos = func_write_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            joints_state.xanchor[i_j, i_b] - gu.ti_transform_by_quat(joints_info.pos[I_j], quat_1),
+                            static_rigid_sim_config
+                        )
                     elif joint_type == gs.JOINT_TYPE.REVOLUTE:
                         axis = dofs_info.motion_ang[I_d]
                         dofs_state.pos[dof_start, i_b] = (
                             rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
                         )
                         qloc = gu.ti_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], EPS)
-                        links_state.quat_bw[i_l, next_i_j, i_b] = gu.ti_transform_quat_by_quat(
-                            qloc, links_state.quat_bw[i_l, curr_i_j, i_b]
+                        quat_0 = func_read_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            curr_i_j,
+                            i_b,
+                            quat,
+                            static_rigid_sim_config
                         )
-                        links_state.pos_bw[i_l, next_i_j, i_b] = joints_state.xanchor[
-                            i_j, i_b
-                        ] - gu.ti_transform_by_quat(joints_info.pos[I_j], links_state.quat_bw[i_l, next_i_j, i_b])
+                        quat = func_write_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            gu.ti_transform_quat_by_quat(qloc, quat_0),
+                            static_rigid_sim_config
+                        )
+                        quat_1 = func_read_field_if_backward(
+                            links_state.quat_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            quat,
+                            static_rigid_sim_config
+                        )
+                        pos = func_write_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            joints_state.xanchor[i_j, i_b] - gu.ti_transform_by_quat(joints_info.pos[I_j], quat_1),
+                            static_rigid_sim_config
+                        )
                     else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
                         dofs_state.pos[dof_start, i_b] = (
                             rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
                         )
-                        links_state.pos_bw[i_l, next_i_j, i_b] = (
-                            links_state.pos_bw[i_l, curr_i_j, i_b]
-                            + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
+                        pos_0 = func_read_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            curr_i_j,
+                            i_b,
+                            pos,
+                            static_rigid_sim_config
+                        )
+                        pos = func_write_field_if_backward(
+                            links_state.pos_bw,
+                            i_l,
+                            next_i_j,
+                            i_b,
+                            pos_0 + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b],
+                            static_rigid_sim_config
                         )
 
             # Skip link pose update for fixed root links to let users manually overwrite them
             i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
             if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
-                links_state.pos[i_l, i_b] = links_state.pos_bw[i_l, i_j_, i_b]
-                links_state.quat[i_l, i_b] = links_state.quat_bw[i_l, i_j_, i_b]
+                links_state.pos[i_l, i_b] = func_read_field_if_backward(
+                    links_state.pos_bw,
+                    i_l,
+                    i_j_,
+                    i_b,
+                    pos,
+                    static_rigid_sim_config
+                )
+                links_state.quat[i_l, i_b] = func_read_field_if_backward(
+                    links_state.quat_bw,
+                    i_l,
+                    i_j_,
+                    i_b,
+                    quat,
+                    static_rigid_sim_config
+                )
 
 
 @ti.func
@@ -5268,12 +5388,12 @@ def func_forward_velocity_entity(
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
             n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
-            links_state.cd_vel_bw[i_l, 0, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            links_state.cd_ang_bw[i_l, 0, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            cvel_vel = func_write_field_if_backward(links_state.cd_vel_bw, i_l, 0, i_b, ti.Vector.zero(gs.ti_float, 3), static_rigid_sim_config)
+            cvel_ang = func_write_field_if_backward(links_state.cd_ang_bw, i_l, 0, i_b, ti.Vector.zero(gs.ti_float, 3), static_rigid_sim_config)
 
             if links_info.parent_idx[I_l] != -1:
-                links_state.cd_vel_bw[i_l, 0, i_b] = links_state.cd_vel[links_info.parent_idx[I_l], i_b]
-                links_state.cd_ang_bw[i_l, 0, i_b] = links_state.cd_ang[links_info.parent_idx[I_l], i_b]
+                cvel_vel = func_write_field_if_backward(links_state.cd_vel_bw, i_l, 0, i_b, links_state.cd_vel[links_info.parent_idx[I_l], i_b], static_rigid_sim_config)
+                cvel_ang = func_write_field_if_backward(links_state.cd_ang_bw, i_l, 0, i_b, links_state.cd_ang[links_info.parent_idx[I_l], i_b], static_rigid_sim_config)
 
             for i_j_ in (
                 range(n_joints)
@@ -5295,7 +5415,7 @@ def func_forward_velocity_entity(
 
                     if joint_type == gs.JOINT_TYPE.FREE:
                         for i_3 in ti.static(range(3)):
-                            func_atomic_add_if_backward_3d(
+                            cvel_vel = cvel_vel + func_atomic_add_field_if_backward(
                                 links_state.cd_vel_bw,
                                 i_l,
                                 curr_i_j,
@@ -5303,7 +5423,7 @@ def func_forward_velocity_entity(
                                 dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b],
                                 static_rigid_sim_config,
                             )
-                            func_atomic_add_if_backward_3d(
+                            cvel_ang = cvel_ang + func_atomic_add_field_if_backward(
                                 links_state.cd_ang_bw,
                                 i_l,
                                 curr_i_j,
@@ -5322,17 +5442,18 @@ def func_forward_velocity_entity(
                                 dofs_state.cdofd_ang[dof_start + i_3 + 3, i_b],
                                 dofs_state.cdofd_vel[dof_start + i_3 + 3, i_b],
                             ) = gu.motion_cross_motion(
-                                links_state.cd_ang_bw[i_l, curr_i_j, i_b],
-                                links_state.cd_vel_bw[i_l, curr_i_j, i_b],
+                                func_read_field_if_backward(links_state.cd_ang_bw, i_l, curr_i_j, i_b, cvel_ang, static_rigid_sim_config),
+                                func_read_field_if_backward(links_state.cd_vel_bw, i_l, curr_i_j, i_b, cvel_vel, static_rigid_sim_config),
                                 dofs_state.cdof_ang[dof_start + i_3 + 3, i_b],
                                 dofs_state.cdof_vel[dof_start + i_3 + 3, i_b],
                             )
 
-                        links_state.cd_vel_bw[i_l, next_i_j, i_b] = links_state.cd_vel_bw[i_l, curr_i_j, i_b]
-                        links_state.cd_ang_bw[i_l, next_i_j, i_b] = links_state.cd_ang_bw[i_l, curr_i_j, i_b]
+                        if ti.static(static_rigid_sim_config.is_backward):
+                            links_state.cd_vel_bw[i_l, next_i_j, i_b] = links_state.cd_vel_bw[i_l, curr_i_j, i_b]
+                            links_state.cd_ang_bw[i_l, next_i_j, i_b] = links_state.cd_ang_bw[i_l, curr_i_j, i_b]
 
                         for i_3 in ti.static(range(3)):
-                            func_atomic_add_if_backward_3d(
+                            cvel_vel = cvel_vel + func_atomic_add_field_if_backward(
                                 links_state.cd_vel_bw,
                                 i_l,
                                 next_i_j,
@@ -5341,7 +5462,7 @@ def func_forward_velocity_entity(
                                 * dofs_state.vel[dof_start + i_3 + 3, i_b],
                                 static_rigid_sim_config,
                             )
-                            func_atomic_add_if_backward_3d(
+                            cvel_ang = cvel_ang + func_atomic_add_field_if_backward(
                                 links_state.cd_ang_bw,
                                 i_l,
                                 next_i_j,
@@ -5362,14 +5483,15 @@ def func_forward_velocity_entity(
                                 i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
                             ):
                                 dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
-                                    links_state.cd_ang_bw[i_l, curr_i_j, i_b],
-                                    links_state.cd_vel_bw[i_l, curr_i_j, i_b],
+                                    func_read_field_if_backward(links_state.cd_ang_bw, i_l, curr_i_j, i_b, cvel_ang, static_rigid_sim_config),
+                                    func_read_field_if_backward(links_state.cd_vel_bw, i_l, curr_i_j, i_b, cvel_vel, static_rigid_sim_config),
                                     dofs_state.cdof_ang[i_d, i_b],
                                     dofs_state.cdof_vel[i_d, i_b],
                                 )
 
-                        links_state.cd_vel_bw[i_l, next_i_j, i_b] = links_state.cd_vel_bw[i_l, curr_i_j, i_b]
-                        links_state.cd_ang_bw[i_l, next_i_j, i_b] = links_state.cd_ang_bw[i_l, curr_i_j, i_b]
+                        if ti.static(static_rigid_sim_config.is_backward):
+                            links_state.cd_vel_bw[i_l, next_i_j, i_b] = links_state.cd_vel_bw[i_l, curr_i_j, i_b]
+                            links_state.cd_ang_bw[i_l, next_i_j, i_b] = links_state.cd_ang_bw[i_l, curr_i_j, i_b]
 
                         for i_d_ in (
                             range(dof_start, joints_info.dof_end[I_j])
@@ -5380,7 +5502,7 @@ def func_forward_velocity_entity(
                             if func_check_index_range(
                                 i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
                             ):
-                                func_atomic_add_if_backward_3d(
+                                cvel_vel = cvel_vel + func_atomic_add_field_if_backward(
                                     links_state.cd_vel_bw,
                                     i_l,
                                     next_i_j,
@@ -5388,7 +5510,7 @@ def func_forward_velocity_entity(
                                     dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b],
                                     static_rigid_sim_config,
                                 )
-                                func_atomic_add_if_backward_3d(
+                                cvel_ang = cvel_ang + func_atomic_add_field_if_backward(
                                     links_state.cd_ang_bw,
                                     i_l,
                                     next_i_j,
@@ -5397,9 +5519,8 @@ def func_forward_velocity_entity(
                                     static_rigid_sim_config,
                                 )
 
-            i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
-            links_state.cd_vel[i_l, i_b] = links_state.cd_vel_bw[i_l, i_j_, i_b]
-            links_state.cd_ang[i_l, i_b] = links_state.cd_ang_bw[i_l, i_j_, i_b]
+            links_state.cd_vel[i_l, i_b] = func_read_field_if_backward(links_state.cd_vel_bw, i_l, n_joints, i_b, cvel_vel, static_rigid_sim_config)
+            links_state.cd_ang[i_l, i_b] = func_read_field_if_backward(links_state.cd_ang_bw, i_l, n_joints, i_b, cvel_ang, static_rigid_sim_config)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -7982,6 +8103,28 @@ def func_atomic_add_if_backward_3d(
     else:
         field[i, j, k] = field[i, j, k] + value
 
+
+@ti.func
+def func_read_field_if_backward(
+    field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, k: ti.i32, value, static_rigid_sim_config: ti.template()
+):
+    return field[i, j, k] if ti.static(static_rigid_sim_config.is_backward) else value
+
+@ti.func
+def func_write_field_if_backward(
+    field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, k: ti.i32, value, static_rigid_sim_config: ti.template()
+):
+    if ti.static(static_rigid_sim_config.is_backward):
+        field[i, j, k] = value
+    return value
+
+@ti.func
+def func_atomic_add_field_if_backward(
+    field: array_class.V_ANNOTATION, i: ti.i32, j: ti.i32, k: ti.i32, value, static_rigid_sim_config: ti.template()
+):
+    if ti.static(static_rigid_sim_config.is_backward):
+        field[i, j, k] += value
+    return value
 
 @ti.func
 def func_check_index_range(idx: ti.i32, min: ti.i32, max: ti.i32, cond: ti.template()):
