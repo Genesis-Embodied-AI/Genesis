@@ -15,13 +15,18 @@ import re
 from scipy.spatial.transform import Rotation as R
 from genesis.utils.usd.usd_parser_context import UsdParserContext
 from genesis.utils.usd.usd_parser_utils import (bfs_iterator, 
-                                               compute_global_transform, 
-                                               compute_related_transform, 
+                                               compute_usd_global_transform, 
+                                               compute_usd_related_transform, 
+                                               compute_gs_global_transform,
+                                               compute_gs_related_transform,
                                                extract_rotation_and_scale,
                                                extract_quat_from_transform,
                                                apply_transform_to_pos,
-                                               usd_mesh_to_trimesh, 
-                                               gf_quat_to_numpy)
+                                               usd_mesh_to_gs_trimesh, 
+                                               usd_quat_to_numpy,
+                                               convert_usd_joint_axis_to_gs_link_space,
+                                               convert_usd_joint_pos_to_gs_link_space,
+                                               compute_joint_axis_scaling_factor)
 from genesis.utils import geom as gu
 
 class UsdArticulationParser:
@@ -305,8 +310,8 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
         visual_meshes = UsdArticulationParser.get_visual_meshes(link)
         collision_meshes = UsdArticulationParser.get_collision_meshes(link)
         
-        if not (len(visual_meshes) > 0 or len(collision_meshes) > 0):
-           gs.logger.warning(f"Link {link.GetPath()} has no visual or collision meshes.")
+        # if not (len(visual_meshes) > 0 or len(collision_meshes) > 0):
+           # gs.logger.warning(f"Link {link.GetPath()} has no visual or collision meshes.")
         
         assert morph.scale == 1.0, "Currently we only support scale=1.0 for USD articulation parsing."
         
@@ -319,13 +324,15 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
             geom_is_col = i >= n_visuals
             geom_type = gs.GEOM_TYPE.MESH
             geom_data = None
-            tmesh = usd_mesh_to_trimesh(usd_mesh, link)
+
+            # Get Genesis transform and trimesh relative to link
+            Q_rel, tmesh = usd_mesh_to_gs_trimesh(usd_mesh, link)
             
             # Get material for this mesh
             mesh_prim = usd_mesh.GetPrim()
             # Try to get material binding if not collision
             
-            default_surface = gs.surfaces.Default()
+            default_surface = gs.surfaces.Collision()
             default_surface.color = (1.0, 0.0, 1.0)
             
             mesh_material:gs.surfaces.Surface = None
@@ -344,11 +351,10 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
             
             g_info = {"mesh" if geom_is_col else "vmesh": mesh}
             
-            trans_mat = compute_related_transform(usd_mesh.GetPrim(), link)
             g_info["type"] = geom_type
             g_info["data"] = geom_data
-            g_info["pos"] = trans_mat[:3, 3]
-            g_info["quat"] = extract_quat_from_transform(trans_mat)
+            g_info["pos"] = Q_rel[:3, 3]
+            g_info["quat"] = gu.R_to_quat(Q_rel[:3, :3])
             g_info["contype"] = 1 if geom_is_col else 0
             g_info["conaffinity"] = 1 if geom_is_col else 0
             g_info["friction"] = gu.default_friction()
@@ -383,11 +389,12 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
         
         l_info = l_infos[idx]
         if parent_link:
-            # Compute transform relative to parent link
-            trans_mat = compute_related_transform(child_link, parent_link)
+            # Compute Genesis transform relative to parent link (Q^i_j)
+            # This uses Genesis tree structure, not USD tree structure
+            trans_mat, _ = compute_gs_related_transform(child_link, parent_link)
         else:
-            # For base links, compute transform relative to world
-            trans_mat = compute_global_transform(child_link)
+            # For base links, compute Genesis global transform (Q^w)
+            trans_mat, _ = compute_gs_global_transform(child_link)
             
         l_info["pos"] = trans_mat[:3, 3]
         l_info["quat"] = extract_quat_from_transform(trans_mat)
@@ -398,8 +405,14 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
         # Get joint name and basic properties
         joint_prim = joint.GetPrim()
         j_info["name"] = joint_prim.GetPath()
-        j_local_pos = np.array(joint.GetLocalPos0Attr().Get(), dtype=np.float64) if joint.GetLocalPos0Attr() else gu.zero_pos()
-        j_info["pos"] = j_local_pos
+        
+        # Convert joint position from USD world space to Genesis link local space
+        # Use body0 (parent) as reference for joint position
+        if parent_link:
+            j_info["pos"] = convert_usd_joint_pos_to_gs_link_space(joint_prim, parent_link, child_link)
+        else:
+            # For base joints, convert from world space
+            j_info["pos"] = convert_usd_joint_pos_to_gs_link_space(joint_prim, child_link, child_link)
         j_info["quat"] = gu.identity_quat()
         
         # Get parent link
@@ -410,45 +423,29 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
             if parent_idx is not None:
                 l_info["parent_idx"] = parent_idx
         
-        # Parse joint type and properties
-        if joint_prim.IsA(UsdPhysics.FixedJoint):
-            if not body0_targets:
-                gs.logger.info(f"Root Fixed Joint detected {joint_prim.GetPath()}")
-            j_info["dofs_motion_ang"] = np.zeros((0, 3))
-            j_info["dofs_motion_vel"] = np.zeros((0, 3))
-            j_info["dofs_limit"] = np.zeros((0, 2))
-            j_info["dofs_stiffness"] = np.zeros((0))
-            
-            j_info["type"] = gs.JOINT_TYPE.FIXED
-            j_info["n_qs"] = 0
-            j_info["n_dofs"] = 0
-            j_info["init_qpos"] = np.zeros(0)
-            
-        elif joint_prim.IsA(UsdPhysics.RevoluteJoint):
+        
+        if joint_prim.IsA(UsdPhysics.RevoluteJoint):
             revolute_joint = UsdPhysics.RevoluteJoint(joint_prim)
             
-            # Get joint axis
+            # Get joint axis string
             axis_attr = revolute_joint.GetAxisAttr()
             axis_str = axis_attr.Get() if axis_attr else "X"
-            if axis_str == "X":
-                axis = np.array([1.0, 0.0, 0.0])
-            elif axis_str == "Y":
-                axis = np.array([0.0, 1.0, 0.0])
-            elif axis_str == "Z":
-                axis = np.array([0.0, 0.0, 1.0])
-            else:
-                gs.raise_exception(
-                    f"Unsupported joint axis {axis_str} in USD revolute joint {joint_prim.GetPath()}."
-                )
             
-            quat = gf_quat_to_numpy(joint.GetLocalRot0Attr().Get()) if joint.GetLocalRot0Attr() else gu.identity_quat()
-            R_joint = gu.quat_to_R(quat)
-            axis = R_joint @ axis
+            # Convert joint axis from USD world space to Genesis link local space
+            # Use body0 (parent) as reference for joint axis definition
+            if parent_link:
+                axis = convert_usd_joint_axis_to_gs_link_space(joint_prim, parent_link, axis_str, child_link)
+            else:
+                # For base joints, use child link as reference
+                axis = convert_usd_joint_axis_to_gs_link_space(joint_prim, child_link, axis_str, child_link)
+            
+            # Normalize the axis (should already be normalized, but ensure it)
+            axis = axis / np.linalg.norm(axis) if np.linalg.norm(axis) > 1e-10 else axis
             
             j_info["dofs_motion_ang"] = np.array([axis])
             j_info["dofs_motion_vel"] = np.zeros((1, 3))
             
-            # Get joint limits
+            # Get joint limits (angle limits are preserved under proportional scaling)
             lower_limit_attr = revolute_joint.GetLowerLimitAttr()
             upper_limit_attr = revolute_joint.GetUpperLimitAttr()
             lower_limit = lower_limit_attr.Get() if lower_limit_attr else -np.inf
@@ -466,24 +463,20 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
         elif joint_prim.IsA(UsdPhysics.PrismaticJoint):
             prismatic_joint = UsdPhysics.PrismaticJoint(joint_prim)
             
-            # Get joint axis (same as revolute)
+            # Get joint axis string
             axis_attr = prismatic_joint.GetAxisAttr()
             axis_str = axis_attr.Get() if axis_attr else "X"
-            if axis_str == "X":
-                axis = np.array([1.0, 0.0, 0.0])
-            elif axis_str == "Y":
-                axis = np.array([0.0, 1.0, 0.0])
-            elif axis_str == "Z":
-                axis = np.array([0.0, 0.0, 1.0])
-            else:
-                gs.raise_exception(
-                    f"Unsupported joint axis {axis_str} in USD prismatic joint {joint_prim.GetPath()}."
-                )
             
-            # Transform axis using joint rotation
-            quat = gf_quat_to_numpy(joint.GetLocalRot0Attr().Get()) if joint.GetLocalRot0Attr() else gu.identity_quat()
-            R_joint = gu.quat_to_R(quat)
-            axis = R_joint @ axis
+            # Convert joint axis from USD world space to Genesis link local space
+            # Use body0 (parent) as reference for joint axis definition
+            if parent_link:
+                axis = convert_usd_joint_axis_to_gs_link_space(joint_prim, parent_link, axis_str, child_link)
+            else:
+                # For base joints, use child link as reference
+                axis = convert_usd_joint_axis_to_gs_link_space(joint_prim, child_link, axis_str, child_link)
+            
+            # Normalize the axis (should already be normalized, but ensure it)
+            axis = axis / np.linalg.norm(axis) if np.linalg.norm(axis) > 1e-10 else axis
             
             # Prismatic joints use dofs_motion_vel (linear motion) instead of dofs_motion_ang
             j_info["dofs_motion_ang"] = np.zeros((1, 3))
@@ -494,10 +487,17 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
             upper_limit_attr = prismatic_joint.GetUpperLimitAttr()
             lower_limit = lower_limit_attr.Get() if lower_limit_attr else -np.inf
             upper_limit = upper_limit_attr.Get() if upper_limit_attr else np.inf
-            # Limits are in meters, no deg2rad conversion needed
-            # Apply scale to limits (similar to urdf.py)
-            lower_limit = lower_limit * morph.scale if lower_limit != -np.inf else -np.inf
-            upper_limit = upper_limit * morph.scale if upper_limit != np.inf else np.inf
+            
+            # Apply distance limit scaling: β = ||axis^w||
+            # The distance limit should be scaled by β
+            if parent_link:
+                beta = compute_joint_axis_scaling_factor(joint_prim, parent_link, axis_str)
+            else:
+                beta = compute_joint_axis_scaling_factor(joint_prim, child_link, axis_str)
+            
+            # Scale limits by β
+            lower_limit = lower_limit * beta if lower_limit != -np.inf else -np.inf
+            upper_limit = upper_limit * beta if upper_limit != np.inf else np.inf
             
             j_info["dofs_limit"] = np.array([[lower_limit, upper_limit]])
             j_info["dofs_stiffness"] = np.array([0.0])
@@ -525,8 +525,24 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
             j_info["n_dofs"] = 3  # 3 rotational DOF
             j_info["init_qpos"] = gu.identity_quat()  # Initial quaternion
         else:
-            gs.logger.warning(f"Unsupported USD joint type: {joint_prim.GetTypeName()} in joint {joint_prim.GetPath()}. Treating as fixed joint.")
-        
+            # Parse joint type and properties
+            if not joint_prim.IsA(UsdPhysics.FixedJoint):
+                gs.logger.warning(f"Unsupported USD joint type: <{joint_prim.GetTypeName()}> in joint {joint_prim.GetPath()}. Treating as fixed joint.")
+            
+            if not body0_targets:
+                gs.logger.info(f"Root Fixed Joint detected {joint_prim.GetPath()}")
+            else:
+                gs.logger.info(f"Fixed Joint detected {joint_prim.GetPath()}")
+            j_info["dofs_motion_ang"] = np.zeros((0, 3))
+            j_info["dofs_motion_vel"] = np.zeros((0, 3))
+            j_info["dofs_limit"] = np.zeros((0, 2))
+            j_info["dofs_stiffness"] = np.zeros((0))
+            
+            j_info["type"] = gs.JOINT_TYPE.FIXED
+            j_info["n_qs"] = 0
+            j_info["n_dofs"] = 0
+            j_info["init_qpos"] = np.zeros(0)
+                    
         # Common joint properties
         j_info["sol_params"] = gu.default_solver_params()
         j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
@@ -545,6 +561,35 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
         
         # Force limits
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
+    
+    # Add FREE joint to base links that have no incoming joints (unless morph is fixed)
+    # This prevents base links from being incorrectly marked as fixed to world
+    morph_fixed = getattr(morph, 'fixed', False)
+    if not morph_fixed:
+        for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+            # Base link (no parent) with no joints should get a FREE joint
+            if l_info["parent_idx"] == -1 and len(link_j_infos) == 0:
+                j_info = dict()
+                j_info["name"] = f"{l_info['name']}_root_joint"
+                j_info["type"] = gs.JOINT_TYPE.FREE
+                j_info["n_qs"] = 7
+                j_info["n_dofs"] = 6
+                j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+                j_info["pos"] = gu.zero_pos()
+                j_info["quat"] = gu.identity_quat()
+                j_info["dofs_motion_ang"] = np.eye(6, 3, -3)
+                j_info["dofs_motion_vel"] = np.eye(6, 3)
+                j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (6, 1))
+                j_info["dofs_stiffness"] = np.zeros(6)
+                j_info["dofs_invweight"] = np.zeros(6)
+                j_info["dofs_frictionloss"] = np.zeros(6)
+                j_info["dofs_damping"] = np.zeros(6)
+                j_info["dofs_armature"] = np.zeros(6)
+                j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
+                j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
+                j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
+                j_info["sol_params"] = gu.default_solver_params()
+                link_j_infos.append(j_info)
     
     # Apply scaling factor
     for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):

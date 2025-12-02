@@ -6,7 +6,7 @@ Provides the parse pipeline: materials -> articulations -> rigid bodies.
 """
 
 
-from typing import List
+from typing import List, Dict
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity as GSEntity
 
@@ -26,7 +26,7 @@ class UsdParser:
     """
     
     @staticmethod
-    def import_from_stage(scene: gs.Scene, stage: Usd.Stage) -> List[GSEntity]:
+    def import_from_stage(scene: gs.Scene, stage: Usd.Stage) -> Dict[str, GSEntity]:
         """
         Import all entities from a USD stage into the scene.
         
@@ -54,7 +54,7 @@ class UsdParser:
         context = UsdParserContext(stage)
         
         # Return Values
-        entities = []
+        entities: Dict[str, GSEntity] = {}
         
         # Step 1: Parse all rendering materials
         material_parser = UsdRenderingMaterialParser(context)
@@ -72,7 +72,7 @@ class UsdParser:
                 prim_path=str(articulation_root.GetPath()),
             )
             entity = scene.add_entity(morph)
-            entities.append(entity)
+            entities[str(articulation_root.GetPath())] = entity
             gs.logger.info(f"Imported articulation from prim: {articulation_root.GetPath()}")
         
         # Step 3: Find all rigid bodies (not in articulation)
@@ -86,7 +86,7 @@ class UsdParser:
                 prim_path=str(rigid_body_prim.GetPath()),
             )
             entity = scene.add_entity(morph)
-            entities.append(entity)
+            entities[str(rigid_body_prim.GetPath())] = entity
             gs.logger.info(f"Imported rigid body from prim: {rigid_body_prim.GetPath()}")
         
         if not entities:
