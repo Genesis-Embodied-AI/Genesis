@@ -258,7 +258,6 @@ class RigidSolver(Solver):
                 sparse_solve=self._options.sparse_solve,
                 integrator=self._integrator,
                 solver_type=self._options.constraint_solver,
-                is_backward=False,
             )
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:
@@ -281,7 +280,6 @@ class RigidSolver(Solver):
                 enable_collision=self._enable_collision,
                 integrator=gs.integrator.approximate_implicitfast,
                 solver_type=gs.constraint_solver.CG,
-                is_backward=False,
             )
 
         if self._static_rigid_sim_config.requires_grad:
@@ -7103,11 +7101,9 @@ def kernel_update_geoms_render_T(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_g, i_b in ti.ndrange(n_geoms, _B):
         geom_T = gu.ti_trans_quat_to_T(
-            geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b],
-            geoms_state.quat[i_g, i_b],
-            EPS,
+            geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], geoms_state.quat[i_g, i_b], EPS
         )
-        for J in ti.static(ti.grouped(ti.static(ti.ndrange(4, 4)))):
+        for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
             geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
@@ -7127,9 +7123,7 @@ def kernel_update_vgeoms_render_T(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_g, i_b in ti.ndrange(n_vgeoms, _B):
         geom_T = gu.ti_trans_quat_to_T(
-            vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b],
-            vgeoms_state.quat[i_g, i_b],
-            EPS,
+            vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], vgeoms_state.quat[i_g, i_b], EPS
         )
         for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
             vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
