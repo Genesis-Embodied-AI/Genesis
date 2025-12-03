@@ -71,7 +71,6 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.8,
             IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
             enable_ipc_gui=enable_ipc_gui,
         )
         if use_ipc

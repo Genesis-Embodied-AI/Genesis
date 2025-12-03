@@ -216,17 +216,13 @@ class IPCCouplerOptions(BaseCouplerOptions):
     ipc_constraint_strength : tuple, optional
         Strength ratios for IPC soft transform constraint coupling. Tuple of (translation_strength, rotation_strength).
         Higher values create stiffer coupling between Genesis rigid bodies and IPC ABD objects. Defaults to (100.0, 100.0).
-    two_way_coupling : bool, optional
-        Whether to enable bidirectional coupling between IPC and Genesis rigid bodies.
-        When True, forces from IPC ABD constraint are applied back to Genesis rigid bodies.
-        When False, only Genesis → IPC coupling is active (one-way). Defaults to True.
     IPC_self_contact : bool, optional
         Whether to enable contact detection between rigid bodies in IPC system (ABD-ABD collisions).
-        When False, only FEM-FEM and FEM-ABD collisions are detected. Defaults to False.
-    disable_genesis_ground_contact : bool, optional
+        When False, only FEM-FEM and FEM-ABD collisions are detected. Defaults to True.
+    disable_genesis_contact : bool, optional
         Whether to disable ground contact in Genesis rigid solver when using IPC.
         When True, ground collision is only handled by IPC system, not by Genesis rigid solver.
-        This can be useful to avoid double-counting ground contacts. Defaults to False.
+        This can be useful to avoid double-counting ground contacts. Defaults to True.
     disable_ipc_ground_contact : bool, optional
         Whether to disable ground contact in IPC system.
         When True, all objects in IPC (FEM, cloth, rigid ABD) will not collide with ground plane.
@@ -235,6 +231,10 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Whether to disable IPC library logging output. Defaults to True.
     enable_ipc_gui : bool, optional
         Whether to enable IPC GUI visualization using polyscope. Defaults to False.
+    two_way_coupling : bool, optional
+        Whether to apply coupling forces/torques from IPC back to Genesis rigid bodies. Defaults to True.
+    use_contact_proxy : bool, optional
+        Whether to use contact proxy mode for IPC coupling. Defaults to False.
     """
 
     dt: float = 0.001
@@ -249,12 +249,13 @@ class IPCCouplerOptions(BaseCouplerOptions):
     sanity_check_enable: bool = False
     coupling_strategy: str = "two_way_soft_constraint"
     ipc_constraint_strength: tuple = (100.0, 100.0)
-    two_way_coupling: bool = True
-    IPC_self_contact: bool = False
-    disable_genesis_ground_contact: bool = False
+    IPC_self_contact: bool = True
+    disable_genesis_contact: bool = True
     disable_ipc_ground_contact: bool = False
     disable_ipc_logging: bool = True
     enable_ipc_gui: bool = False
+    two_way_coupling: bool = True
+    use_contact_proxy: bool = False
 
 
 ############################ Solvers inside simulator ############################

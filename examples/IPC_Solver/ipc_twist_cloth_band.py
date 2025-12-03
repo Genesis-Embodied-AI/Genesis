@@ -36,7 +36,6 @@ def main():
             ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.5,  # Higher friction to grip the band
             IPC_self_contact=False,
-            two_way_coupling=True,
             enable_ipc_gui=args.vis_ipc,
         ),
         show_viewer=args.vis or args.vis_ipc,

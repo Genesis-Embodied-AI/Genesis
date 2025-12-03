@@ -14,25 +14,27 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    dt = 1e-2
+    dt = 1e-3
 
     coupler_options = (
         gs.options.IPCCouplerOptions(
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
-            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
+            ipc_constraint_strength=(3, 3),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.8,
-            IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
+            use_contact_proxy=True,
             enable_ipc_gui=args.vis_ipc,
         )
         if args.ipc
         else None
     )
     args.vis = args.vis or args.vis_ipc
-
+    rigid_options = gs.options.RigidOptions(
+        enable_collision=False,  # Disable rigid collision when using IPC
+    )
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
+        rigid_options=rigid_options,
         coupler_options=coupler_options,
         show_viewer=args.vis,
     )
@@ -43,7 +45,7 @@ def main():
     scene.add_entity(gs.morphs.Plane())
 
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
     )
 
     if args.ipc:
@@ -58,7 +60,7 @@ def main():
         if args.ipc
         else gs.materials.Rigid()
     )
-
+    # material = gs.materials.Rigid()
     cube = scene.add_entity(
         morph=gs.morphs.Box(pos=(0.65, 0.0, 0.03), size=(0.05, 0.05, 0.05)),
         material=material,
@@ -90,7 +92,7 @@ def main():
     new_kp[fingers_dof] = current_kp[fingers_dof] * 10
     franka.set_dofs_kp(new_kp)
 
-    print(f"New kp: {franka.get_dofs_kp()}")
+    # print(f"New kp: {franka.get_dofs_kp()}")
     # grasp
     finder_pos = 0.0
     for i in range(int(0.1 / dt)):
