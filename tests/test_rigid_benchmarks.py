@@ -420,7 +420,21 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
     if n_envs > 0:
         ctrl = torch.tile(ctrl, (n_envs, 1))
     if is_collision_free:
+        franka.set_qpos(ctrl)
         franka.control_dofs_position(ctrl)
+
+    vel0 = torch.zeros((franka.n_qs,), dtype=gs.tc_float, device=gs.device)
+    if n_envs > 0:
+        n_reset_envs = int(0.02 * n_envs)
+        reset_envs_idx = torch.randperm(n_envs)[:n_reset_envs]
+        vel0 = torch.tile(vel0, (n_reset_envs, 1))
+        qpos0 = ctrl[reset_envs_idx]
+    else:
+        reset_envs_idx = None
+        qpos0 = ctrl
+
+    dofs_stiffness = franka.get_dofs_stiffness()
+    dofs_damping = franka.get_dofs_damping()
 
     num_steps = 0
     is_recording = False
@@ -428,6 +442,10 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
     while True:
         scene.step()
         if accessors:
+            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
+            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
+            franka.set_dofs_stiffness(dofs_stiffness)
+            franka.set_dofs_damping(dofs_damping)
             franka.get_ang()
             franka.get_vel()
             franka.get_dofs_position()

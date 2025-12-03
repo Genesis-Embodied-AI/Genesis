@@ -363,7 +363,7 @@ class RigidGeom(RBC):
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
         _kernel_get_geoms_pos(self._idx, tensor, self._solver.geoms_state)
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     @gs.assert_built
@@ -374,7 +374,7 @@ class RigidGeom(RBC):
         tensor = torch.empty((self._solver._B, 4), dtype=gs.tc_float, device=gs.device)
         _kernel_get_geoms_quat(self._idx, tensor, self._solver.geoms_state)
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     @gs.assert_built
@@ -391,7 +391,7 @@ class RigidGeom(RBC):
             tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
-                tensor = tensor.squeeze(0)
+                tensor = tensor[0]
         return tensor
 
     @gs.assert_built
@@ -407,7 +407,7 @@ class RigidGeom(RBC):
         Set the solver parameters of this geometry.
         """
         if self.is_built:
-            self._solver.set_sol_params(sol_params[None], geoms_idx=self._idx, envs_idx=None, unsafe=False)
+            self._solver.set_sol_params(sol_params, geoms_idx=self._idx, envs_idx=None)
         else:
             self._sol_params = sol_params
 
@@ -417,7 +417,7 @@ class RigidGeom(RBC):
         Get the solver parameters of this geometry.
         """
         if self.is_built:
-            return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None, unsafe=True)[0]
+            return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None)[0]
         return self._sol_params
 
     # ------------------------------------------------------------------------------------
@@ -878,7 +878,7 @@ class RigidVisGeom(RBC):
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
         _kernel_get_vgeoms_pos(self._idx, tensor, self._solver.vgeoms_state)
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     @gs.assert_built
@@ -889,7 +889,7 @@ class RigidVisGeom(RBC):
         tensor = torch.empty((self._solver._B, 4), dtype=gs.tc_float, device=gs.device)
         _kernel_get_vgeoms_quat(self._idx, tensor, self._solver.vgeoms_state)
         if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
+            tensor = tensor[0]
         return tensor
 
     # ------------------------------------------------------------------------------------

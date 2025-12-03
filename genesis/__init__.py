@@ -21,6 +21,11 @@ except ImportError as e:
     raise ImportError(
         "'torch' module not available. Please install pytorch manually: https://pytorch.org/get-started/locally/"
     ) from e
+if tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8):
+    raise ImportError(
+        "'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/"
+    )
+
 import numpy as np
 
 from .constants import GS_ARCH, TI_ARCH
@@ -28,7 +33,6 @@ from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
 from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device
-from .utils.misc import ALLOCATE_TENSOR_WARNING
 
 
 # Global state
@@ -104,9 +108,6 @@ def init(
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─'*(bar_width)}╯>~")
 
-    # FIXME: Disable this warning for now, because it is not useful without printing the entire traceback
-    logger.addFilter(lambda record: record.msg != ALLOCATE_TENSOR_WARNING)
-
     # Get concrete device and backend
     global device
     device, device_name, total_mem, backend = get_device(backend)
@@ -171,9 +172,9 @@ def init(
     tc_int = torch.int32
 
     # Bool
-    # Note that `ti.u1` is broken on Apple Metal and output garbage.
+    # Note that `ti.u1` is broken on Apple Metal and Vulkan.
     global ti_bool, np_bool, tc_bool
-    if backend == gs_backend.metal:
+    if backend in (gs_backend.metal, gs_backend.vulkan):
         ti_bool = ti.i32
         np_bool = np.int32
         tc_bool = torch.int32
@@ -258,6 +259,7 @@ def init(
             fast_math=not debug,
             default_ip=ti_int,
             default_fp=ti_float,
+            unrolling_limit=100,  # This threshold needs to be increased to accommodate gradient computation
             **taichi_kwargs,
         )
 
@@ -406,7 +408,7 @@ with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
         from pygel3d import graph, hmesh
     except OSError as e:
         # Import may fail because of missing system dependencies (libGLU.so.1).
-        # This is not blocking because it is only an issue for hybrig entities.
+        # This is not blocking because it is only an issue for hybrid entities.
         pass
 
     try:

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from contextlib import nullcontext
+from copy import deepcopy
 from typing import cast
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from genesis.utils.misc import get_assets_dir, tensor_to_array, ti_to_torch
 
 from .utils import (
     assert_allclose,
+    assert_array_equal,
     build_genesis_sim,
     build_mujoco_sim,
     check_mujoco_data_consistency,
@@ -860,7 +862,7 @@ def test_box_box_dynamics(gs_sim):
         assert_allclose(qpos[8], 0.6, atol=2e-3)
 
 
-@pytest.mark.slow
+@pytest.mark.slow  # ~840s
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
     [
@@ -979,8 +981,8 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
     # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
     attr_orig = {}
     for scale, robot in zip(ROBOT_SCALES, scene.entities):
-        links_invweight = robot.get_links_invweight()
-        dofs_invweight = robot.get_dofs_invweight()
+        links_invweight = robot.get_links_invweight().clone()
+        dofs_invweight = robot.get_dofs_invweight().clone()
         robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
         assert torch.all(robot.get_dofs_invweight() < 1.0)
         with pytest.raises(AssertionError):
@@ -988,8 +990,8 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         with pytest.raises(AssertionError):
             assert_allclose(robot.get_links_invweight(), links_invweight, tol=tol)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-        links_invweight = robot.get_links_invweight()
-        dofs_invweight = robot.get_dofs_invweight()
+        links_invweight = robot.get_links_invweight().clone()
+        dofs_invweight = robot.get_dofs_invweight().clone()
         qpos = np.random.rand(robot.n_dofs)
         robot.set_dofs_position(qpos)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
@@ -1292,9 +1294,11 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         ):
             pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
             euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
+            quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
             assert_allclose(entity.get_pos(), pos_zero, tol=tol)
-            euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
-            assert_allclose(euler, euler_zero, tol=5e-4)
+            # Use quaternion for comparison to avoid gymbal lock issue in euler angles
+            quat = entity.get_quat()
+            assert_allclose(quat, quat_zero, tol=tol)
             base_aabb = entity.geoms[0].get_AABB()
             assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
             assert_allclose(base_aabb, base_aabb_init, tol=tol)
@@ -1311,14 +1315,12 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
             quat_delta /= torch.linalg.norm(quat_delta)
             entity.set_quat(quat_delta, relative=relative)
-            euler = gu.quat_to_xyz(entity.get_quat(), rpy=True)
-            quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
+            quat = entity.get_quat()
             if relative:
                 quat_ref = gu.transform_quat_by_quat(quat_zero, quat_delta)
             else:
                 quat_ref = quat_delta
-            euler_ref = gu.quat_to_xyz(quat_ref, rpy=True)
-            assert_allclose(euler, euler_ref, tol=tol)
+            assert_allclose(quat, quat_ref, tol=tol)
 
 
 @pytest.mark.required
@@ -1351,15 +1353,11 @@ def test_set_sol_params(n_envs, batched, tol):
             obj.set_sol_params(sol_params)
             with pytest.raises(AssertionError):
                 assert_allclose(obj.sol_params, sol_params, tol=tol)
-            sol_params = np.zeros(((scene.n_envs,) if scene.n_envs > 0 and batched else ()) + (7,))
-            obj.set_sol_params(sol_params)
-            sol_params = np.tile(
-                [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0],
-                ((scene.n_envs,) if scene.n_envs > 0 and batched else ()) + (1,),
-            )
-            assert_allclose(obj.sol_params, sol_params, tol=tol)
+            obj.set_sol_params(0.0)
+            assert_allclose(obj.sol_params, [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
 
 
+@pytest.mark.slow  # ~160s
 @pytest.mark.required
 @pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("xml_path", ["xml/humanoid.xml"])
@@ -1456,6 +1454,7 @@ def test_multilink_inverse_kinematics(show_viewer):
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=TOL)
 
 
+@pytest.mark.slow  # ~180s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -1928,6 +1927,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
 
 
+@pytest.mark.slow  # ~160s
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
@@ -2354,6 +2354,17 @@ def test_jacobian(gs_sim, tol):
 
 
 @pytest.mark.required
+def test_mjcf_parsing_with_include():
+    scene = gs.Scene()
+    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
+    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
+    scene.build()
+    assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
+    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("gjk_collision", [True, False])
 def test_urdf_parsing(show_viewer, tol, gjk_collision):
     POS_OFFSET = 0.8
@@ -2463,14 +2474,73 @@ def test_urdf_parsing(show_viewer, tol, gjk_collision):
 
 
 @pytest.mark.required
-def test_mjcf_parsing_with_include():
-    scene = gs.Scene()
-    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
-    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
-    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
+def test_urdf_capsule(tmp_path, show_viewer, tol):
+    urdf_path = tmp_path / "capsule.urdf"
+    with open(urdf_path, "w") as f:
+        f.write(
+            """
+            <robot name="urdf_robot">
+                <link name="base_link">
+                    <inertial>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <mass value=".1"/>
+                        <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+                    </inertial>
+                    <collision>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule length="0.1" radius="0.02"/>
+                        </geometry>
+                    </collision>
+                </link>
+            </robot>
+            """
+        )
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+            pos=(0.0, 0.0, 0.3),
+        ),
+        vis_mode="collision",
+    )
     scene.build()
-    assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
-    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
+
+    (geom,) = robot.geoms
+    assert geom.type == gs.GEOM_TYPE.CAPSULE
+    assert_allclose(geom.data[:2], (0.02, 0.1), tol=gs.EPS)
+
+    for _ in range(40):
+        scene.step()
+    geom_verts = tensor_to_array(geom.get_verts())
+    assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.0), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
+
+
+def test_urdf_color_overwrite():
+    scene = gs.Scene()
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="genesis/assets/urdf/blue_box/model.urdf",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    for vgeom in robot.vgeoms:
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        assert_array_equal(color, (255, 0, 0, 255))
+    for geom in robot.geoms:
+        visual = geom.mesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        # Collision geometry meshes have randomized colors with partial transparency to ease debugging
+        with pytest.raises(AssertionError):
+            assert_array_equal(color, (255, 0, 0, 255))
 
 
 @pytest.mark.required
@@ -2546,6 +2616,7 @@ def test_gravity(show_viewer, tol):
     )
 
 
+@pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(tmp_path, show_viewer, tol):
@@ -2731,6 +2802,7 @@ def test_get_constraints_api(show_viewer, tol):
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
 
 
+@pytest.mark.slow  # ~100s
 @pytest.mark.parametrize(
     "n_envs, batched, backend",
     [
@@ -2823,19 +2895,35 @@ def test_data_accessor(n_envs, batched, tol):
     # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
     # * Compare first 'Get' output with last 'Get' output
     # * Compare last 'Get' output with corresponding slice of non-masking 'Get' output
-    def get_all_supported_masks(i):
+    def get_all_supported_masks(i, max_length):
+        if max_length <= 0 or i > max_length - 1:
+            return (None,)
+        if i == max_length - 1:
+            return (
+                i,
+                [i],
+                slice(i, i + 1),
+                range(i, i + 1),
+                np.array([i], dtype=np.int32),
+                torch.tensor([i], dtype=torch.int64),
+                torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+            )
         return (
-            i,
-            [i],
-            slice(i, i + 1),
-            range(i, i + 1),
-            np.array([i], dtype=np.int32),
-            torch.tensor([i], dtype=torch.int64),
-            torch.tensor([i], dtype=gs.tc_int, device=gs.device),
+            [i, i + 1],
+            slice(i, i + 2),
+            range(i, i + 2),
+            np.array([i, i + 1], dtype=np.int32),
+            torch.tensor([i, i + 1], dtype=torch.int64),
+            torch.tensor([i, i + 1], dtype=gs.tc_int, device=gs.device),
         )
 
-    def must_cast(value):
-        return not (isinstance(value, torch.Tensor) and value.dtype == gs.tc_int and value.device == gs.device)
+    def must_cast(value, dtype):
+        return not (
+            isinstance(value, torch.Tensor)
+            and value.is_contiguous()
+            and value.dtype == dtype
+            and value.device == gs.device
+        )
 
     for arg1_max, arg2_max, getter_or_spec, setter, ti_data in (
         # SOLVER
@@ -2854,8 +2942,8 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_velocity, gs_s.set_dofs_velocity, gs_s.dofs_state.vel),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_position, gs_s.set_dofs_position, gs_s.dofs_state.pos),
         (gs_s.n_dofs, -1, gs_s.get_dofs_force_range, gs_s.set_dofs_force_range, gs_s.dofs_info.force_range),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_limit, None, gs_s.dofs_info.limit),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, None, gs_s.dofs_info.stiffness),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_limit, gs_s.set_dofs_limit, gs_s.dofs_info.limit),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, gs_s.set_dofs_stiffness, gs_s.dofs_info.stiffness),
         (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dofs_info.invweight),
         (gs_s.n_dofs, -1, gs_s.get_dofs_armature, gs_s.set_dofs_armature, gs_s.dofs_info.armature),
         (gs_s.n_dofs, -1, gs_s.get_dofs_damping, gs_s.set_dofs_damping, gs_s.dofs_info.damping),
@@ -2911,7 +2999,7 @@ def test_data_accessor(n_envs, batched, tol):
 
         # Check getter and setter without row or column masking
         if getter is not None:
-            datas = getter()
+            datas = deepcopy(getter())
             is_tuple = isinstance(datas, (tuple, list))
             if arg1_max > 0:
                 assert_allclose(getter(range(arg1_max)), datas, tol=tol)
@@ -2958,66 +3046,66 @@ def test_data_accessor(n_envs, batched, tol):
 
         # Check getter and setter for all possible combinations of row and column masking
         for i in range(arg1_max) if arg1_max > 0 else (None,):
-            for arg1 in get_all_supported_masks(i) if arg1_max > 0 else (None,):
+            if i is not None:
+                mask_i = [i, i + 1] if i < arg1_max - 1 else [i]
+            for arg1 in get_all_supported_masks(i, arg1_max):
                 for j in range(max(arg2_max, 1)) if arg2_max >= 0 else (None,):
-                    for arg2 in get_all_supported_masks(j) if arg2_max > 0 else (None,):
+                    if j is not None:
+                        mask_j = [j, j + 1] if j < arg2_max - 1 else [j]
+                    for arg2 in get_all_supported_masks(j, arg2_max):
                         if arg1 is None and arg2 is not None:
-                            unsafe = not must_cast(arg2)
                             if getter is not None:
-                                data = getter(arg2, unsafe=unsafe)
+                                data = deepcopy(getter(arg2))
                             else:
                                 if is_tuple:
-                                    data = [torch.ones((1, *shape)) for shape in spec]
+                                    data = [torch.ones((len(mask_j), *shape)) for shape in spec]
                                 else:
-                                    data = torch.ones((1, *spec))
+                                    data = torch.ones((len(mask_j), *spec))
                             if setter is not None:
-                                setter(data, arg2, unsafe=unsafe)
+                                setter(data, arg2)
                             if n_envs:
                                 if is_tuple:
-                                    data_ = [val[[j]] for val in datas]
+                                    data_ = [val[mask_j] for val in datas]
                                 else:
-                                    data_ = datas[[j]]
+                                    data_ = datas[mask_j]
                             else:
                                 data_ = datas
                         elif arg1 is not None and arg2 is None:
-                            unsafe = not must_cast(arg1)
                             if getter is not None:
-                                data = getter(arg1, unsafe=unsafe)
+                                data = deepcopy(getter(arg1))
                             else:
                                 if is_tuple:
-                                    data = [torch.ones((1, *shape)) for shape in spec]
+                                    data = [torch.ones((len(mask_i), *shape)) for shape in spec]
                                 else:
-                                    data = torch.ones((1, *spec))
+                                    data = torch.ones((len(mask_i), *spec))
                             if setter is not None:
                                 if is_tuple:
-                                    setter(*data, arg1, unsafe=unsafe)
+                                    setter(*data, arg1)
                                 else:
-                                    setter(data, arg1, unsafe=unsafe)
+                                    setter(data, arg1)
                             if is_tuple:
-                                data_ = [val[[i]] for val in datas]
+                                data_ = [val[mask_i] for val in datas]
                             else:
-                                data_ = datas[[i]]
+                                data_ = datas[mask_i]
                         else:
-                            unsafe = not any(map(must_cast, (arg1, arg2)))
                             if getter is not None:
-                                data = getter(arg1, arg2, unsafe=unsafe)
+                                data = deepcopy(getter(arg1, arg2))
                             else:
                                 if is_tuple:
-                                    data = [torch.ones((1, 1, *shape)) for shape in spec]
+                                    data = [torch.ones((len(mask_j), len(mask_i), *shape)) for shape in spec]
                                 else:
-                                    data = torch.ones((1, 1, *spec))
+                                    data = torch.ones((len(mask_j), len(mask_i), *spec))
                             if setter is not None:
-                                setter(data, arg1, arg2, unsafe=unsafe)
+                                setter(data, arg1, arg2)
                             if is_tuple:
-                                data_ = [val[[j], :][:, [i]] for val in datas]
+                                data_ = [val[mask_j, :][:, mask_i] for val in datas]
                             else:
-                                data_ = datas[[j], :][:, [i]]
+                                data_ = datas[mask_j, :][:, mask_i]
                         # FIXME: Not sure why tolerance must be increased for tests to pass
                         assert_allclose(data_, data, tol=(5.0 * tol))
 
-    for dofs_idx in (*get_all_supported_masks(0), None):
-        for envs_idx in (*(get_all_supported_masks(0) if n_envs > 0 else ()), None):
-            unsafe = not any(map(must_cast, (dofs_idx, envs_idx)))
+    for dofs_idx in (*get_all_supported_masks(0, gs_s.n_dofs), None):
+        for envs_idx in (*(get_all_supported_masks(0, gs_s.n_dofs) if n_envs > 0 else ()), None):
             dofs_pos = gs_s.get_dofs_position(dofs_idx, envs_idx)
             dofs_vel = gs_s.get_dofs_velocity(dofs_idx, envs_idx)
             gs_s.control_dofs_position(dofs_pos, dofs_idx, envs_idx)
@@ -3028,19 +3116,19 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.required
-def test_get_cartesian_space_variables(show_viewer, tol):
-    # FIXME: what is this test supposed to check??
+@pytest.mark.parametrize("enable_mujoco_compatibility", [True, False])
+def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
+    DT = 0.01
+    GRAVITY = 10.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
-            # by default, enable_mujoco_compatibility=False
-            # the test will fail if enable_mujoco_compatibility=True
-            enable_mujoco_compatibility=False,
+            enable_mujoco_compatibility=enable_mujoco_compatibility,
         ),
-        show_viewer=show_viewer,
     )
     box = scene.add_entity(
         gs.morphs.Box(
@@ -3048,25 +3136,20 @@ def test_get_cartesian_space_variables(show_viewer, tol):
             pos=(0.0, 0.0, 0.0),
         )
     )
+    (box_link,) = box.links
     scene.build()
 
-    for _ in range(2):
-        for link in box.links:
-            force = torch.tensor(np.array([0, 0, 0])).unsqueeze(0)
-            acc = 50.0
-            force[0, 0] = acc * link.inertial_mass
-            pos = link.get_pos()
-            vel = link.get_vel()
-
-            dof_vel = link.solver.get_dofs_velocity()
-            dof_pos = link.solver.get_qpos()
-
-            assert_allclose(dof_vel[:3], vel, atol=tol)
-            assert_allclose(dof_pos[:3], pos, atol=tol)
-
-            link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
-
-        scene.step()
+    scene.step()
+    dof_vel = scene.rigid_solver.get_dofs_velocity()
+    assert_allclose(dof_vel[:3], (0.0, 0.0, GRAVITY * DT), atol=gs.EPS)
+    vel = box_link.get_vel()
+    with pytest.raises(AssertionError) if enable_mujoco_compatibility else nullcontext():
+        assert_allclose(dof_vel[:3], vel, atol=gs.EPS)
+    dof_pos = scene.rigid_solver.get_qpos()
+    assert_allclose(dof_pos[:3], (0.0, 0.0, GRAVITY * DT**2), atol=gs.EPS)
+    pos = box_link.get_pos()
+    with pytest.raises(AssertionError) if enable_mujoco_compatibility else nullcontext():
+        assert_allclose(dof_pos[:3], pos, atol=gs.EPS)
 
 
 @pytest.mark.required
@@ -3209,6 +3292,7 @@ def test_mesh_primitive_COM(show_viewer, tol):
     assert_allclose(cube_COM[2], 0.25, atol=2e-3)
 
 
+@pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [0.1, 10.0])
 @pytest.mark.parametrize("box_box_detection", [False, True])

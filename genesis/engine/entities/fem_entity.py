@@ -13,7 +13,7 @@ from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING, to_gs_tensor, tensor_to_array
+from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
 
 from .base_entity import Entity
 
@@ -126,6 +126,34 @@ class FEMEntity(Entity):
     # ----------------------------------- basic entity ops -------------------------------
     # ------------------------------------------------------------------------------------
 
+    def _sanitize_verts_idx_local(self, verts_idx_local=None, envs_idx=None):
+        if verts_idx_local is None:
+            verts_idx_local = range(self.n_vertices)
+
+        if envs_idx is None:
+            verts_idx_local_ = broadcast_tensor(verts_idx_local, gs.tc_int, (-1,), ("envs_idx",))
+        else:
+            verts_idx_local_ = broadcast_tensor(verts_idx_local, gs.tc_int, (len(envs_idx), -1), ("envs_idx", ""))
+
+        # FIXME: This check is too expensive
+        # if not (0 <= verts_idx_local_ & verts_idx_local_ < self.n_vertices).all():
+        #     gs.raise_exception("Elements of `verts_idx_local' are out-of-range.")
+
+        return verts_idx_local_.contiguous()
+
+    def _sanitize_verts_tensor(self, tensor, dtype, verts_idx=None, envs_idx=None, element_shape=(), *, batched=True):
+        n_vertices = verts_idx.shape[-1] if verts_idx is not None else self.n_vertices
+        if batched:
+            assert envs_idx is not None
+            batch_shape = (len(envs_idx), n_vertices)
+            dim_names = ("envs_idx", "verts_idx", *("" for _ in element_shape))
+        else:
+            batch_shape = (n_vertices,)
+            dim_names = ("verts_idx", *("" for _ in element_shape))
+        tensor_shape = (*batch_shape, *element_shape)
+
+        return broadcast_tensor(tensor, dtype, tensor_shape, dim_names).contiguous()
+
     def set_position(self, pos):
         """
         Set the target position(s) for the FEM entity.
@@ -153,14 +181,14 @@ class FEMEntity(Entity):
         if pos.ndim == 1:
             if pos.shape == (3,):
                 pos = self.init_positions_COM_offset + pos
-                self._tgt["pos"] = pos.unsqueeze(0).tile((self._sim._B, 1, 1))
+                self._tgt["pos"] = pos[None].tile((self._sim._B, 1, 1))
                 is_valid = True
         elif pos.ndim == 2:
             if pos.shape == (self.n_vertices, 3):
-                self._tgt["pos"] = pos.unsqueeze(0).tile((self._sim._B, 1, 1))
+                self._tgt["pos"] = pos[None].tile((self._sim._B, 1, 1))
                 is_valid = True
             elif pos.shape == (self._sim._B, 3):
-                pos = self.init_positions_COM_offset.unsqueeze(0) + pos.unsqueeze(1)
+                pos = self.init_positions_COM_offset[None] + pos[:, None]
                 self._tgt["pos"] = pos
                 is_valid = True
         elif pos.ndim == 3:
@@ -200,10 +228,10 @@ class FEMEntity(Entity):
                 is_valid = True
         elif vel.ndim == 2:
             if vel.shape == (self.n_vertices, 3):
-                self._tgt["vel"] = vel.unsqueeze(0).tile((self._sim._B, 1, 1))
+                self._tgt["vel"] = vel[None].tile((self._sim._B, 1, 1))
                 is_valid = True
             elif vel.shape == (self._sim._B, 3):
-                self._tgt["vel"] = vel.unsqueeze(1).tile((1, self.n_vertices, 1))
+                self._tgt["vel"] = vel[:, None].tile((1, self.n_vertices, 1))
                 is_valid = True
         elif vel.ndim == 3:
             if vel.shape == (self._sim._B, self.n_vertices, 3):
@@ -241,7 +269,7 @@ class FEMEntity(Entity):
             is_valid = True
         elif actu.ndim == 1:
             if actu.shape == (n_groups,):
-                self._tgt["actu"] = actu.unsqueeze(0).tile((self._sim._B, 1))
+                self._tgt["actu"] = actu[None].tile((self._sim._B, 1))
                 is_valid = True
             elif actu.shape == (self.n_elements,):
                 gs.raise_exception("Cannot set per-element actuation.")
@@ -814,46 +842,16 @@ class FEMEntity(Entity):
             muscle_direction=muscle_direction,
         )
 
-    def _sanitize_input_tensor(self, tensor, dtype, unbatched_ndim=1):
-        _tensor = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
-
-        if _tensor.ndim < unbatched_ndim + 1:
-            _tensor = _tensor.repeat((self._sim._B, *((1,) * max(1, _tensor.ndim))))
-            if self._sim._B > 1:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        else:
-            _tensor = _tensor.contiguous()
-            if _tensor is not tensor:
-                gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-
-            if len(_tensor) != self._sim._B:
-                gs.raise_exception("Input tensor batch size must match the number of environments.")
-
-        if _tensor.ndim != unbatched_ndim + 1:
-            gs.raise_exception(f"Input tensor ndim is {_tensor.ndim}, should be {unbatched_ndim + 1}.")
-
-        return _tensor
-
-    def _sanitize_input_verts_idx(self, verts_idx_local):
-        verts_idx = self._sanitize_input_tensor(verts_idx_local, dtype=gs.tc_int, unbatched_ndim=1) + self._v_start
-        assert ((verts_idx >= 0) & (verts_idx < self._solver.n_vertices)).all(), "Vertex indices out of bounds."
-        return verts_idx
-
-    def _sanitize_input_poss(self, poss):
-        poss = self._sanitize_input_tensor(poss, dtype=gs.tc_float, unbatched_ndim=2)
-        assert poss.ndim == 3 and poss.shape[2] == 3, "Position tensor must have shape (B, num_verts, 3)."
-        return poss
-
     def set_vertex_constraints(
-        self, verts_idx, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
+        self, verts_idx_local, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
     ):
         """
         Set vertex constraints for specified vertices.
 
         Parameters
         ----------
-            verts_idx : array_like
-                List of vertex indices to constrain.
+            verts_idx_local : array_like
+                List of local vertex indices to constrain.
             target_poss : array_like, shape (len(verts_idx), 3), optional
                 List of target positions [x, y, z] for each vertex. If not provided, the initial positions are used.
             link : RigidLink
@@ -874,30 +872,27 @@ class FEMEntity(Entity):
         if not self._solver._constraints_initialized:
             self._solver.init_constraints()
 
+        use_current_poss = target_poss is None
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        verts_idx = self._sanitize_input_verts_idx(verts_idx)
+        verts_idx_local = self._sanitize_verts_idx_local(verts_idx_local, envs_idx)
+        verts_idx = verts_idx_local + self._v_start
+        target_poss = self._sanitize_verts_tensor(target_poss, gs.tc_float, verts_idx, envs_idx, (3,))
 
-        if target_poss is None:
-            target_poss = torch.zeros(
-                (verts_idx.shape[0], verts_idx.shape[1], 3), dtype=gs.tc_float, device=gs.device, requires_grad=False
-            )
+        if use_current_poss:
             self._kernel_get_verts_pos(self._sim.cur_substep_local, target_poss, verts_idx)
-        target_poss = self._sanitize_input_poss(target_poss)
-
-        assert (
-            len(envs_idx) == len(target_poss) == len(verts_idx)
-        ), "First dimension should match number of environments."
-        assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
 
         if link is None:
+            link_idx = -1
             link_init_pos = torch.zeros((self._sim._B, 3), dtype=gs.tc_float, device=gs.device)
             link_init_quat = torch.zeros((self._sim._B, 4), dtype=gs.tc_float, device=gs.device)
-            link_idx = -1
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
-            link_init_pos = self._sanitize_input_tensor(link.get_pos(), dtype=gs.tc_float)
-            link_init_quat = self._sanitize_input_tensor(link.get_quat(), dtype=gs.tc_float)
             link_idx = link.idx
+            link_init_pos = link.get_pos()
+            link_init_quat = link.get_quat()
+            if self._scene.n_envs == 0:
+                link_init_pos = link_init_pos[None]
+                link_init_quat = link_init_quat[None]
 
         self._solver._kernel_set_vertex_constraints(
             self._sim.cur_substep_local,
@@ -911,31 +906,36 @@ class FEMEntity(Entity):
             envs_idx,
         )
 
-    def update_constraint_targets(self, verts_idx, target_poss, envs_idx=None):
+    def update_constraint_targets(self, verts_idx_local, target_poss, envs_idx=None):
         """Update target positions for existing constraints."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
             return
 
+        assert target_poss is not None
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        verts_idx = self._sanitize_input_verts_idx(verts_idx)
-        target_poss = self._sanitize_input_poss(target_poss)
-        assert target_poss.shape[1] == verts_idx.shape[1], "Target position should be provided for each vertex."
+        verts_idx_local = self._sanitize_verts_idx_local(verts_idx_local, envs_idx)
+        verts_idx = verts_idx_local + self._v_start
+        target_poss = self._sanitize_verts_tensor(target_poss, gs.tc_float, verts_idx, envs_idx, (3,))
 
         self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
 
-    def remove_vertex_constraints(self, verts_idx=None, envs_idx=None):
+    def remove_vertex_constraints(self, verts_idx_local=None, envs_idx=None):
         """Remove constraints from specified vertices, or all if None."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
             return
 
-        if verts_idx is None:
+        # FIXME: GsTaichi 'fill' method is very inefficient. Try using zero-copy if possible.
+        if verts_idx_local is None:
             self._solver.vertex_constraints.is_constrained.fill(0)
-        else:
-            verts_idx = self._sanitize_input_verts_idx(verts_idx)
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-            self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
+            return
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        verts_idx_local = self._sanitize_verts_idx_local(verts_idx_local, envs_idx)
+        verts_idx = verts_idx_local + self._v_start
+
+        self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
     @ti.kernel
     def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
@@ -954,14 +954,8 @@ class FEMEntity(Entity):
         el2v : gs.Tensor
             Tensor of shape (n_elements, 4) mapping each element to its vertex indices.
         """
-
         el2v = gs.zeros((self.n_elements, 4), dtype=int, requires_grad=False, scene=self.scene)
-        self._solver._kernel_get_el2v(
-            element_el_start=self._el_start,
-            n_elements=self.n_elements,
-            el2v=el2v,
-        )
-
+        self._solver._kernel_get_el2v(element_el_start=self._el_start, n_elements=self.n_elements, el2v=el2v)
         return el2v
 
     @ti.kernel

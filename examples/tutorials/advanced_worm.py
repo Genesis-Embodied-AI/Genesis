@@ -1,5 +1,5 @@
 import math
-
+import os
 import torch
 import genesis as gs
 
@@ -72,7 +72,7 @@ elif isinstance(worm.material, gs.materials.FEM.Muscle):
 else:
     raise NotImplementedError
 
-pos_max, pos_min = pos.max(dim=0), pos.min(dim=0)
+pos_max, pos_min = pos.max(dim=0).values, pos.min(dim=0).values
 pos_range = pos_max - pos_min
 
 lu_thr, fh_thr = 0.3, 0.6
@@ -93,8 +93,9 @@ worm.set_muscle(
 
 
 ########################## run ##########################
+horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 scene.reset()
-for i in range(1000):
+for i in range(horizon):
     actu = (0.0, 0.0, 0.0, 1.0 * (0.5 + math.sin(0.005 * math.pi * i)))
     worm.set_actuation(actu)
     scene.step()

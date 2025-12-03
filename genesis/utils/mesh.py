@@ -473,8 +473,12 @@ def postprocess_collision_geoms(
 
 def parse_mesh_trimesh(path, group_by_material, scale, surface):
     meshes = []
-    for _, mesh in trimesh.load(path, force="scene", group_material=group_by_material, process=False).geometry.items():
-        meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface, metadata={"mesh_path": path}))
+    scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+    for tmesh in scene.geometry.values():
+        if not isinstance(tmesh, trimesh.Trimesh):
+            gs.raise_exception(f"Mesh type not supported: {path}")
+        mesh = gs.Mesh.from_trimesh(mesh=tmesh, scale=scale, surface=surface, metadata={"mesh_path": path})
+        meshes.append(mesh)
     return meshes
 
 

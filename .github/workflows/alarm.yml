@@ -474,9 +474,8 @@ jobs:
             }
 
             const title = (process.env.HAS_REGRESSIONS || '0') === '1'
-              ? 'Benchmark Regression Detected' : 'Abnormal Benchmark Result Detected';
-            const comment = `:warning: **${title}**
-            ➡️  **[Report](${process.env.REPORT_URL})**`;
+              ? '🔴 Benchmark Regression Detected' : '⚠️ Abnormal Benchmark Result Detected';
+            const comment = `**${title} ➡️ [Report](${process.env.REPORT_URL})**`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,

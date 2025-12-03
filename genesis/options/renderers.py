@@ -72,7 +72,7 @@ class RayTracer(RendererOptions):
     rr_depth: int = 0
     rr_threshold: float = 0.95
 
-    # environment texure
+    # environment texture
     env_surface: Optional[Surface] = None
     env_radius: float = 1000.0
     env_pos: tuple = (0.0, 0.0, 0.0)

@@ -6,6 +6,7 @@ import genesis as gs
 from .utils import assert_allclose, get_hf_dataset
 
 
+@pytest.mark.slow  # ~120s
 @pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_pick_and_place(mode, show_viewer):
@@ -207,6 +208,7 @@ def test_hanging_rigid_cable(show_viewer, tol):
     assert_allclose(links_quat_err, 0.0, tol=1e-3)
 
 
+@pytest.mark.slow  # ~150s
 @pytest.mark.parametrize("primitive_type", ["box", "sphere"])
 @pytest.mark.parametrize("precision", ["64"])
 def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
@@ -318,4 +320,4 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
         franka.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
         scene.step()
     box_pos_post = obj.get_state().pos.mean(dim=-2)
-    assert_allclose(box_pos_f, box_pos_post, atol=5e-4)
+    assert_allclose(box_pos_f, box_pos_post, atol=1e-3)

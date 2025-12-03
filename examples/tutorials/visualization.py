@@ -1,9 +1,10 @@
+import os
+import math
 import genesis as gs
 
 gs.init()
 
 scene = gs.Scene(
-    show_viewer=True,
     viewer_options=gs.options.ViewerOptions(
         res=(1280, 960),
         camera_pos=(3.5, 0.0, 2.5),
@@ -21,6 +22,7 @@ scene = gs.Scene(
     ),
     # renderer=gs.renderers.RayTracer(),
     renderer=gs.renderers.Rasterizer(),
+    show_viewer=True,
 )
 
 plane = scene.add_entity(
@@ -35,7 +37,7 @@ cam = scene.add_camera(
     pos=(3.5, 0.0, 2.5),
     lookat=(0, 0, 0.5),
     fov=30,
-    GUI=True,
+    GUI="PYTEST_VERSION" not in os.environ,
 )
 
 scene.build()
@@ -44,12 +46,12 @@ scene.build()
 rgb, depth, segmentation, normal = cam.render(rgb=True, depth=True, segmentation=True, normal=True)
 
 cam.start_recording()
-import numpy as np
 
+horizon = 120 if "PYTEST_VERSION" not in os.environ else 5
 for i in range(120):
     scene.step()
     cam.set_pose(
-        pos=(3.0 * np.sin(i / 60), 3.0 * np.cos(i / 60), 2.5),
+        pos=(3.0 * math.sin(i / 60), 3.0 * math.cos(i / 60), 2.5),
         lookat=(0, 0, 0.5),
     )
     cam.render()

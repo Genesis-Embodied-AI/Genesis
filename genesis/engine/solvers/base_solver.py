@@ -43,12 +43,12 @@ class Solver(RBC):
             self._gravity.from_numpy(gravity)
 
     @gs.assert_built
-    def set_gravity(self, gravity, envs_idx=None, *, unsafe=False):
+    def set_gravity(self, gravity, envs_idx=None):
         if self._gravity is None:
             gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return
 
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx, unsafe=unsafe)
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         gravity = torch.as_tensor(gravity, dtype=gs.tc_float, device=gs.device).expand((len(envs_idx), 3)).contiguous()
         assert gravity.shape == (len(envs_idx), 3), "Input gravity array should match (n_envs, 3)"
         if isinstance(self._gravity, ti.Field):
@@ -56,9 +56,9 @@ class Solver(RBC):
         else:
             _kernel_set_gravity_ndarray(gravity, envs_idx, self._gravity)
 
-    def get_gravity(self, envs_idx=None, *, unsafe=False):
+    def get_gravity(self, envs_idx=None):
         tensor = ti_to_torch(self._gravity, envs_idx, transpose=True)
-        return tensor.squeeze(0) if self.n_envs == 0 else tensor
+        return tensor[0] if self.n_envs == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}

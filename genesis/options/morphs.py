@@ -18,7 +18,7 @@ from .options import Options
 
 URDF_FORMAT = ".urdf"
 MJCF_FORMAT = ".xml"
-MESH_FORMATS = (".obj", ".ply", ".stl")
+MESH_FORMATS = (".obj", ".stl")
 GLTF_FORMATS = (".glb", ".gltf")
 USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
 
@@ -520,6 +520,8 @@ class FileMorph(Morph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    parse_glb_with_zup : bool, optional
+        Whether to use zup to load glb files. Defaults to False.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -546,6 +548,7 @@ class FileMorph(Morph):
     decompose_robot_error_threshold: float = float("inf")
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
+    parse_glb_with_zup: bool = False
     batch_fixed_verts: bool = False
 
     def __init__(self, **data):
@@ -705,7 +708,6 @@ class Mesh(FileMorph, TetGenMixin):
     """
 
     parse_glb_with_trimesh: bool = False
-    parse_glb_with_zup: bool = False
 
     # Rigid specific
     fixed: bool = False
@@ -795,6 +797,8 @@ class MJCF(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    parse_glb_with_zup : bool, optional
+        Whether to use zup to load glb files. Defaults to False.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -899,6 +903,8 @@ class URDF(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    parse_glb_with_zup : bool, optional
+        Whether to use zup to load glb files. Defaults to False.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -995,6 +1001,8 @@ class Drone(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    parse_glb_with_zup : bool, optional
+        Whether to use zup to load glb files. Defaults to False.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.

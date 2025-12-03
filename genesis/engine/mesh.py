@@ -195,7 +195,7 @@ class Mesh(RBC):
         Copy the mesh.
         """
         return Mesh(
-            mesh=self._mesh.copy(include_cache=True),
+            mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
             surface=self._surface.copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
             metadata=self._metadata.copy(),
@@ -221,7 +221,7 @@ class Mesh(RBC):
             surface.update_texture()
         else:
             surface = surface.copy()
-        mesh = mesh.copy(include_cache=True)
+        mesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
 
         try:  # always parse uvs because roughness and normal map also need uvs
             uvs = mesh.visual.uv.copy()
@@ -234,9 +234,10 @@ class Mesh(RBC):
         color_factor = None
         opacity = 1.0
 
-        if mesh.visual.defined:
-            if mesh.visual.kind == "texture":
-                material = mesh.visual.material
+        visual = mesh.visual
+        if isinstance(visual, trimesh.visual.texture.TextureVisuals) and visual.defined:
+            if visual.kind == "texture":
+                material = visual.material
 
                 # TODO: Parsing PBR in obj or not
                 # trimesh from .obj file will never use PBR material, but that from .glb file will
@@ -267,12 +268,15 @@ class Mesh(RBC):
                         else:
                             color_factor = (*color_factor[:3], color_factor[3] * opacity)
                 else:
-                    gs.raise_exception()
-
+                    gs.raise_exception(f"Unsupported Trimesh material type '{type(material)}'.")
             else:
                 # TODO: support vertex/face colors in luisa
-                color_factor = tuple(np.array(mesh.visual.main_color, dtype=np.float32) / 255.0)
-
+                color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
+        elif isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0:
+            color = np.unique(visual.vertex_colors, axis=0)
+            if len(color) > 1:
+                gs.raise_exception("Loading point clouds with heterogeneous colors is not supported.")
+            color_factor = tuple(np.array(color, dtype=np.float32) / 255.0)
         else:
             # use white color as default
             color_factor = (1.0, 1.0, 1.0, 1.0)
@@ -328,26 +332,24 @@ class Mesh(RBC):
     def from_morph_surface(cls, morph, surface=None):
         """
         Create a genesis.Mesh from morph and surface options.
-        If the morph is a Mesh morph (morphs.Mesh), it could contain multiple submeshes, so we return a list.
+        If the morph is a Mesh morph (morphs.Mesh), it could contain multiple sub-meshes, so we return a list.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
-                if not morph.parse_glb_with_zup:
+                if morph.parse_glb_with_trimesh:
+                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                else:
+                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                if morph.parse_glb_with_zup:
+                    for mesh in meshes:
+                        mesh.convert_to_zup()
+                else:
                     gs.logger.warning(
                         "GLTF is using y-up while Genesis uses z-up. Please set parse_glb_with_zup=True"
                         " in morph options if you find the mesh is 90-degree rotated. We will set parse_glb_with_zup=True"
                         " and rotate glb mesh by default later and gradually enforce this option."
-                    )
-                if morph.parse_glb_with_trimesh:
-                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
-                    if morph.parse_glb_with_zup:
-                        for mesh in meshes:
-                            mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
-                else:
-                    meshes = gltf_utils.parse_mesh_glb(
-                        morph.file, morph.group_by_material, morph.scale, surface, morph.parse_glb_with_zup
                     )
             elif morph.is_format(gs.options.morphs.USD_FORMATS):
                 import genesis.utils.usda as usda_utils
@@ -357,9 +359,7 @@ class Mesh(RBC):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
             else:
-                gs.raise_exception(
-                    f"File type not supported (yet). Submit a feature request if you need this: {morph.file}."
-                )
+                gs.raise_exception(f"File type not supported: {morph.file}")
 
             return meshes
 
@@ -376,7 +376,7 @@ class Mesh(RBC):
             else:
                 gs.raise_exception()
 
-            metadata = {"mesh_path": morph.file} if isinstance(morph, gs.options.morphs.FileMorph) else {}
+            metadata = {}
             return cls.from_trimesh(tmesh, surface=surface, metadata=metadata)
 
     def set_color(self, color):
@@ -394,6 +394,12 @@ class Mesh(RBC):
         Update the trimesh obj's visual attributes using its surface and uvs.
         """
         self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self.surface, self.uvs, len(self.verts))
+
+    def convert_to_zup(self):
+        """
+        Convert the mesh to z-up.
+        """
+        self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
 
     def apply_transform(self, T):
         """

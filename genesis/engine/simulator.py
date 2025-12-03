@@ -165,30 +165,21 @@ class Simulator(RBC):
     def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.Avatar):
             entity = self.avatar_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
-
         elif isinstance(material, gs.materials.Rigid):
             entity = self.rigid_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
-
         elif isinstance(material, gs.materials.MPM.Base):
             entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.SPH.Base):
             entity = self.sph_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.PBD.Base):
             entity = self.pbd_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.FEM.Base):
             entity = self.fem_solver.add_entity(self.n_entities, material, morph, surface)
-
         elif isinstance(material, gs.materials.Hybrid):
-            entity = HybridEntity(
-                self.n_entities, self.scene, material, morph, surface
-            )  # adding to solver is handled in the hybrid entity
-
+            # Note that adding to solver is handled in the hybrid entity
+            entity = HybridEntity(self.n_entities, self.scene, material, morph, surface)
         else:
             gs.raise_exception(f"Material not supported.: {material}")
 
@@ -275,9 +266,9 @@ class Simulator(RBC):
     # ------------------------------------------------------------------------------------
 
     def step(self, in_backward=False):
-        if self._rigid_only:  # "Only Advance!" --Thomas Wade :P
+        if self._rigid_only and not self._requires_grad:  # "Only Advance!" --Thomas Wade :P
             for _ in range(self._substeps):
-                self.rigid_solver.substep()
+                self.rigid_solver.substep(self.cur_substep_local)
                 self._cur_substep_global += 1
         else:
             self.process_input(in_backward=in_backward)

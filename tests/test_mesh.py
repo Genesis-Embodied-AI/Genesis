@@ -379,9 +379,15 @@ def test_urdf_with_existing_glb(tmp_path, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    robot_urdf = scene.add_entity(
+    robot_urdf_yup = scene.add_entity(
         gs.morphs.URDF(
             file=urdf_path,
+        ),
+    )
+    robot_urdf_zup = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+            parse_glb_with_zup=True,
         ),
     )
     robot_mesh = scene.add_entity(
@@ -390,7 +396,9 @@ def test_urdf_with_existing_glb(tmp_path, show_viewer):
             parse_glb_with_zup=True,
         ),
     )
-    check_gs_meshes(robot_urdf.vgeoms[0].vmesh, robot_mesh.vgeoms[0].vmesh, "robot")
+    check_gs_meshes(robot_urdf_zup.vgeoms[0].vmesh, robot_mesh.vgeoms[0].vmesh, "robot")
+    robot_urdf_yup.vgeoms[0].vmesh.convert_to_zup()
+    check_gs_meshes(robot_urdf_yup.vgeoms[0].vmesh, robot_mesh.vgeoms[0].vmesh, "robot")
 
 
 @pytest.mark.required

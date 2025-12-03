@@ -151,10 +151,8 @@ def main():
         spp=512,
     )
     scene.build()
-
-    ########################## forward + backward twice ##########################
     scene.reset()
-    horizon = 2000
+    horizon = 10
 
     for i in range(horizon):
         scene.step()
