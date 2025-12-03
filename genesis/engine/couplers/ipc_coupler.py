@@ -1689,10 +1689,15 @@ class IPCCoupler(RBC):
         import numpy as np
 
         rigid_solver = self.rigid_solver
+        is_parallelized = self.sim._scene.n_envs > 0
 
         # Get current link state from Genesis
-        link_pos = rigid_solver.get_links_pos(links_idx=link_idx, envs_idx=env_idx)
-        link_quat = rigid_solver.get_links_quat(links_idx=link_idx, envs_idx=env_idx)
+        if is_parallelized:
+            link_pos = rigid_solver.get_links_pos(links_idx=link_idx, envs_idx=env_idx)
+            link_quat = rigid_solver.get_links_quat(links_idx=link_idx, envs_idx=env_idx)
+        else:
+            link_pos = rigid_solver.get_links_pos(links_idx=link_idx)
+            link_quat = rigid_solver.get_links_quat(links_idx=link_idx)
 
         link_pos = link_pos.detach().cpu().numpy()
         link_quat = link_quat.detach().cpu().numpy()
