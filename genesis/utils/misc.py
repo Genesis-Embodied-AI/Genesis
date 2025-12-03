@@ -580,7 +580,7 @@ def ti_to_python(
                 # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:
-                    value_tc = value_tc[:, 0]
+                    value_tc = value_tc.reshape((*batch_shape, value.n))
                 value._tc = value_tc
                 value._T_tc = value_tc.movedim(batch_ndim - 1, 0) if (batch_ndim := len(batch_shape)) > 1 else value_tc
                 if gs.backend == gs.cpu:
