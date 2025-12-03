@@ -577,19 +577,21 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
-                value._tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
-                if (batch_ndim := len(batch_shape)) > 1:
-                    value._T_tc = value._tc.movedim(batch_ndim - 1, 0)
-                else:
-                    value._T_tc = value._tc
+                value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
+                if issubclass(data_type, ti.MatrixField) and value.m == 1:
+                    value_tc = value_tc[:, 0]
+                value._tc = value_tc
+                value._T_tc = value_tc.movedim(batch_ndim - 1, 0) if (batch_ndim := len(batch_shape)) > 1 else value_tc
                 if gs.backend == gs.cpu:
-                    value._np = value._tc.numpy()
+                    value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
         if copy:
             if to_torch:
                 out = out.clone()
-            else:
+            elif gs.backend != gs.cpu:
                 out = tensor_to_array(out)
+            else:
+                out = out.copy()
         return out
 
     # Keep track of taichi runtime to automatically clear cache if destroyed

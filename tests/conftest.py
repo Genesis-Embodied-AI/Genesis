@@ -548,12 +548,6 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip("No GPU available on this machine")
 
-        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
-        if gs.use_ndarray:
-            for mark in request.node.iter_markers("field_only"):
-                if not mark.args or mark.args[0]:
-                    pytest.skip("This test does not support GsTaichi dynamic array mode. Skipping...")
-
         yield
     finally:
         gs.destroy()
