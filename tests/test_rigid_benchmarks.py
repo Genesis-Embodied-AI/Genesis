@@ -391,7 +391,7 @@ def anymal_c(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _batched_franka(solver, n_envs, gjk, is_collision_free):
+def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -416,18 +416,46 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
+    ctrl = torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device)
+    if n_envs > 0:
+        ctrl = torch.tile(ctrl, (n_envs, 1))
     if is_collision_free:
-        franka.control_dofs_position(
-            torch.tile(
-                torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device), (n_envs, 1)
-            ),
-        )
+        franka.set_qpos(ctrl)
+        franka.control_dofs_position(ctrl)
+
+    vel0 = torch.zeros((franka.n_qs,), dtype=gs.tc_float, device=gs.device)
+    if n_envs > 0:
+        n_reset_envs = int(0.02 * n_envs)
+        reset_envs_idx = torch.randperm(n_envs)[:n_reset_envs]
+        vel0 = torch.tile(vel0, (n_reset_envs, 1))
+        qpos0 = ctrl[reset_envs_idx]
+    else:
+        reset_envs_idx = None
+        qpos0 = ctrl
+
+    dofs_stiffness = franka.get_dofs_stiffness()
+    dofs_damping = franka.get_dofs_damping()
 
     num_steps = 0
     is_recording = False
     time_start = time.time()
     while True:
         scene.step()
+        if accessors:
+            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
+            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
+            franka.set_dofs_stiffness(dofs_stiffness)
+            franka.set_dofs_damping(dofs_damping)
+            franka.get_ang()
+            franka.get_vel()
+            franka.get_dofs_position()
+            franka.get_dofs_velocity()
+            franka.get_links_pos()
+            franka.get_links_quat()
+            franka.get_links_vel()
+            franka.get_contacts()
+            franka.control_dofs_position(ctrl)
+
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
@@ -444,12 +472,17 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free):
 
 @pytest.fixture
 def batched_franka(solver, n_envs, gjk):
-    return _batched_franka(solver, n_envs, gjk, is_collision_free=False)
+    return _batched_franka(solver, n_envs, gjk, is_collision_free=False, accessors=False)
 
 
 @pytest.fixture
 def batched_franka_free(solver, n_envs, gjk):
-    return _batched_franka(solver, n_envs, gjk, is_collision_free=True)
+    return _batched_franka(solver, n_envs, gjk, is_collision_free=True, accessors=False)
+
+
+@pytest.fixture
+def batched_franka_accessors(solver, n_envs, gjk):
+    return _batched_franka(solver, n_envs, gjk, is_collision_free=True, accessors=True)
 
 
 def _duck_in_box(solver, n_envs, gjk, hard):
@@ -645,6 +678,8 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
         ("anymal_c", gs.constraint_solver.Newton, None, 30000, gs.gpu),
         ("anymal_c", None, None, 0, gs.gpu),
         ("anymal_c", None, None, 0, gs.cpu),
+        ("batched_franka_accessors", None, None, 0, gs.cpu),
+        ("batched_franka_accessors", None, None, 30000, gs.gpu),
         ("batched_franka_free", None, False, 30000, gs.gpu),
         ("batched_franka_free", None, True, 30000, gs.gpu),
         ("batched_franka", None, True, 30000, gs.gpu),

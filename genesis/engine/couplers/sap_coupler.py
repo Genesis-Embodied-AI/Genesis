@@ -357,10 +357,10 @@ class SAPCoupler(RBC):
         self.rigid_volume_verts_geom_idx.from_numpy(rigid_volume_verts_geom_idx_np)
         self.rigid_volume_elems_geom_idx = ti.field(gs.ti_int, shape=(self.n_rigid_volume_elems,))
         self.rigid_volume_elems_geom_idx.from_numpy(rigid_volume_elems_geom_idx_np)
-        # FIXME: Convert collision_pair_validity to field here because SAPCouler cannot support ndarray/field switch yet
-        np_collision_pair_validity = self.rigid_solver.collider._collider_info.collision_pair_validity.to_numpy()
-        self.rigid_collision_pair_validity = ti.field(gs.ti_int, shape=np_collision_pair_validity.shape)
-        self.rigid_collision_pair_validity.from_numpy(np_collision_pair_validity)
+        # FIXME: Convert collision_pair_idx to field here because SAPCoupler cannot support ndarray/field switch yet
+        np_collision_pair_idx = self.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+        self.rigid_collision_pair_idx = ti.field(gs.ti_int, shape=np_collision_pair_idx.shape)
+        self.rigid_collision_pair_idx.from_numpy(np_collision_pair_idx)
         self.rigid_pressure_field = ti.field(gs.ti_float, shape=(self.n_rigid_volume_verts,))
         self.rigid_pressure_field.from_numpy(rigid_pressure_field_np)
         self.rigid_pressure_gradient_rest = ti.field(gs.ti_vec3, shape=(self.n_rigid_volume_elems,))

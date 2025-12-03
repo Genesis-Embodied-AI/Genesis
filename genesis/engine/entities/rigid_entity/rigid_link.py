@@ -3,13 +3,14 @@ from typing import TYPE_CHECKING
 import gstaichi as ti
 import numpy as np
 import torch
+import trimesh
 from numpy.typing import ArrayLike
 
 import genesis as gs
-import trimesh
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
-from genesis.utils.misc import DeprecationError
+
+from genesis.utils.misc import DeprecationError, tensor_to_array
 
 from .rigid_geom import RigidGeom, RigidVisGeom, _kernel_get_free_verts, _kernel_get_fixed_verts
 
@@ -19,7 +20,6 @@ if TYPE_CHECKING:
     from genesis.ext.pyrender.interaction.vec3 import Pose
 
 
-@ti.data_oriented
 class RigidLink(RBC):
     """
     RigidLink class. One RigidEntity consists of multiple RigidLinks, each of which is a rigid body and could consist of multiple RigidGeoms (`link.geoms`, for collision) and RigidVisGeoms (`link.vgeoms` for visualization).
@@ -262,7 +262,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the position. If None, get the position of all environments. Default is None.
         """
-        return self._solver.get_links_pos([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_pos(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_quat(self, envs_idx=None):
@@ -274,7 +274,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
         """
-        return self._solver.get_links_quat([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_quat(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_vel(self, envs_idx=None) -> torch.Tensor:
@@ -286,7 +286,7 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
         """
-        return self._solver.get_links_vel([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_vel(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_ang(self, envs_idx=None) -> torch.Tensor:
@@ -298,14 +298,14 @@ class RigidLink(RBC):
         envs_idx : int or array of int, optional
             The indices of the environments to get the angular velocity. If None, get the angular velocity of all environments. Default is None.
         """
-        return self._solver.get_links_ang([self._idx], envs_idx).squeeze(-2)
+        return self._solver.get_links_ang(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_verts(self):
         """
         Get the vertices of the link's collision body (concatenation of all `link.geoms`) in the world frame.
         """
-        self._solver.update_verts_for_geoms(range(self.geom_start, self.geom_end))
+        self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
 
         if self.is_fixed and not self._entity._batch_fixed_verts:
             tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
@@ -314,32 +314,8 @@ class RigidLink(RBC):
             tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
             _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
             if self._solver.n_envs == 0:
-                tensor = tensor.squeeze(0)
+                tensor = tensor[0]
         return tensor
-
-    @gs.assert_built
-    def get_vverts(self):
-        """
-        Get the vertices of the link's visualization body (concatenation of all `link.vgeoms`) in the world frame.
-        """
-        tensor = torch.empty((self._solver._B, self.n_vverts, 3), dtype=gs.tc_float, device=gs.device)
-        self._kernel_get_vverts(tensor)
-        if self._solver.n_envs == 0:
-            tensor = tensor.squeeze(0)
-        return tensor
-
-    @ti.kernel
-    def _kernel_get_vverts(self, tensor: ti.types.ndarray()):
-        for i_vg_, i_b in ti.ndrange(self.n_vgeoms, self._solver._B):
-            i_vg = i_vg_ + self._vgeom_start
-            for i_v in range(self._solver.vgeoms_info.vvert_start[i_vg], self._solver.vgeoms_info.vvert_end[i_vg]):
-                vvert_pos = gu.ti_transform_by_trans_quat(
-                    self._solver.vverts_info.init_pos[i_v],
-                    self._solver.vgeoms_state.pos[i_vg, i_b],
-                    self._solver.vgeoms_state.quat[i_vg, i_b],
-                )
-                for j in range(3):
-                    tensor[i_b, i_v - self._vvert_start, j] = vvert_pos[j]
 
     @gs.assert_built
     def get_AABB(self):
@@ -569,7 +545,7 @@ class RigidLink(RBC):
         The invweight of the link.
         """
         if self._invweight is None:
-            self._invweight = self._solver.get_links_invweight([self._idx]).cpu().numpy()[..., 0, :]
+            self._invweight = tensor_to_array(self._solver.get_links_invweight(self._idx))[..., 0, :]
         return self._invweight
 
     @property

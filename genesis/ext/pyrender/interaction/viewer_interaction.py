@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, cast
-from typing_extensions import override
+from typing_extensions import override  # Made it into standard lib from Python 3.12
 from threading import Lock as threading_Lock
 
 import numpy as np

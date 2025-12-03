@@ -237,7 +237,7 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         assert_allclose(state.vel, 0.0, tol=2e-2)
 
         # Landed vertically
-        pos = tensor_to_array(state.pos.squeeze(0))
+        pos = tensor_to_array(state.pos[0])
         BV, *_ = igl.bounding_box(pos)
         entity_center = 0.5 * (BV[0] + BV[-1])
         if coupler_type == gs.options.SAPCouplerOptions:
@@ -320,7 +320,7 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
         assert_allclose(state.vel, 0.0, tol=0.05)
 
         # More or less at the initial position
-        pos = tensor_to_array(state.pos.squeeze(0))
+        pos = tensor_to_array(state.pos[0])
         BV, *_ = igl.bounding_box(pos)
         entity_center = 0.5 * (BV[0] + BV[-1])
         assert_allclose(entity_center[:2], 0.0, tol=0.02)
@@ -370,14 +370,8 @@ def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
     scene.build()
 
     verts_idx = [0, 1, 2, 3, 4, 5, 6, 7]
-
     target_poss = box.init_positions[verts_idx]
-    box.set_vertex_constraints(
-        verts_idx=verts_idx,
-        target_poss=target_poss,
-        is_soft_constraint=True,
-        stiffness=CONSTRAINT_STIFFNESS,
-    )
+    box.set_vertex_constraints(verts_idx, target_poss, is_soft_constraint=True, stiffness=CONSTRAINT_STIFFNESS)
     if show_viewer:
         scene.draw_debug_spheres(poss=target_poss, radius=0.01, color=(1, 0, 1, 1))
 
@@ -447,7 +441,7 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
         target_poss[1, 0] = (MOTION_RADIUS + BOX_SIZE) * math.sin(MOTION_SPEED * it)
         target_poss[1, 1] = (MOTION_RADIUS + BOX_SIZE) * math.cos(MOTION_SPEED * it)
         target_poss[1, 2] = HEIGHT + BOX_SIZE
-        box.set_vertex_constraints(verts_idx=VERTICES_IDX, target_poss=target_poss)
+        box.set_vertex_constraints(VERTICES_IDX, target_poss)
 
         # Do one simulation step
         scene.step(update_visualizer=False)
@@ -547,7 +541,7 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
     sphere_poss -= torch.tensor(sphere.morph.pos)
     sphere_center_idx = int(torch.argmin(torch.linalg.norm(sphere_poss, dim=-1)))
     sphere_target_poss = sphere.init_positions[sphere_center_idx]
-    sphere.set_vertex_constraints(verts_idx=[sphere_center_idx], target_poss=sphere_target_poss[None])
+    sphere.set_vertex_constraints(sphere_center_idx, sphere_target_poss)
 
     # Simulate
     n_steps = int(0.5 * math.pi / MOTION_SPEED)
@@ -561,7 +555,7 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
         target_poss[1, 0] = (MOTION_RADIUS + BOX_SIZE) * math.sin(MOTION_SPEED * it)
         target_poss[1, 1] = (MOTION_RADIUS + BOX_SIZE) * math.cos(MOTION_SPEED * it)
         target_poss[1, 2] = HEIGHT
-        box.set_vertex_constraints(verts_idx=VERTICES_IDX, target_poss=target_poss)
+        box.set_vertex_constraints(VERTICES_IDX, target_poss)
 
         # Do one simulation step
         scene.step(update_visualizer=False)
@@ -606,7 +600,7 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
         scene.step()
 
     # Disable box constraints only
-    box.remove_vertex_constraints(verts_idx=VERTICES_IDX)
+    box.remove_vertex_constraints(VERTICES_IDX)
 
     # Simulate for a while
     n_steps = 40

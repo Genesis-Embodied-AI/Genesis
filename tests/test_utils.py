@@ -107,6 +107,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args):
     return kernel
 
 
+@pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):

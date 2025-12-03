@@ -1,6 +1,7 @@
 import base64
 import ctypes
 import gc
+import logging
 import os
 import re
 import subprocess
@@ -15,7 +16,6 @@ import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
-from syrupy.location import PyTestLocation
 
 has_display = True
 try:
@@ -66,9 +66,12 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl
 def pytest_cmdline_main(config: pytest.Config) -> None:
-    # Force disabling forked for non-linux systems
-    if not sys.platform.startswith("linux"):
-        config.option.forked = False
+    # Make sure that no unsupported markers have been specified in CLI
+    declared_markers = set(name for spec in config.getini("markers") if (name := spec.split(":")[0]) != "forked")
+    try:
+        eval(config.option.markexpr, {"__builtins__": {}}, {key: None for key in declared_markers})
+    except NameError as e:
+        raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
@@ -79,6 +82,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         if backend == "cpu":
             raise ValueError("Running benchmarks on CPU is not supported.")
         config.option.backend = "gpu"
+
+    # Force disabling forked for non-linux systems
+    if not sys.platform.startswith("linux"):
+        config.option.forked = False
 
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
@@ -106,6 +113,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
     # relying on this mechanism is fragile.
     os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
+
+    # Disable GsTaichi dynamic array mode by default on MacOS because it is not supported by Metal
+    if sys.platform == "darwin":
+        os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
 
     # Enforce special environment variable before importing test modules if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
@@ -491,7 +502,7 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         yield
         return
 
-    logging_level = request.config.getoption("--log-cli-level")
+    logging_level = request.config.getoption("--log-cli-level", logging.INFO)
     debug = request.config.getoption("--dev")
 
     if not taichi_offline_cache:
@@ -536,12 +547,6 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip("No GPU available on this machine")
-
-        # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
-        if gs.use_ndarray:
-            for mark in request.node.iter_markers("field_only"):
-                if not mark.args or mark.args[0]:
-                    pytest.skip("This test does not support GsTaichi dynamic array mode. Skipping...")
 
         yield
     finally:
