@@ -5240,8 +5240,12 @@ def func_forward_velocity_entity(
         if ti.static(not static_rigid_sim_config.is_backward)
         else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
     ):
+        W = ti.static(func_write_field_if_backward)
+        R = ti.static(func_read_field_if_backward)
+        A = ti.static(func_atomic_add_field_if_backward)
+        BW = ti.static(static_rigid_sim_config.is_backward)
+
         i_l = i_l_ if ti.static(not static_rigid_sim_config.is_backward) else (i_l_ + entities_info.link_start[i_e])
-        backward = ti.static(static_rigid_sim_config.is_backward)
 
         if func_check_index_range(
             i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], static_rigid_sim_config.is_backward
@@ -5249,19 +5253,15 @@ def func_forward_velocity_entity(
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
             n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
-            cvel_vel = func_write_field_if_backward(
-                links_state.cd_vel_bw, i_l, 0, i_b, ti.Vector.zero(gs.ti_float, 3), backward
-            )
-            cvel_ang = func_write_field_if_backward(
-                links_state.cd_ang_bw, i_l, 0, i_b, ti.Vector.zero(gs.ti_float, 3), backward
-            )
+            cvel_vel = W(links_state.cd_vel_bw, i_l, 0, i_b, ti.Vector.zero(gs.ti_float, 3), BW)
+            cvel_ang = W(links_state.cd_ang_bw, i_l, 0, i_b, ti.Vector.zero(gs.ti_float, 3), BW)
 
             if links_info.parent_idx[I_l] != -1:
-                cvel_vel = func_write_field_if_backward(
-                    links_state.cd_vel_bw, i_l, 0, i_b, links_state.cd_vel[links_info.parent_idx[I_l], i_b], backward
+                cvel_vel = W(
+                    links_state.cd_vel_bw, i_l, 0, i_b, links_state.cd_vel[links_info.parent_idx[I_l], i_b], BW
                 )
-                cvel_ang = func_write_field_if_backward(
-                    links_state.cd_ang_bw, i_l, 0, i_b, links_state.cd_ang[links_info.parent_idx[I_l], i_b], backward
+                cvel_ang = W(
+                    links_state.cd_ang_bw, i_l, 0, i_b, links_state.cd_ang[links_info.parent_idx[I_l], i_b], BW
                 )
 
             for i_j_ in (
@@ -5284,22 +5284,11 @@ def func_forward_velocity_entity(
 
                     if joint_type == gs.JOINT_TYPE.FREE:
                         for i_3 in ti.static(range(3)):
-                            cvel_vel = cvel_vel + func_atomic_add_field_if_backward(
-                                links_state.cd_vel_bw,
-                                i_l,
-                                curr_i_j,
-                                i_b,
-                                dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b],
-                                backward,
-                            )
-                            cvel_ang = cvel_ang + func_atomic_add_field_if_backward(
-                                links_state.cd_ang_bw,
-                                i_l,
-                                curr_i_j,
-                                i_b,
-                                dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b],
-                                backward,
-                            )
+                            _vel = dofs_state.cdof_vel[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
+                            _ang = dofs_state.cdof_ang[dof_start + i_3, i_b] * dofs_state.vel[dof_start + i_3, i_b]
+
+                            cvel_vel = cvel_vel + A(links_state.cd_vel_bw, i_l, curr_i_j, i_b, _vel, BW)
+                            cvel_ang = cvel_ang + A(links_state.cd_ang_bw, i_l, curr_i_j, i_b, _ang, BW)
 
                         for i_3 in ti.static(range(3)):
                             (
@@ -5311,12 +5300,8 @@ def func_forward_velocity_entity(
                                 dofs_state.cdofd_ang[dof_start + i_3 + 3, i_b],
                                 dofs_state.cdofd_vel[dof_start + i_3 + 3, i_b],
                             ) = gu.motion_cross_motion(
-                                func_read_field_if_backward(
-                                    links_state.cd_ang_bw, i_l, curr_i_j, i_b, cvel_ang, backward
-                                ),
-                                func_read_field_if_backward(
-                                    links_state.cd_vel_bw, i_l, curr_i_j, i_b, cvel_vel, backward
-                                ),
+                                R(links_state.cd_ang_bw, i_l, curr_i_j, i_b, cvel_ang, BW),
+                                R(links_state.cd_vel_bw, i_l, curr_i_j, i_b, cvel_vel, BW),
                                 dofs_state.cdof_ang[dof_start + i_3 + 3, i_b],
                                 dofs_state.cdof_vel[dof_start + i_3 + 3, i_b],
                             )
@@ -5326,24 +5311,14 @@ def func_forward_velocity_entity(
                             links_state.cd_ang_bw[i_l, next_i_j, i_b] = links_state.cd_ang_bw[i_l, curr_i_j, i_b]
 
                         for i_3 in ti.static(range(3)):
-                            cvel_vel = cvel_vel + func_atomic_add_field_if_backward(
-                                links_state.cd_vel_bw,
-                                i_l,
-                                next_i_j,
-                                i_b,
-                                dofs_state.cdof_vel[dof_start + i_3 + 3, i_b]
-                                * dofs_state.vel[dof_start + i_3 + 3, i_b],
-                                backward,
+                            _vel = (
+                                dofs_state.cdof_vel[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
                             )
-                            cvel_ang = cvel_ang + func_atomic_add_field_if_backward(
-                                links_state.cd_ang_bw,
-                                i_l,
-                                next_i_j,
-                                i_b,
-                                dofs_state.cdof_ang[dof_start + i_3 + 3, i_b]
-                                * dofs_state.vel[dof_start + i_3 + 3, i_b],
-                                backward,
+                            _ang = (
+                                dofs_state.cdof_ang[dof_start + i_3 + 3, i_b] * dofs_state.vel[dof_start + i_3 + 3, i_b]
                             )
+                            cvel_vel = cvel_vel + A(links_state.cd_vel_bw, i_l, next_i_j, i_b, _vel, BW)
+                            cvel_ang = cvel_ang + A(links_state.cd_ang_bw, i_l, next_i_j, i_b, _ang, BW)
 
                     else:
                         for i_d_ in (
@@ -5356,12 +5331,8 @@ def func_forward_velocity_entity(
                                 i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
                             ):
                                 dofs_state.cdofd_ang[i_d, i_b], dofs_state.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
-                                    func_read_field_if_backward(
-                                        links_state.cd_ang_bw, i_l, curr_i_j, i_b, cvel_ang, backward
-                                    ),
-                                    func_read_field_if_backward(
-                                        links_state.cd_vel_bw, i_l, curr_i_j, i_b, cvel_vel, backward
-                                    ),
+                                    R(links_state.cd_ang_bw, i_l, curr_i_j, i_b, cvel_ang, BW),
+                                    R(links_state.cd_vel_bw, i_l, curr_i_j, i_b, cvel_vel, BW),
                                     dofs_state.cdof_ang[i_d, i_b],
                                     dofs_state.cdof_vel[i_d, i_b],
                                 )
@@ -5379,29 +5350,13 @@ def func_forward_velocity_entity(
                             if func_check_index_range(
                                 i_d, dof_start, joints_info.dof_end[I_j], static_rigid_sim_config.is_backward
                             ):
-                                cvel_vel = cvel_vel + func_atomic_add_field_if_backward(
-                                    links_state.cd_vel_bw,
-                                    i_l,
-                                    next_i_j,
-                                    i_b,
-                                    dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b],
-                                    backward,
-                                )
-                                cvel_ang = cvel_ang + func_atomic_add_field_if_backward(
-                                    links_state.cd_ang_bw,
-                                    i_l,
-                                    next_i_j,
-                                    i_b,
-                                    dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b],
-                                    backward,
-                                )
+                                _vel = dofs_state.cdof_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                                _ang = dofs_state.cdof_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+                                cvel_vel = cvel_vel + A(links_state.cd_vel_bw, i_l, next_i_j, i_b, _vel, BW)
+                                cvel_ang = cvel_ang + A(links_state.cd_ang_bw, i_l, next_i_j, i_b, _ang, BW)
 
-            links_state.cd_vel[i_l, i_b] = func_read_field_if_backward(
-                links_state.cd_vel_bw, i_l, n_joints, i_b, cvel_vel, backward
-            )
-            links_state.cd_ang[i_l, i_b] = func_read_field_if_backward(
-                links_state.cd_ang_bw, i_l, n_joints, i_b, cvel_ang, backward
-            )
+            links_state.cd_vel[i_l, i_b] = R(links_state.cd_vel_bw, i_l, n_joints, i_b, cvel_vel, BW)
+            links_state.cd_ang[i_l, i_b] = R(links_state.cd_ang_bw, i_l, n_joints, i_b, cvel_ang, BW)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
