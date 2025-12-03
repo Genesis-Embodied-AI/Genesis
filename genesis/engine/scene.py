@@ -276,6 +276,11 @@ class Scene(RBC):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
         # Validate rigid_options against sim_options
+        if sim_options.requires_grad and gs.use_ndarray:
+            gs.logger.warning(
+                "Use GsTaichi dynamic array mode while enabling gradient computation is not recommended. Please "
+                "enable performance mode at init for efficiency, e.g. 'gs.init(..., performance_mode=True)'."
+            )
         if rigid_options.box_box_detection is None:
             rigid_options.box_box_detection = not sim_options.requires_grad
         elif rigid_options.box_box_detection and sim_options.requires_grad:
