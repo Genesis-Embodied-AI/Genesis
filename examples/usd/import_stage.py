@@ -16,11 +16,12 @@ scene = gs.Scene(
         max_collision_pairs = 10000,
     ),
     show_viewer=True,
-    
 )
 
+AssetRoot = "D:/Assets"
+
 # load a stage from USD file
-entities = scene.add_stage("D:\\Assets\\Lightwheel_Kitchen001\\Kitchen001\\Kitchen001.usd")
+entities = scene.add_stage(f"{AssetRoot}/Lightwheel_Kitchen001/Kitchen001/Kitchen001.usd")
 
 # Build the scene
 scene.build()

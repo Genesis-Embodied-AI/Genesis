@@ -34,51 +34,6 @@ def bfs_iterator(root: Usd.Prim):
         for child in prim.GetChildren():
             queue.append(child)
 
-def compute_usd_global_transform(prim: Usd.Prim) -> np.ndarray:
-    """
-    Convert a USD transform to a 4x4 numpy transformation matrix.
-    
-    Parameters
-    ----------
-    prim : Usd.Prim
-        The prim to get the global transform for.
-        
-    Returns
-    -------
-    np.ndarray, shape (4, 4)
-        The global transformation matrix.
-    """
-    imageable = UsdGeom.Imageable(prim)
-    if not imageable:
-        return np.eye(4)
-    # USD's transform is left-multiplied, while we use right-multiplied convention in genesis.
-    t = imageable.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetTranspose()
-    return np.array(t)
-
-def compute_usd_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim = None) -> np.ndarray:
-    """
-    Compute the transformation matrix from the reference prim to the prim.
-    
-    Parameters
-    ----------
-    prim : Usd.Prim
-        The prim to get the transform for.
-    ref_prim : Usd.Prim
-        The reference prim (transform will be relative to this).
-        
-    Returns
-    -------
-    np.ndarray, shape (4, 4)
-        The transformation matrix relative to ref_prim.
-    """
-    prim_world_transform = compute_usd_global_transform(prim)
-    if ref_prim is None:
-        return prim_world_transform
-    ref_prim_to_world = compute_usd_global_transform(ref_prim)
-    world_to_ref_prim = np.linalg.inv(ref_prim_to_world)
-    prim_to_ref_prim_transform = world_to_ref_prim @ prim_world_transform
-    return prim_to_ref_prim_transform
-
 def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     """
     Convert a USD Gf.Quatf to a numpy array (w, x, y, z format).
@@ -121,7 +76,7 @@ def extract_rotation_and_scale(trans_matrix: np.ndarray) -> tuple[np.ndarray, np
     scale = np.diag(S)
     return R, scale
 
-def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim = None) -> tuple[np.ndarray, trimesh.Trimesh]:
+def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) -> tuple[np.ndarray, trimesh.Trimesh]:
     """
     Convert a USD mesh to a trimesh mesh and compute its Genesis transform relative to ref_prim.
     
@@ -226,6 +181,51 @@ def extract_quat_from_transform(trans_matrix: np.ndarray) -> np.ndarray:
     quat = gu.R_to_quat(R)
     return quat
 
+def compute_usd_global_transform(prim: Usd.Prim) -> np.ndarray:
+    """
+    Convert a USD transform to a 4x4 numpy transformation matrix.
+    
+    Parameters
+    ----------
+    prim : Usd.Prim
+        The prim to get the global transform for.
+        
+    Returns
+    -------
+    np.ndarray, shape (4, 4)
+        The global transformation matrix.
+    """
+    imageable = UsdGeom.Imageable(prim)
+    if not imageable:
+        return np.eye(4)
+    # USD's transform is left-multiplied, while we use right-multiplied convention in genesis.
+    t = imageable.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetTranspose()
+    return np.array(t)
+
+def compute_usd_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> np.ndarray:
+    """
+    Compute the transformation matrix from the reference prim to the prim.
+    
+    Parameters
+    ----------
+    prim : Usd.Prim
+        The prim to get the transform for.
+    ref_prim : Usd.Prim
+        The reference prim (transform will be relative to this).
+        
+    Returns
+    -------
+    np.ndarray, shape (4, 4)
+        The transformation matrix relative to ref_prim.
+    """
+    prim_world_transform = compute_usd_global_transform(prim)
+    if ref_prim is None:
+        return prim_world_transform
+    ref_prim_to_world = compute_usd_global_transform(ref_prim)
+    world_to_ref_prim = np.linalg.inv(ref_prim_to_world)
+    prim_to_ref_prim_transform = world_to_ref_prim @ prim_world_transform
+    return prim_to_ref_prim_transform
+
 def compute_gs_global_transform(prim: Usd.Prim) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute Genesis global transform (Q^w) from USD prim.
@@ -259,7 +259,7 @@ def compute_gs_global_transform(prim: Usd.Prim) -> tuple[np.ndarray, np.ndarray]
     
     return Q_w, S
 
-def compute_gs_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim = None) -> tuple[np.ndarray, np.ndarray]:
+def compute_gs_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute Genesis transform (Q^i_j) relative to a reference prim.
     This computes the transform in Genesis tree structure (without scaling).
@@ -293,157 +293,83 @@ def compute_gs_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim = None) -> t
     
     return Q_i_j, S_prim
 
-def convert_usd_joint_axis_to_gs_link_space(
-    joint_prim: Usd.Prim,
-    body_prim: Usd.Prim,
-    axis_str: str,
-    gs_link_prim: Usd.Prim
+def convert_usd_joint_axis_to_gs(
+    usd_local_joint_axis: np.ndarray,
+    usd_link_prim: Usd.Prim|None
 ) -> np.ndarray:
     """
-    Convert USD joint axis from USD world space to Genesis link local space.
-    
-    The joint axis is defined in USD body local space. We convert it to world space,
-    then to Genesis link local space.
+    Convert USD joint axis from USD link local space to Genesis link local space.
     
     Parameters
     ----------
-    joint_prim : Usd.Prim
-        The joint prim.
-    body_prim : Usd.Prim
-        The body (link) prim that defines the joint axis local space.
-    axis_str : str
-        The axis string ('X', 'Y', or 'Z').
-    gs_link_prim : Usd.Prim
-        The Genesis link prim to convert the axis to.
+    usd_local_joint_axis : np.ndarray, shape (3,)
+        The joint axis in USD link local space.
+    usd_link_prim : Usd.Prim
+        The USD link prim.
         
     Returns
     -------
     np.ndarray, shape (3,)
-        The axis vector in Genesis link local space.
+        The joint axis in Genesis link local space.
     """
-    # Get axis vector in body local space (axis_str defines axis in body0's local space)
-    if axis_str == "X":
-        axis_local = np.array([1.0, 0.0, 0.0])
-    elif axis_str == "Y":
-        axis_local = np.array([0.0, 1.0, 0.0])
-    elif axis_str == "Z":
-        axis_local = np.array([0.0, 0.0, 1.0])
-    else:
-        gs.raise_exception(f"Unsupported joint axis {axis_str}.")
     
-    # Apply joint rotation if available (LocalRot0Attr rotates the axis in body0's local space)
-    from pxr import UsdPhysics
-    joint_api = UsdPhysics.Joint(joint_prim)
-    if joint_api.GetLocalRot0Attr():
-        quat = usd_quat_to_numpy(joint_api.GetLocalRot0Attr().Get())
-        R_joint = gu.quat_to_R(quat)
-        axis_local = R_joint @ axis_local
+    if usd_link_prim is None:
+        # if usd_link_prim is None, the joint axis is in the world frame
+        return usd_local_joint_axis 
     
-    # Transform axis to world space: axis^w = T^w_body · axis
-    # The axis is already in body0's local space (after LocalRot0Attr), so transform directly by body0's global transform
-    T_w_body = compute_usd_global_transform(body_prim)
-    axis_world = T_w_body[:3, :3] @ axis_local
-    
-    # Convert to Genesis link local space: axis^0' = (Q^w_0')^(-1) · axis^w
-    Q_w_gs_link, _ = compute_gs_global_transform(gs_link_prim)
-    Q_w_gs_link_inv = np.linalg.inv(Q_w_gs_link)
-    axis_gs_link = Q_w_gs_link_inv[:3, :3] @ axis_world
-    
-    return axis_gs_link
+    T_w = compute_usd_global_transform(usd_link_prim)
+    axis_w = T_w[:3, :3] @ usd_local_joint_axis
+    Q_w, _ = compute_gs_global_transform(usd_link_prim)
+    Q_w_inv = np.linalg.inv(Q_w)
+    gs_local_joint_axis = Q_w_inv[:3, :3] @ axis_w
 
-def convert_usd_joint_pos_to_gs_link_space(
-    joint_prim: Usd.Prim,
-    body_prim: Usd.Prim,
-    gs_link_prim: Usd.Prim
+    return gs_local_joint_axis
+
+def convert_usd_joint_pos_to_gs(
+    usd_local_joint_pos: np.ndarray,
+    usd_link_prim: Usd.Prim|None
 ) -> np.ndarray:
     """
-    Convert USD joint position from USD world space to Genesis link local space.
+    Convert USD joint position from USD link local space to Genesis link local space.
     
     Parameters
     ----------
-    joint_prim : Usd.Prim
-        The joint prim.
-    body_prim : Usd.Prim
-        The body (link) prim that defines the joint position local space.
-    gs_link_prim : Usd.Prim
-        The Genesis link prim to convert the position to.
+    usd_local_joint_pos : np.ndarray, shape (3,)
+        The joint position in USD link local space.
+    usd_link_prim : Usd.Prim
+        The USD link prim.
         
     Returns
     -------
     np.ndarray, shape (3,)
-        The position in Genesis link local space.
+        The joint position in Genesis link local space.
     """
-    from pxr import UsdPhysics
-    joint_api = UsdPhysics.Joint(joint_prim)
+    if usd_link_prim is None:
+        # if usd_link_prim is None, the joint position is in the world frame
+        return usd_local_joint_pos
     
-    # Get joint position in body local space (LocalPos0Attr is relative to body0)
-    # LocalPos0Attr defines the joint frame origin in body0's local space
-    if joint_api.GetLocalPos0Attr():
-        pos_local = np.array(joint_api.GetLocalPos0Attr().Get(), dtype=np.float64)
-    else:
-        pos_local = gu.zero_pos()
-    
-    # Transform position to world space: P^w = T^w_body · P
-    # LocalPos0Attr is already in body0's local space, so we just need to transform by body0's global transform
-    T_w_body = compute_usd_global_transform(body_prim)
-    pos_world = T_w_body[:3, :3] @ pos_local + T_w_body[:3, 3]
-    
-    # Convert to Genesis link local space: P^0' = (Q^w_0')^(-1) · (P^w - t^w_0')
-    Q_w_gs_link, _ = compute_gs_global_transform(gs_link_prim)
-    Q_w_gs_link_inv = np.linalg.inv(Q_w_gs_link)
-    pos_gs_link = Q_w_gs_link_inv[:3, :3] @ (pos_world - Q_w_gs_link[:3, 3])
-    
-    return pos_gs_link
+    T_w = compute_usd_global_transform(usd_link_prim)
+    pos_w = T_w[:3, :3] @ usd_local_joint_pos + T_w[:3, 3]
+    Q_w, _ = compute_gs_global_transform(usd_link_prim)
+    Q_w_inv = np.linalg.inv(Q_w)
+    gs_local_joint_pos = Q_w_inv[:3, :3] @ (pos_w - Q_w[:3, 3])
+
+    return gs_local_joint_pos
 
 def compute_joint_axis_scaling_factor(
-    joint_prim: Usd.Prim,
-    body_prim: Usd.Prim,
-    axis_str: str
+    gs_local_joint_axis: np.ndarray
 ) -> float:
     """
-    Compute the scaling factor for joint axis (for distance limit scaling).
-    
-    The scaling factor β = ||axis^w|| = α||axis||, where ||axis|| = 1 by definition.
-    Under proportional scaling, β = α = ||axis^w||.
+    Compute the scaling factor for a joint axis.
     
     Parameters
     ----------
-    joint_prim : Usd.Prim
-        The joint prim.
-    body_prim : Usd.Prim
-        The body (link) prim.
-    axis_str : str
-        The axis string ('X', 'Y', or 'Z').
+    gs_local_joint_axis : np.ndarray, shape (3,)
+        The joint axis in Genesis link local space.
         
     Returns
     -------
     float
-        The scaling factor β.
+        The scaling factor.
     """
-    # Get axis vector in body local space (axis_str defines axis in body0's local space)
-    if axis_str == "X":
-        axis_local = np.array([1.0, 0.0, 0.0])
-    elif axis_str == "Y":
-        axis_local = np.array([0.0, 1.0, 0.0])
-    elif axis_str == "Z":
-        axis_local = np.array([0.0, 0.0, 1.0])
-    else:
-        gs.raise_exception(f"Unsupported joint axis {axis_str}.")
-    
-    # Apply joint rotation if available (LocalRot0Attr rotates the axis in body0's local space)
-    from pxr import UsdPhysics
-    joint_api = UsdPhysics.Joint(joint_prim)
-    if joint_api.GetLocalRot0Attr():
-        quat = usd_quat_to_numpy(joint_api.GetLocalRot0Attr().Get())
-        R_joint = gu.quat_to_R(quat)
-        axis_local = R_joint @ axis_local
-    
-    # Transform axis to world space: axis^w = T^w_body · axis
-    # The axis is already in body0's local space (after LocalRot0Attr), so transform directly by body0's global transform
-    T_w_body = compute_usd_global_transform(body_prim)
-    axis_world = T_w_body[:3, :3] @ axis_local
-    
-    # Compute scaling factor: β = ||axis^w||
-    beta = np.linalg.norm(axis_world)
-    
-    return beta
+    return np.linalg.norm(gs_local_joint_axis)
