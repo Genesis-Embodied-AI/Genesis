@@ -2053,6 +2053,9 @@ class IPCCoupler(RBC):
         prim_types = contact_feature.contact_primitive_types()
 
         # Accumulate contact gradients (forces) for all vertices
+        # NOTE: IPC gradients are actually force * dt^2, so we need to divide by dt^2
+        dt = self.options.dt
+        dt2 = dt * dt
         total_force_dict = {}  # {vertex_index: force_vector}
 
         for prim_type in prim_types:
@@ -2070,11 +2073,12 @@ class IPCCoupler(RBC):
                 gradients = view(grad_attr)
 
                 # Accumulate gradients for each vertex
+                # Gradients from IPC are force * dt^2, so divide by dt^2 to get actual force
                 for idx, grad in zip(indices, gradients):
                     grad_vec = np.array(grad).flatten()
                     if idx not in total_force_dict:
                         total_force_dict[idx] = np.zeros(3)
-                    total_force_dict[idx] += grad_vec[:3]  # Take first 3 components
+                    total_force_dict[idx] += grad_vec[:3] / dt2  # Convert gradient to force
 
         if not total_force_dict:
             return  # No contact forces to process
