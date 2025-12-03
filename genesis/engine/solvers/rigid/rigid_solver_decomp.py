@@ -5355,8 +5355,9 @@ def func_forward_velocity_entity(
                                 cvel_vel = cvel_vel + A(links_state.cd_vel_bw, i_l, next_i_j, i_b, _vel, BW)
                                 cvel_ang = cvel_ang + A(links_state.cd_ang_bw, i_l, next_i_j, i_b, _ang, BW)
 
-            links_state.cd_vel[i_l, i_b] = R(links_state.cd_vel_bw, i_l, n_joints, i_b, cvel_vel, BW)
-            links_state.cd_ang[i_l, i_b] = R(links_state.cd_ang_bw, i_l, n_joints, i_b, cvel_ang, BW)
+            i_j_ = 0 if ti.static(not static_rigid_sim_config.is_backward) else n_joints
+            links_state.cd_vel[i_l, i_b] = R(links_state.cd_vel_bw, i_l, i_j_, i_b, cvel_vel, BW)
+            links_state.cd_ang[i_l, i_b] = R(links_state.cd_ang_bw, i_l, i_j_, i_b, cvel_ang, BW)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
