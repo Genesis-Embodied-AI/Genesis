@@ -23,6 +23,7 @@ from genesis.utils.misc import get_assets_dir, tensor_to_array, ti_to_torch
 
 from .utils import (
     assert_allclose,
+    assert_array_equal,
     build_genesis_sim,
     build_mujoco_sim,
     check_mujoco_data_consistency,
@@ -2353,6 +2354,17 @@ def test_jacobian(gs_sim, tol):
 
 
 @pytest.mark.required
+def test_mjcf_parsing_with_include():
+    scene = gs.Scene()
+    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
+    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
+    scene.build()
+    assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
+    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("gjk_collision", [True, False])
 def test_urdf_parsing(show_viewer, tol, gjk_collision):
     POS_OFFSET = 0.8
@@ -2507,15 +2519,28 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
 
 
-@pytest.mark.required
-def test_mjcf_parsing_with_include():
+def test_urdf_color_overwrite():
     scene = gs.Scene()
-    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
-    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
-    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
-    scene.build()
-    assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
-    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="genesis/assets/urdf/blue_box/model.urdf",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    for vgeom in robot.vgeoms:
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        assert_array_equal(color, (255, 0, 0, 255))
+    for geom in robot.geoms:
+        visual = geom.mesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        # Collision geometry meshes have randomized colors with partial transparency to ease debugging
+        with pytest.raises(AssertionError):
+            assert_array_equal(color, (255, 0, 0, 255))
 
 
 @pytest.mark.required
