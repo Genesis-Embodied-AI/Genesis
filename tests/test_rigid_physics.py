@@ -3116,19 +3116,19 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.required
-def test_get_cartesian_space_variables(show_viewer, tol):
-    # FIXME: what is this test supposed to check??
+@pytest.mark.parametrize("enable_mujoco_compatibility", [True, False])
+def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
+    DT = 0.01
+    GRAVITY = 10.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
-            # by default, enable_mujoco_compatibility=False
-            # the test will fail if enable_mujoco_compatibility=True
-            enable_mujoco_compatibility=False,
+            enable_mujoco_compatibility=enable_mujoco_compatibility,
         ),
-        show_viewer=show_viewer,
     )
     box = scene.add_entity(
         gs.morphs.Box(
@@ -3136,25 +3136,20 @@ def test_get_cartesian_space_variables(show_viewer, tol):
             pos=(0.0, 0.0, 0.0),
         )
     )
+    (box_link,) = box.links
     scene.build()
 
-    for _ in range(2):
-        for link in box.links:
-            force = torch.tensor(np.array([0, 0, 0])).unsqueeze(0)
-            acc = 50.0
-            force[0, 0] = acc * link.inertial_mass
-            pos = link.get_pos()
-            vel = link.get_vel()
-
-            dof_vel = link.solver.get_dofs_velocity()
-            dof_pos = link.solver.get_qpos()
-
-            assert_allclose(dof_vel[:3], vel, atol=tol)
-            assert_allclose(dof_pos[:3], pos, atol=tol)
-
-            link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
-
-        scene.step()
+    scene.step()
+    dof_vel = scene.rigid_solver.get_dofs_velocity()
+    assert_allclose(dof_vel[:3], (0.0, 0.0, GRAVITY * DT), atol=gs.EPS)
+    vel = box_link.get_vel()
+    with pytest.raises(AssertionError) if enable_mujoco_compatibility else nullcontext():
+        assert_allclose(dof_vel[:3], vel, atol=gs.EPS)
+    dof_pos = scene.rigid_solver.get_qpos()
+    assert_allclose(dof_pos[:3], (0.0, 0.0, GRAVITY * DT**2), atol=gs.EPS)
+    pos = box_link.get_pos()
+    with pytest.raises(AssertionError) if enable_mujoco_compatibility else nullcontext():
+        assert_allclose(dof_pos[:3], pos, atol=gs.EPS)
 
 
 @pytest.mark.required

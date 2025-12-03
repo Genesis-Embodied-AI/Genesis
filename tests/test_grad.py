@@ -407,6 +407,7 @@ def test_diff_solver(monkeypatch):
         assert_allclose(dL_error, 0.0, atol=RTOL)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_rigid(show_viewer):
