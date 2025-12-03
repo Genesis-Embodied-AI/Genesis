@@ -23,6 +23,7 @@ from genesis.utils.misc import get_assets_dir, tensor_to_array, ti_to_torch
 
 from .utils import (
     assert_allclose,
+    assert_array_equal,
     build_genesis_sim,
     build_mujoco_sim,
     check_mujoco_data_consistency,
@@ -2353,6 +2354,17 @@ def test_jacobian(gs_sim, tol):
 
 
 @pytest.mark.required
+def test_mjcf_parsing_with_include():
+    scene = gs.Scene()
+    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
+    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
+    scene.build()
+    assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
+    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("gjk_collision", [True, False])
 def test_urdf_parsing(show_viewer, tol, gjk_collision):
     POS_OFFSET = 0.8
@@ -2507,15 +2519,28 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
 
 
-@pytest.mark.required
-def test_mjcf_parsing_with_include():
+def test_urdf_color_overwrite():
     scene = gs.Scene()
-    robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
-    robot2 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
-    robot3 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_sim/franka_panda.xml"))
-    scene.build()
-    assert_allclose(robot1.get_qpos(), robot2.get_qpos(), tol=gs.EPS)
-    assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="genesis/assets/urdf/blue_box/model.urdf",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    for vgeom in robot.vgeoms:
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        assert_array_equal(color, (255, 0, 0, 255))
+    for geom in robot.geoms:
+        visual = geom.mesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        # Collision geometry meshes have randomized colors with partial transparency to ease debugging
+        with pytest.raises(AssertionError):
+            assert_array_equal(color, (255, 0, 0, 255))
 
 
 @pytest.mark.required
@@ -3091,19 +3116,19 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.required
-def test_get_cartesian_space_variables(show_viewer, tol):
-    # FIXME: what is this test supposed to check??
+@pytest.mark.parametrize("enable_mujoco_compatibility", [True, False])
+def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
+    DT = 0.01
+    GRAVITY = 10.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
-            # by default, enable_mujoco_compatibility=False
-            # the test will fail if enable_mujoco_compatibility=True
-            enable_mujoco_compatibility=False,
+            enable_mujoco_compatibility=enable_mujoco_compatibility,
         ),
-        show_viewer=show_viewer,
     )
     box = scene.add_entity(
         gs.morphs.Box(
@@ -3111,25 +3136,20 @@ def test_get_cartesian_space_variables(show_viewer, tol):
             pos=(0.0, 0.0, 0.0),
         )
     )
+    (box_link,) = box.links
     scene.build()
 
-    for _ in range(2):
-        for link in box.links:
-            force = torch.tensor(np.array([0, 0, 0])).unsqueeze(0)
-            acc = 50.0
-            force[0, 0] = acc * link.inertial_mass
-            pos = link.get_pos()
-            vel = link.get_vel()
-
-            dof_vel = link.solver.get_dofs_velocity()
-            dof_pos = link.solver.get_qpos()
-
-            assert_allclose(dof_vel[:3], vel, atol=tol)
-            assert_allclose(dof_pos[:3], pos, atol=tol)
-
-            link.solver.apply_links_external_force(force, (link.idx,), ref="link_com", local=False)
-
-        scene.step()
+    scene.step()
+    dof_vel = scene.rigid_solver.get_dofs_velocity()
+    assert_allclose(dof_vel[:3], (0.0, 0.0, GRAVITY * DT), atol=gs.EPS)
+    vel = box_link.get_vel()
+    with pytest.raises(AssertionError) if enable_mujoco_compatibility else nullcontext():
+        assert_allclose(dof_vel[:3], vel, atol=gs.EPS)
+    dof_pos = scene.rigid_solver.get_qpos()
+    assert_allclose(dof_pos[:3], (0.0, 0.0, GRAVITY * DT**2), atol=gs.EPS)
+    pos = box_link.get_pos()
+    with pytest.raises(AssertionError) if enable_mujoco_compatibility else nullcontext():
+        assert_allclose(dof_pos[:3], pos, atol=gs.EPS)
 
 
 @pytest.mark.required

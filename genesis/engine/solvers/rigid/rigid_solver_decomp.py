@@ -258,7 +258,6 @@ class RigidSolver(Solver):
                 sparse_solve=self._options.sparse_solve,
                 integrator=self._integrator,
                 solver_type=self._options.constraint_solver,
-                is_backward=False,
             )
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:
@@ -281,7 +280,6 @@ class RigidSolver(Solver):
                 enable_collision=self._enable_collision,
                 integrator=gs.integrator.approximate_implicitfast,
                 solver_type=gs.constraint_solver.CG,
-                is_backward=False,
             )
 
         if self._static_rigid_sim_config.requires_grad:
@@ -6734,65 +6732,19 @@ def kernel_prepare_backward_substep(
                 force_update_fixed_geoms=False,
             )
 
-        # FIXME: Parameter pruning for ndarray is buggy on this one. Inlining this function is "fixing" this issue.
+        # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
         # Save results of [update_cartesian_space] to adjoint cache
-        # func_copy_cartesian_space(
-        #     src_dofs_state=dofs_state,
-        #     src_links_state=links_state,
-        #     src_joints_state=joints_state,
-        #     src_geoms_state=geoms_state,
-        #     dst_dofs_state=dofs_state_adjoint_cache,
-        #     dst_links_state=links_state_adjoint_cache,
-        #     dst_joints_state=joints_state_adjoint_cache,
-        #     dst_geoms_state=geoms_state_adjoint_cache,
-        #     static_rigid_sim_config=static_rigid_sim_config,
-        # )
-
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for I in ti.grouped(ti.ndrange(*dofs_state.pos.shape)):
-            # pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
-            dofs_state_adjoint_cache.pos[I] = dofs_state.pos[I]
-            dofs_state_adjoint_cache.cdof_ang[I] = dofs_state.cdof_ang[I]
-            dofs_state_adjoint_cache.cdof_vel[I] = dofs_state.cdof_vel[I]
-            dofs_state_adjoint_cache.cdofvel_ang[I] = dofs_state.cdofvel_ang[I]
-            dofs_state_adjoint_cache.cdofvel_vel[I] = dofs_state.cdofvel_vel[I]
-            dofs_state_adjoint_cache.cdofd_ang[I] = dofs_state.cdofd_ang[I]
-            dofs_state_adjoint_cache.cdofd_vel[I] = dofs_state.cdofd_vel[I]
-
-        # links state
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for I in ti.grouped(ti.ndrange(*links_state.pos.shape)):
-            # pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat,
-            # cd_vel, cd_ang
-            links_state_adjoint_cache.pos[I] = links_state.pos[I]
-            links_state_adjoint_cache.quat[I] = links_state.quat[I]
-            links_state_adjoint_cache.root_COM[I] = links_state.root_COM[I]
-            links_state_adjoint_cache.mass_sum[I] = links_state.mass_sum[I]
-            links_state_adjoint_cache.i_pos[I] = links_state.i_pos[I]
-            links_state_adjoint_cache.i_quat[I] = links_state.i_quat[I]
-            links_state_adjoint_cache.cinr_inertial[I] = links_state.cinr_inertial[I]
-            links_state_adjoint_cache.cinr_pos[I] = links_state.cinr_pos[I]
-            links_state_adjoint_cache.cinr_quat[I] = links_state.cinr_quat[I]
-            links_state_adjoint_cache.cinr_mass[I] = links_state.cinr_mass[I]
-            links_state_adjoint_cache.j_pos[I] = links_state.j_pos[I]
-            links_state_adjoint_cache.j_quat[I] = links_state.j_quat[I]
-            links_state_adjoint_cache.cd_vel[I] = links_state.cd_vel[I]
-            links_state_adjoint_cache.cd_ang[I] = links_state.cd_ang[I]
-
-        # joints state
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for I in ti.grouped(ti.ndrange(*joints_state.xanchor.shape)):
-            # xanchor, xaxis
-            joints_state_adjoint_cache.xanchor[I] = joints_state.xanchor[I]
-            joints_state_adjoint_cache.xaxis[I] = joints_state.xaxis[I]
-
-        # geoms state
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for I in ti.grouped(ti.ndrange(*geoms_state.pos.shape)):
-            # pos, quat, verts_updated
-            geoms_state_adjoint_cache.pos[I] = geoms_state.pos[I]
-            geoms_state_adjoint_cache.quat[I] = geoms_state.quat[I]
-            geoms_state_adjoint_cache.verts_updated[I] = geoms_state.verts_updated[I]
+        func_copy_cartesian_space(
+            dofs_state=dofs_state,
+            links_state=links_state,
+            joints_state=joints_state,
+            geoms_state=geoms_state,
+            dofs_state_adjoint_cache=dofs_state_adjoint_cache,
+            links_state_adjoint_cache=links_state_adjoint_cache,
+            joints_state_adjoint_cache=joints_state_adjoint_cache,
+            geoms_state_adjoint_cache=geoms_state_adjoint_cache,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6830,65 +6782,19 @@ def kernel_begin_backward_substep(
         )
 
         if not static_rigid_sim_config.enable_mujoco_compatibility:
-            # FIXME: Parameter pruning for ndarray is buggy on this one. Inlining this function is "fixing" this issue.
+            # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
             # Save results of [update_cartesian_space] to adjoint cache
-            # func_copy_cartesian_space(
-            #     src_dofs_state=dofs_state,
-            #     src_links_state=links_state,
-            #     src_joints_state=joints_state,
-            #     src_geoms_state=geoms_state,
-            #     dst_dofs_state=dofs_state_adjoint_cache,
-            #     dst_links_state=links_state_adjoint_cache,
-            #     dst_joints_state=joints_state_adjoint_cache,
-            #     dst_geoms_state=geoms_state_adjoint_cache,
-            #     static_rigid_sim_config=static_rigid_sim_config,
-            # )
-
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for I in ti.grouped(ti.ndrange(*dofs_state.pos.shape)):
-                # pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
-                dofs_state_adjoint_cache.pos[I] = dofs_state.pos[I]
-                dofs_state_adjoint_cache.cdof_ang[I] = dofs_state.cdof_ang[I]
-                dofs_state_adjoint_cache.cdof_vel[I] = dofs_state.cdof_vel[I]
-                dofs_state_adjoint_cache.cdofvel_ang[I] = dofs_state.cdofvel_ang[I]
-                dofs_state_adjoint_cache.cdofvel_vel[I] = dofs_state.cdofvel_vel[I]
-                dofs_state_adjoint_cache.cdofd_ang[I] = dofs_state.cdofd_ang[I]
-                dofs_state_adjoint_cache.cdofd_vel[I] = dofs_state.cdofd_vel[I]
-
-            # links state
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for I in ti.grouped(ti.ndrange(*links_state.pos.shape)):
-                # pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat,
-                # cd_vel, cd_ang
-                links_state_adjoint_cache.pos[I] = links_state.pos[I]
-                links_state_adjoint_cache.quat[I] = links_state.quat[I]
-                links_state_adjoint_cache.root_COM[I] = links_state.root_COM[I]
-                links_state_adjoint_cache.mass_sum[I] = links_state.mass_sum[I]
-                links_state_adjoint_cache.i_pos[I] = links_state.i_pos[I]
-                links_state_adjoint_cache.i_quat[I] = links_state.i_quat[I]
-                links_state_adjoint_cache.cinr_inertial[I] = links_state.cinr_inertial[I]
-                links_state_adjoint_cache.cinr_pos[I] = links_state.cinr_pos[I]
-                links_state_adjoint_cache.cinr_quat[I] = links_state.cinr_quat[I]
-                links_state_adjoint_cache.cinr_mass[I] = links_state.cinr_mass[I]
-                links_state_adjoint_cache.j_pos[I] = links_state.j_pos[I]
-                links_state_adjoint_cache.j_quat[I] = links_state.j_quat[I]
-                links_state_adjoint_cache.cd_vel[I] = links_state.cd_vel[I]
-                links_state_adjoint_cache.cd_ang[I] = links_state.cd_ang[I]
-
-            # joints state
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for I in ti.grouped(ti.ndrange(*joints_state.xanchor.shape)):
-                # xanchor, xaxis
-                joints_state_adjoint_cache.xanchor[I] = joints_state.xanchor[I]
-                joints_state_adjoint_cache.xaxis[I] = joints_state.xaxis[I]
-
-            # geoms state
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for I in ti.grouped(ti.ndrange(*geoms_state.pos.shape)):
-                # pos, quat, verts_updated
-                geoms_state_adjoint_cache.pos[I] = geoms_state.pos[I]
-                geoms_state_adjoint_cache.quat[I] = geoms_state.quat[I]
-                geoms_state_adjoint_cache.verts_updated[I] = geoms_state.verts_updated[I]
+            func_copy_cartesian_space(
+                dofs_state=dofs_state,
+                links_state=links_state,
+                joints_state=joints_state,
+                geoms_state=geoms_state,
+                dofs_state_adjoint_cache=dofs_state_adjoint_cache,
+                links_state_adjoint_cache=links_state_adjoint_cache,
+                joints_state_adjoint_cache=joints_state_adjoint_cache,
+                geoms_state_adjoint_cache=geoms_state_adjoint_cache,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
     return is_grad_valid
 
@@ -6915,14 +6821,14 @@ def func_is_grad_valid(
 
 @ti.func
 def func_copy_cartesian_space(
-    src_dofs_state: array_class.DofsState,
-    src_links_state: array_class.LinksState,
-    src_joints_state: array_class.JointsState,
-    src_geoms_state: array_class.GeomsState,
-    dst_dofs_state: array_class.DofsState,
-    dst_links_state: array_class.LinksState,
-    dst_joints_state: array_class.JointsState,
-    dst_geoms_state: array_class.GeomsState,
+    dofs_state: array_class.DofsState,
+    links_state: array_class.LinksState,
+    joints_state: array_class.JointsState,
+    geoms_state: array_class.GeomsState,
+    dofs_state_adjoint_cache: array_class.DofsState,
+    links_state_adjoint_cache: array_class.LinksState,
+    joints_state_adjoint_cache: array_class.JointsState,
+    geoms_state_adjoint_cache: array_class.GeomsState,
     static_rigid_sim_config: ti.template(),
 ):
     # Copy outputs of [kernel_update_cartesian_space] among [dofs, links, joints, geoms] states. This is used to restore
@@ -6930,50 +6836,50 @@ def func_copy_cartesian_space(
 
     # dofs state
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*src_dofs_state.pos.shape)):
+    for I in ti.grouped(ti.ndrange(*dofs_state.pos.shape)):
         # pos, cdof_ang, cdof_vel, cdofvel_ang, cdofvel_vel, cdofd_ang, cdofd_vel
-        dst_dofs_state.pos[I] = src_dofs_state.pos[I]
-        dst_dofs_state.cdof_ang[I] = src_dofs_state.cdof_ang[I]
-        dst_dofs_state.cdof_vel[I] = src_dofs_state.cdof_vel[I]
-        dst_dofs_state.cdofvel_ang[I] = src_dofs_state.cdofvel_ang[I]
-        dst_dofs_state.cdofvel_vel[I] = src_dofs_state.cdofvel_vel[I]
-        dst_dofs_state.cdofd_ang[I] = src_dofs_state.cdofd_ang[I]
-        dst_dofs_state.cdofd_vel[I] = src_dofs_state.cdofd_vel[I]
+        dofs_state_adjoint_cache.pos[I] = dofs_state.pos[I]
+        dofs_state_adjoint_cache.cdof_ang[I] = dofs_state.cdof_ang[I]
+        dofs_state_adjoint_cache.cdof_vel[I] = dofs_state.cdof_vel[I]
+        dofs_state_adjoint_cache.cdofvel_ang[I] = dofs_state.cdofvel_ang[I]
+        dofs_state_adjoint_cache.cdofvel_vel[I] = dofs_state.cdofvel_vel[I]
+        dofs_state_adjoint_cache.cdofd_ang[I] = dofs_state.cdofd_ang[I]
+        dofs_state_adjoint_cache.cdofd_vel[I] = dofs_state.cdofd_vel[I]
 
     # links state
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*src_links_state.pos.shape)):
+    for I in ti.grouped(ti.ndrange(*links_state.pos.shape)):
         # pos, quat, root_COM, mass_sum, i_pos, i_quat, cinr_inertial, cinr_pos, cinr_quat, cinr_mass, j_pos, j_quat,
         # cd_vel, cd_ang
-        dst_links_state.pos[I] = src_links_state.pos[I]
-        dst_links_state.quat[I] = src_links_state.quat[I]
-        dst_links_state.root_COM[I] = src_links_state.root_COM[I]
-        dst_links_state.mass_sum[I] = src_links_state.mass_sum[I]
-        dst_links_state.i_pos[I] = src_links_state.i_pos[I]
-        dst_links_state.i_quat[I] = src_links_state.i_quat[I]
-        dst_links_state.cinr_inertial[I] = src_links_state.cinr_inertial[I]
-        dst_links_state.cinr_pos[I] = src_links_state.cinr_pos[I]
-        dst_links_state.cinr_quat[I] = src_links_state.cinr_quat[I]
-        dst_links_state.cinr_mass[I] = src_links_state.cinr_mass[I]
-        dst_links_state.j_pos[I] = src_links_state.j_pos[I]
-        dst_links_state.j_quat[I] = src_links_state.j_quat[I]
-        dst_links_state.cd_vel[I] = src_links_state.cd_vel[I]
-        dst_links_state.cd_ang[I] = src_links_state.cd_ang[I]
+        links_state_adjoint_cache.pos[I] = links_state.pos[I]
+        links_state_adjoint_cache.quat[I] = links_state.quat[I]
+        links_state_adjoint_cache.root_COM[I] = links_state.root_COM[I]
+        links_state_adjoint_cache.mass_sum[I] = links_state.mass_sum[I]
+        links_state_adjoint_cache.i_pos[I] = links_state.i_pos[I]
+        links_state_adjoint_cache.i_quat[I] = links_state.i_quat[I]
+        links_state_adjoint_cache.cinr_inertial[I] = links_state.cinr_inertial[I]
+        links_state_adjoint_cache.cinr_pos[I] = links_state.cinr_pos[I]
+        links_state_adjoint_cache.cinr_quat[I] = links_state.cinr_quat[I]
+        links_state_adjoint_cache.cinr_mass[I] = links_state.cinr_mass[I]
+        links_state_adjoint_cache.j_pos[I] = links_state.j_pos[I]
+        links_state_adjoint_cache.j_quat[I] = links_state.j_quat[I]
+        links_state_adjoint_cache.cd_vel[I] = links_state.cd_vel[I]
+        links_state_adjoint_cache.cd_ang[I] = links_state.cd_ang[I]
 
     # joints state
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*src_joints_state.xanchor.shape)):
+    for I in ti.grouped(ti.ndrange(*joints_state.xanchor.shape)):
         # xanchor, xaxis
-        dst_joints_state.xanchor[I] = src_joints_state.xanchor[I]
-        dst_joints_state.xaxis[I] = src_joints_state.xaxis[I]
+        joints_state_adjoint_cache.xanchor[I] = joints_state.xanchor[I]
+        joints_state_adjoint_cache.xaxis[I] = joints_state.xaxis[I]
 
     # geoms state
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*src_geoms_state.pos.shape)):
+    for I in ti.grouped(ti.ndrange(*geoms_state.pos.shape)):
         # pos, quat, verts_updated
-        dst_geoms_state.pos[I] = src_geoms_state.pos[I]
-        dst_geoms_state.quat[I] = src_geoms_state.quat[I]
-        dst_geoms_state.verts_updated[I] = src_geoms_state.verts_updated[I]
+        geoms_state_adjoint_cache.pos[I] = geoms_state.pos[I]
+        geoms_state_adjoint_cache.quat[I] = geoms_state.quat[I]
+        geoms_state_adjoint_cache.verts_updated[I] = geoms_state.verts_updated[I]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -7087,11 +6993,9 @@ def kernel_update_geoms_render_T(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_g, i_b in ti.ndrange(n_geoms, _B):
         geom_T = gu.ti_trans_quat_to_T(
-            geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b],
-            geoms_state.quat[i_g, i_b],
-            EPS,
+            geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], geoms_state.quat[i_g, i_b], EPS
         )
-        for J in ti.static(ti.grouped(ti.static(ti.ndrange(4, 4)))):
+        for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
             geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
@@ -7111,9 +7015,7 @@ def kernel_update_vgeoms_render_T(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_g, i_b in ti.ndrange(n_vgeoms, _B):
         geom_T = gu.ti_trans_quat_to_T(
-            vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b],
-            vgeoms_state.quat[i_g, i_b],
-            EPS,
+            vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], vgeoms_state.quat[i_g, i_b], EPS
         )
         for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
             vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)

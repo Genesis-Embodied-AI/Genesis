@@ -98,7 +98,6 @@ def test_differentiable_push(precision, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.field_only  # FIXME: Parameter pruning for ndarray is buggy...
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact():
@@ -124,7 +123,6 @@ def test_diff_contact():
     box1 = scene.add_entity(
         gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset + 0.8 * box_spacing * np.array([0, 0, 1])),
     )
-
     scene.build()
     solver = scene.sim.rigid_solver
     collider = solver.collider
@@ -133,10 +131,10 @@ def test_diff_contact():
     x_ang, y_ang, z_ang = 3.0, 3.0, 3.0
     box1.set_quat(R_to_quat(gs.euler_to_R([np.deg2rad(x_ang), np.deg2rad(y_ang), np.deg2rad(z_ang)])))
 
-    box0_init_pos = box0.get_pos()
-    box1_init_pos = box1.get_pos()
-    box0_init_quat = box0.get_quat()
-    box1_init_quat = box1.get_quat()
+    box0_init_pos = box0.get_pos().clone()
+    box1_init_pos = box1.get_pos().clone()
+    box0_init_quat = box0.get_quat().clone()
+    box1_init_quat = box1.get_quat().clone()
 
     ### Compute the initial loss and compute gradients using differentiable contact detection
     # Detect contact
@@ -220,7 +218,6 @@ def test_diff_contact():
 # gradient estimates through finite difference method. This small perturbation is not supported by 32-bit precision in
 # stable way.
 @pytest.mark.required
-@pytest.mark.field_only  # FIXME: Parameter pruning for ndarray is buggy...
 @pytest.mark.precision("64")
 def test_diff_solver(monkeypatch):
     from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver, func_solve
@@ -241,8 +238,8 @@ def test_diff_solver(monkeypatch):
         show_viewer=False,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane(pos=(0, 0, 0)))
-    box = scene.add_entity(gs.morphs.Box(size=(1, 1, 1), pos=(10, 10, 0.49)))
+    scene.add_entity(gs.morphs.Plane(pos=(0, 0, 0)))
+    scene.add_entity(gs.morphs.Box(size=(1, 1, 1), pos=(10, 10, 0.49)))
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
@@ -296,53 +293,48 @@ def test_diff_solver(monkeypatch):
 
     # Loss function to compute gradients using finite difference method
     def compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force):
-        rigid_solver._rigid_global_info.mass_mat.from_numpy(tensor_to_array(input_mass))
-        constraint_solver.constraint_state.jac.from_numpy(tensor_to_array(input_jac))
-        constraint_solver.constraint_state.aref.from_numpy(tensor_to_array(input_aref))
-        constraint_solver.constraint_state.efc_D.from_numpy(tensor_to_array(input_efc_D))
-        rigid_solver.dofs_state.force.from_numpy(tensor_to_array(input_force))
+        rigid_solver._rigid_global_info.mass_mat.from_numpy(input_mass)
+        constraint_solver.constraint_state.jac.from_numpy(input_jac)
+        constraint_solver.constraint_state.aref.from_numpy(input_aref)
+        constraint_solver.constraint_state.efc_D.from_numpy(input_efc_D)
+        rigid_solver.dofs_state.force.from_numpy(input_force)
 
         # Recompute acc_smooth from the updated input variables
-        updated_acc_smooth = torch.linalg.solve(input_mass.squeeze(-1), input_force.squeeze(-1))
-        input_acc_smooth = tensor_to_array(updated_acc_smooth.unsqueeze(-1))
-
-        rigid_solver.dofs_state.acc_smooth.from_numpy(input_acc_smooth)
-
+        updated_acc_smooth = np.linalg.solve(input_mass[..., 0], input_force[..., 0])
+        rigid_solver.dofs_state.acc_smooth.from_numpy(updated_acc_smooth[..., None])
         constraint_solver.resolve()
-        output_qacc = ti_to_numpy(constraint_solver.qacc)
-        th_output_qacc = torch.from_numpy(output_qacc).to(device=gs.device)
-        loss = ((th_output_qacc - target_qacc) ** 2).mean()
-        return loss
 
-    init_input_mass = ti_to_torch(rigid_solver._rigid_global_info.mass_mat)
-    init_input_jac = ti_to_torch(constraint_solver.constraint_state.jac)
-    init_input_aref = ti_to_torch(constraint_solver.constraint_state.aref)
-    init_input_efc_D = ti_to_torch(constraint_solver.constraint_state.efc_D)
-    init_input_force = ti_to_torch(rigid_solver.dofs_state.force)
+        output_qacc = ti_to_torch(constraint_solver.qacc)
+        return ((output_qacc - target_qacc) ** 2).mean()
+
+    init_input_mass = ti_to_numpy(rigid_solver._rigid_global_info.mass_mat, copy=True)
+    init_input_jac = ti_to_numpy(constraint_solver.constraint_state.jac, copy=True)
+    init_input_aref = ti_to_numpy(constraint_solver.constraint_state.aref, copy=True)
+    init_input_efc_D = ti_to_numpy(constraint_solver.constraint_state.efc_D, copy=True)
+    init_input_force = ti_to_numpy(rigid_solver.dofs_state.force, copy=True)
 
     # Initial output of the constraint solver
     set_random_seed(0)
     init_output_qacc = ti_to_torch(constraint_solver.qacc)
-    target_qacc = np.random.randn(*init_output_qacc.shape)
-    target_qacc = torch.from_numpy(target_qacc).to(device=gs.device) * init_output_qacc.abs().mean()
+    target_qacc = torch.from_numpy(np.random.randn(*init_output_qacc.shape)).to(device=gs.device)
+    target_qacc = target_qacc * init_output_qacc.abs().mean()
 
     # Solve the constraint solver and get the output
-    output_qacc = ti_to_numpy(constraint_solver.qacc)
-    th_output_qacc = torch.from_numpy(output_qacc).to(device=gs.device).requires_grad_(True)
+    output_qacc = ti_to_torch(constraint_solver.qacc, copy=True).requires_grad_(True)
 
     # Compute loss and gradient of the output
-    loss = ((th_output_qacc - target_qacc) ** 2).mean()
-    dL_dqacc = tensor_to_array(torch.autograd.grad(loss, th_output_qacc)[0])
+    loss = ((output_qacc - target_qacc) ** 2).mean()
+    dL_dqacc = tensor_to_array(torch.autograd.grad(loss, output_qacc)[0])
 
     # Compute gradients of the input variables: [mass], [jac], [aref], [efc_D], [force]
     constraint_solver.backward(dL_dqacc)
 
     # Fetch gradients of the input variables
-    dL_dM = ti_to_torch(constraint_solver.constraint_state.dL_dM)
-    dL_djac = ti_to_torch(constraint_solver.constraint_state.dL_djac)
-    dL_daref = ti_to_torch(constraint_solver.constraint_state.dL_daref)
-    dL_defc_D = ti_to_torch(constraint_solver.constraint_state.dL_defc_D)
-    dL_dforce = ti_to_torch(constraint_solver.constraint_state.dL_dforce)
+    dL_dM = ti_to_numpy(constraint_solver.constraint_state.dL_dM)
+    dL_djac = ti_to_numpy(constraint_solver.constraint_state.dL_djac)
+    dL_daref = ti_to_numpy(constraint_solver.constraint_state.dL_daref)
+    dL_defc_D = ti_to_numpy(constraint_solver.constraint_state.dL_defc_D)
+    dL_dforce = ti_to_numpy(constraint_solver.constraint_state.dL_dforce)
 
     ### Compute directional derivatives along random directions
     FD_EPS = 1e-3
@@ -358,13 +350,12 @@ def test_diff_solver(monkeypatch):
         dL_error = 0.0
         for _ in range(TRIALS):
             rand_dx = np.random.randn(*dL_dx.shape)
-            rand_dx = torch.from_numpy(rand_dx).to(device=gs.device)
             rand_dx = rand_dx / max(
-                torch.linalg.norm(rand_dx, dim=0 if x_type in ("force", "aref", "efc_D") else (0, 1)), gs.EPS
+                np.linalg.norm(rand_dx, axis=0 if x_type in ("force", "aref", "efc_D") else (0, 1)), gs.EPS
             )
             if x_type == "mass":
                 # Make rand_dx symmetric
-                rand_dx = (rand_dx + rand_dx.transpose(0, 1)) * 0.5
+                rand_dx = (rand_dx + np.moveaxis(rand_dx, 0, 1)) * 0.5
 
             dL = (rand_dx * dL_dx).sum()
 
@@ -398,15 +389,17 @@ def test_diff_solver(monkeypatch):
                 input_jac = init_input_jac - rand_dx * FD_EPS
             elif x_type == "mass":
                 input_mass = init_input_mass - rand_dx * FD_EPS
+
             lossP2 = compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force)
             dL_fd = (lossP1 - lossP2) / (2 * FD_EPS)
 
-            dL_error += (dL - dL_fd).abs() / max(dL.abs(), dL_fd.abs(), gs.EPS)
+            dL_error += (dL - dL_fd).abs() / max(abs(dL), abs(dL_fd), gs.EPS)
 
         dL_error /= TRIALS
         assert_allclose(dL_error, 0.0, atol=RTOL)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_rigid(show_viewer):
