@@ -120,7 +120,7 @@ usd = [
     # import stubs
     "types-usd==24.5.2",
     # omniverse-kit
-    "omniverse-kit"
+    # "omniverse-kit"
 ]
 
 [project.scripts]

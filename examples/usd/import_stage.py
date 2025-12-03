@@ -1,4 +1,5 @@
 import genesis as gs
+
 gs.init(backend=gs.cpu)
 
 scene = gs.Scene(
@@ -11,9 +12,9 @@ scene = gs.Scene(
     rigid_options=gs.options.RigidOptions(
         # constraint_solver=gs.constraint_solver.Newton,
         gravity=(0, 0, -9.8),
-        enable_collision = True,
-        enable_joint_limit = True,
-        max_collision_pairs = 10000,
+        enable_collision=True,
+        enable_joint_limit=True,
+        max_collision_pairs=1000,
     ),
     show_viewer=True,
 )
@@ -27,6 +28,6 @@ entities = scene.add_stage(f"{AssetRoot}/Lightwheel_Kitchen001/Kitchen001/Kitche
 scene.build()
 
 # Run the simulation for visualization
-while(scene.viewer.is_alive()):
+while scene.viewer.is_alive():
     scene.step()
     pass
