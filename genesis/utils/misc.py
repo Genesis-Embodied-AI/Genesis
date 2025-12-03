@@ -588,8 +588,10 @@ def ti_to_python(
         if copy:
             if to_torch:
                 out = out.clone()
-            else:
+            elif gs.backend != gs.cpu:
                 out = tensor_to_array(out)
+            else:
+                out = out.copy()
         return out
 
     # Keep track of taichi runtime to automatically clear cache if destroyed

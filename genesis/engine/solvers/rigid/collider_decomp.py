@@ -378,6 +378,7 @@ class Collider:
             self._gjk._gjk_static_config,
             self._sdf._sdf_info,
             self._support_field._support_field_info,
+            self._gjk._gjk_state.diff_contact_input,
             self._solver._errno,
         )
         func_narrow_phase_convex_specializations(
@@ -439,7 +440,7 @@ class Collider:
 
             for key, data in self._contacts_info.items():
                 if n_envs == 0:
-                    data = data[0, :n_contacts_max]
+                    data = data[0, :n_contacts_max] if not keep_batch_dim else data[:, :n_contacts_max]
                     if not to_torch:
                         data = tensor_to_array(data)
                 else:
@@ -542,6 +543,7 @@ class Collider:
             self._gjk._gjk_state,
             self._gjk._gjk_info,
             self._gjk._gjk_static_config,
+            self._collider_state.diff_contact_input,
         )
 
 
@@ -1570,6 +1572,7 @@ def func_narrow_phase_convex_vs_convex(
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
+    diff_contact_input: array_class.DiffContactInput,
     errno: array_class.V_ANNOTATION,
 ):
     """
@@ -1626,6 +1629,8 @@ def func_narrow_phase_convex_vs_convex(
                         gjk_static_config=gjk_static_config,
                         sdf_info=sdf_info,
                         support_field_info=support_field_info,
+                        # FIXME: Passing nested data structure as input argument is not supported for now.
+                        diff_contact_input=diff_contact_input,
                         errno=errno,
                     )
                 else:
@@ -1654,6 +1659,8 @@ def func_narrow_phase_convex_vs_convex(
                             gjk_static_config=gjk_static_config,
                             sdf_info=sdf_info,
                             support_field_info=support_field_info,
+                            # FIXME: Passing nested data structure as input argument is not supported for now.
+                            diff_contact_input=diff_contact_input,
                             errno=errno,
                         )
 
@@ -1668,6 +1675,8 @@ def func_narrow_phase_diff_convex_vs_convex(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     gjk_static_config: ti.template(),
+    # FIXME: Passing nested data structure as input argument is not supported for now.
+    diff_contact_input: array_class.DiffContactInput,
 ):
     # Compute reference contacts
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -1681,16 +1690,8 @@ def func_narrow_phase_diff_convex_vs_convex(
             if is_ref:
                 ref_penetration = -1.0
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    geoms_state,
-                    collider_state.diff_contact_input,
-                    gjk_info,
-                    i_ga,
-                    i_gb,
-                    i_b,
-                    i_c,
-                    ref_penetration,
+                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
                 )
-
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
                 func_set_contact(
@@ -1718,15 +1719,9 @@ def func_narrow_phase_diff_convex_vs_convex(
             if not is_ref:
                 ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    geoms_state,
-                    collider_state.diff_contact_input,
-                    gjk_info,
-                    i_ga,
-                    i_gb,
-                    i_b,
-                    i_c,
-                    ref_penetration,
+                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
                 )
+
                 func_set_contact(
                     i_ga,
                     i_gb,
@@ -2338,6 +2333,8 @@ def func_convex_convex_contact(
     gjk_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
+    # FIXME: Passing nested data structure as input argument is not supported for now.
+    diff_contact_input: array_class.DiffContactInput,
     errno: array_class.V_ANNOTATION,
 ):
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
@@ -2510,6 +2507,7 @@ def func_convex_convex_contact(
                                 gjk_state,
                                 gjk_info,
                                 support_field_info,
+                                diff_contact_input,
                                 i_ga,
                                 i_gb,
                                 i_b,
