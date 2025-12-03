@@ -249,9 +249,9 @@ def init(
             debug=ti_debug and backend == gs_backend.cpu,
             check_out_of_bound=debug and backend != gs_backend.metal,
             # force_scalarize_matrix=True for speeding up kernel compilation
-            # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
+            # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
             force_scalarize_matrix=True,
-            # Turning off 'advanced_optimization' is causing issues on MacOS
+            # FIXME: Turning off 'advanced_optimization' is causing issues on MacOS
             advanced_optimization=True,
             # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
             cfg_optimization=False,
@@ -322,7 +322,7 @@ def init(
 
 def destroy():
     """
-    A simple wrapper for ti.reset(). This call releases all gpu memories allocated and destroyes all runtime data, and also forces caching of compiled kernels.
+    A simple wrapper for ti.reset(). This call releases all gpu memories allocated and destroys all runtime data, and also forces caching of compiled kernels.
     gs.init() needs to be called again to reinitialize the system after destroy.
     """
     # Early return if not initialized

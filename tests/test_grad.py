@@ -1,4 +1,4 @@
-import sys
+import os
 
 import numpy as np
 import pytest
@@ -12,12 +12,16 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
+# FIXME: Gradient computation is broken if debug mode is enabled
+@pytest.fixture(scope="function", autouse=True)
+def disable_debug(monkeypatch):
+    monkeypatch.setenv("TI_DEBUG", "0")
+    yield
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_differentiable_push(precision, show_viewer):
-    if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
-        pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
-
+def test_differentiable_push(show_viewer):
     HORIZON = 10
 
     scene = gs.Scene(
