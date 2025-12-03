@@ -22,6 +22,7 @@ from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
+from genesis.utils.usd import parse_usd_articulation, parse_usd_rigid_body
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -143,11 +144,15 @@ class RigidEntity(Entity):
                 self._load_mesh(self._morph, self._surface)
             else:
                 self._load_usd_rigid_body(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.MJCF, 
-                                      gs.morphs.URDF, 
-                                      gs.morphs.Drone,
-                                      gs.morphs.USDArticulation,
-                                      )):
+        elif isinstance(
+            self._morph,
+            (
+                gs.morphs.MJCF,
+                gs.morphs.URDF,
+                gs.morphs.Drone,
+                gs.morphs.USDArticulation,
+            ),
+        ):
             self._load_scene(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
@@ -335,7 +340,7 @@ class RigidEntity(Entity):
         """
         # Parse USD rigid body to get l_info, j_infos, and g_infos
         l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
-        
+
         # Create link and joint using _add_by_info
         link, (joint,) = self._add_by_info(
             l_info=l_info,
@@ -394,7 +399,7 @@ class RigidEntity(Entity):
             morph=morph,
             surface=surface,
         )
-    
+
     def _collect_urdf_articulation_info(self, morph, surface):
         # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
         # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
@@ -439,9 +444,9 @@ class RigidEntity(Entity):
                         link_g_infos.append(g_info)
         except (ValueError, AssertionError):
             gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
-        
+
         return l_infos, links_j_infos, links_g_infos, eqs_info
-    
+
     def _build_up_articulation(self, l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface):
         # Add free floating joint at root if necessary
         if (
@@ -607,7 +612,7 @@ class RigidEntity(Entity):
                 data=eq_info["data"],
                 sol_params=eq_info["sol_params"],
             )
-    
+
     def _load_scene(self, morph, surface):
         # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
         # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
@@ -622,10 +627,9 @@ class RigidEntity(Entity):
             l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
         else:
             gs.raise_exception(f"Unsupported morph type: {type(morph)}")
-        
-        if(len(l_infos) > 0):
-            self._build_up_articulation(l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface)
 
+        if len(l_infos) > 0:
+            self._build_up_articulation(l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface)
 
     def _build(self):
         for link in self._links:
