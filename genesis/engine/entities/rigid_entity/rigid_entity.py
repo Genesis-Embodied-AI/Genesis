@@ -22,7 +22,6 @@ from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
-from genesis.utils.usd import parse_usd_articulation, parse_usd_rigid_body
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -338,6 +337,8 @@ class RigidEntity(Entity):
         """
         Load a USD rigid body, similar to _load_mesh but parsing from USD file.
         """
+        from genesis.utils.usd import parse_usd_rigid_body
+
         # Parse USD rigid body to get l_info, j_infos, and g_infos
         l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
 
@@ -624,6 +625,8 @@ class RigidEntity(Entity):
         elif isinstance(morph, gs.morphs.URDF):
             l_infos, links_j_infos, links_g_infos, eqs_info = self._collect_urdf_articulation_info(morph, surface)
         elif isinstance(morph, gs.morphs.USDArticulation):
+            from genesis.utils.usd import parse_usd_articulation
+
             l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
         else:
             gs.raise_exception(f"Unsupported morph type: {type(morph)}")
