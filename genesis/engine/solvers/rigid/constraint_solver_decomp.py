@@ -174,6 +174,20 @@ class ConstraintSolver:
             static_rigid_sim_config=solver._static_rigid_sim_config,
         )
 
+    def add_inequality_constraints_grad(self):
+        solver = self._solver
+        add_inequality_constraints.grad(
+            links_info=solver.links_info,
+            links_state=solver.links_state,
+            dofs_state=solver.dofs_state,
+            dofs_info=solver.dofs_info,
+            joints_info=solver.joints_info,
+            constraint_state=self.constraint_state,
+            collider_state=self._collider._collider_state,
+            rigid_global_info=solver._rigid_global_info,
+            static_rigid_sim_config=solver._static_rigid_sim_config,
+        )
+
     def resolve(self):
         solver = self._solver
 
@@ -438,15 +452,20 @@ def add_collision_constraints(
     static_rigid_sim_config: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(dofs_state.ctrl_mode.shape[1]):
+    for i_b, i_0 in (
+        ti.ndrange(dofs_state.ctrl_mode.shape[1], 1)
+        if ti.static(not static_rigid_sim_config.is_backward)
+        else ti.ndrange(dofs_state.ctrl_mode.shape[1], static_rigid_sim_config.max_contact_pairs)
+    ):
         EPS = rigid_global_info.EPS[None]
         n_dofs = dofs_state.ctrl_mode.shape[0]
 
-        for i_col in (
+        for i_1 in (
             range(collider_state.n_contacts[i_b])
             if ti.static(not static_rigid_sim_config.is_backward)
-            else ti.static(range(static_rigid_sim_config.max_contact_pairs))
+            else ti.static(range(1))
         ):
+            i_col = i_1 if ti.static(not static_rigid_sim_config.is_backward) else i_0
             if i_col < collider_state.n_contacts[i_b]:
                 contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
                 contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
@@ -472,7 +491,7 @@ def add_collision_constraints(
                     d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
                     n = d * contact_data_friction - contact_data_normal
 
-                    n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
+                    n_con = i_col * 4 + i # + constraint_state.n_constraints[i_b]
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                             i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -495,9 +514,8 @@ def add_collision_constraints(
                             link = link_b
 
                         # FIXME: Set number of iterations to look for parent to certain value for autodiff
-                        # while link > -1:
                         for i_parent in (
-                            range(20) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(20))
+                            range(20) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(1))
                         ):
                             if link > -1:
                                 link_maybe_batch = (
@@ -531,6 +549,10 @@ def add_collision_constraints(
 
                                 link = links_info.parent_idx[link_maybe_batch]
 
+                            if ti.static(static_rigid_sim_config.is_backward):
+                                if i_parent == 4 and link > -1:
+                                    print("Warning: Number of parents is too large for backward mode in add_collision_constraints")
+
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
                     imp, aref = gu.imp_aref(
@@ -545,6 +567,9 @@ def add_collision_constraints(
                     constraint_state.aref[n_con, i_b] = aref
                     constraint_state.efc_D[n_con, i_b] = 1 / diag
 
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(dofs_state.ctrl_mode.shape[1]):
+        constraint_state.n_constraints[i_b] += 4 * collider_state.n_contacts[i_b]
 
 @ti.func
 def func_equality_connect(
@@ -811,15 +836,15 @@ def add_inequality_constraints(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    add_frictionloss_constraints(
-        links_info=links_info,
-        joints_info=joints_info,
-        dofs_info=dofs_info,
-        dofs_state=dofs_state,
-        rigid_global_info=rigid_global_info,
-        constraint_state=constraint_state,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
+    # add_frictionloss_constraints(
+    #     links_info=links_info,
+    #     joints_info=joints_info,
+    #     dofs_info=dofs_info,
+    #     dofs_state=dofs_state,
+    #     rigid_global_info=rigid_global_info,
+    #     constraint_state=constraint_state,
+    #     static_rigid_sim_config=static_rigid_sim_config,
+    # )
     if ti.static(static_rigid_sim_config.enable_collision):
         add_collision_constraints(
             links_info=links_info,

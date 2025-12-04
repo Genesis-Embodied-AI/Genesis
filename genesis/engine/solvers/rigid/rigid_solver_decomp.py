@@ -272,6 +272,7 @@ class RigidSolver(Solver):
                     n_links=self._n_links,
                     n_geoms=self._n_geoms,
                     n_dofs=self._n_dofs,
+                    n_entities=self._n_entities,
                     # max_contact_pairs=self.collider._collider_state.contact_data.geom_a.shape[0],
                 )
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
@@ -1195,7 +1196,17 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
-            kernel_update_cartesian_space.grad(
+            kernel_update_geoms.grad(
+                envs_idx,
+                entities_info=self.entities_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                links_state=self.links_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                force_update_fixed_geoms=False,
+            )
+            kernel_COM_links.grad(
                 links_state=self.links_state,
                 links_info=self.links_info,
                 joints_state=self.joints_state,
@@ -1209,6 +1220,34 @@ class RigidSolver(Solver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 force_update_fixed_geoms=False,
             )
+            kernel_forward_kinematics.grad(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                force_update_fixed_geoms=False,
+            )
+            # kernel_update_cartesian_space.grad(
+            #     links_state=self.links_state,
+            #     links_info=self.links_info,
+            #     joints_state=self.joints_state,
+            #     joints_info=self.joints_info,
+            #     dofs_state=self.dofs_state,
+            #     dofs_info=self.dofs_info,
+            #     geoms_state=self.geoms_state,
+            #     geoms_info=self.geoms_info,
+            #     entities_info=self.entities_info,
+            #     rigid_global_info=self._rigid_global_info,
+            #     static_rigid_sim_config=self._static_rigid_sim_config,
+            #     force_update_fixed_geoms=False,
+            # )
 
         is_grad_valid = kernel_begin_backward_substep(
             f=f,
@@ -1250,25 +1289,47 @@ class RigidSolver(Solver):
         )
 
         if not self._disable_constraint:
+            # Solver backward
             dL_dqacc = self.dofs_state.acc.grad.to_numpy()
-            self.constraint_solver.backward(dL_dqacc)
-            pass
+            self.dofs_state.acc.grad.fill(0.0)
 
-        # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
-        # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).
-        # In [kernel_forward_dynamics], we read [acc] in [func_update_acc] and overwrite it in [kernel_compute_qacc].
-        # As [kenrel_compute_qacc] is called at the end of [kernel_forward_dynamics], we first backpropagate through
-        # [kernel_compute_qacc] and then restore the original [acc] from the adjoint cache. This copy operation
-        # cannot be merged with [kernel_compute_qacc.grad] because .grad function itself is a standalone kernel.
-        # We could possibly merge this small kernel later if (1) .grad function is regarded as a function instead of a
-        # kernel, (2) we add another variable to store the new [acc] from [kernel_compute_qacc] and thus can avoid
-        # the data access violation. However, both of these require major changes.
-        kernel_compute_qacc.grad(
-            dofs_state=self.dofs_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
+            self.constraint_solver.backward(dL_dqacc)
+            dL_dM = self.constraint_solver.constraint_state.dL_dM.to_numpy()
+            dL_djac = self.constraint_solver.constraint_state.dL_djac.to_numpy()
+            dL_daref = self.constraint_solver.constraint_state.dL_daref.to_numpy()
+            dL_defc_D = self.constraint_solver.constraint_state.dL_defc_D.to_numpy()
+            dL_dforce = self.constraint_solver.constraint_state.dL_dforce.to_numpy()
+
+            self._rigid_global_info.mass_mat.grad.from_numpy(dL_dM)
+            self.constraint_solver.constraint_state.jac.grad.from_numpy(dL_djac)
+            self.constraint_solver.constraint_state.aref.grad.from_numpy(dL_daref)
+            self.constraint_solver.constraint_state.efc_D.grad.from_numpy(dL_defc_D)
+            self.dofs_state.force.grad.from_numpy(dL_dforce)
+
+            self.constraint_solver.constraint_state.n_constraints.fill(0)
+            self.constraint_solver.add_inequality_constraints_grad()
+
+            # Collider backward
+            dL_dcontact_pos = self.collider._collider_state.contact_data.pos.grad.to_numpy()
+            dL_dcontact_normal = self.collider._collider_state.contact_data.normal.grad.to_numpy()
+            dL_dcontact_penetration = self.collider._collider_state.contact_data.penetration.grad.to_numpy()
+            self.collider.backward(dL_dcontact_pos, dL_dcontact_normal, dL_dcontact_penetration)
+        else:
+            # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
+            # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).
+            # In [kernel_forward_dynamics], we read [acc] in [func_update_acc] and overwrite it in [kernel_compute_qacc].
+            # As [kenrel_compute_qacc] is called at the end of [kernel_forward_dynamics], we first backpropagate through
+            # [kernel_compute_qacc] and then restore the original [acc] from the adjoint cache. This copy operation
+            # cannot be merged with [kernel_compute_qacc.grad] because .grad function itself is a standalone kernel.
+            # We could possibly merge this small kernel later if (1) .grad function is regarded as a function instead of a
+            # kernel, (2) we add another variable to store the new [acc] from [kernel_compute_qacc] and thus can avoid
+            # the data access violation. However, both of these require major changes.
+            kernel_compute_qacc.grad(
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
         kernel_copy_acc(
             f=f,
             dofs_state=self.dofs_state,
@@ -3915,7 +3976,7 @@ def func_solve_mass_batched(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
+            else ti.static(range(static_rigid_sim_config.n_entities))
         )
     ):
         if func_check_index_range(i_0, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.is_backward):
@@ -4241,6 +4302,65 @@ def kernel_update_cartesian_space(
             force_update_fixed_geoms=force_update_fixed_geoms,
         )
 
+@ti.kernel
+def kernel_forward_kinematics(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    geoms_info: array_class.GeomsInfo,
+    geoms_state: array_class.GeomsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    force_update_fixed_geoms: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(links_state.pos.shape[1]):
+        func_forward_kinematics(
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+@ti.kernel
+def kernel_COM_links(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    geoms_info: array_class.GeomsInfo,
+    geoms_state: array_class.GeomsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    force_update_fixed_geoms: ti.template(),
+):
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(links_state.pos.shape[1]):
+        func_COM_links(
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
 @ti.func
 def func_update_cartesian_space(
@@ -4967,7 +5087,7 @@ def func_forward_kinematics(
         else (
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
+            else ti.static(range(static_rigid_sim_config.n_entities))
         )
     ):
         if func_check_index_range(
@@ -5017,7 +5137,7 @@ def func_forward_velocity(
             # Static inner loop for backward pass
             ti.static(range(static_rigid_sim_config.max_n_awake_entities))
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
+            else ti.static(range(static_rigid_sim_config.n_entities))
         )
     ):
         if func_check_index_range(
@@ -5446,7 +5566,7 @@ def func_update_geoms(
         ):
             i_g = i_1 + entities_info.geom_start[i_e] if ti.static(static_rigid_sim_config.use_hibernation) else i_0
             if func_check_index_range(
-                i_g, entities_info.geom_start[i_e], entities_info.geom_end[i_e], static_rigid_sim_config.is_backward
+                i_g, entities_info.geom_start[i_e], entities_info.geom_end[i_e], static_rigid_sim_config.use_hibernation
             ):
                 if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
                     (

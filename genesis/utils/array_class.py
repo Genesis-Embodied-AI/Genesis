@@ -286,15 +286,15 @@ def get_constraint_state(constraint_solver, solver):
         efc_AR=V(dtype=gs.ti_float, shape=efc_AR_shape),
         active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
         prev_active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
-        diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B), needs_grad=solver._requires_grad),
+        aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B), needs_grad=solver._requires_grad),
         Jaref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        efc_frictionloss=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        efc_frictionloss=V(dtype=gs.ti_float, shape=(len_constraints_, _B), needs_grad=solver._requires_grad),
         efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B), needs_grad=solver._requires_grad),
         jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
-        jac=V(dtype=gs.ti_float, shape=jac_shape),
+        jac=V(dtype=gs.ti_float, shape=jac_shape, needs_grad=solver._requires_grad),
         jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
         # Backward gradients
@@ -1814,6 +1814,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     n_links: int = -1
     n_geoms: int = -1
     n_dofs: int = -1
+    n_entities: int = -1
     max_contact_pairs: int = -1
 
 
