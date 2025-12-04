@@ -549,13 +549,8 @@ def ti_to_python(
     # Check if copy mode is supported while setting default mode if not specified.
     # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
     # See: https://github.com/pytorch/pytorch/pull/168193
-    # FIXME: Zero-copy is currently broken for ti.Field for some reason...
     data_type = type(value)
-    use_zerocopy = (
-        gs.use_zerocopy
-        and not issubclass(data_type, ti.Field)
-        # and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
-    )
+    use_zerocopy = gs.use_zerocopy and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
         if copy is False:
             gs.raise_exception(
