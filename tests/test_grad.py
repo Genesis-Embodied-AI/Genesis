@@ -1,4 +1,5 @@
-import os
+import platform
+import sys
 
 import numpy as np
 import pytest
@@ -19,6 +20,7 @@ pytestmark = [
 
 
 @pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Physics-based particle sampler not supported on ARM.")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(show_viewer):
     HORIZON = 10
