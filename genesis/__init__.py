@@ -141,7 +141,6 @@ def init(
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue.
     # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
     # See: https://github.com/pytorch/pytorch/pull/168193
-    # FIXME: Zero-copy is currently broken for ti.Field for some reason...
     _use_zerocopy = int(os.environ["GS_ENABLE_ZEROCOPY"]) if "GS_ENABLE_ZEROCOPY" in os.environ else None
     if backend in (gs_backend.cpu, gs_backend.cuda):
         if _use_zerocopy is None:
@@ -150,7 +149,7 @@ def init(
         if _use_zerocopy:
             raise_exception(f"Zero-copy only support by GsTaichi dynamic array mode on CPU and CUDA backend.")
         _use_zerocopy = False
-    use_zerocopy = _use_zerocopy and _use_ndarray  # (_use_ndarray or backend != gs_backend.metal)
+    use_zerocopy = _use_zerocopy and (_use_ndarray or backend != gs_backend.metal)
 
     # Define the right dtypes in accordance with selected backend and precision
     global ti_float, np_float, tc_float
@@ -250,9 +249,9 @@ def init(
             debug=ti_debug and backend == gs_backend.cpu,
             check_out_of_bound=debug and backend != gs_backend.metal,
             # force_scalarize_matrix=True for speeding up kernel compilation
-            # Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
+            # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
             force_scalarize_matrix=True,
-            # Turning off 'advanced_optimization' is causing issues on MacOS
+            # FIXME: Turning off 'advanced_optimization' is causing issues on MacOS
             advanced_optimization=True,
             # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
             cfg_optimization=False,
@@ -323,7 +322,7 @@ def init(
 
 def destroy():
     """
-    A simple wrapper for ti.reset(). This call releases all gpu memories allocated and destroyes all runtime data, and also forces caching of compiled kernels.
+    A simple wrapper for ti.reset(). This call releases all gpu memories allocated and destroys all runtime data, and also forces caching of compiled kernels.
     gs.init() needs to be called again to reinitialize the system after destroy.
     """
     # Early return if not initialized
