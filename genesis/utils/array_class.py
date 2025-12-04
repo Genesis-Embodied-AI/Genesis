@@ -1813,6 +1813,8 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     max_n_geoms_per_entity: int = -1
     n_links: int = -1
     n_geoms: int = -1
+    n_dofs: int = -1
+    max_contact_pairs: int = -1
 
 
 # =========================================== DataManager ===========================================

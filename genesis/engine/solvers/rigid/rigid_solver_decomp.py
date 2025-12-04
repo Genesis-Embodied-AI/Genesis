@@ -271,6 +271,8 @@ class RigidSolver(Solver):
                     max_n_qs_per_link=max(link.n_qs for link in self.links) if self.links else 0,
                     n_links=self._n_links,
                     n_geoms=self._n_geoms,
+                    n_dofs=self._n_dofs,
+                    # max_contact_pairs=self.collider._collider_state.contact_data.geom_a.shape[0],
                 )
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
         else:
@@ -298,6 +300,9 @@ class RigidSolver(Solver):
 
             if getattr(self._options, "noslip_iterations", 0) > 0:
                 gs.raise_exception("Noslip is not supported yet when requires_grad is True.")
+
+            if getattr(self._options, "sparse_solve", False):
+                gs.raise_exception("Sparse solve is not supported yet when requires_grad is True.")
 
         # when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -816,6 +821,9 @@ class RigidSolver(Solver):
     def _init_collider(self):
         self.collider = Collider(self)
 
+        if self.sim.options.requires_grad:
+            self._static_rigid_sim_config.max_contact_pairs = self.collider._collider_state.contact_data.geom_a.shape[0]
+
         if self.collider._collider_static_config.has_terrain:
             link_idx_ = next(
                 i for i, _type in enumerate(ti_to_numpy(self.geoms_info.type)) if _type == gs.GEOM_TYPE.TERRAIN
@@ -1240,6 +1248,11 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
+
+        if not self._disable_constraint:
+            dL_dqacc = self.dofs_state.acc.grad.to_numpy()
+            self.constraint_solver.backward(dL_dqacc)
+            pass
 
         # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
         # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).

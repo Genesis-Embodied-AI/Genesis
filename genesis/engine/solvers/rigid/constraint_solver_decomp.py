@@ -437,94 +437,113 @@ def add_collision_constraints(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    EPS = rigid_global_info.EPS[None]
-
-    _B = dofs_state.ctrl_mode.shape[1]
-    n_dofs = dofs_state.ctrl_mode.shape[0]
-
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        for i_col in range(collider_state.n_contacts[i_b]):
-            contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
-            contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
+    for i_b in range(dofs_state.ctrl_mode.shape[1]):
+        EPS = rigid_global_info.EPS[None]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
 
-            contact_data_pos = collider_state.contact_data.pos[i_col, i_b]
-            contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
-            contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
-            contact_data_sol_params = collider_state.contact_data.sol_params[i_col, i_b]
-            contact_data_penetration = collider_state.contact_data.penetration[i_col, i_b]
+        for i_col in (
+            range(collider_state.n_contacts[i_b])
+            if ti.static(not static_rigid_sim_config.is_backward)
+            else ti.static(range(static_rigid_sim_config.max_contact_pairs))
+        ):
+            if i_col < collider_state.n_contacts[i_b]:
+                contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
+                contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
 
-            link_a = contact_data_link_a
-            link_b = contact_data_link_b
-            link_a_maybe_batch = [link_a, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link_a
-            link_b_maybe_batch = [link_b, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link_b
+                contact_data_pos = collider_state.contact_data.pos[i_col, i_b]
+                contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
+                contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+                contact_data_sol_params = collider_state.contact_data.sol_params[i_col, i_b]
+                contact_data_penetration = collider_state.contact_data.penetration[i_col, i_b]
 
-            d1, d2 = gu.ti_orthogonals(contact_data_normal)
+                link_a = contact_data_link_a
+                link_b = contact_data_link_b
+                link_a_maybe_batch = [link_a, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link_a
+                link_b_maybe_batch = [link_b, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link_b
 
-            invweight = links_info.invweight[link_a_maybe_batch][0]
-            if link_b > -1:
-                invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
+                d1, d2 = gu.ti_orthogonals(contact_data_normal)
 
-            for i in range(4):
-                d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                n = d * contact_data_friction - contact_data_normal
+                invweight = links_info.invweight[link_a_maybe_batch][0]
+                if link_b > -1:
+                    invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-                n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
-                if ti.static(static_rigid_sim_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                        i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
-                        constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
-                else:
-                    for i_d in range(n_dofs):
-                        constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
+                for i in range(4) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(4)):
+                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                    n = d * contact_data_friction - contact_data_normal
 
-                con_n_relevant_dofs = 0
-                jac_qvel = gs.ti_float(0.0)
-                for i_ab in range(2):
-                    sign = gs.ti_float(-1.0)
-                    link = link_a
-                    if i_ab == 1:
-                        sign = gs.ti_float(1.0)
-                        link = link_b
+                    n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
+                    if ti.static(static_rigid_sim_config.sparse_solve):
+                        for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
+                            i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+                            constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
+                    else:
+                        for i_d in (
+                            range(n_dofs)
+                            if ti.static(not static_rigid_sim_config.is_backward)
+                            else ti.static(range(static_rigid_sim_config.n_dofs))
+                        ):
+                            constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
-                    while link > -1:
-                        link_maybe_batch = [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
+                    con_n_relevant_dofs = 0
+                    jac_qvel = gs.ti_float(0.0)
+                    for i_ab in range(2) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(2)):
+                        sign = gs.ti_float(-1.0)
+                        link = link_a
+                        if i_ab == 1:
+                            sign = gs.ti_float(1.0)
+                            link = link_b
 
-                        # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
-                        for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
-                            i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
+                        # FIXME: Set number of iterations to look for parent to certain value for autodiff
+                        # while link > -1:
+                        for i_parent in (
+                            range(20) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(20))
+                        ):
+                            if link > -1:
+                                link_maybe_batch = (
+                                    [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
+                                )
 
-                            cdof_ang = dofs_state.cdof_ang[i_d, i_b]
-                            cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+                                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                                for i_d_ in (
+                                    range(links_info.n_dofs[link_maybe_batch])
+                                    if ti.static(not static_rigid_sim_config.is_backward)
+                                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
+                                ):
+                                    if i_d_ < links_info.n_dofs[link_maybe_batch]:
+                                        i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
-                            t_quat = gu.ti_identity_quat()
-                            t_pos = contact_data_pos - links_state.root_COM[link, i_b]
-                            _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                                        cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                                        cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
-                            diff = sign * vel
-                            jac = diff @ n
-                            jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
-                            constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
+                                        t_quat = gu.ti_identity_quat()
+                                        t_pos = contact_data_pos - links_state.root_COM[link, i_b]
+                                        _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
-                            if ti.static(static_rigid_sim_config.sparse_solve):
-                                constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                                con_n_relevant_dofs += 1
+                                        diff = sign * vel
+                                        jac = diff @ n
+                                        jac_qvel += jac * dofs_state.vel[i_d, i_b]
+                                        constraint_state.jac[n_con, i_d, i_b] += jac
 
-                        link = links_info.parent_idx[link_maybe_batch]
+                                        if ti.static(static_rigid_sim_config.sparse_solve):
+                                            constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
+                                            con_n_relevant_dofs += 1
 
-                if ti.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-                imp, aref = gu.imp_aref(
-                    contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
-                )
+                                link = links_info.parent_idx[link_maybe_batch]
 
-                diag = invweight + contact_data_friction * contact_data_friction * invweight
-                diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
-                diag = ti.max(diag, EPS)
+                    if ti.static(static_rigid_sim_config.sparse_solve):
+                        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                    imp, aref = gu.imp_aref(
+                        contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
+                    )
 
-                constraint_state.diag[n_con, i_b] = diag
-                constraint_state.aref[n_con, i_b] = aref
-                constraint_state.efc_D[n_con, i_b] = 1 / diag
+                    diag_0 = invweight + contact_data_friction * contact_data_friction * invweight
+                    diag_1 = diag_0 * 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
+                    diag = ti.max(diag_1, EPS)
+
+                    constraint_state.diag[n_con, i_b] = diag
+                    constraint_state.aref[n_con, i_b] = aref
+                    constraint_state.efc_D[n_con, i_b] = 1 / diag
 
 
 @ti.func
@@ -1026,52 +1045,69 @@ def add_joint_limit_constraints(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    EPS = rigid_global_info.EPS[None]
-
-    _B = constraint_state.jac.shape[2]
-    n_links = links_info.root_idx.shape[0]
-    n_dofs = dofs_state.ctrl_mode.shape[0]
-
     # TODO: sparse mode
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b in range(_B):
-        for i_l in range(n_links):
+    for i_b in range(constraint_state.jac.shape[2]):
+        EPS = rigid_global_info.EPS[None]
+        n_links = links_info.root_idx.shape[0]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
+
+        for i_l in (
+            range(n_links)
+            if ti.static(not static_rigid_sim_config.is_backward)
+            else ti.static(range(static_rigid_sim_config.n_links))
+        ):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
-            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
-                I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+            for i_j_ in (
+                range(links_info.joint_start[I_l], links_info.joint_end[I_l])
+                if ti.static(not static_rigid_sim_config.is_backward)
+                else ti.static(range(static_rigid_sim_config.max_n_joints_per_link))
+            ):
+                i_j = (
+                    i_j_ if ti.static(not static_rigid_sim_config.is_backward) else (i_j_ + links_info.joint_start[I_l])
+                )
+                if i_j < links_info.joint_end[I_l]:
+                    I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
 
-                if joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE or joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
-                    i_q = joints_info.q_start[I_j]
-                    i_d = joints_info.dof_start[I_j]
-                    I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                    pos_delta_min = rigid_global_info.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
-                    pos_delta_max = dofs_info.limit[I_d][1] - rigid_global_info.qpos[i_q, i_b]
-                    pos_delta = min(pos_delta_min, pos_delta_max)
+                    if (
+                        joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE
+                        or joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC
+                    ):
+                        i_q = joints_info.q_start[I_j]
+                        i_d = joints_info.dof_start[I_j]
+                        I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        pos_delta_min = rigid_global_info.qpos[i_q, i_b] - dofs_info.limit[I_d][0]
+                        pos_delta_max = dofs_info.limit[I_d][1] - rigid_global_info.qpos[i_q, i_b]
+                        pos_delta = min(pos_delta_min, pos_delta_max)
 
-                    if pos_delta < 0:
-                        jac = (pos_delta_min < pos_delta_max) * 2 - 1
-                        jac_qvel = jac * dofs_state.vel[i_d, i_b]
-                        imp, aref = gu.imp_aref(joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta)
-                        diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, EPS)
+                        if pos_delta < 0:
+                            jac = (pos_delta_min < pos_delta_max) * 2 - 1
+                            jac_qvel = jac * dofs_state.vel[i_d, i_b]
+                            imp, aref = gu.imp_aref(joints_info.sol_params[I_j], pos_delta, jac_qvel, pos_delta)
+                            diag = ti.max(dofs_info.invweight[I_d] * (1 - imp) / imp, EPS)
 
-                        n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
-                        constraint_state.diag[n_con, i_b] = diag
-                        constraint_state.aref[n_con, i_b] = aref
-                        constraint_state.efc_D[n_con, i_b] = 1 / diag
+                            n_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
+                            constraint_state.diag[n_con, i_b] = diag
+                            constraint_state.aref[n_con, i_b] = aref
+                            constraint_state.efc_D[n_con, i_b] = 1 / diag
 
-                        if ti.static(static_rigid_sim_config.sparse_solve):
-                            for i_d2_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                                i_d2 = constraint_state.jac_relevant_dofs[n_con, i_d2_, i_b]
-                                constraint_state.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
-                        else:
-                            for i_d2 in range(n_dofs):
-                                constraint_state.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
-                        constraint_state.jac[n_con, i_d, i_b] = jac
+                            if ti.static(static_rigid_sim_config.sparse_solve):
+                                for i_d2_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
+                                    i_d2 = constraint_state.jac_relevant_dofs[n_con, i_d2_, i_b]
+                                    constraint_state.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
+                            else:
+                                for i_d2 in (
+                                    range(n_dofs)
+                                    if ti.static(not static_rigid_sim_config.is_backward)
+                                    else ti.static(range(static_rigid_sim_config.n_dofs))
+                                ):
+                                    constraint_state.jac[n_con, i_d2, i_b] = gs.ti_float(0.0)
+                            constraint_state.jac[n_con, i_d, i_b] = jac
 
-                        if ti.static(static_rigid_sim_config.sparse_solve):
-                            constraint_state.jac_n_relevant_dofs[n_con, i_b] = 1
-                            constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
+                            if ti.static(static_rigid_sim_config.sparse_solve):
+                                constraint_state.jac_n_relevant_dofs[n_con, i_b] = 1
+                                constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
 
 
 @ti.func
@@ -1084,46 +1120,70 @@ def add_frictionloss_constraints(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    EPS = rigid_global_info.EPS[None]
-
-    _B = constraint_state.jac.shape[2]
-    n_links = links_info.root_idx.shape[0]
-    n_dofs = dofs_state.ctrl_mode.shape[0]
-
     # TODO: sparse mode
     # FIXME: The condition `if dofs_info.frictionloss[I_d] > EPS:` is not correctly evaluated on Apple Metal
     # if `serialize=True`...
     ti.loop_config(
         serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and gs.backend != gs.metal)
     )
-    for i_b in range(_B):
+    for i_b in range(constraint_state.jac.shape[2]):
         constraint_state.n_constraints_frictionloss[i_b] = 0
 
-        for i_l in range(n_links):
+        EPS = rigid_global_info.EPS[None]
+        n_links = links_info.root_idx.shape[0]
+        n_dofs = dofs_state.ctrl_mode.shape[0]
+
+        for i_l in (
+            range(n_links)
+            if ti.static(not static_rigid_sim_config.is_backward)
+            else ti.static(range(static_rigid_sim_config.n_links))
+        ):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
 
-            for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
-                I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+            for i_j_ in (
+                range(links_info.joint_start[I_l], links_info.joint_end[I_l])
+                if ti.static(not static_rigid_sim_config.is_backward)
+                else ti.static(range(static_rigid_sim_config.max_n_joints_per_link))
+            ):
+                i_j = (
+                    i_j_ if ti.static(not static_rigid_sim_config.is_backward) else (i_j_ + links_info.joint_start[I_l])
+                )
+                if i_j < links_info.joint_end[I_l]:
+                    I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
 
-                for i_d in range(joints_info.dof_start[I_j], joints_info.dof_end[I_j]):
-                    I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                    for i_d_ in (
+                        range(joints_info.dof_start[I_j], joints_info.dof_end[I_j])
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else ti.static(range(static_rigid_sim_config.max_n_dofs_per_joint))
+                    ):
+                        i_d = (
+                            i_d_
+                            if ti.static(not static_rigid_sim_config.is_backward)
+                            else (i_d_ + joints_info.dof_start[I_j])
+                        )
+                        if i_d < joints_info.dof_end[I_j]:
+                            I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
 
-                    if dofs_info.frictionloss[I_d] > EPS:
-                        jac = 1.0
-                        jac_qvel = jac * dofs_state.vel[i_d, i_b]
-                        imp, aref = gu.imp_aref(joints_info.sol_params[I_j], 0.0, jac_qvel, 0.0)
-                        diag = ti.max(dofs_info.invweight[I_d] * (1.0 - imp) / imp, EPS)
+                            if dofs_info.frictionloss[I_d] > EPS:
+                                jac = 1.0
+                                jac_qvel = jac * dofs_state.vel[i_d, i_b]
+                                imp, aref = gu.imp_aref(joints_info.sol_params[I_j], 0.0, jac_qvel, 0.0)
+                                diag = ti.max(dofs_info.invweight[I_d] * (1.0 - imp) / imp, EPS)
 
-                        i_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
-                        ti.atomic_add(constraint_state.n_constraints_frictionloss[i_b], 1)
+                                i_con = ti.atomic_add(constraint_state.n_constraints[i_b], 1)
+                                ti.atomic_add(constraint_state.n_constraints_frictionloss[i_b], 1)
 
-                        constraint_state.diag[i_con, i_b] = diag
-                        constraint_state.aref[i_con, i_b] = aref
-                        constraint_state.efc_D[i_con, i_b] = 1.0 / diag
-                        constraint_state.efc_frictionloss[i_con, i_b] = dofs_info.frictionloss[I_d]
-                        for i_d2 in range(n_dofs):
-                            constraint_state.jac[i_con, i_d2, i_b] = gs.ti_float(0.0)
-                        constraint_state.jac[i_con, i_d, i_b] = jac
+                                constraint_state.diag[i_con, i_b] = diag
+                                constraint_state.aref[i_con, i_b] = aref
+                                constraint_state.efc_D[i_con, i_b] = 1.0 / diag
+                                constraint_state.efc_frictionloss[i_con, i_b] = dofs_info.frictionloss[I_d]
+                                for i_d2 in (
+                                    range(n_dofs)
+                                    if ti.static(not static_rigid_sim_config.is_backward)
+                                    else ti.static(range(static_rigid_sim_config.n_dofs))
+                                ):
+                                    constraint_state.jac[i_con, i_d2, i_b] = gs.ti_float(0.0)
+                                constraint_state.jac[i_con, i_d, i_b] = jac
 
 
 @ti.func
