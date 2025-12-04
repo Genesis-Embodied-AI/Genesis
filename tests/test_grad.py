@@ -12,11 +12,10 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
-# FIXME: Gradient computation is broken if debug mode is enabled
-@pytest.fixture(scope="function", autouse=True)
-def disable_debug(monkeypatch):
-    monkeypatch.setenv("TI_DEBUG", "0")
-    yield
+# FIXME: Gradient computation is broken if debug mode is enabled and field is used
+pytestmark = [
+    pytest.mark.debug(False),
+]
 
 
 @pytest.mark.required
