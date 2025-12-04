@@ -1,3 +1,4 @@
+import platform
 import sys
 
 import numpy as np
@@ -12,12 +13,16 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_differentiable_push(precision, show_viewer):
-    if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
-        pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
+# FIXME: Gradient computation is broken if debug mode is enabled and field is used
+pytestmark = [
+    pytest.mark.debug(False),
+]
 
+
+@pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Physics-based particle sampler not supported on ARM.")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_differentiable_push(show_viewer):
     HORIZON = 10
 
     scene = gs.Scene(

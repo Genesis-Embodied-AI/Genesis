@@ -1426,15 +1426,13 @@ def func_solve(
     static_rigid_sim_config: ti.template(),
 ):
     _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.grad.shape[0]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
         if constraint_state.n_constraints[i_b] > 0:
-            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
-            for it in range(rigid_global_info.iterations[None]):
+            for _ in range(rigid_global_info.iterations[None]):
                 func_solve_body(
                     i_b,
                     entities_info=entities_info,
