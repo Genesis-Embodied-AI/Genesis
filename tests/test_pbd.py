@@ -113,7 +113,7 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
     scene.reset()
 
     # Simulate for a while
-    for i in range(40):
+    for _ in range(40):
         scene.step()
 
     # Make sure that the cloth is landing perfectly vertically and laying on the ground without moving
