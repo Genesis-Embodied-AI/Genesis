@@ -82,6 +82,9 @@ class Collider:
         # one copy here to save memory and maintain cleaner code.
         self._support_field = SupportField(rigid_solver)
 
+        # Make sure that the initial state is clean
+        self.clear()
+
     def _init_static_config(self) -> None:
         # Identify the convex collision detection (ccd) algorithm
         if self._solver._options.use_gjk_collision and self._gjk._is_active:
