@@ -622,7 +622,7 @@ class RigidEntity(Entity):
         if isinstance(morph, gs.morphs.MJCF):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
             l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
-        elif isinstance(morph, gs.morphs.URDF):
+        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             l_infos, links_j_infos, links_g_infos, eqs_info = self._collect_urdf_articulation_info(morph, surface)
         elif isinstance(morph, gs.morphs.USDArticulation):
             from genesis.utils.usd import parse_usd_articulation
