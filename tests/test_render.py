@@ -523,7 +523,9 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
     )
     plane = scene.add_entity(
         gs.morphs.Plane(),
-        surface=gs.surfaces.Default(diffuse_texture=gs.textures.BatchTexture.from_images(image_folder=asset_path)),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.BatchTexture.from_images(image_folder=os.path.join(asset_path, "ci_assets"))
+        ),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -562,7 +564,7 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
             rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False
         )
         batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
-        assert rgba_all.shape == (*batch_shape, 3)
+        assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all,))
         exporter.export_frame_all_cameras(i, rgb=rgba_all)
 
     for image_file in sorted(tmp_path.rglob("*.png")):

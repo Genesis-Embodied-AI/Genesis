@@ -273,6 +273,9 @@ class BatchTexture(Texture):
             ]
 
         num_images = len(image_paths) if image_paths is not None else len(image_arrays)
+        if num_images == 0:
+            gs.raise_exception("No images found.")
+
         if image_colors is not None:
             if isinstance(image_colors[0], float):  # List[float]
                 image_colors = [image_colors for _ in range(num_images)]
