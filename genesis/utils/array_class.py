@@ -418,14 +418,12 @@ def get_sort_buffer(solver):
 
 @DATA_ORIENTED
 class StructContactCache(metaclass=BASE_METACLASS):
-    i_va_ws: V_ANNOTATION
     normal: V_ANNOTATION
 
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
     return StructContactCache(
-        i_va_ws=V(dtype=gs.ti_int, shape=(2, n_possible_pairs, _B)),
         normal=V_VEC(3, dtype=gs.ti_float, shape=(n_possible_pairs, _B)),
     )
 
@@ -589,7 +587,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     # multi contact perturbation and tolerance
     mc_perturbation: V_ANNOTATION
     mc_tolerance: V_ANNOTATION
-    mpr_to_sdf_overlap_ratio: V_ANNOTATION
+    mpr_to_gjk_overlap_ratio: V_ANNOTATION
     # differentiable contact tolerance
     diff_pos_tolerance: V_ANNOTATION
     diff_normal_tolerance: V_ANNOTATION
@@ -618,7 +616,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         terrain_xyz_maxmin=V(dtype=gs.ti_float, shape=(6,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_tolerance"]),
-        mpr_to_sdf_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_sdf_overlap_ratio"]),
+        mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_normal_tolerance"]),
     )
@@ -626,8 +624,9 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
 
 @ti.data_oriented
 class StructColliderStaticConfig(metaclass=AutoInitMeta):
-    has_nonconvex_nonterrain: bool
     has_terrain: bool
+    has_convex_convex: bool
+    has_nonconvex_nonterrain: bool
     # maximum number of contact pairs per collision pair
     n_contacts_per_pair: int
     # ccd algorithm
@@ -1800,7 +1799,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_links_info: bool = False
     batch_dofs_info: bool = False
     batch_joints_info: bool = False
-    enable_mujoco_compatibility: bool = True
+    enable_mujoco_compatibility: bool = False
     enable_multi_contact: bool = False
     enable_joint_limit: bool = False
     box_box_detection: bool = False

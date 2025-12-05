@@ -46,21 +46,18 @@ class Collider:
 
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
-        self._mpr_to_sdf_overlap_ratio = 0.4
+        self._mpr_to_gjk_overlap_ratio = 0.25
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
 
-        # FIXME: MPR is necessary because it is used for terrain collision detection
-        self._mpr = MPR(rigid_solver)
-        self._sdf = SDF(rigid_solver)
-        is_gjk_active = (
-            self._solver._options.use_gjk_collision and sum(geom.is_convex for geom in self._solver.geoms) > 1
-        )
-        self._gjk = GJK(rigid_solver, is_active=is_gjk_active)
-
         self._init_static_config()
         self._init_collision_fields()
+
+        self._mpr = MPR(rigid_solver, is_active=self._collider_static_config.has_terrain)
+        self._sdf = SDF(rigid_solver, is_active=self._collider_static_config.has_nonconvex_nonterrain)
+        self._gjk = GJK(rigid_solver, is_active=self._collider_static_config.has_convex_convex)
+        self._support_field = SupportField(rigid_solver, is_active=self._mpr.is_active or self._gjk.is_active)
 
         if gs.use_zerocopy:
             self._contacts_info: dict[str, torch.Tensor] = {}
@@ -77,10 +74,6 @@ class Collider:
                 self._contacts_info[key] = ti_to_torch(
                     getattr(self._collider_state.contact_data, name), transpose=True, copy=False
                 )
-
-        # Support field used for mpr and gjk. Rather than having separate support fields for each algorithm, keep only
-        # one copy here to save memory and maintain cleaner code.
-        self._support_field = SupportField(rigid_solver)
 
         # Make sure that the initial state is clean
         self.clear()
@@ -105,20 +98,39 @@ class Collider:
         ):
             n_contacts_per_pair = max(n_contacts_per_pair, self._box_MAXCONPAIR)
 
+        # Determine which combination of collision detection algorithms must be enabled
+        self._n_possible_pairs, self._collision_pair_idx = self._compute_collision_pair_idx()
+        has_any_vs_terrain = False
+        has_convex_vs_convex = False
+        has_nonconvex_vs_nonterrain = False
+        for i_ga in range(self._solver.n_geoms):
+            for i_gb in range(i_ga + 1, self._solver.n_geoms):
+                if self._collision_pair_idx[i_ga, i_gb] == -1:
+                    geom_a, geom_b = self._solver.geoms[i_ga], self._solver.geoms[i_gb]
+                    if geom_a.type == gs.GEOM_TYPE.TERRAIN or geom_b.type == gs.GEOM_TYPE.TERRAIN:
+                        has_any_vs_terrain = True
+                    if geom_a.is_convex and geom_b.is_convex:
+                        has_convex_vs_convex = True
+                    if not (
+                        geom_a.is_convex
+                        or geom_b.is_convex
+                        or geom_a.type == gs.GEOM_TYPE.TERRAIN
+                        or geom_b.type == gs.GEOM_TYPE.TERRAIN
+                    ):
+                        has_nonconvex_vs_nonterrain = True
+
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
-            has_nonconvex_nonterrain=not all(
-                geom.is_convex or geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms
-            ),
-            has_terrain=any(geom.type == gs.GEOM_TYPE.TERRAIN for geom in self._solver.geoms),
+            has_terrain=has_any_vs_terrain,
+            has_convex_convex=has_convex_vs_convex,
+            has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
 
     def _init_collision_fields(self) -> None:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
-        self._n_possible_pairs, collision_pair_idx = self._compute_collision_pair_idx()
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
 
@@ -130,11 +142,11 @@ class Collider:
             self._collider_static_config,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
-            mpr_to_sdf_overlap_ratio=self._mpr_to_sdf_overlap_ratio,
+            mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
         )
-        self._init_collision_pair_idx(collision_pair_idx)
+        self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(self._n_possible_pairs)
         self._init_terrain_state()
@@ -307,17 +319,13 @@ class Collider:
                 first_time = ti_to_torch(self._collider_state.first_time, copy=False)
                 first_time[envs_idx] = True
 
-            i_va_ws = ti_to_torch(self._collider_state.contact_cache.i_va_ws, copy=False)
             normal = ti_to_torch(self._collider_state.contact_cache.normal, copy=False)
             if isinstance(envs_idx, torch.Tensor):
                 max_possible_pairs = normal.shape[0]
-                i_va_ws.scatter_(2, envs_idx[None, None].expand((2, max_possible_pairs, -1)), -1)
                 normal.scatter_(1, envs_idx[None, :, None].expand((max_possible_pairs, -1, 3)), 0.0)
             elif envs_idx is None:
-                i_va_ws.fill_(-1)
                 normal.zero_()
             else:
-                i_va_ws[:, :, envs_idx] = -1
                 normal[:, envs_idx] = 0.0
             return
 
@@ -585,8 +593,6 @@ def collider_kernel_reset(
             collider_state.first_time[i_b] = True
 
         for i_pair in range(max_possible_pairs):
-            collider_state.contact_cache.i_va_ws[0, i_pair, i_b] = -1
-            collider_state.contact_cache.i_va_ws[1, i_pair, i_b] = -1
             collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
 
@@ -1419,8 +1425,6 @@ def func_broad_phase(
                             # Clear collision normal cache if not in contact
                             if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
-                                collider_state.contact_cache.i_va_ws[0, i_pair, i_b] = -1
-                                collider_state.contact_cache.i_va_ws[1, i_pair, i_b] = -1
                                 collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
                             continue
 
@@ -1477,8 +1481,6 @@ def func_broad_phase(
                                 # Clear collision normal cache if not in contact
                                 if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
-                                    collider_state.contact_cache.i_va_ws[0, i_pair, i_b] = -1
-                                    collider_state.contact_cache.i_va_ws[1, i_pair, i_b] = -1
                                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
                                 continue
 
@@ -1512,8 +1514,6 @@ def func_broad_phase(
                                 if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
                                     # Clear collision normal cache if not in contact
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
-                                    collider_state.contact_cache.i_va_ws[0, i_pair, i_b] = -1
-                                    collider_state.contact_cache.i_va_ws[1, i_pair, i_b] = -1
                                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
                                     continue
 
@@ -2401,8 +2401,10 @@ def func_convex_convex_contact(
 
         i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
         for i_detection in range(5):
-            try_sdf = False
-            prefer_sdf = False
+            prefer_gjk = (
+                collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.GJK
+                or collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
+            )
 
             if multi_contact and is_col_0:
                 # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
@@ -2475,25 +2477,19 @@ def func_convex_convex_contact(
                                 )
                                 is_mpr_updated = True
 
-                        # Fallback on SDF if collision is detected by MPR but no collision direction was cached and the
+                        # Fallback on GJK if collision is detected by MPR but no collision direction was cached and the
                         # initial penetration is already quite large, because the contact information provided by MPR
                         # may be unreliable in such a case.
                         if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                             if is_col and penetration > tolerance:
-                                # MPR cannot handle collision detection for fully enclosed geometries. Falling back to
-                                # SDF. Note that SDF does not take into account to direction of interest. As such, it
-                                # cannot be used reliably for anything else than the point of deepest penetration.
-                                prefer_sdf = (
+                                # MPR cannot handle collision detection for enclosed geometries. Falling back to GJK.
+                                prefer_gjk = (
                                     collider_info.mc_tolerance[None] * penetration
-                                    >= collider_info.mpr_to_sdf_overlap_ratio[None] * tolerance
+                                    >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                                 )
-                                if prefer_sdf or not is_mpr_guess_direction_available:
-                                    try_sdf = True
 
                     ### GJK, MJ_GJK
-                    elif ti.static(
-                        collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
-                    ):
+                    if prefer_gjk:
                         if ti.static(static_rigid_sim_config.requires_grad):
                             diff_gjk.func_gjk_contact(
                                 links_state,
@@ -2596,80 +2592,6 @@ def func_convex_convex_contact(
                                     contact_pos = gjk_state.contact_pos[i_b, 0]
                                     normal = gjk_state.normal[i_b, 0]
 
-                if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                    if try_sdf:
-                        # Note that SDF may detect different collision points depending on geometry ordering. Because of
-                        # this, it is necessary to run it twice and take the contact information associated with the
-                        # point of deepest penetration.
-                        is_col_a = False
-                        is_col_b = False
-                        normal_a = ti.Vector.zero(gs.ti_float, 3)
-                        normal_b = ti.Vector.zero(gs.ti_float, 3)
-                        penetration_b = gs.ti_float(0.0)
-                        penetration_a = gs.ti_float(0.0)
-                        contact_pos_a = ti.Vector.zero(gs.ti_float, 3)
-                        contact_pos_b = ti.Vector.zero(gs.ti_float, 3)
-                        i_va = collider_state.contact_cache.i_va_ws[0, i_pair, i_b]
-                        i_vb = collider_state.contact_cache.i_va_ws[1, i_pair, i_b]
-                        for i_sdf in range(2):
-                            is_col_i, normal_i, penetration_i, contact_pos_i, i_vi = func_contact_convex_convex_sdf(
-                                i_ga if i_sdf == 0 else i_gb,
-                                i_gb if i_sdf == 0 else i_ga,
-                                i_b,
-                                i_va if i_sdf == 0 else i_vb,
-                                geoms_state,
-                                geoms_info,
-                                verts_info,
-                                collider_info,
-                                collider_static_config,
-                                sdf_info,
-                                rigid_global_info,
-                                # FIXME: The specialized edge collision detection subrountine is not reliable
-                                enable_edge_detection_fallback=False,
-                            )
-                            if not is_col_i:
-                                is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_edge_sdf(
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    geoms_state,
-                                    geoms_info,
-                                    verts_info,
-                                    edges_info,
-                                    rigid_global_info,
-                                    collider_static_config,
-                                    sdf_info,
-                                )
-                            if i_sdf == 0:
-                                is_col_a = is_col_i
-                                normal_a = normal_i
-                                penetration_a = penetration_i
-                                contact_pos_a = contact_pos_i
-                                i_va = i_vi
-                            else:
-                                is_col_b = is_col_i
-                                normal_b = -normal_i
-                                penetration_b = penetration_i
-                                contact_pos_b = contact_pos_i
-                                i_vb = i_vi
-
-                        if is_col_a and (
-                            not is_col_b or penetration_a >= max(penetration_b, (not prefer_sdf) * penetration)
-                        ):
-                            normal = normal_a
-                            penetration = penetration_a
-                            contact_pos = contact_pos_a
-                            collider_state.contact_cache.i_va_ws[0, i_pair, i_b] = i_va
-                        elif is_col_b and (
-                            not is_col_a or penetration_b > max(penetration_a, (not prefer_sdf) * penetration)
-                        ):
-                            normal = normal_b
-                            penetration = penetration_b
-                            contact_pos = contact_pos_b
-                            collider_state.contact_cache.i_va_ws[1, i_pair, i_b] = i_vb
-                        elif not is_col_a and not is_col_b:
-                            is_col = False
-
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
@@ -2709,8 +2631,6 @@ def func_convex_convex_contact(
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
                 else:
                     # Clear collision normal cache if not in contact
-                    collider_state.contact_cache.i_va_ws[0, i_pair, i_b] = -1
-                    collider_state.contact_cache.i_va_ws[1, i_pair, i_b] = -1
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
             elif multi_contact and is_col_0 > 0 and is_col > 0:
