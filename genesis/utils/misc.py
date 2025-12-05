@@ -549,13 +549,8 @@ def ti_to_python(
     # Check if copy mode is supported while setting default mode if not specified.
     # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
     # See: https://github.com/pytorch/pytorch/pull/168193
-    # FIXME: Zero-copy is currently broken for ti.Field for some reason...
     data_type = type(value)
-    use_zerocopy = (
-        gs.use_zerocopy
-        and not issubclass(data_type, ti.Field)
-        # and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
-    )
+    use_zerocopy = gs.use_zerocopy and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
         if copy is False:
             gs.raise_exception(
@@ -577,9 +572,15 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
+                # FIXME: Field data is not properly initialized (not materialized) in memory at this point.
+                # DLPack will return garbage at best, or segfault right away if `ti.sync` is not called beforehand.
+                if issubclass(data_type, ti.Field):
+                    ti.sync()
+
+                # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:
-                    value_tc = value_tc[:, 0]
+                    value_tc = value_tc.reshape((*batch_shape, value.n))
                 value._tc = value_tc
                 value._T_tc = value_tc.movedim(batch_ndim - 1, 0) if (batch_ndim := len(batch_shape)) > 1 else value_tc
                 if gs.backend == gs.cpu:

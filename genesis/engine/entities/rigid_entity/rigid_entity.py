@@ -938,7 +938,7 @@ class RigidEntity(Entity):
                 links_state=sol.links_state,
             )
 
-        jacobian = ti_to_torch(self._jacobian, transpose=True)
+        jacobian = ti_to_torch(self._jacobian, transpose=True, copy=True)
         if self._solver.n_envs == 0:
             jacobian = jacobian[0]
 

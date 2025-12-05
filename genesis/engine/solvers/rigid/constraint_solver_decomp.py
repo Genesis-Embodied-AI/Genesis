@@ -491,7 +491,7 @@ def add_collision_constraints(
                     d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
                     n = d * contact_data_friction - contact_data_normal
 
-                    n_con = i_col * 4 + i # + constraint_state.n_constraints[i_b]
+                    n_con = i_col * 4 + i  # + constraint_state.n_constraints[i_b]
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                             i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -551,7 +551,9 @@ def add_collision_constraints(
 
                             if ti.static(static_rigid_sim_config.is_backward):
                                 if i_parent == 4 and link > -1:
-                                    print("Warning: Number of parents is too large for backward mode in add_collision_constraints")
+                                    print(
+                                        "Warning: Number of parents is too large for backward mode in add_collision_constraints"
+                                    )
 
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
@@ -570,6 +572,7 @@ def add_collision_constraints(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(dofs_state.ctrl_mode.shape[1]):
         constraint_state.n_constraints[i_b] += 4 * collider_state.n_contacts[i_b]
+
 
 @ti.func
 def func_equality_connect(
@@ -1511,15 +1514,13 @@ def func_solve(
     static_rigid_sim_config: ti.template(),
 ):
     _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.grad.shape[0]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
         if constraint_state.n_constraints[i_b] > 0:
-            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
-            for it in range(rigid_global_info.iterations[None]):
+            for _ in range(rigid_global_info.iterations[None]):
                 func_solve_body(
                     i_b,
                     entities_info=entities_info,

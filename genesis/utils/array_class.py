@@ -116,12 +116,17 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
 
 def get_rigid_global_info(solver):
     _B = solver._B
-    requires_grad = solver._requires_grad
 
     mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
     if math.prod(mass_mat_shape) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+        )
+    requires_grad = solver._requires_grad
+    mass_mat_shape_bw = maybe_shape((2, *mass_mat_shape), requires_grad)
+    if math.prod(mass_mat_shape_bw) > np.iinfo(np.int32).max:
+        gs.raise_exception(
+            f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
 
     return StructRigidGlobalInfo(
@@ -141,7 +146,7 @@ def get_rigid_global_info(solver):
         geoms_init_AABB=V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
         mass_mat=V(dtype=gs.ti_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L=V(dtype=gs.ti_float, shape=mass_mat_shape, needs_grad=requires_grad),
-        mass_mat_L_bw=V(dtype=gs.ti_float, shape=(2, solver.n_dofs_, solver.n_dofs_, _B), needs_grad=requires_grad),
+        mass_mat_L_bw=V(dtype=gs.ti_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.ti_bool, shape=(solver.n_entities_, _B)),
         mass_parent_mask=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
@@ -1182,6 +1187,7 @@ class StructDofsState(metaclass=BASE_METACLASS):
 def get_dofs_state(solver):
     shape = (solver.n_dofs_, solver._B)
     requires_grad = solver._requires_grad
+    shape_bw = maybe_shape((2, *shape), requires_grad)
 
     return StructDofsState(
         force=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
@@ -1195,9 +1201,9 @@ def get_dofs_state(solver):
         vel_prev=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         vel_next=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         acc=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
-        acc_bw=V(dtype=gs.ti_float, shape=(2, solver.n_dofs_, solver._B), needs_grad=requires_grad),
+        acc_bw=V(dtype=gs.ti_float, shape=shape_bw, needs_grad=requires_grad),
         acc_smooth=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
-        acc_smooth_bw=V(dtype=gs.ti_float, shape=(2, solver.n_dofs_, solver._B), needs_grad=requires_grad),
+        acc_smooth_bw=V(dtype=gs.ti_float, shape=shape_bw, needs_grad=requires_grad),
         qf_smooth=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         qf_constraint=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         cdof_ang=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
@@ -1269,9 +1275,8 @@ class StructLinksState(metaclass=BASE_METACLASS):
 def get_links_state(solver):
     max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = (solver.n_links_, solver._B)
-    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
-
     requires_grad = solver._requires_grad
+    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
 
     return StructLinksState(
         cinr_inertial=V(dtype=gs.ti_mat3, shape=shape, needs_grad=requires_grad),
