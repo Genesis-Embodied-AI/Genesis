@@ -116,10 +116,15 @@ class GJK:
         self._gjk_state = array_class.get_gjk_state(
             rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info, is_active
         )
+
         self._is_active = is_active
 
     def reset(self):
         pass
+
+    @property
+    def is_active(self):
+        return self._is_active
 
 
 @ti.func
