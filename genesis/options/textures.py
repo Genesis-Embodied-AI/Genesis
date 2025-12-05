@@ -259,6 +259,13 @@ class BatchTexture(Texture):
 
         image_textures = []
         if image_folder is not None:
+            input_image_folder = image_folder
+            if not os.path.exists(image_folder):
+                image_folder = os.path.join(gs.utils.get_assets_dir(), image_folder)
+            if not os.path.exists(image_folder):
+                gs.raise_exception(
+                    f"Directory not found in either current directory or assets directory: '{input_image_folder}'."
+                )
             image_paths = [
                 os.path.join(image_folder, image_path)
                 for image_path in os.listdir(image_folder)

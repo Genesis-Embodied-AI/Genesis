@@ -222,6 +222,7 @@ class FrameImageExporter:
             cv2_params = [cv2.IMWRITE_PNG_COMPRESSION, compress_level] if compress_level is not None else None
             for i_env, img_data in enumerate(imgs_data):
                 frame_path = os.path.join(self.export_dir, f"{img_type}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
+                gs.logger.info(f"Image saved to ~<{frame_path}>~.")
                 executor.submit(partial(cv2.imwrite, params=cv2_params), frame_path, img_data)
 
         # Shutdown executor if necessary
