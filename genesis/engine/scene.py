@@ -460,13 +460,12 @@ class Scene(RBC):
         return entity
 
     @gs.assert_unbuilt
-    def link_entities(
-        self,
-        parent_entity: "Entity",
-        child_entity: "Entity",
-        parent_link_name="",
-        child_link_name="",
-    ):
+    def add_stage(self, file: str):
+        from ..utils.usd import import_from_usd
+        return import_from_usd(self, file)
+
+    @gs.assert_unbuilt
+    def link_entities(self, parent_entity: "Entity", child_entity: "Entity", parent_link_name="", child_link_name=""):
         """
         links two entities to act as single entity.
 
