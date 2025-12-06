@@ -1588,10 +1588,11 @@ def func_narrow_phase_convex_vs_convex(
     Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
     """
     _B = collider_state.active_buffer.shape[1]
+    max_collision_pairs_broad = collider_info.max_collision_pairs_broad[None]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        for i_pair in range(collider_state.n_broad_pairs[i_b]):
+    for i_b, i_pair in ti.ndrange(_B, max_collision_pairs_broad):
+        if i_pair < collider_state.n_broad_pairs[i_b]:
             i_ga = collider_state.broad_collision_pairs[i_pair, i_b][0]
             i_gb = collider_state.broad_collision_pairs[i_pair, i_b][1]
 
@@ -2145,6 +2146,8 @@ def func_add_contact(
 ):
     i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_contact_pairs[None]:
+        i_c = ti.atomic_add(collider_state.n_contacts[i_b], 1)
+
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
@@ -2160,8 +2163,6 @@ def func_add_contact(
         )
         collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
-
-        collider_state.n_contacts[i_b] = i_c + 1
     else:
         errno[None] = 2
 
