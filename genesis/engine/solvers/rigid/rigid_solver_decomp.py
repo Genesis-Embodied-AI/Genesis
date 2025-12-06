@@ -1467,6 +1467,24 @@ class RigidSolver(Solver):
             entity.reset_grad()
         self._queried_states.clear()
 
+        # zero grad
+        for state in [
+            self._rigid_global_info, 
+            self.links_state, 
+            self.dofs_state, 
+            self.geoms_state,
+            self.joints_state,
+            self.entities_state,
+            self.constraint_solver.constraint_state,
+            self.collider._collider_state.diff_contact_input,
+            self.collider._collider_state.contact_data,
+            self._rigid_adjoint_cache,
+        ]:
+            for attr in state.__dict__.values():
+                if hasattr(attr, 'grad') and attr.grad is not None:
+                    attr.grad.fill(0.0)
+
+
     def update_geoms_render_T(self):
         kernel_update_geoms_render_T(
             self._geoms_render_T,
@@ -7986,3 +8004,14 @@ def func_write_and_read_field_if(field: array_class.V_ANNOTATION, I, value, cond
 def func_check_index_range(idx: ti.i32, min: ti.i32, max: ti.i32, cond: ti.template()):
     # Conditionally check if the index is in the range [min, max) to save computational cost
     return (idx >= min and idx < max) if ti.static(cond) else True
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_zero_grad(
+    links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
+    geoms_state: array_class.GeomsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    pass
