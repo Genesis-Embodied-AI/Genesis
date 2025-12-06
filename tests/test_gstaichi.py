@@ -124,7 +124,6 @@ def gs_static_child(args: list[str]):
     scene.build()
 
     scene.rigid_solver.collider.detection()
-    ti.sync()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
@@ -307,19 +306,19 @@ def change_scene(args: list[str]):
         ),
         show_viewer=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     for i_obj in range(args.n_objs):
-        cube = scene.add_entity(
+        scene.add_entity(
             gs.morphs.Box(
                 size=(0.4, 0.4, 0.4),
-                pos=(0.0, 0.5 * i_obj, 0.8),
+                pos=(0.0, 0.5 * i_obj, 0.5),
             )
         )
     scene.build(n_envs=args.n_envs)
 
-    for i in range(500):
+    for _ in range(60):
         scene.step()
 
     qpos = scene.sim.rigid_solver.get_qpos()
@@ -331,7 +330,7 @@ def change_scene(args: list[str]):
     assert qpos.shape[-1] == args.n_objs * 7
 
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
-    assert_allclose(z, 0.2, atol=1e-2, err_msg=f"zs {z} is not close to 0.2.")
+    assert_allclose(z, 0.2, atol=1e-3)
 
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 

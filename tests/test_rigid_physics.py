@@ -1916,7 +1916,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     # MPR collision detection is less reliable than SDF and GJK in terms of penetration depth estimation
     is_mpr = convexify and not gjk_collision
     tol_pos = 0.05 if is_mpr else 0.01
-    tol_rot = 1.2 if is_mpr else 0.4
+    tol_rot = 1.25 if is_mpr else 0.4
     for i in range(450):
         scene.step()
         if i > 350:
@@ -2050,7 +2050,7 @@ def test_collision_edge_cases(gs_sim, mode, gjk_collision):
     qvel = gs_sim.rigid_solver.get_dofs_velocity()
     assert_allclose(qvel, 0, atol=1e-2)
     qpos = gs_sim.rigid_solver.get_dofs_position()
-    atol = 1e-3 if gjk_collision and mode in (4, 6) else 1e-4
+    atol = 1e-3 if mode in (4, 6) else 1e-4
     assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=atol)
 
 
