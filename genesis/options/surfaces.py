@@ -1,4 +1,5 @@
 from typing import Optional
+import math
 
 import numpy as np
 
@@ -6,7 +7,7 @@ import genesis as gs
 
 from .misc import FoamOptions
 from .options import Options
-from .textures import ColorTexture, ImageTexture, Texture
+from .textures import Texture, ColorTexture, ImageTexture, BatchTexture
 
 
 ############################ Base ############################
@@ -215,59 +216,82 @@ class Surface(Options):
                 self.double_sided = double_sided
 
     def requires_uv(self):
-        return (
-            isinstance(self.get_texture(), ImageTexture)
-            or isinstance(self.opacity_texture, ImageTexture)
-            or isinstance(self.roughness_texture, ImageTexture)
-            or isinstance(self.metallic_texture, ImageTexture)
-            or isinstance(self.normal_texture, ImageTexture)
-            or isinstance(self.emissive_texture, ImageTexture)
+        textures = (
+            self.get_texture(),
+            self.opacity_texture,
+            self.roughness_texture,
+            self.metallic_texture,
+            self.normal_texture,
+            self.emissive_texture,
         )
+        return any(texture is not None and texture.requires_uv() for texture in textures)
 
-    def get_rgba(self):
-        texture = self.get_texture() if self.emissive_texture is None else self.emissive_texture
-        opacity_texture = self.opacity_texture
+    def get_rgba(self, batch=False):
 
-        if isinstance(texture, ColorTexture):
-            if isinstance(opacity_texture, ColorTexture):
-                return ColorTexture(color=(*texture.color, *opacity_texture.color))
+        def fetch_batch(texture):
+            if isinstance(texture, BatchTexture):
+                return texture.textures if batch else texture.textures[:1]
+            else:
+                return [texture]
 
-            elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                rgb_color = np.round(np.array(texture.color) * 255).astype(np.uint8)
-                rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
-                rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
-                rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
-                return ImageTexture(image_array=rgba_array, image_color=rgba_scale)
+        color_textures = fetch_batch(self.get_texture() if self.emissive_texture is None else self.emissive_texture)
+        opacity_textures = fetch_batch(self.opacity_texture)
+
+        rgba_textures = []
+        num_colors = len(color_textures)
+        num_opacities = len(opacity_textures)
+        num_rgba = num_colors * num_opacities // math.gcd(num_colors, num_opacities)
+
+        for i in range(num_rgba):
+            color_texture = color_textures[i % num_colors]
+            opacity_texture = opacity_textures[i % num_opacities]
+
+            if isinstance(color_texture, ColorTexture):
+                if isinstance(opacity_texture, ColorTexture):
+                    rgba_texture = ColorTexture(color=(*color_texture.color, *opacity_texture.color))
+
+                elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
+                    rgb_color = np.round(np.array(color_texture.color) * 255).astype(np.uint8)
+                    rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
+                    rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
+                    rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
+                    rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
+
+                else:
+                    rgba_texture = ColorTexture(color=(*color_texture.color, 1.0))
+
+            elif isinstance(color_texture, ImageTexture) and color_texture.image_array is not None:
+                if isinstance(opacity_texture, ColorTexture):
+                    a_color = np.round(np.array(opacity_texture.color) * 255).astype(np.uint8)
+                    a_array = np.full((*color_texture.image_array.shape[:2],), a_color, dtype=np.uint8)
+                    rgba_array = np.dstack((color_texture.image_array, a_array))
+                    rgba_scale = (*color_texture.image_color, 1.0)
+
+                elif (
+                    isinstance(opacity_texture, ImageTexture)
+                    and opacity_texture.image_array is not None
+                    and opacity_texture.image_array.shape[:2] == color_texture.image_array.shape[:2]
+                ):
+                    rgba_array = np.dstack((color_texture.image_array, opacity_texture.image_array))
+                    rgba_scale = (*color_texture.image_color, *opacity_texture.image_color)
+
+                else:
+                    if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
+                        gs.logger.warning(
+                            "Color and opacity image shapes do not match. Fall back to fully opaque texture."
+                        )
+                    a_array = np.full(color_texture.image_array.shape[:2], 255, dtype=np.uint8)
+                    rgba_array = np.dstack((color_texture.image_array, a_array))
+                    rgba_scale = (*color_texture.image_color, 1.0)
+
+                rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
 
             else:
-                return ColorTexture(color=(*texture.color, 1.0))
+                rgba_texture = ColorTexture(color=(1.0, 1.0, 1.0, 1.0))
 
-        elif isinstance(texture, ImageTexture) and texture.image_array is not None:
-            if isinstance(opacity_texture, ColorTexture):
-                a_color = np.round(np.array(opacity_texture.color) * 255).astype(np.uint8)
-                a_array = np.full((*texture.image_array.shape[:2],), a_color, dtype=np.uint8)
-                rgba_array = np.dstack((texture.image_array, a_array))
-                rgba_scale = (*texture.image_color, 1.0)
+            rgba_textures.append(rgba_texture)
 
-            elif (
-                isinstance(opacity_texture, ImageTexture)
-                and opacity_texture.image_array is not None
-                and opacity_texture.image_array.shape[:2] == texture.image_array.shape[:2]
-            ):
-                rgba_array = np.dstack((texture.image_array, opacity_texture.image_array))
-                rgba_scale = (*texture.image_color, *opacity_texture.image_color)
-
-            else:
-                if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                    gs.logger.warning("Color and opacity image shapes do not match. Fall back to fully opaque texture.")
-                a_array = np.full(texture.image_array.shape[:2], 255, dtype=np.uint8)
-                rgba_array = np.dstack((texture.image_array, a_array))
-                rgba_scale = (*texture.image_color, 1.0)
-
-            return ImageTexture(image_array=rgba_array, image_color=rgba_scale)
-
-        else:
-            return ColorTexture(color=(1.0, 1.0, 1.0, 1.0))
+        return BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
 
     def set_texture(self, texture):
         raise NotImplementedError
