@@ -2,7 +2,6 @@ import sys
 from typing import TYPE_CHECKING
 
 import numpy as np
-import numpy.typing as npt
 import torch
 
 import gstaichi as ti
@@ -323,7 +322,7 @@ class Collider:
             self._collider_info.terrain_scale.from_numpy(scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
-    def reset(self, envs_idx: npt.NDArray[np.int32] | None = None, cache_only: bool = False) -> None:
+    def reset(self, envs_idx: "np.typing.NDArray[np.int32] | None" = None, cache_only: bool = False) -> None:
         self._contacts_info_cache.clear()
         if gs.use_zerocopy:
             envs_idx = slice(None) if envs_idx is None else envs_idx

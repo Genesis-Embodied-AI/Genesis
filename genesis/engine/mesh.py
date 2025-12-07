@@ -3,7 +3,6 @@ import pickle as pkl
 
 import fast_simplification
 import numpy as np
-import numpy.typing as npt
 import trimesh
 
 import genesis as gs
@@ -45,7 +44,7 @@ class Mesh(RBC):
         self,
         mesh,
         surface: Surface | None = None,
-        uvs: npt.NDArray | None = None,
+        uvs: "np.typing.NDArray | None" = None,
         convexify=False,
         decimate=False,
         decimate_face_num=500,

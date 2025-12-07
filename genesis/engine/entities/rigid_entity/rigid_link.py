@@ -1,10 +1,8 @@
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
 import numpy as np
 import torch
 import trimesh
-from numpy.typing import ArrayLike
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -42,11 +40,11 @@ class RigidLink(RBC):
         vgeom_start: int,
         vvert_start: int,
         vface_start: int,
-        pos: ArrayLike,
-        quat: ArrayLike,
-        inertial_pos: ArrayLike | None,
-        inertial_quat: ArrayLike | None,
-        inertial_i: ArrayLike | None,  # may be None, eg. for plane; NDArray is 3x3 matrix
+        pos: "np.typing.ArrayLike",
+        quat: "np.typing.ArrayLike",
+        inertial_pos: "np.typing.ArrayLike | None",
+        inertial_quat: "np.typing.ArrayLike | None",
+        inertial_i: "np.typing.ArrayLike | None",  # may be None, eg. for plane; NDArray is 3x3 matrix
         inertial_mass: float | None,  # may be None, eg. for plane
         parent_idx: int,
         root_idx: int | None,
@@ -98,17 +96,17 @@ class RigidLink(RBC):
         self._vface_start: int = vface_start
 
         # Link position & rotation at creation time:
-        self._pos: ArrayLike = pos
-        self._quat: ArrayLike = quat
+        self._pos: "np.typing.ArrayLike" = pos
+        self._quat: "np.typing.ArrayLike" = quat
         # Link's center-of-mass position & principal axes frame rotation at creation time:
         if inertial_pos is not None:
             inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
-        self._inertial_pos: ArrayLike | None = inertial_pos
+        self._inertial_pos: "np.typing.ArrayLike | None" = inertial_pos
         if inertial_quat is not None:
             inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
-        self._inertial_quat: ArrayLike | None = inertial_quat
+        self._inertial_quat: "np.typing.ArrayLike | None" = inertial_quat
         self._inertial_mass: float | None = inertial_mass
-        self._inertial_i: ArrayLike | None = inertial_i
+        self._inertial_i: "np.typing.ArrayLike | None" = inertial_i
         self._invweight: float | None = invweight
 
         self._visualize_contact = visualize_contact
@@ -549,28 +547,28 @@ class RigidLink(RBC):
         return self._invweight
 
     @property
-    def pos(self) -> ArrayLike:
+    def pos(self) -> "np.typing.ArrayLike":
         """
         The initial position of the link. For real-time position, use `link.get_pos()`.
         """
         return self._pos
 
     @property
-    def quat(self) -> ArrayLike:
+    def quat(self) -> "np.typing.ArrayLike":
         """
         The initial quaternion of the link. For real-time quaternion, use `link.get_quat()`.
         """
         return self._quat
 
     @property
-    def inertial_pos(self) -> ArrayLike | None:
+    def inertial_pos(self) -> "np.typing.ArrayLike | None":
         """
         The initial position of the link's inertial frame.
         """
         return self._inertial_pos
 
     @property
-    def inertial_quat(self) -> ArrayLike | None:
+    def inertial_quat(self) -> "np.typing.ArrayLike | None":
         """
         The initial quaternion of the link's inertial frame.
         """
@@ -584,7 +582,7 @@ class RigidLink(RBC):
         return self._inertial_mass
 
     @property
-    def inertial_i(self) -> ArrayLike | None:
+    def inertial_i(self) -> "np.typing.ArrayLike | None":
         """
         The inerial matrix of the link.
         """

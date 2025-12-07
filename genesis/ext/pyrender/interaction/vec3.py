@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Union
 
 import numpy as np
 import torch
-from numpy.typing import NDArray, ArrayLike
 
 from genesis.utils.misc import tensor_to_array
 
@@ -18,9 +17,9 @@ class Vec3:
 
     This also makes vector dimensionality explicit for linting and static analysis.
     """
-    v: NDArray[np.float32]
+    v: "np.typing.NDArray[np.float32]"
 
-    def __init__(self, v: NDArray[np.float32]):
+    def __init__(self, v: "np.typing.NDArray[np.float32]"):
         assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
         assert v.dtype == np.float32, f"Vec3 must be initialized with a float32 array, got {v.dtype}"
         self.v = v
@@ -93,12 +92,12 @@ class Vec3:
         return cls.from_array(array)
 
     @classmethod
-    def from_arraylike(cls, v: ArrayLike) -> 'Vec3':
+    def from_arraylike(cls, v: "np.typing.ArrayLike") -> 'Vec3':
         if isinstance(v, np.ndarray):
             return cls.from_array(v)
         elif isinstance(v, torch.Tensor):
             return cls.from_tensor(v)
-        elif isinstance(v, ArrayLike):
+        elif isinstance(v, np.typing.ArrayLike):
             assert len(v) == 3, f"Vec3 must be initialized with a 3-element ArrayLike, got {len(v)}"
             return cls.from_xyz(*v)
         assert False
@@ -118,8 +117,8 @@ class Vec3:
 
 
 class Quat:
-    v: NDArray[np.float32]
-    def __init__(self, v: NDArray[np.float32]):
+    v: "np.typing.NDArray[np.float32]"
+    def __init__(self, v: "np.typing.NDArray[np.float32]"):
         assert v.shape == (4,), f"Quat must be initialized with a 4-element array, got {v.shape}"
         assert v.dtype == np.float32, f"Quat must be initialized with a float32 array, got {v.dtype}"
         self.v = v
@@ -188,12 +187,12 @@ class Quat:
         return cls.from_array(array)
 
     @classmethod
-    def from_arraylike(cls, v: ArrayLike) -> 'Quat':
+    def from_arraylike(cls, v: "np.typing.ArrayLike") -> 'Quat':
         if isinstance(v, np.ndarray):
             return cls.from_array(v)
         elif isinstance(v, torch.Tensor):
             return cls.from_tensor(v)
-        elif isinstance(v, ArrayLike):
+        elif isinstance(v, np.typing.ArrayLike):
             assert len(v) == 4, f"Quat must be initialized with a 4-element ArrayLike, got {len(v)}"
             return cls.from_wxyz(*v)
         assert False

@@ -864,7 +864,7 @@ def sanitize_indices(
 
 
 def broadcast_tensor(
-    tensor: np.typing.ArrayLike | None,
+    tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
     expected_shape: tuple[int, ...] | list[int],
     dim_names: tuple[str, ...] | list[str] | None = None,
@@ -930,7 +930,7 @@ def broadcast_tensor(
 
 
 def sanitize_indexed_tensor(
-    tensor: np.typing.ArrayLike | None,
+    tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
     indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
     expected_shape: tuple[int, ...] | list[int],
@@ -991,7 +991,7 @@ def get_indexed_shape(tensor_shape, indices):
 def assign_indexed_tensor(
     tensor: torch.Tensor,
     indices: tuple[int | slice | torch.Tensor, ...],
-    value: np.typing.ArrayLike,
+    value: "np.typing.ArrayLike",
     dim_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
     try:

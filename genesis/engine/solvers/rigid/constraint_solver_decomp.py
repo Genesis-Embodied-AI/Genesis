@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import numpy.typing as npt
 import gstaichi as ti
 import torch
 
@@ -104,7 +103,7 @@ class ConstraintSolver:
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
 
-    def clear(self, envs_idx: npt.NDArray[np.int32] | None = None, cache_only: bool = False):
+    def clear(self, envs_idx: "np.typing.NDArray[np.int32] | None" = None, cache_only: bool = False):
         self._eq_const_info_cache.clear()
         if cache_only:
             return
