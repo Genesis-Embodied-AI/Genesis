@@ -1592,14 +1592,6 @@ def func_narrow_phase_convex_vs_convex(
     diff_contact_input: array_class.DiffContactInput,
     errno: array_class.V_ANNOTATION,
 ):
-    """
-    NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`.
-    However, parallelize over both B and collision_pairs (instead of only over B) leads to significantly slow performance for batched scene.
-    We can treat B=0 and B>0 separately, but we will end up with messier code.
-    Therefore, for a big non-batched scene, users are encouraged to simply use `gs.cpu` backend.
-    Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
-    Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
-    """
     _B = collider_state.active_buffer.shape[1]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2719,10 +2711,11 @@ def func_convex_convex_contact(
                         )
                         n_con = n_con + 1
 
-            geoms_state.pos[i_ga, i_b] = ga_pos
-            geoms_state.quat[i_ga, i_b] = ga_quat
-            geoms_state.pos[i_gb, i_b] = gb_pos
-            geoms_state.quat[i_gb, i_b] = gb_quat
+            if multi_contact and is_col_0:
+                geoms_state.pos[i_ga, i_b] = ga_pos
+                geoms_state.quat[i_ga, i_b] = ga_quat
+                geoms_state.pos[i_gb, i_b] = gb_pos
+                geoms_state.quat[i_gb, i_b] = gb_quat
 
 
 @ti.func
