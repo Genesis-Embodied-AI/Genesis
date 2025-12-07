@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
 import numpy as np
-import numpy.typing as npt
 import torch
 
 import genesis as gs
@@ -46,7 +45,9 @@ TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
 
 def _sanitize_sol_params(
-    sol_params: npt.NDArray[np.float64] | torch.Tensor, min_timeconst: float, default_timeconst: float | None = None
+    sol_params: "np.typing.NDArray[np.float64] | torch.Tensor",
+    min_timeconst: float,
+    default_timeconst: float | None = None,
 ):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
     if default_timeconst is None:
@@ -1536,7 +1537,7 @@ class RigidSolver(Solver):
 
     def _sanitize_io_variables(
         self,
-        tensor: np.typing.ArrayLike | None,
+        tensor: "np.typing.ArrayLike | None",
         inputs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
         input_size: int,
         idx_name: str,

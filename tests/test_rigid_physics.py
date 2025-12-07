@@ -1828,7 +1828,7 @@ def test_frictionloss_advanced(show_viewer, tol):
     box_pos = box.get_pos()
     assert box_pos[0] > 0.6
     assert_allclose(box_pos[1:], 0.0, tol=0.02)
-    assert_allclose(box.get_dofs_velocity(), 0.0, tol=tol)
+    assert_allclose(box.get_dofs_velocity(), 0.0, tol=5 * tol)
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])

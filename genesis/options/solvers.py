@@ -317,7 +317,7 @@ class RigidOptions(Options):
     iterations : int, optional
         Number of iterations for the constraint solver. Defaults to 50.
     tolerance : float, optional
-        Tolerance for the constraint solver. Defaults to 1e-8.
+        Tolerance for the constraint solver. Defaults to 1e-6.
     ls_iterations : int, optional
         Number of line search iterations for the constraint solver. Defaults to 50.
     ls_tolerance : float, optional
@@ -377,7 +377,7 @@ class RigidOptions(Options):
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton
     iterations: int = 50
-    tolerance: float = 1e-8
+    tolerance: float = 1e-6
     ls_iterations: int = 50
     ls_tolerance: float = 1e-2
     noslip_iterations: int = 0
