@@ -646,13 +646,15 @@ def ti_to_python(
 
 
 def indices_to_mask(
-    *indices: Any, keepdim: bool = True, to_torch: bool = True, raise_if_fancy: bool = False
+    *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = False, raise_if_fancy: bool = False
 ) -> tuple[slice | int | torch.Tensor, ...]:
     """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product.
 
     Args:
         keepdim (bool): Whether to keep all dimensions even if masks are integers. Defaults to True.
         to_torch (bool): Whether to force casting collections to torch.Tensor.
+        boolean_mask (bool): Whether boolean mask are supported more must be converted to indices via `torch.nonzero`.
+        raise_if_fancy (bool): Whether fancy indexing is supported for should raise an exception.
         copy (bool, optional): Wether to raise an exception if the resulting mask requires advanced indexing (aka. fancy
         indexing), which would trigger a copy when extracting slice.
     """
@@ -680,7 +682,9 @@ def indices_to_mask(
                 try:
                     is_torch_, is_numpy_ = False, False
                     if isinstance(arg, torch.Tensor):
-                        is_scalar_ = arg.numel() == 1
+                        if not boolean_mask and arg.dtype == torch.bool:
+                            arg = arg.nonzero()[:, 0]
+                        is_scalar_ = arg.dtype != torch.bool and arg.numel() == 1
                         is_torch_ = True
                     elif isinstance(arg, np.ndarray):
                         is_scalar_ = arg.size == 1

@@ -103,7 +103,7 @@ class ConstraintSolver:
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
 
-    def clear(self, envs_idx: "np.typing.NDArray[np.int32] | None" = None, cache_only: bool = False):
+    def clear(self, envs_idx=None, cache_only: bool = False):
         self._eq_const_info_cache.clear()
         if cache_only:
             return
@@ -125,10 +125,16 @@ class ConstraintSolver:
             n_constraints_frictionloss = ti_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
             qacc_ws = ti_to_torch(self.constraint_state.qacc_ws, copy=False)
             if isinstance(envs_idx, torch.Tensor):
-                n_constraints.scatter_(0, envs_idx, 0)
-                n_constraints_equality.scatter_(0, envs_idx, 0)
-                n_constraints_frictionloss.scatter_(0, envs_idx, 0)
-                qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
+                if envs_idx.dtype == torch.bool:
+                    n_constraints.masked_fill_(envs_idx, 0)
+                    n_constraints_equality.masked_fill_(envs_idx, 0)
+                    n_constraints_frictionloss.masked_fill_(envs_idx, 0)
+                    qacc_ws.masked_fill_(envs_idx[None], 0.0)
+                else:
+                    n_constraints.scatter_(0, envs_idx, 0)
+                    n_constraints_equality.scatter_(0, envs_idx, 0)
+                    n_constraints_frictionloss.scatter_(0, envs_idx, 0)
+                    qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
             else:
                 n_constraints[envs_idx] = 0
                 n_constraints_equality[envs_idx] = 0

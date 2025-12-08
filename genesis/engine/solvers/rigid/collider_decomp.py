@@ -322,18 +322,23 @@ class Collider:
             self._collider_info.terrain_scale.from_numpy(scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
-    def reset(self, envs_idx: "np.typing.NDArray[np.int32] | None" = None, cache_only: bool = False) -> None:
+    def reset(self, envs_idx=None, cache_only: bool = False) -> None:
         self._contacts_info_cache.clear()
         if gs.use_zerocopy:
             envs_idx = slice(None) if envs_idx is None else envs_idx
             if not cache_only:
                 first_time = ti_to_torch(self._collider_state.first_time, copy=False)
-                first_time[envs_idx] = True
+                if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                    first_time.masked_fill_(envs_idx, True)
+                else:
+                    first_time[envs_idx] = True
 
             normal = ti_to_torch(self._collider_state.contact_cache.normal, copy=False)
             if isinstance(envs_idx, torch.Tensor):
-                max_possible_pairs = normal.shape[0]
-                normal.scatter_(1, envs_idx[None, :, None].expand((max_possible_pairs, -1, 3)), 0.0)
+                if envs_idx.dtype == torch.bool:
+                    normal.masked_fill_(envs_idx[None, :, None], 0.0)
+                else:
+                    normal.scatter_(1, envs_idx[None, :, None].expand((normal.shape[0], -1, 3)), 0.0)
             elif envs_idx is None:
                 normal.zero_()
             else:
