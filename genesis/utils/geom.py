@@ -429,7 +429,7 @@ def inv_T(T):
 
 def normalize(x, eps: float = 1e-12):
     if isinstance(x, torch.Tensor):
-        return x / x.norm(p=2, dim=-1).clamp(min=eps, max=None).unsqueeze(-1)
+        return x / torch.linalg.vector_norm(x, ord=2, dim=-1, keepdim=True).clamp(min=eps, max=None)
     elif isinstance(x, np.ndarray):
         return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), eps)
     else:
@@ -596,14 +596,15 @@ def _tc_quat_to_R(quat, out: torch.Tensor | None = None):
         assert out.shape == quat.shape[:-1] + (3, 3)
         R = out
 
-    q_w, q_x, q_y, q_z = torch.tensor_split(quat, 4, dim=-1)
-
-    s = 2.0 / (quat**2).sum(dim=-1, keepdim=True)
+    s = 2 / (quat**2).sum(dim=-1, keepdim=True)
     q_vec_s = s * quat[..., 1:]
-    q_wx, q_wy, q_wz = torch.unbind(q_w * q_vec_s, -1)
-    q_xx, q_xy, q_xz = torch.unbind(q_x * q_vec_s, -1)
-    q_yy, q_yz = torch.unbind(q_y * q_vec_s[..., 1:], -1)
-    q_zz = q_z[..., 0] * q_vec_s[..., -1]
+
+    q_w, q_x, q_y, q_z = quat[..., 0], quat[..., 1], quat[..., 2], quat[..., 3]
+    q_sx, q_sy, q_sz = q_vec_s[..., 0], q_vec_s[..., 1], q_vec_s[..., 2]
+    q_wx, q_wy, q_wz = q_w * q_sx, q_w * q_sy, q_w * q_sz
+    q_xx, q_xy, q_xz = q_x * q_sx, q_x * q_sy, q_x * q_sz
+    q_yy, q_yz = q_y * q_sy, q_y * q_sz
+    q_zz = q_z * q_sz
 
     R[..., 0, 0] = 1.0 - (q_yy + q_zz)
     R[..., 0, 1] = q_xy - q_wz
@@ -687,15 +688,14 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
 
 @torch.jit.script
 def _tc_quat_to_xyz(quat, eps: float, rpy: bool = False):
-    # Extract quaternion components
-    q_w, q_x, q_y, q_z = torch.tensor_split(quat, 4, dim=-1)
+    xyz = torch.empty(quat.shape[:-1] + (3,), dtype=quat.dtype, device=quat.device)
+    x, y, z = xyz[..., :1], xyz[..., 1:2], xyz[..., 2:]
 
-    s = 2.0 / (quat**2).sum(dim=-1, keepdim=True)
-    q_vec_s = s * quat[..., 1:]
-    q_wx, q_wy, q_wz = torch.unbind(q_w * q_vec_s, -1)
-    q_xx, q_xy, q_xz = torch.unbind(q_x * q_vec_s, -1)
-    q_yy, q_yz = torch.unbind(q_y * q_vec_s[..., 1:], -1)
-    q_zz = q_z[..., 0] * q_vec_s[..., 2]
+    q_w, q_x, q_y, q_z = quat[..., :1], quat[..., 1:2], quat[..., 2:3], quat[..., 3:]
+    q_ww, q_wx, q_wy, q_wz = q_w * q_w, q_w * q_x, q_w * q_y, q_w * q_z
+    q_xx, q_xy, q_xz = q_x * q_x, q_x * q_y, q_x * q_z
+    q_yy, q_yz = q_y * q_y, q_y * q_z
+    q_zz = q_z**2
 
     # Compute some intermediary quantities.
     # Numerical robustness of 'cos(pitch)' could be improved using 'hypot' implementation from Eigen:
@@ -708,18 +708,18 @@ def _tc_quat_to_xyz(quat, eps: float, rpy: bool = False):
         sinp = q_xz + q_wy
         sinrcosp = q_wx - q_yz
         sinycosp = q_wz - q_xy
-    cosr_cosp = 1.0 - (q_xx + q_yy)
-    cosycosp = 1.0 - (q_yy + q_zz)
+    cosrcosp = (q_ww - q_xx - q_yy + q_zz) / 2
+    cosycosp = (q_ww + q_xx - q_yy - q_zz) / 2
     cosp = torch.sqrt(cosycosp**2 + sinycosp**2)
 
     # Roll (x-axis rotation)
-    x = torch.atan2(sinrcosp, cosr_cosp)
+    torch.atan2(sinrcosp, cosrcosp, out=x)
 
     # Pitch (y-axis rotation)
-    y = torch.atan2(sinp, cosp)
+    torch.atan2(sinp, cosp, out=y)
 
     # Yaw (z-axis rotation)
-    z = torch.atan2(sinycosp, cosycosp)
+    torch.atan2(sinycosp, cosycosp, out=z)
 
     # Special treatment of nearly singular rotations
     cosp_mask = cosp < eps
@@ -727,11 +727,11 @@ def _tc_quat_to_xyz(quat, eps: float, rpy: bool = False):
         sinycosp_sinrsinpcosy = q_wz - q_xy
     else:
         sinycosp_sinrsinpcosy = q_wz + q_xy
-    cospcosy_sinrsinpsiny = 1.0 - (q_xx + q_zz)
+    cospcosy_sinrsinpsiny = (q_ww - q_xx + q_yy - q_zz) / 2
     x.masked_fill_(cosp_mask, 0.0)
-    z = torch.where(cosp_mask, torch.arctan2(sinycosp_sinrsinpcosy, cospcosy_sinrsinpsiny), z)
+    torch.where(cosp_mask, torch.arctan2(sinycosp_sinrsinpcosy, cospcosy_sinrsinpsiny), z, out=z)
 
-    return torch.stack([x, y, z], dim=-1)
+    return xyz
 
 
 def quat_to_xyz(quat, rpy=False, degrees=False):
@@ -925,13 +925,35 @@ def T_to_trans_quat(T, *, out=None):
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
     assert u.shape == v.shape
+    u_2d = np.atleast_2d(u)
+    v_2d = np.atleast_2d(v)
+
+    w1, x1, y1, z1 = u_2d[..., 0], u_2d[..., 1], u_2d[..., 2], u_2d[..., 3]
+    w2, x2, y2, z2 = v_2d[..., 0], v_2d[..., 1], v_2d[..., 2], v_2d[..., 3]
+    ww = (z1 + x1) * (x2 + y2)
+    yy = (w1 - y1) * (w2 + z2)
+    zz = (w1 + y1) * (w2 - z2)
+    xx = ww + yy + zz
+    qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
 
     if out is None:
-        out_ = np.empty(u.shape, dtype=u.dtype)
+        out_ = np.empty(u_2d.shape, dtype=qq.dtype)
     else:
         assert out.shape == u.shape
         out_ = out
 
+    out_[..., 0] = qq - ww + (z1 - y1) * (y2 - z2)
+    out_[..., 1] = qq - xx + (x1 + w1) * (x2 + w2)
+    out_[..., 2] = qq - yy + (w1 - x1) * (y2 + z2)
+    out_[..., 3] = qq - zz + (z1 + y1) * (w2 - x2)
+
+    out_ /= np.sqrt(np.sum(np.square(np.expand_dims(out_, -2)), -1))
+
+    return out_.reshape(u.shape)
+
+
+@torch.jit.script
+def _tc_quat_mul(u, v):
     w1, x1, y1, z1 = u[..., 0], u[..., 1], u[..., 2], u[..., 3]
     w2, x2, y2, z2 = v[..., 0], v[..., 1], v[..., 2], v[..., 3]
     ww = (z1 + x1) * (x2 + y2)
@@ -940,33 +962,14 @@ def _np_quat_mul(u, v, out=None):
     xx = ww + yy + zz
     qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
 
-    out_[..., 0] = qq - ww + (z1 - y1) * (y2 - z2)
-    out_[..., 1] = qq - xx + (x1 + w1) * (x2 + w2)
-    out_[..., 2] = qq - yy + (w1 - x1) * (y2 + z2)
-    out_[..., 3] = qq - zz + (z1 + y1) * (w2 - x2)
+    out = torch.empty(qq.shape + (4,), dtype=qq.dtype, device=qq.device)
+    out[..., 0] = qq - ww + (z1 - y1) * (y2 - z2)
+    out[..., 1] = qq - xx + (x1 + w1) * (x2 + w2)
+    out[..., 2] = qq - yy + (w1 - x1) * (y2 + z2)
+    out[..., 3] = qq - zz + (z1 + y1) * (w2 - x2)
 
-    return out_
-
-
-@torch.jit.script
-def _tc_quat_mul(u, v):
-    w1, x1, y1, z1 = torch.unbind(u, dim=-1)
-    w2, x2, y2, z2 = torch.unbind(v, dim=-1)
-    ww = (z1 + x1) * (x2 + y2)
-    yy = (w1 - y1) * (w2 + z2)
-    zz = (w1 + y1) * (w2 - z2)
-    xx = ww + yy + zz
-    qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
-
-    return torch.stack(
-        (
-            qq - ww + (z1 - y1) * (y2 - z2),
-            qq - xx + (x1 + w1) * (x2 + w2),
-            qq - yy + (w1 - x1) * (y2 + z2),
-            qq - zz + (z1 + y1) * (w2 - x2),
-        ),
-        dim=-1,
-    )
+    out /= torch.linalg.vector_norm(out, ord=2, dim=-1, keepdim=True)
+    return out
 
 
 def transform_quat_by_quat(v, u):
@@ -984,7 +987,7 @@ def transform_quat_by_quat(v, u):
     else:
         gs.raise_exception(f"The inputs must all be torch.Tensor or np.ndarray. got: {type(v)=} and {type(quat)=}")
 
-    return normalize(quat)
+    return quat
 
 
 @nb.jit(nopython=True, cache=True)
@@ -1015,24 +1018,20 @@ def _np_transform_by_quat(v, quat, out=None):
 def _tc_transform_by_quat(v, quat, out: torch.Tensor | None = None):
     if out is None:
         out = torch.empty(v.shape, dtype=v.dtype, device=v.device)
+    u_x, u_y, u_z = out[..., :1], out[..., 1:2], out[..., 2:]
 
-    v_x, v_y, v_z = torch.unbind(v, dim=-1)
-    q_w, q_x, q_y, q_z = torch.unbind(quat, dim=-1)
-    q_ww, q_wx, q_wy, q_wz = torch.unbind(q_w[..., None] * quat, dim=-1)
-    q_xx, q_xy, q_xz = torch.unbind(q_x[..., None] * quat[..., 1:], dim=-1)
-    q_yy, q_yz = torch.unbind(q_y[..., None] * quat[..., 2:], dim=-1)
-    q_zz = q_z * quat[..., 3]
+    q_w, q_x, q_y, q_z = quat[..., :1], quat[..., 1:2], quat[..., 2:3], quat[..., 3:]
+    q_ww, q_wx, q_wy, q_wz = q_w * q_w, q_w * q_x, q_w * q_y, q_w * q_z
+    q_xx, q_xy, q_xz = q_x * q_x, q_x * q_y, q_x * q_z
+    q_yy, q_yz = q_y * q_y, q_y * q_z
+    q_zz = q_z**2
 
-    scale = 1.0 / (q_ww + q_xx + q_yy + q_zz)
-    out[..., 0] = (
-        v_x * (q_xx + q_ww - q_yy - q_zz) + v_y * (2.0 * q_xy - 2.0 * q_wz) + v_z * (2.0 * q_xz + 2.0 * q_wy)
-    ) * scale
-    out[..., 1] = (
-        v_x * (2.0 * q_wz + 2.0 * q_xy) + v_y * (q_ww - q_xx + q_yy - q_zz) + v_z * (2.0 * q_yz - 2.0 * q_wx)
-    ) * scale
-    out[..., 2] = (
-        v_x * (2.0 * q_xz - 2.0 * q_wy) + v_y * (2.0 * q_wx + 2.0 * q_yz) + v_z * (q_ww - q_xx - q_yy + q_zz)
-    ) * scale
+    vs = v / (q_ww + q_xx + q_yy + q_zz)
+    v_x, v_y, v_z = vs[..., :1], vs[..., 1:2], vs[..., 2:]
+
+    u_x.copy_(v_x * (q_xx + q_ww - q_yy - q_zz) + v_y * (2.0 * q_xy - 2.0 * q_wz) + v_z * (2.0 * q_xz + 2.0 * q_wy))
+    u_y.copy_(v_x * (2.0 * q_wz + 2.0 * q_xy) + v_y * (q_ww - q_xx + q_yy - q_zz) + v_z * (2.0 * q_yz - 2.0 * q_wx))
+    u_z.copy_(v_x * (2.0 * q_xz - 2.0 * q_wy) + v_y * (2.0 * q_wx + 2.0 * q_yz) + v_z * (q_ww - q_xx - q_yy + q_zz))
 
     return out
 
@@ -1256,7 +1255,7 @@ def _tc_z_up_to_R(z, eps: float, up=None, out: torch.Tensor | None = None):
     x, y, z = R[..., 0], R[..., 1], R[..., 2]
 
     # Normalize z vectors
-    z_norm = torch.linalg.norm(z, dim=-1, keepdim=True)
+    z_norm = torch.linalg.vector_norm(z, ord=2, dim=-1, keepdim=True)
     z /= z_norm.clamp(min=eps)
 
     # Handle zero norm cases
@@ -1278,7 +1277,7 @@ def _tc_z_up_to_R(z, eps: float, up=None, out: torch.Tensor | None = None):
         torch.where(up_mask, 0.0, -z[..., 0], out=x[..., 2])
 
     # Normalize x vectors
-    x_norm = torch.norm(x, dim=-1, keepdim=True)
+    x_norm = torch.linalg.vector_norm(x, ord=2, dim=-1, keepdim=True)
     x /= x_norm.clamp(min=eps)
 
     # Handle zero x norm cases
