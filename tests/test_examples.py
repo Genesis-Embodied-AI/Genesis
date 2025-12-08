@@ -20,6 +20,7 @@ ALLOW_PATTERNS = {
     "sap_coupling/**/*.py",
     "sensors/**/*.py",
     "tutorials/**/*.py",
+    "usd/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
