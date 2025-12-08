@@ -59,7 +59,7 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
 def parse_urdf(morph, surface):
     if isinstance(morph.file, (str, Path)):
         path = os.path.join(get_assets_dir(), morph.file)
-        robot:urdfpy.URDF = urdfpy.URDF.load(path)
+        robot = urdfpy.URDF.load(path)
     else:
         robot = morph.file
 

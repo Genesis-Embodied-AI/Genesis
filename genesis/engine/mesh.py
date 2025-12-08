@@ -352,7 +352,7 @@ class Mesh(RBC):
                         " and rotate glb mesh by default later and gradually enforce this option."
                     )
             elif morph.is_format(gs.options.morphs.USD_FORMATS):
-                import genesis.utils.usda as usda_utils
+                import genesis.utils.usd.usda as usda_utils
 
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
             elif isinstance(morph, gs.options.morphs.MeshSet):

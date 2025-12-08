@@ -13,12 +13,12 @@ import genesis as gs
 import numpy as np
 import re
 from scipy.spatial.transform import Rotation as R
-from genesis.utils.usd.usd_parser_context import UsdParserContext
-from genesis.utils.usd.usd_parser_utils import bfs_iterator, compute_gs_global_transform, compute_gs_related_transform
-from genesis.utils.usd.usd_articulation_parser import UsdArticulationParser
-from genesis.utils.usd.usd_geo_adapter import BatchedUsdGeometryAdapater, UsdGeometryAdapter
-from genesis.utils import geom as gu
-from genesis.utils import mesh as mu
+from .usd_parser_context import UsdParserContext
+from .usd_parser_utils import bfs_iterator, compute_gs_global_transform, compute_gs_related_transform
+from .usd_articulation_parser import UsdArticulationParser
+from .usd_geo_adapter import BatchedUsdGeometryAdapater, UsdGeometryAdapter
+from .. import geom as gu
+from .. import mesh as mu
 
 
 class UsdRigidBodyParser:

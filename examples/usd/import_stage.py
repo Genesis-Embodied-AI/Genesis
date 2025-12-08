@@ -14,7 +14,8 @@ def main():
 
     args.num_steps = 1 if "PYTEST_VERSION" in os.environ else args.num_steps
     args.show_viewer = False if "PYTEST_VERSION" in os.environ else args.show_viewer
-
+    args.show_viewer = True
+    # set the asset root path
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
