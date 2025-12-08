@@ -14,8 +14,8 @@ def main():
 
     args.num_steps = 1 if "PYTEST_VERSION" in os.environ else args.num_steps
     args.show_viewer = False if "PYTEST_VERSION" in os.environ else args.show_viewer
-    args.show_viewer = True
-    # set the asset root path
+    args.show_viewer = True # just for testing
+    
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
@@ -23,7 +23,7 @@ def main():
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
-            # enable_interaction=True,
+            enable_interaction=True,
         ),
         rigid_options=gs.options.RigidOptions(
             # constraint_solver=gs.constraint_solver.Newton,

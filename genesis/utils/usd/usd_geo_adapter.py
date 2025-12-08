@@ -116,7 +116,7 @@ class UsdGeometryAdapter:
                     )
                     normals = None
 
-                uv_name = self._get_uv_name()
+        uv_name = self._get_uv_name()
 
         # Parse UVs
         uvs = None
