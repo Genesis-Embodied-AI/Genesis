@@ -1513,13 +1513,27 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
     assert not collider_state.n_contacts.to_numpy().any()
     franka.set_qpos(torch.zeros_like(qpos_goal))
 
-    free_path, return_valid_mask = franka.plan_path(
-        qpos_goal=qpos_goal,
-        num_waypoints=300,
-        resolution=0.05,
-        ignore_collision=True,
-        return_valid_mask=True,
-    )
+    num_waypoints = 300
+    if n_envs == 0:
+        free_path, return_valid_mask = franka.plan_path(
+            qpos_goal=qpos_goal,
+            num_waypoints=num_waypoints,
+            resolution=0.05,
+            ignore_collision=True,
+            return_valid_mask=True,
+        )
+    else:
+        return_valid_mask = torch.zeros((n_envs,), dtype=torch.bool, device=gs.device)
+        free_path = torch.empty((num_waypoints, n_envs, franka.n_dofs), dtype=gs.tc_float, device=gs.device)
+        for i in range(n_envs):
+            free_path[:, i : i + 1], return_valid_mask[i : i + 1] = franka.plan_path(
+                qpos_goal=qpos_goal[i : i + 1],
+                envs_idx=[i],
+                num_waypoints=num_waypoints,
+                resolution=0.05,
+                ignore_collision=True,
+                return_valid_mask=True,
+            )
     assert return_valid_mask.all()
     assert_allclose(free_path[0], 0.0, tol=tol)
     assert_allclose(free_path[-1], qpos_goal, tol=tol)
