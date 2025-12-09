@@ -117,7 +117,7 @@ class RigidEntity(Entity):
         self._load_model()
 
         # Initialize target variables and checkpoint
-        self._tgt_keys = ("pos", "quat", "qpos", "dofs_velocity")
+        self._tgt_keys = ("pos", "quat", "qpos", "dofs_velocity", "control_dofs_force")
         self._tgt = dict()
         self._tgt_buffer = list()
         self._ckpt = dict()
@@ -1661,6 +1661,8 @@ class RigidEntity(Entity):
                     self.set_quat(**data_kwargs)
                 case "set_dofs_velocity":
                     self.set_dofs_velocity(**data_kwargs)
+                case "control_dofs_force":
+                    self.control_dofs_force(**data_kwargs)
                 case _:
                     gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
 
@@ -1693,6 +1695,16 @@ class RigidEntity(Entity):
                             data_kwargs["dofs_idx_local"],
                             data_kwargs["envs_idx"],
                         )
+
+                case "control_dofs_force":
+                    force = data_kwargs.pop("force")
+                    if force.requires_grad:
+                        force._backward_from_ti(
+                            self.control_dofs_force_grad,
+                            data_kwargs["dofs_idx_local"],
+                            data_kwargs["envs_idx"],
+                        )
+
                 case _:
                     gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
 
@@ -2355,6 +2367,7 @@ class RigidEntity(Entity):
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
 
     @gs.assert_built
+    @tracked
     def control_dofs_force(self, force, dofs_idx_local=None, envs_idx=None):
         """
         Control the entity's dofs' motor force. This is used for force/torque control.
@@ -2370,6 +2383,14 @@ class RigidEntity(Entity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.control_dofs_force(force, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def control_dofs_force_grad(self, dofs_idx_local, envs_idx, force_grad):
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.control_dofs_force_grad(dofs_idx, envs_idx, force_grad.data)
+        
+        pass
+
 
     @gs.assert_built
     def control_dofs_velocity(self, velocity, dofs_idx_local=None, envs_idx=None):

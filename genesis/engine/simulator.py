@@ -280,7 +280,9 @@ class Simulator(RBC):
                     self.save_ckpt()
 
         if self.rigid_solver.is_active:
-            self.rigid_solver.clear_external_force()
+            # In backward pass, we need to keep the external force for gradient computation
+            if not in_backward:
+                self.rigid_solver.clear_external_force()
             if self._cur_substep_global % RATE_CHECK_ERRNO == 0:
                 self.rigid_solver.check_errno()
 
@@ -294,6 +296,9 @@ class Simulator(RBC):
             self._cur_substep_global -= 1
 
             self.sub_step_grad(self.cur_substep_local)
+            if self.rigid_solver.is_active:
+                # Clear external force after gradient computation
+                self.rigid_solver.clear_external_force()
 
         self.process_input_grad()
 

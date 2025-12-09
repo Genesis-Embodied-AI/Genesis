@@ -1160,9 +1160,6 @@ class RigidSolver(Solver):
             self.substep(f)
 
     def substep_pre_coupling_grad(self, f):
-        # Change to backward mode
-        self._static_rigid_sim_config.is_backward = True
-
         # Run forward substep again to restore this step's information, this is needed because we do not store info
         # of every substep.
         kernel_prepare_backward_substep(
@@ -1188,6 +1185,12 @@ class RigidSolver(Solver):
         self.substep(f)
 
         # =================== Backward substep ======================
+        # Change to backward mode: Note that we use forward mode in the [substep] function right above. This is because
+        # we need to reproduce the same data as in the forward pass for the backward pass. The backward pass should be
+        # logically same as the forward pass, but it is tweaked to use autodiff, and thus numerical differences could
+        # arise. To prevent this, we change to backward mode here.
+        self._static_rigid_sim_config.is_backward = True
+
         envs_idx = self._scene._sanitize_envs_idx(None)
         if not self._enable_mujoco_compatibility:
             kernel_forward_velocity.grad(
@@ -2182,6 +2185,14 @@ class RigidSolver(Solver):
 
         kernel_control_dofs_force(force, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
+    def control_dofs_force_grad(self, dofs_idx, envs_idx, force_grad):
+        force_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
+            force_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+        )
+        if self.n_envs == 0:
+            force_grad_ = force_grad_.unsqueeze(0)
+        kernel_control_dofs_force_grad(force_grad_, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
+
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
@@ -2559,11 +2570,11 @@ class RigidSolver(Solver):
 
     def clear_external_force(self):
         if gs.use_zerocopy:
-            for tensor in (self.links_state.cfrc_applied_ang, self.links_state.cfrc_applied_vel):
+            for tensor in (self.links_state.cfrc_applied_ang, self.links_state.cfrc_applied_vel, self.dofs_state.ctrl_force):
                 out = ti_to_torch(tensor, copy=False)
                 out.zero_()
         else:
-            kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
+            kernel_clear_external_force(self.links_state, self.dofs_state, self._rigid_global_info, self._static_rigid_sim_config)
 
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
@@ -4251,11 +4262,13 @@ def kernel_forward_dynamics_without_qacc(
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_clear_external_force(
     links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
     func_clear_external_force(
         links_state=links_state,
+        dofs_state=dofs_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
     )
@@ -5907,6 +5920,7 @@ def func_apply_link_external_torque(
 @ti.func
 def func_clear_external_force(
     links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
@@ -5925,6 +5939,10 @@ def func_clear_external_force(
             i_l = rigid_global_info.awake_links[i_1, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_0
             links_state.cfrc_applied_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
             links_state.cfrc_applied_vel[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for I in ti.grouped(dofs_state.ctrl_force):
+        dofs_state.ctrl_force[I] = ti.Vector.zero(gs.ti_float, 3)
 
 
 @ti.func
@@ -7838,6 +7856,19 @@ def kernel_control_dofs_force(
     for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         dofs_state.ctrl_mode[dofs_idx[i_d_], envs_idx[i_b_]] = gs.CTRL_MODE.FORCE
         dofs_state.ctrl_force[dofs_idx[i_d_], envs_idx[i_b_]] = force[i_b_, i_d_]
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_control_dofs_force_grad(
+    force_grad: ti.types.ndarray(),
+    dofs_idx: ti.types.ndarray(),
+    envs_idx: ti.types.ndarray(),
+    dofs_state: array_class.DofsState,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_d_, i_b_ in ti.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+        force_grad[i_b_, i_d_] = dofs_state.ctrl_force.grad[dofs_idx[i_d_], envs_idx[i_b_]]
+        dofs_state.ctrl_force.grad[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
