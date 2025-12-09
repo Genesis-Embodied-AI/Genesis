@@ -3178,6 +3178,34 @@ def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
 
 
 @pytest.mark.required
+def test_extended_broadcasting():
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    for i in range(4):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(1.0, 1.0, 1.0),
+                pos=(0.0, 0.0, i),
+            )
+        )
+    scene.build(n_envs=2)
+
+    envs_idx = torch.tensor([0, 1], dtype=gs.tc_int, device=gs.device)
+    for entity in scene.entities:
+        entity.zero_all_dofs_velocity(envs_idx)
+    assert_allclose(entity.get_dofs_velocity(), 0.0, tol=gs.EPS)
+    entity.set_dofs_velocity(1.0)
+    assert_allclose(entity.get_dofs_velocity(), 1.0, tol=gs.EPS)
+    entity.set_dofs_velocity((1.0, 2.0))
+    assert_allclose(entity.get_dofs_velocity(), np.array([(1.0,) * 6, (2.0,) * 6]), tol=gs.EPS)
+    entity.set_dofs_velocity((3.0,) * 6)
+    assert_allclose(entity.get_dofs_velocity(), 3.0, tol=gs.EPS)
+    entity.zero_all_dofs_velocity(torch.tensor([False, True], dtype=torch.bool, device=gs.device))
+    assert_allclose(entity.get_dofs_velocity(), np.array([(3.0,) * 6, (0.0,) * 6]), tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_geom_pos_quat(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

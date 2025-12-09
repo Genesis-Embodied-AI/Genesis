@@ -616,8 +616,6 @@ class RigidEntity(Entity):
         self._n_free_verts = len(self._free_verts_idx_local)
         self._n_fixed_verts = len(self._fixed_verts_idx_local)
 
-        self._dofs_idx = slice(self._dof_start, self._dof_start + self._n_dofs)
-
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
 
@@ -1722,18 +1720,15 @@ class RigidEntity(Entity):
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         # Handling default argument and special cases
         if idx_local is None:
-            if unsafe:
-                idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
-            else:
-                idx_global = range(idx_global_start, idx_local_max + idx_global_start)
-        elif isinstance(idx_local, (range, slice)):
+            idx_global = range(idx_global_start, idx_local_max + idx_global_start)
+        elif isinstance(idx_local, (slice, range)):
             idx_global = range(
                 (idx_local.start or 0) + idx_global_start,
                 (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
                 idx_local.step or 1,
             )
         elif isinstance(idx_local, (int, np.integer)):
-            idx_global = idx_local + idx_global_start
+            idx_global = (idx_local + idx_global_start,)
         elif isinstance(idx_local, (list, tuple)):
             try:
                 idx_global = [i + idx_global_start for i in idx_local]
@@ -2111,7 +2106,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_base_links_pos(pos, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
@@ -2143,7 +2138,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_base_links_quat(quat, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
@@ -2218,7 +2213,7 @@ class RigidEntity(Entity):
         """
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
 
     @gs.assert_built
@@ -2354,7 +2349,7 @@ class RigidEntity(Entity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
 
     @gs.assert_built
@@ -2671,7 +2666,7 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        self.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=skip_forward)
+        self.set_dofs_velocity(None, slice(0, self._n_dofs), envs_idx, skip_forward=skip_forward)
 
     @gs.assert_built
     def detect_collision(self, env_idx=0):
@@ -2807,7 +2802,7 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        links_idx_local = self._get_global_idx(links_idx_local, self.n_links, 0)
+        links_idx_local = self._get_global_idx(links_idx_local, self.n_links, 0, unsafe=True)
 
         links_n_geoms = torch.tensor(
             [self._links[i_l].n_geoms for i_l in links_idx_local], dtype=gs.tc_int, device=gs.device

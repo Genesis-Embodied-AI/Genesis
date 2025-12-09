@@ -892,7 +892,9 @@ def broadcast_tensor(
     # Expand current tensor shape with extra dims of size 1 if necessary before expanding to expected shape
     if tensor_ndim == 0:
         tensor_ = tensor_[None]
-    elif 2 <= tensor_ndim < expected_ndim:
+    elif tensor_ndim < expected_ndim and not all(
+        [d1 == d2 or d2 == -1 for d1, d2 in zip(tensor_shape, expected_shape[-tensor_ndim:])]
+    ):
         # Try expanding first dimensions if priority
         for dims_valid in tuple(combinations(range(expected_ndim), tensor_ndim))[::-1]:
             curr_idx = 0
@@ -900,7 +902,7 @@ def broadcast_tensor(
             for i in range(expected_ndim):
                 if i in dims_valid:
                     dim, size = tensor_.shape[curr_idx], expected_shape[i]
-                    if dim == size or dim == 1:
+                    if dim == size or dim == 1 or size == -1:
                         expanded_shape.append(dim)
                         curr_idx += 1
                     else:
@@ -920,14 +922,16 @@ def broadcast_tensor(
         msg_err = f"Invalid input shape: {tuple(tensor_.shape)}."
         msg_infos: list[str] = []
         for i, name in enumerate(dim_names):
-            dim, size = tensor_.shape[i], expected_shape[i]
-            if size > 0 and i < tensor_.ndim and dim != 1 and dim != size:
+            size = expected_shape[i]
+            if size > 0 and i < tensor_.ndim and (dim := tensor_.shape[i]) != 1 and dim != size:
                 if name:
                     msg_infos.append(f"Dimension {i} consistent with len({name})={size}")
                 else:
                     msg_infos.append(f"Dimension {i} consistent with required size {size}")
         if msg_infos:
             msg_err += f" {' & '.join(msg_infos)}."
+        else:
+            msg_err += f" Expected shape: {tuple(expected_shape)}."
         gs.raise_exception_from(msg_err, e)
 
     return tensor_
