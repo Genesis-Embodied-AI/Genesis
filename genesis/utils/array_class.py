@@ -1776,6 +1776,11 @@ class StructRigidAdjointCache(metaclass=BASE_METACLASS):
     qpos: V_ANNOTATION
     dofs_vel: V_ANNOTATION
     dofs_acc: V_ANNOTATION
+    # We also store the initial solutions (acc_smooth, qacc_ws) for the constraint solver to use in the backward pass.
+    # For [acc_smooth], even though it could be reproduced during the backward pass and thus we do not need to store it,
+    # we do it to compare the reproduced value with the stored one to ensure the integrity of the backward pass.
+    dofs_acc_smooth: V_ANNOTATION
+    solver_qacc_ws: V_ANNOTATION
 
 
 def get_rigid_adjoint_cache(solver):
@@ -1786,6 +1791,8 @@ def get_rigid_adjoint_cache(solver):
         qpos=V(dtype=gs.ti_float, shape=(substeps_local + 1, solver.n_qs_, solver._B), needs_grad=requires_grad),
         dofs_vel=V(dtype=gs.ti_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B), needs_grad=requires_grad),
         dofs_acc=V(dtype=gs.ti_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B), needs_grad=requires_grad),
+        dofs_acc_smooth=V(dtype=gs.ti_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B)),
+        solver_qacc_ws=V(dtype=gs.ti_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B)),
     )
 
 
@@ -1865,7 +1872,10 @@ class DataManager:
             self.joints_state_adjoint_cache = get_joints_state(solver)
             self.geoms_state_adjoint_cache = get_geoms_state(solver)
 
-        self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
+        # We use a pair of adjoint cache, one of which is used for the forward pass and the other is used for the
+        # backward pass to check the integrity of the backward pass.
+        self.rigid_adjoint_cache_fw = get_rigid_adjoint_cache(solver)
+        self.rigid_adjoint_cache_bw = get_rigid_adjoint_cache(solver)
         self.errno = V_SCALAR_FROM(dtype=gs.ti_int, value=0)
 
 
