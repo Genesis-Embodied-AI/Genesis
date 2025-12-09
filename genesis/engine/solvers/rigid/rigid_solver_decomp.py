@@ -1983,7 +1983,7 @@ class RigidSolver(Solver):
                     if envs_idx.dtype == torch.bool:
                         dofs_vel.masked_fill_(envs_idx[:, None], 0.0)
                     else:
-                        dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, vel.shape[1])), 0.0)
+                        dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
                 else:
                     if qpos.ndim == 2:
                         dofs_vel.masked_scatter_(envs_idx[:, None], velocity)
@@ -2385,14 +2385,8 @@ class RigidSolver(Solver):
 
     def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False):
         tensor = ti_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True)
-
         if dofs_idx is not None:
-            if isinstance(dofs_idx, (slice, int, np.integer)) or (dofs_idx.ndim == 0):
-                tensor = tensor[:, dofs_idx, dofs_idx]
-                if tensor.ndim == 1:
-                    tensor = tensor.reshape((-1, 1, 1))
-            else:
-                tensor = tensor[:, dofs_idx[:, None], dofs_idx]
+            tensor = tensor[indices_to_mask(None, dofs_idx, dofs_idx)]
         if self.n_envs == 0:
             tensor = tensor[0]
 
