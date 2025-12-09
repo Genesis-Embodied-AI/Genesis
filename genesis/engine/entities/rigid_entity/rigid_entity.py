@@ -616,9 +616,7 @@ class RigidEntity(Entity):
         self._n_free_verts = len(self._free_verts_idx_local)
         self._n_fixed_verts = len(self._fixed_verts_idx_local)
 
-        self._dofs_idx = torch.arange(
-            self._dof_start, self._dof_start + self._n_dofs, dtype=gs.tc_int, device=gs.device
-        )
+        self._dofs_idx = slice(self._dof_start, self._dof_start + self._n_dofs)
 
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
@@ -1753,16 +1751,21 @@ class RigidEntity(Entity):
             return idx_global
 
         # Perform a bunch of sanity checks
-        idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
-        ndim = idx_global.ndim
-        if ndim == 0:
-            idx_global = idx_global[None]
-        elif ndim > 1:
-            gs.raise_exception("Expecting a 1D tensor for `idx_local`.")
+        if isinstance(idx_global, torch.Tensor) and idx_global.dtype == torch.bool:
+            if idx_global.shape != (idx_local_max - idx_global_start,):
+                gs.raise_exception("Boolean masks must be 1D tensors of fixed size.")
+            idx_global = idx_global_start + idx_global.nonzero()[:, 0]
+        else:
+            idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
+            ndim = idx_global.ndim
+            if ndim == 0:
+                idx_global = idx_global[None]
+            elif ndim > 1:
+                gs.raise_exception("Expecting a 1D tensor for local index.")
 
-        # FIXME: This check is too expensive
-        # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
-        #     gs.raise_exception("`idx_local` exceeds valid range.")
+            # FIXME: This check is too expensive
+            # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
+            #     gs.raise_exception("`idx_local` exceeds valid range.")
 
         return idx_global
 
