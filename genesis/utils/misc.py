@@ -923,7 +923,7 @@ def broadcast_tensor(
             dim, size = tensor_.shape[i], expected_shape[i]
             if size > 0 and i < tensor_.ndim and dim != 1 and dim != size:
                 if name:
-                    msg_infos.append(f"Dimension {i} consistent with len({name})(={size})")
+                    msg_infos.append(f"Dimension {i} consistent with len({name})={size}")
                 else:
                     msg_infos.append(f"Dimension {i} consistent with required size {size}")
         if msg_infos:

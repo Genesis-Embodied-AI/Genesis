@@ -75,7 +75,7 @@ class DroneEntity(RigidEntity):
         # if (propellels_rpm < 0.0).any():
         #     gs.raise_exception("`propellels_rpm` cannot be negative.")
 
-        self._propellers_revs = (self._propellers_revs + propellels_rpm) % (60 / self.solver.dt)
+        self._propellers_revs = (self._propellers_revs + propellels_rpm.T) % (60 / self.solver.dt)
 
         self.solver.set_drone_rpm(
             self._n_propellers,
