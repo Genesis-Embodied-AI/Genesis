@@ -130,8 +130,6 @@ class RigidSolver(Solver):
 
         self._options = options
 
-        self._cur_step = -1
-
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
         self._queried_states = QueriedStates()
@@ -1479,7 +1477,10 @@ class RigidSolver(Solver):
             self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
-            self._cur_step = -1
+
+            for entity in self.entities:
+                if isinstance(entity, DroneEntity):
+                    entity._prev_prop_t = -1
 
     def process_input(self, in_backward=False):
         for entity in self._entities:
@@ -7030,6 +7031,8 @@ def kernel_set_state(
         for j in ti.static(range(3)):
             links_state.pos[i_l, envs_idx[i_b_]][j] = links_pos[envs_idx[i_b_], i_l, j]
             links_state.i_pos_shift[i_l, envs_idx[i_b_]][j] = i_pos_shift[envs_idx[i_b_], i_l, j]
+            links_state.cfrc_applied_vel[i_l, envs_idx[i_b_]][j] = gs.ti_float(0.0)
+            links_state.cfrc_applied_ang[i_l, envs_idx[i_b_]][j] = gs.ti_float(0.0)
         for j in ti.static(range(4)):
             links_state.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
         links_state.mass_shift[i_l, envs_idx[i_b_]] = mass_shift[envs_idx[i_b_], i_l]
