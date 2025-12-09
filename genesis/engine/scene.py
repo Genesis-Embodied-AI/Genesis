@@ -3,7 +3,7 @@ import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Literal
 
 import numpy as np
 import torch
@@ -452,9 +452,9 @@ class Scene(RBC):
         return entity
 
     @gs.assert_unbuilt
-    def add_stage(self, file: str):
+    def add_stage(self, file: str, vis_mode: Literal["visual", "collision"] = "visual"):
         from ..utils.usd import import_from_usd
-        return import_from_usd(self, file)
+        return import_from_usd(self, file, vis_mode)
 
     @gs.assert_unbuilt
     def link_entities(self, parent_entity: "Entity", child_entity: "Entity", parent_link_name="", child_link_name=""):

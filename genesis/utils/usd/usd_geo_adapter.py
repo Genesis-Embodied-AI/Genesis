@@ -6,7 +6,7 @@ from typing import List, Dict, Literal
 from enum import Enum
 from pxr import Usd, UsdGeom, UsdShade
 from genesis.utils.usd.usd_parser_context import UsdParserContext
-from genesis.utils.usd.usd_parser_utils import compute_gs_related_transform
+from genesis.utils.usd.usd_parser_utils import compute_gs_related_transform, compute_gs_global_transform
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils.usd.usd_parser_utils import bfs_iterator
@@ -19,14 +19,16 @@ class UsdGeometryAdapter:
     Return: Genesis geometry info
     """
 
-    SupportUsdGeoms = [UsdGeom.Mesh, UsdGeom.Plane, UsdGeom.Sphere, UsdGeom.Capsule, UsdGeom.Cube]
+    SupportUsdGeoms = [UsdGeom.Mesh, UsdGeom.Plane, UsdGeom.Sphere, UsdGeom.Capsule, UsdGeom.Cube, UsdGeom.Cylinder]
 
     def __init__(self, ctx: UsdParserContext, prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]):
         self._prim: Usd.Prim = prim
         self._ref_prim: Usd.Prim = ref_prim
         self._ctx: UsdParserContext = ctx
         self._mesh_type: Literal["mesh", "vmesh"] = mesh_type
-        pass
+    
+    def is_primitive(self) -> bool:
+        return self._is_primitive
 
     def create_gs_geo_info(self) -> Dict:
         g_info = dict()
@@ -54,7 +56,11 @@ class UsdGeometryAdapter:
         elif self._prim.IsA(UsdGeom.Cube):
             r = self._create_gs_cube_geo_info()
             g_info.update(r)
+        elif self._prim.IsA(UsdGeom.Cylinder):
+            r = self._create_gs_cylinder_geo_info()
+            g_info.update(r)
         else:
+            # gs.logger.warning(f"Unsupported Geometry Type: {self._prim.GetTypeName()} of {self._prim}")
             return None
 
         return g_info
@@ -175,8 +181,6 @@ class UsdGeometryAdapter:
         """Create geometry info for USD visual Mesh with rendering information."""
         mesh_prim = UsdGeom.Mesh(self._prim)
 
-        points_faces_varying = False
-
         # Extract basic geometry
         Q_rel, points, normals, uvs, triangles = self._extract_mesh_geometry(mesh_prim)
 
@@ -205,7 +209,7 @@ class UsdGeometryAdapter:
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
-
+    
     def _create_gs_collision_mesh_geo_info(self) -> Dict:
         """Create geometry info for USD collision Mesh without rendering information."""
         mesh_prim = UsdGeom.Mesh(self._prim)
@@ -217,6 +221,7 @@ class UsdGeometryAdapter:
         tmesh = trimesh.Trimesh(
             vertices=points,
             faces=triangles,
+            vertex_normals=normals,
             process=True,
         )
 
@@ -276,7 +281,6 @@ class UsdGeometryAdapter:
         )
 
     def _create_gs_plane_geo_info(self) -> Dict:
-        """Create geometry info for USD Plane."""
         plane_prim = UsdGeom.Plane(self._prim)
 
         # Get plane properties
@@ -333,14 +337,12 @@ class UsdGeometryAdapter:
 
         return {
             self._mesh_type: mesh_gs,
-            "type": gs.GEOM_TYPE.PLANE,
-            "data": plane_normal_local.copy(),
+            "type": gs.GEOM_TYPE.MESH,
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
     def _create_gs_sphere_geo_info(self) -> Dict:
-        """Create geometry info for USD Sphere."""
         sphere_prim = UsdGeom.Sphere(self._prim)
 
         # Get sphere radius
@@ -362,22 +364,16 @@ class UsdGeometryAdapter:
         # Create sphere mesh (use fewer subdivisions for collision, more for visual)
         subdivisions = 2 if self._mesh_type == "mesh" else 3
         tmesh = mu.create_sphere(radius=radius, subdivisions=subdivisions)
-
         mesh = self._create_mesh_from_trimesh(tmesh)
-
-        # Sphere data is just the radius
-        geom_data = np.array([radius])
 
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.SPHERE,
-            "data": geom_data,
+            "type": gs.GEOM_TYPE.MESH,
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
     def _create_gs_capsule_geo_info(self) -> Dict:
-        """Create geometry info for USD Capsule."""
         capsule_prim = UsdGeom.Capsule(self._prim)
 
         # Get capsule properties
@@ -417,19 +413,14 @@ class UsdGeometryAdapter:
 
         mesh = self._create_mesh_from_trimesh(tmesh)
 
-        # Capsule data: radius and height
-        geom_data = np.array([radius, height])
-
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.CAPSULE,
-            "data": geom_data,
+            "type": gs.GEOM_TYPE.MESH,
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
     def _create_gs_cube_geo_info(self) -> Dict:
-        """Create geometry info for USD Cube (Box)."""
         cube_prim = UsdGeom.Cube(self._prim)
 
         # Get cube size/extents
@@ -466,15 +457,62 @@ class UsdGeometryAdapter:
 
         mesh = self._create_mesh_from_trimesh(tmesh)
 
-        # Box data is the extents
-        geom_data = extents.copy()
+        return {
+            self._mesh_type: mesh,
+            "type": gs.GEOM_TYPE.MESH,
+            "pos": Q_rel[:3, 3],
+            "quat": gu.R_to_quat(Q_rel[:3, :3]),
+        }
+
+    def _create_gs_cylinder_geo_info(self) -> Dict:
+        """Create geometry info for USD Cylinder as a mesh (transform baked into vertices)."""
+        cylinder_prim = UsdGeom.Cylinder(self._prim)
+
+        # Get cylinder properties
+        radius_attr = cylinder_prim.GetRadiusAttr()
+        height_attr = cylinder_prim.GetHeightAttr()
+        axis_attr = cylinder_prim.GetAxisAttr()
+
+        # Get cylinder dimensions (defaults)
+        radius = radius_attr.Get() if radius_attr and radius_attr.HasValue() else 0.5
+        height = height_attr.Get() if height_attr and height_attr.HasValue() else 1.0
+
+        # Get axis (default to "Z")
+        axis_str = axis_attr.Get() if axis_attr and axis_attr.HasValue() else "Z"
+
+        # Get transform relative to reference prim (includes scale S)
+        Q_rel, S = compute_gs_related_transform(self._prim, self._ref_prim)
+        S_diag = np.diag(S)
+
+        # Apply scale to cylinder dimensions
+        # Height scales along the axis direction, radius scales perpendicular to axis
+        if axis_str == "X":
+            height *= S_diag[0]  # X scale
+            radius *= np.mean([S_diag[1], S_diag[2]])
+        elif axis_str == "Y":
+            height *= S_diag[1]  # Y scale
+            # Radius scales by average of X and Z
+            radius *= np.mean([S_diag[0], S_diag[2]])
+        elif axis_str == "Z":
+            height *= S_diag[2]  # Z scale
+            # Radius scales by average of X and Y
+            radius *= np.mean([S_diag[0], S_diag[1]])
+
+        # Create cylinder mesh (use fewer sections for collision, more for visual)
+        sections = 8 if self._mesh_type == "mesh" else 16
+        tmesh = mu.create_cylinder(radius=radius, height=height, sections=sections)
+
+        # Apply transform to mesh vertices (bake pos and quat into vertices)
+        vertices = tmesh.vertices
+        vertices_transformed = (Q_rel[:3, :3] @ vertices.T).T + Q_rel[:3, 3]
+        tmesh.vertices = vertices_transformed
+
+        mesh = self._create_mesh_from_trimesh(tmesh)
 
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.BOX,
-            "data": geom_data,
-            "pos": Q_rel[:3, 3],
-            "quat": gu.R_to_quat(Q_rel[:3, :3]),
+            "type": gs.GEOM_TYPE.MESH,
+            "data": None,
         }
 
 

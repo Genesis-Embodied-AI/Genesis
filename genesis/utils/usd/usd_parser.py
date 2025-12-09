@@ -6,7 +6,7 @@ Provides the parse pipeline: materials -> articulations -> rigid bodies.
 """
 
 
-from typing import List, Dict
+from typing import List, Dict, Literal
 import genesis as gs
 from genesis.engine.entities.base_entity import Entity as GSEntity
 
@@ -26,7 +26,7 @@ class UsdParser:
     """
     
     @staticmethod
-    def import_from_stage(scene: gs.Scene, stage: Usd.Stage) -> Dict[str, GSEntity]:
+    def import_from_stage(scene: gs.Scene, stage: Usd.Stage, vis_mode: Literal["visual", "collision"]) -> Dict[str, GSEntity]:
         """
         Import all entities from a USD stage into the scene.
         
@@ -52,6 +52,8 @@ class UsdParser:
         
         # Create parser context
         context = UsdParserContext(stage)
+        context._vis_mode = vis_mode
+        
         
         # Return Values
         entities: Dict[str, GSEntity] = {}
@@ -94,6 +96,6 @@ class UsdParser:
         return entities
 
 # A simple entrance function for users
-def import_from_usd(scene:gs.Scene, path:str):
+def import_from_usd(scene:gs.Scene, path:str, vis_mode: Literal["visual", "collision"]):
     stage = Usd.Stage.Open(path)
-    return UsdParser.import_from_stage(scene, stage)
+    return UsdParser.import_from_stage(scene, stage, vis_mode)

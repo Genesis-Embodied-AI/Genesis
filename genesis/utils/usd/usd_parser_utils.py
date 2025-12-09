@@ -6,12 +6,13 @@ mesh conversions, and other helper functions.
 """
 
 from pxr import Usd, UsdGeom, Gf
-from typing import List
+from typing import List, Tuple
 import genesis as gs
 import numpy as np
 import trimesh
 from collections import deque
 from .. import geom as gu
+import scipy.linalg
 
 def bfs_iterator(root: Usd.Prim):
     """
@@ -50,33 +51,11 @@ def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     """
     return np.array([usd_quat.GetReal(), *usd_quat.GetImaginary()])
 
-def extract_rotation_and_scale(trans_matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Extract rotation R and scale S from a 3x3 matrix using SVD.
-    
-    Parameters
-    ----------
-    matrix_3x3 : np.ndarray, shape (3, 3)
-        The 3x3 transformation matrix.
-        
-    Returns
-    -------
-    R : np.ndarray, shape (3, 3)
-        Rotation matrix.
-    S : np.ndarray, shape (3,)
-        Scale factors as diagonal.
-    """
-    # SVD to get rotation and scale
-    U, S, Vh = np.linalg.svd(trans_matrix[:3, :3])
-    
-    # Check if reflection is present
-    if np.linalg.det(U @ Vh) < 0:
-        Vh[-1, :] *= -1
-    R = U @ Vh
-    scale = np.diag(S)
-    return R, scale
+def extract_rotation_and_scale(trans_matrix: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    R, S = scipy.linalg.polar(trans_matrix[:3, :3], side="right")
+    return R, S
 
-def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) -> tuple[np.ndarray, trimesh.Trimesh]:
+def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) -> Tuple[np.ndarray, trimesh.Trimesh]:
     """
     Convert a USD mesh to a trimesh mesh and compute its Genesis transform relative to ref_prim.
     

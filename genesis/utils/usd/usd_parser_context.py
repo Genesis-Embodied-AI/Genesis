@@ -8,6 +8,7 @@ from pxr import Usd, UsdShade
 from typing import Set
 import genesis as gs
 from .usd_parser_utils import bfs_iterator
+from typing import Literal
 
 
 class UsdParserContext:
@@ -35,11 +36,17 @@ class UsdParserContext:
         self._articulation_root_prims: dict[str, Usd.Prim] = {}  # prim_path -> articulation_root_prim
         self._prims_in_articulation: dict[str, Usd.Prim] = {}  # prim_path -> prim (flattened set)
         self._rigid_body_top_prims: dict[str, Usd.Prim] = {}  # prim_path -> rigid_body_top_prim
+        self._vis_mode: Literal["visual", "collision"] = "visual"
     
     @property
     def stage(self) -> Usd.Stage:
         """Get the USD stage."""
         return self._stage
+    
+    @property
+    def vis_mode(self) -> Literal["visual", "collision"]:
+        """Get the visualization mode."""
+        return self._vis_mode
     
     @property
     def materials(self) -> dict[str, tuple[gs.surfaces.Surface, str]]:

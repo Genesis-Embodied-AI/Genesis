@@ -169,17 +169,24 @@ class UsdArticulationParser:
 
     @staticmethod
     def get_visual_geometries(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
-        vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
-            context, link, UsdArticulationParser.visual_pattern, "vmesh"
-        )
-        if len(vis_geo_infos) == 0:
-            # if no visual geometries found, use any pattern to find visual geometries
-            gs.logger.info(
-                f"No visual geometries found, using any pattern to find visual geometries in {link.GetPath()}"
-            )
+        if context.vis_mode == "visual":
             vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
-                context, link, UsdArticulationParser.all_pattern, "vmesh"
+                context, link, UsdArticulationParser.visual_pattern, "vmesh"
             )
+            if len(vis_geo_infos) == 0:
+                # if no visual geometries found, use any pattern to find visual geometries
+                gs.logger.info(
+                    f"No visual geometries found, using any pattern to find visual geometries in {link.GetPath()}"
+                )
+                vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+                    context, link, UsdArticulationParser.all_pattern, "vmesh"
+                )
+        elif context.vis_mode == "collision":
+                vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+                    context, link, UsdArticulationParser.collision_pattern, "vmesh"
+                )
+        else:
+            gs.raise_exception(f"Unsupported visualization mode {context.vis_mode}.")
         return vis_geo_infos
 
     @staticmethod
@@ -598,6 +605,9 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
 
         if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
             continue
+
+        if len(collision_g_infos) == 0:
+            gs.logger.warning(f"No collision geometries found for link {link.GetPath()}, using visual geometries instead.")
 
         # Add all visual geometries
         link_g_infos.extend(visual_g_infos)
