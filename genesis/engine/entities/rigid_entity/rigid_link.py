@@ -126,19 +126,15 @@ class RigidLink(RBC):
             # Determine which geom list to use: geoms first, then vgeoms, then fallback
             if len(self._geoms) > 0:
                 geom_list = self._geoms
-                get_mesh = lambda geom: trimesh.Trimesh(geom.init_verts, geom.init_faces)
-                get_pos = lambda geom: geom._init_pos
-                get_quat = lambda geom: geom._init_quat
+                is_visual = False
             elif len(self._vgeoms) > 0:
                 geom_list = self._vgeoms
-                get_mesh = lambda geom: trimesh.Trimesh(geom.init_vverts, geom.init_vfaces)
-                get_pos = lambda geom: geom._init_pos
-                get_quat = lambda geom: geom._init_quat
+                is_visual = True
             else:
                 # Fallback: use default values
-                self._inertial_mass = 1e-3
+                self._inertial_mass = gs.EPS
                 self._inertial_pos = np.zeros(3, dtype=gs.np_float)
-                self._inertial_i = np.zeros((3, 3), dtype=gs.np_float)
+                self._inertial_i = np.eye(3, dtype=gs.np_float) * gs.EPS
                 geom_list = []
 
             # Process each geom individually and compose their properties
@@ -148,32 +144,22 @@ class RigidLink(RBC):
                 total_inertia = np.zeros((3, 3), dtype=gs.np_float)
 
                 for geom in geom_list:
-                    inertia_mesh = get_mesh(geom)
-                    geom_pos = get_pos(geom)
-                    geom_quat = get_quat(geom)
-
-                    if inertia_mesh.is_watertight:
-                        geom_mass = inertia_mesh.volume * self.entity.material.rho
+                    # Create mesh based on geom type
+                    if is_visual:
+                        inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces)
                     else:
-                        geom_mass = 1e-3
+                        inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces)
 
-                    geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+                    geom_pos = geom._init_pos
+                    geom_quat = geom._init_quat
 
                     if not inertia_mesh.is_watertight:
                         inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
-                    if inertia_mesh.is_watertight and inertia_mesh.mass > 0:
-                        # density conversion
-                        geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+                    geom_mass = inertia_mesh.volume * self.entity.material.rho
+                    geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
 
-                    else:
-                        # Approximate with sphere
-                        radius = (
-                            max(inertia_mesh.bounds[1] - inertia_mesh.bounds[0]) / 2.0
-                            if inertia_mesh.bounds is not None
-                            else 0.1
-                        )
-                        geom_inertia_local = 0.4 * geom_mass * radius**2 * np.eye(3)
+                    geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
 
                     # Transform geom properties to link frame
                     geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
@@ -202,8 +188,6 @@ class RigidLink(RBC):
         # override invweight if fixed
         if self._is_fixed:
             self._invweight = np.zeros((2,), dtype=gs.np_float)
-
-        print(self.name, self._inertial_mass)
 
     def _add_geom(
         self,
