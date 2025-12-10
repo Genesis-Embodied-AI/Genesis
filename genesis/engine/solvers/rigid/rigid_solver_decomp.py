@@ -1985,7 +1985,7 @@ class RigidSolver(Solver):
                     else:
                         dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
                 else:
-                    if qpos.ndim == 2:
+                    if velocity.ndim == 2:
                         dofs_vel.masked_scatter_(envs_idx[:, None], velocity)
                     else:
                         velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)
