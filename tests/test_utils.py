@@ -441,46 +441,28 @@ def test_fps_tracker():
 @pytest.mark.required
 def test_compose_inertial_properties():
     """Test composition of inertial properties combining multiple effects."""
+    mass1, com1 = 1.0, np.array([1.0, 0.0, 0.0])
+    inertia1 = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 
-    # Single comprehensive test case: Three bodies with different properties
-    # Body 1: Mass=2.0 at origin with full inertia tensor
-    # Body 2: Mass=1.0 at [3,0,0] with zero inertia (point mass)
-    # Body 3: Mass=1.5 at [0,2,0] with different inertia tensor
+    mass2, com2 = 2.0, np.array([0.0, 2.0, 0.0])
+    inertia2 = np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]])
 
-    mass1, com1 = 2.0, np.array([0.0, 0.0, 0.0])
-    inertia1 = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.5]])  # Asymmetric inertia
+    # Analytical calculations: mass=3.0, COM=[1/3, 4/3, 0]
+    expected_mass, expected_com = 3.0, np.array([1.0 / 3.0, 4.0 / 3.0, 0.0])
 
-    mass2, com2 = 1.0, np.array([3.0, 0.0, 0.0])
-    inertia2 = np.zeros((3, 3))
+    # Translate inertias to combined COM using parallel axis theorem
+    def translate_inertia(I, m, r):  # I + m*(||r||²*I - r⊗r)
+        return I + m * (np.dot(r, r) * np.eye(3) - np.outer(r, r))
 
-    mass3, com3 = 1.5, np.array([0.0, 2.0, 0.0])
-    inertia3 = np.array([[0.5, 0.0, 0.0], [0.0, 1.2, 0.0], [0.0, 0.0, 0.8]])
+    expected_inertia = translate_inertia(inertia1, mass1, expected_com - com1) + translate_inertia(
+        inertia2, mass2, expected_com - com2
+    )
 
-    combined_mass_12, combined_com_12, combined_inertia_12 = compose_inertial_properties(
+    # Now call the function and verify results
+    combined_mass, combined_com, combined_inertia = compose_inertial_properties(
         mass1, com1, inertia1, mass2, com2, inertia2
     )
 
-    total_mass, total_com, total_inertia = compose_inertial_properties(
-        combined_mass_12, combined_com_12, combined_inertia_12, mass3, com3, inertia3
-    )
-
-    # Total mass = 2.0 + 1.0 + 1.5 = 4.5
-    expected_mass = 4.5
-
-    # Center of mass calculation:
-    # COM_x = (2.0*0 + 1.0*3 + 1.5*0) / 4.5 = 3/4.5 = 0.667
-    # COM_y = (2.0*0 + 1.0*0 + 1.5*2) / 4.5 = 3/4.5 = 0.667
-    # COM_z = 0
-    expected_com = np.array([3.0 / 4.5, 3.0 / 4.5, 0.0])  # [0.667, 0.667, 0.0]
-
-    assert_allclose(total_mass, expected_mass, tol=TOL)
-    assert_allclose(total_com, expected_com, tol=TOL)
-
-    # Verify inertia tensor is symmetric and positive definite
-    assert_allclose(total_inertia, total_inertia.T, tol=TOL)  # Symmetric
-    eigenvals = np.linalg.eigvals(total_inertia)
-    assert np.all(eigenvals >= -TOL)  # Positive semi-definite (within tolerance)
-
-    # Verify physical consistency: trace of inertia relates to total mass distribution
-    # (This is a rough sanity check - the exact value depends on the specific configuration)
-    assert total_inertia.trace() > 0  # Should be positive for real physical systems
+    assert_allclose(combined_mass, expected_mass, tol=TOL)
+    assert_allclose(combined_com, expected_com, tol=TOL)
+    assert_allclose(combined_inertia, expected_inertia, tol=TOL)
