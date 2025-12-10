@@ -11,6 +11,7 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
+from genesis.utils.urdf import compose_inertial_properties
 
 from .utils import assert_allclose
 
@@ -435,3 +436,78 @@ def test_fps_tracker():
     fps = tracker.step(current_time=10.45)
     # num envs * [num steps] / (delta time)
     assert math.isclose(fps, n_envs * 4 / 0.14)
+
+
+@pytest.mark.required
+def test_compose_inertial_properties():
+    """Test composition of inertial properties of two bodies."""
+
+    # Test case 1: Two point masses
+    mass1, com1 = 1.0, np.array([0.0, 0.0, 0.0])
+    inertia1 = np.zeros((3, 3))  # Point mass has zero inertia
+
+    mass2, com2 = 1.0, np.array([2.0, 0.0, 0.0])
+    inertia2 = np.zeros((3, 3))  # Point mass has zero inertia
+
+    combined_mass, combined_com, combined_inertia = compose_inertial_properties(
+        mass1, com1, inertia1, mass2, com2, inertia2
+    )
+
+    # Combined COM at [1.0, 0.0, 0.0]
+    # Each mass contributes m*r^2 where r is distance from COM
+    # I_y = I_z = 1*1^2 + 1*1^2 = 2 (about axes perpendicular to separation)
+    expected_inertia = np.array([[0.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]])
+
+    assert_allclose(combined_mass, 2.0, tol=TOL)
+    assert_allclose(combined_com, np.array([1.0, 0.0, 0.0]), tol=TOL)
+    assert_allclose(combined_inertia, expected_inertia, tol=TOL)
+
+    # Test case 2: One body with inertia, one point mass
+    mass1, com1 = 2.0, np.array([0.0, 0.0, 0.0])
+    inertia1 = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])  # Unit inertia
+
+    mass2, com2 = 1.0, np.array([1.0, 0.0, 0.0])
+    inertia2 = np.zeros((3, 3))
+
+    combined_mass, combined_com, combined_inertia = compose_inertial_properties(
+        mass1, com1, inertia1, mass2, com2, inertia2
+    )
+
+    expected_com = np.array([1.0 / 3.0, 0.0, 0.0])
+    # Proper calculation using parallel axis theorem
+    expected_inertia = np.array([[1.0, 0.0, 0.0], [0.0, 5.0 / 3.0, 0.0], [0.0, 0.0, 5.0 / 3.0]])
+
+    assert_allclose(combined_mass, 3.0, tol=TOL)
+    assert_allclose(combined_com, expected_com, tol=TOL)
+    assert_allclose(combined_inertia, expected_inertia, tol=TOL)
+
+    # Test case 3: Two bodies with different inertias
+    mass1, com1 = 1.0, np.array([0.0, 0.0, 0.0])
+    inertia1 = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+    mass2, com2 = 1.0, np.array([0.0, 0.0, 0.0])
+    inertia2 = np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]])
+
+    combined_mass, combined_com, combined_inertia = compose_inertial_properties(
+        mass1, com1, inertia1, mass2, com2, inertia2
+    )
+
+    expected_inertia = np.array([[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 2.0]])
+
+    assert_allclose(combined_mass, 2.0, tol=TOL)
+    assert_allclose(combined_com, np.array([0.0, 0.0, 0.0]), tol=TOL)
+    assert_allclose(combined_inertia, expected_inertia, tol=TOL)
+
+    # Test case 4: Zero total mass (edge case)
+    mass1, com1 = 0.0, np.array([0.0, 0.0, 0.0])
+    inertia1 = np.zeros((3, 3))
+
+    mass2, com2 = 0.0, np.array([1.0, 0.0, 0.0])
+    inertia2 = np.zeros((3, 3))
+
+    combined_mass, combined_com, combined_inertia = compose_inertial_properties(
+        mass1, com1, inertia1, mass2, com2, inertia2
+    )
+
+    assert_allclose(combined_mass, 0.0, tol=TOL)
+    assert_allclose(combined_com, np.array([0.0, 0.0, 0.0]), tol=TOL)  # Should use com1 when total_mass == 0

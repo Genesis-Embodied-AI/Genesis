@@ -7,6 +7,7 @@ import trimesh
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
+from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 
 from genesis.utils.misc import DeprecationError, tensor_to_array
 
@@ -121,82 +122,92 @@ class RigidLink(RBC):
         for vgeom in self._vgeoms:
             vgeom._build()
 
-        self._init_mesh = self._compose_init_mesh()
-
-        # inertial_mass and inertia_i
-        if self._inertial_mass is None:
-            if len(self._geoms) == 0 and len(self._vgeoms) == 0:
-                self._inertial_mass = 0.0
+        # inertial_mass, inertial_pos, and inertial_i
+        if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
+            # Determine which geom list to use: geoms first, then vgeoms, then fallback
+            if len(self._geoms) > 0:
+                geom_list = self._geoms
+                get_mesh = lambda geom: trimesh.Trimesh(geom.init_verts, geom.init_faces)
+                get_pos = lambda geom: geom._init_pos
+                get_quat = lambda geom: geom._init_quat
+            elif len(self._vgeoms) > 0:
+                geom_list = self._vgeoms
+                get_mesh = lambda geom: trimesh.Trimesh(geom.init_vverts, geom.init_vfaces)
+                get_pos = lambda geom: geom._init_pos
+                get_quat = lambda geom: geom._init_quat
             else:
-                if self._init_mesh.is_watertight:
-                    self._inertial_mass = self._init_mesh.volume * self.entity.material.rho
-                else:  # TODO: handle non-watertight mesh
-                    self._inertial_mass = 1.0
+                # Fallback: use default values
+                self._inertial_mass = 1e-3
+                self._inertial_pos = np.zeros(3, dtype=gs.np_float)
+                self._inertial_i = np.zeros((3, 3), dtype=gs.np_float)
+                geom_list = []
+
+            # Process each geom individually and compose their properties
+            if len(geom_list) > 0:
+                total_mass = 0.0
+                total_com = np.zeros(3, dtype=gs.np_float)
+                total_inertia = np.zeros((3, 3), dtype=gs.np_float)
+
+                for geom in geom_list:
+                    inertia_mesh = get_mesh(geom)
+                    geom_pos = get_pos(geom)
+                    geom_quat = get_quat(geom)
+
+                    # Compute mass for this geom
+                    if inertia_mesh.is_watertight:
+                        geom_mass = inertia_mesh.volume * self.entity.material.rho
+                    else:
+                        geom_mass = 1e-3
+
+                    # Compute COM for this geom in its local frame
+                    geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+
+                    # Compute inertia tensor for this geom in its local frame
+                    if not inertia_mesh.is_watertight:
+                        inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+
+                    if inertia_mesh.is_watertight and inertia_mesh.mass > 0:
+                        # density conversion
+                        geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+
+                    else:
+                        # Approximate with sphere
+                        radius = (
+                            max(inertia_mesh.bounds[1] - inertia_mesh.bounds[0]) / 2.0
+                            if inertia_mesh.bounds is not None
+                            else 0.1
+                        )
+                        geom_inertia_local = 0.4 * geom_mass * radius**2 * np.eye(3)
+
+                    # Transform geom properties to link frame
+                    geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
+                    geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
+
+                    # Compose with accumulated properties
+                    if total_mass == 0.0:
+                        # First geom
+                        total_mass = geom_mass
+                        total_com = geom_com_link
+                        total_inertia = geom_inertia_link
+                    else:
+                        # Compose with existing properties
+                        total_mass, total_com, total_inertia = compose_inertial_properties(
+                            total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
+                        )
+
+                self._inertial_mass = total_mass
+                self._inertial_pos = total_com
+                self._inertial_i = total_inertia
 
         # Postpone computation of inverse weight if not specified
         if self._invweight is None:
             self._invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
 
-        # inertial_pos
-        if self._inertial_pos is None:
-            if self._init_mesh is None:
-                self._inertial_pos = gu.zero_pos()
-            else:
-                self._inertial_pos = np.array(self._init_mesh.center_mass, dtype=gs.np_float)
-
-        # inertial_i
-        if self._inertial_i is None:
-            # FIXME: Why coef 0.4 ???
-            if self._init_mesh is None:  # use sphere inertia with radius 0.1
-                self._inertial_i = 0.4 * self._inertial_mass * 0.1**2 * np.eye(3)
-
-            else:
-                # attempt to fix non-watertight mesh by convexifying
-                inertia_mesh = self._init_mesh.copy()
-                if not inertia_mesh.is_watertight:
-                    inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
-
-                if inertia_mesh.is_watertight and self._init_mesh.mass > 0:
-                    # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
-                    T_inertia = gu.trans_quat_to_T(self._inertial_pos, self._inertial_quat)
-                    self._inertial_i = (
-                        self._init_mesh.moment_inertia_frame(T_inertia) / self._init_mesh.mass * self._inertial_mass
-                    )
-
-                else:  # approximate with a sphere
-                    self._inertial_i = (
-                        0.4
-                        * self._inertial_mass
-                        * (max(self._init_mesh.bounds[1] - self._init_mesh.bounds[0]) / 2.0) ** 2
-                        * np.eye(3)
-                    )
-
-        self._inertial_i = np.asarray(self._inertial_i, dtype=gs.np_float)
-
         # override invweight if fixed
         if self._is_fixed:
             self._invweight = np.zeros((2,), dtype=gs.np_float)
 
-    def _compose_init_mesh(self):
-        if len(self._geoms) == 0 and len(self._vgeoms) == 0:
-            return None
-        else:
-            init_verts = []
-            init_faces = []
-            vert_offset = 0
-            if len(self._geoms) > 0:
-                for geom in self._geoms:
-                    init_verts.append(gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat))
-                    init_faces.append(geom.init_faces + vert_offset)
-                    vert_offset += geom.init_verts.shape[0]
-            elif len(self._vgeoms) > 0:  # use vgeom if there's no geom
-                for vgeom in self._vgeoms:
-                    init_verts.append(gu.transform_by_trans_quat(vgeom.init_vverts, vgeom.init_pos, vgeom.init_quat))
-                    init_faces.append(vgeom.init_vfaces + vert_offset)
-                    vert_offset += vgeom.init_vverts.shape[0]
-            init_verts = np.concatenate(init_verts)
-            init_faces = np.concatenate(init_faces)
-            return trimesh.Trimesh(init_verts, init_faces)
+        print(self.name, self._inertial_mass)
 
     def _add_geom(
         self,
