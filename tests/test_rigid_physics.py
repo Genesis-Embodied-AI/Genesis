@@ -863,6 +863,7 @@ def test_box_box_dynamics(gs_sim):
 
 
 @pytest.mark.slow  # ~840s
+@pytest.mark.debug(False)
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
     [

@@ -1426,7 +1426,7 @@ def func_solve(
 ):
     _B = constraint_state.grad.shape[1]
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=16)
     for i_b in range(_B):
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
@@ -2136,7 +2136,7 @@ def func_init_solver(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=16)
     for i_b in range(_B):
         func_update_constraint(
             i_b,
