@@ -166,7 +166,7 @@ class RigidLink(RBC):
                     geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
 
                     # Compose with accumulated properties
-                    if total_mass == 0.0:
+                    if total_mass < gs.EPS:
                         # First geom
                         total_mass = geom_mass
                         total_com = geom_com_link
