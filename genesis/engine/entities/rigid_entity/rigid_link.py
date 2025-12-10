@@ -122,7 +122,6 @@ class RigidLink(RBC):
         for vgeom in self._vgeoms:
             vgeom._build()
 
-        # inertial_mass, inertial_pos, and inertial_i
         if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
             # Determine which geom list to use: geoms first, then vgeoms, then fallback
             if len(self._geoms) > 0:
@@ -153,16 +152,13 @@ class RigidLink(RBC):
                     geom_pos = get_pos(geom)
                     geom_quat = get_quat(geom)
 
-                    # Compute mass for this geom
                     if inertia_mesh.is_watertight:
                         geom_mass = inertia_mesh.volume * self.entity.material.rho
                     else:
                         geom_mass = 1e-3
 
-                    # Compute COM for this geom in its local frame
                     geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
 
-                    # Compute inertia tensor for this geom in its local frame
                     if not inertia_mesh.is_watertight:
                         inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
