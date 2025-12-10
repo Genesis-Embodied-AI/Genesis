@@ -329,7 +329,7 @@ class UsdGeometryAdapter:
             plane_normal / np.linalg.norm(plane_normal) if np.linalg.norm(plane_normal) > 1e-10 else plane_normal
         )
 
-        # Create plane geometry using mesh utility
+        # Create plane geometry using mesh utility (for visualization)
         plane_size = (width, length)
         vmesh, cmesh = mu.create_plane(normal=plane_normal, plane_size=plane_size)
         plane_mesh = vmesh if self._mesh_type == "vmesh" else cmesh
@@ -337,7 +337,8 @@ class UsdGeometryAdapter:
 
         return {
             self._mesh_type: mesh_gs,
-            "type": gs.GEOM_TYPE.MESH,
+            "type": gs.GEOM_TYPE.PLANE,
+            "data": plane_normal,
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
@@ -368,7 +369,8 @@ class UsdGeometryAdapter:
 
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.MESH,
+            "type": gs.GEOM_TYPE.SPHERE,
+            "data": np.array([radius]),
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
@@ -415,7 +417,8 @@ class UsdGeometryAdapter:
 
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.MESH,
+            "type": gs.GEOM_TYPE.CAPSULE,
+            "data": np.array([radius, height]),
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
@@ -452,20 +455,21 @@ class UsdGeometryAdapter:
         # Apply scale to extents (element-wise multiplication)
         extents = S_diag * extents
 
-        # Create box mesh
+        # Create box mesh (for visualization)
         tmesh = mu.create_box(extents=extents)
 
         mesh = self._create_mesh_from_trimesh(tmesh)
 
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.MESH,
+            "type": gs.GEOM_TYPE.BOX,
+            "data": extents,
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
     def _create_gs_cylinder_geo_info(self) -> Dict:
-        """Create geometry info for USD Cylinder as a mesh (transform baked into vertices)."""
+        """Create geometry info for USD Cylinder as a primitive."""
         cylinder_prim = UsdGeom.Cylinder(self._prim)
 
         # Get cylinder properties
@@ -502,17 +506,14 @@ class UsdGeometryAdapter:
         sections = 8 if self._mesh_type == "mesh" else 16
         tmesh = mu.create_cylinder(radius=radius, height=height, sections=sections)
 
-        # Apply transform to mesh vertices (bake pos and quat into vertices)
-        vertices = tmesh.vertices
-        vertices_transformed = (Q_rel[:3, :3] @ vertices.T).T + Q_rel[:3, 3]
-        tmesh.vertices = vertices_transformed
-
         mesh = self._create_mesh_from_trimesh(tmesh)
 
         return {
             self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.MESH,
-            "data": None,
+            "type": gs.GEOM_TYPE.CYLINDER,
+            "data": np.array([radius, height]),
+            "pos": Q_rel[:3, 3],
+            "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
 
