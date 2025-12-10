@@ -36,6 +36,8 @@ class SimOptions(Options):
         Height of the floor in meters. Defaults to 0.0.
     requires_grad : bool, optional
         Whether to enable differentiable mode. Defaults to False.
+    substeps_grad: int, optional
+        Number of steps that constitutes a window for gradient computation, defaults to None (window not used).
     use_hydroelastic_contact : bool, optional
         Whether to use hydroelastic contact. Defaults to False.
     """
@@ -46,6 +48,7 @@ class SimOptions(Options):
     gravity: tuple = (0.0, 0.0, -9.81)
     floor_height: float = 0.0
     requires_grad: bool = False
+    grad_window_steps: Optional[int] = None
 
     # not set by user
     _steps_local: Optional[int] = None

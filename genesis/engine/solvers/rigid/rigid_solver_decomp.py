@@ -1280,6 +1280,11 @@ class RigidSolver(Solver):
             case 1:
                 gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
             case 2:
+                qpos_diff = self._rigid_adjoint_cache_fw.qpos.to_numpy() - self._rigid_adjoint_cache_bw.qpos.to_numpy()
+                vel_diff = self._rigid_adjoint_cache_fw.dofs_vel.to_numpy() - self._rigid_adjoint_cache_bw.dofs_vel.to_numpy()
+                acc_diff = self._rigid_adjoint_cache_fw.dofs_acc.to_numpy() - self._rigid_adjoint_cache_bw.dofs_acc.to_numpy()
+                acc_smooth_diff = self._rigid_adjoint_cache_fw.dofs_acc_smooth.to_numpy() - self._rigid_adjoint_cache_bw.dofs_acc_smooth.to_numpy()
+                solver_qacc_ws_diff = self._rigid_adjoint_cache_fw.solver_qacc_ws.to_numpy() - self._rigid_adjoint_cache_bw.solver_qacc_ws.to_numpy()
                 gs.raise_exception(f"The backward computation result does not match the forward computation result at step {self._sim.cur_step_global}")
 
         kernel_step_2.grad(
@@ -1480,7 +1485,9 @@ class RigidSolver(Solver):
         for entity in self._entities:
             entity.reset_grad()
         self._queried_states.clear()
+        self.zero_grad()
 
+    def zero_grad(self):
         # zero grad
         for state in [
             self._rigid_global_info, 

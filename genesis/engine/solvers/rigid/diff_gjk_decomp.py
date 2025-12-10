@@ -77,7 +77,7 @@ def func_gjk_contact(
     found_default_epa = False
 
     # 4 (small) + 4 (large) perturbated configurations
-    num_perturb = 8
+    num_perturb = 4
 
     ### Detect multiple possible contact points and gather the non-differentiable contact data.
     for i in range(1 + num_perturb):
@@ -209,6 +209,8 @@ def func_gjk_contact(
                         )
 
                         found_default_epa = True
+                        # Do not use extended EPA algorithm for now, practically it seems not needed.
+                        break
 
                     # Break the loop if we found enough contact points for default configuration. As we can find at most
                     # 8 contact points for perturbed configurations, we can find at most max_contacts_per_pair - 8

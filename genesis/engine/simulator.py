@@ -296,11 +296,16 @@ class Simulator(RBC):
             self._cur_substep_global -= 1
 
             self.sub_step_grad(self.cur_substep_local)
-            if self.rigid_solver.is_active:
-                # Clear external force after gradient computation
-                self.rigid_solver.clear_external_force()
+
+        if self.rigid_solver.is_active:
+            # Clear external force after gradient computation
+            self.rigid_solver.clear_external_force()
 
         self.process_input_grad()
+
+        if self.options.grad_window_steps is not None and self.cur_step_global % self.options.grad_window_steps == 0:
+            # Truncate upstream gradient flow
+            self.rigid_solver.zero_grad()
 
     def process_input(self, in_backward=False):
         """
