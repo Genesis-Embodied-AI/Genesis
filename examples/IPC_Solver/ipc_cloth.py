@@ -31,8 +31,7 @@ def main():
             contact_d_hat=0.01,  # Contact barrier distance (10mm) - must be appropriate for mesh resolution
             contact_friction_mu=0.3,  # Friction coefficient
             IPC_self_contact=False,  # Disable rigid self-contact in IPC
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
-            disable_genesis_ground_contact=True,  # Disable Genesis ground contact to avoid double contact handling
+            disable_genesis_contact=True,  # Disable Genesis ground contact to avoid double contact handling
             enable_ipc_gui=args.vis_ipc,
         ),
         show_viewer=args.vis,
