@@ -525,7 +525,7 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int) -> Dict:
         "dofs_frictionloss": np.full(n_dofs, 0.0),
         "dofs_damping": np.full(n_dofs, 0.0),
         "dofs_armature": np.zeros(n_dofs),
-    }
+    } 
 
     # Check for damping attribute on the joint
     # Note: Standard USD Physics may not have damping directly on Joint,
@@ -788,6 +788,14 @@ def _parse_joints(
         # TODO: Implement all the joint physics properties.
         j_info["dofs_invweight"] = np.full((n_dofs,), fill_value=-1.0)
         
+        # Default values
+        j_info["dofs_frictionloss"] = np.full((n_dofs,), fill_value=0.0)
+        j_info["dofs_damping"] = np.full((n_dofs,), fill_value=0.0)
+        j_info["dofs_armature"] = np.full((n_dofs,), fill_value=0.0)
+        j_info["dofs_kp"] = np.full((n_dofs,), fill_value=0.0)
+        j_info["dofs_kv"] = np.full((n_dofs,), fill_value=0.0)
+        j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
+
         # Parse joint dynamics properties (friction, damping, armature)
         dynamics_params = _parse_joint_dynamics(joint_prim, n_dofs)
         j_info.update(dynamics_params)
