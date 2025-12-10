@@ -128,10 +128,17 @@ class RigidLink(RBC):
                 geom_list = self._geoms
                 is_visual = False
             elif len(self._vgeoms) > 0:
+                gs.logger.info(
+                    f"Link mass is not specified and collision geoms can not be found for "
+                    f"link '{self.name}'. Using visual geoms to compute inertial properties."
+                )
                 geom_list = self._vgeoms
                 is_visual = True
             else:
-                # Fallback: use default values
+                gs.logger.info(
+                    f"Link mass is not specified and no geoms found for "
+                    f"link '{self.name}'. Inertial and mass are set to zero."
+                )
                 self._inertial_mass = gs.EPS
                 self._inertial_pos = np.zeros(3, dtype=gs.np_float)
                 self._inertial_i = np.eye(3, dtype=gs.np_float) * gs.EPS
