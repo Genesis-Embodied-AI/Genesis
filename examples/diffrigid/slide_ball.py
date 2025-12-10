@@ -9,7 +9,8 @@ gs.init(precision="32", logging_level="warn", backend=gs.cpu)
 dt = 1e-2
 horizon = 100
 substeps = 4
-goal_pos = gs.tensor([0.0, 0.1, -0.1])
+goal_pos = gs.tensor([0.2, 0.1, 0.1])
+render_every = 100
 
 scene = gs.Scene(
     sim_options=gs.options.SimOptions(dt=dt, substeps=substeps, requires_grad=True),
@@ -57,16 +58,23 @@ racket = scene.add_entity(
     )
 )
 
+cam = scene.add_camera(
+    pos=(3.5, 0.5, 2.5),
+    lookat=(0.0, 0.0, 0.5),
+    fov=40,
+    GUI=False,
+)
+
 scene.build()
 
-num_iter = 200
-lr = 1e-4
+num_iter = 300
+lr = 1e-2
 
 init_pos = gs.tensor([0.0, 0.0, 0.0], requires_grad=True)
 init_quat = gs.tensor([1.0, 0.0, 0.0, 0.0], requires_grad=True)
 optimizer = torch.optim.Adam([init_pos, init_quat], lr=lr)
 
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_iter, eta_min=1e-3)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_iter, eta_min=1e-4)
 
 prev_loss = float('inf')
 losses = []
@@ -76,14 +84,18 @@ for iter in range(num_iter):
     racket.set_pos(init_pos)
     racket.set_quat(init_quat)
     #ball.set_dofs_velocity(gs.tensor([0, 0, -2.0, 0, 0, 0]))
+    
+    record = (iter % render_every == 0) or (iter == num_iter - 1)
 
+    if record: 
+        cam.start_recording()   
     for i in range(horizon):
         scene.step()
-        # ball_state = ball.get_state()
-        # ball_pos = ball_state.pos
-        # losses.append(torch.abs(ball_pos - goal_pos).sum())
-        # if show_viewer:
-        #     target.set_pos(goal_pos)
+        if record: 
+            cam.render()
+    
+    if record: 
+        cam.stop_recording(save_to_filename=f"video_{iter:06d}.mp4", fps=30)
 
     ball_state = ball.get_state()
     ball_pos = ball_state.pos
@@ -96,9 +108,14 @@ for iter in range(num_iter):
     scheduler.step()
 
     with torch.no_grad():
+        # init_quat.data[0] = 1.0
+        # init_quat.data[1] = 0.0
+        # init_quat.data[2] = 0.0
+        # init_quat.data[3] = 0.0
         init_quat.data = init_quat / torch.norm(init_quat, dim=-1, keepdim=True)
+        #init_pos.data = init_pos.data.clamp(0.0, 0.0)
         
-    print(f"Loss: {prev_loss:.6g} -> {loss.item():.6g}")
+    print(f"Loss: {prev_loss:.6g} -> {loss.item():.6g} | Ball Pos: {ball_pos.detach().cpu().numpy().tolist()}")
     prev_loss = loss.item()
 
     losses.append(loss.item())
