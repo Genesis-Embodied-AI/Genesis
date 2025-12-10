@@ -1983,9 +1983,9 @@ class RigidSolver(Solver):
                     if envs_idx.dtype == torch.bool:
                         dofs_vel.masked_fill_(envs_idx[:, None], 0.0)
                     else:
-                        dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, vel.shape[1])), 0.0)
+                        dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
                 else:
-                    if qpos.ndim == 2:
+                    if velocity.ndim == 2:
                         dofs_vel.masked_scatter_(envs_idx[:, None], velocity)
                     else:
                         velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)
