@@ -163,6 +163,10 @@ class RigidLink(RBC):
                     if not inertia_mesh.is_watertight:
                         inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
+                    # If the volume is negative, it means the mesh is inverted.
+                    if inertia_mesh.volume < -gs.EPS:
+                        inertia_mesh.invert()
+
                     geom_mass = inertia_mesh.volume * self.entity.material.rho
                     geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
 
