@@ -3178,6 +3178,34 @@ def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
 
 
 @pytest.mark.required
+def test_extended_broadcasting():
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    for i in range(4):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(1.0, 1.0, 1.0),
+                pos=(0.0, 0.0, i),
+            )
+        )
+    scene.build(n_envs=2)
+
+    envs_idx = torch.tensor([0, 1], dtype=gs.tc_int, device=gs.device)
+    for entity in scene.entities:
+        entity.zero_all_dofs_velocity(envs_idx)
+    assert_allclose(entity.get_dofs_velocity(), 0.0, tol=gs.EPS)
+    entity.set_dofs_velocity(1.0)
+    assert_allclose(entity.get_dofs_velocity(), 1.0, tol=gs.EPS)
+    entity.set_dofs_velocity((1.0, 2.0))
+    assert_allclose(entity.get_dofs_velocity(), np.array([(1.0,) * 6, (2.0,) * 6]), tol=gs.EPS)
+    entity.set_dofs_velocity((3.0,) * 6)
+    assert_allclose(entity.get_dofs_velocity(), 3.0, tol=gs.EPS)
+    entity.zero_all_dofs_velocity(torch.tensor([False, True], dtype=torch.bool, device=gs.device))
+    assert_allclose(entity.get_dofs_velocity(), np.array([(3.0,) * 6, (0.0,) * 6]), tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_geom_pos_quat(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -3529,3 +3557,64 @@ def test_joint_get_anchor_pos_and_axis(n_envs):
     assert anchor_axis.shape == (*batch_shape, 3)
     expected_axis = scene.rigid_solver.joints_state.xaxis.to_numpy()
     assert_allclose(anchor_axis, expected_axis[joint.idx], tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("is_fixed", [False, True])
+@pytest.mark.parametrize("merge_fixed_links", [False, True])
+def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol):
+    EULER_OFFSET = (0, 0, 45)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0, -3.5, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    franka = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/panda_bullet/panda_nohand.urdf",
+            merge_fixed_links=False,
+            fixed=True,
+        ),
+        vis_mode="collision",
+    )
+    hand = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/panda_bullet/hand.urdf",
+            euler=EULER_OFFSET,
+            fixed=is_fixed,
+            merge_fixed_links=merge_fixed_links,
+            batch_fixed_verts=is_fixed,
+        ),
+        vis_mode="collision",
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.02, 0.02, 0.02),
+            pos=(0.3, 0.0, 0.01),
+        ),
+    )
+    hand.attach(franka, "attachment")
+    scene.build()
+
+    franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
+    hand.control_dofs_position([0.04, 0.04])
+    for _ in range(30):
+        scene.step()
+
+    attach_link = franka.get_link("attachment")
+    assert_allclose(attach_link.get_pos(), hand.links[0].get_pos(), tol=gs.EPS)
+    offset_quat = gu.transform_quat_by_quat(hand.links[0].get_quat(), gu.inv_quat(attach_link.get_quat()))
+    assert_allclose(gu.quat_to_xyz(offset_quat, rpy=False, degrees=True), EULER_OFFSET, tol=tol)
+    for link in hand.links[slice(0, None) if merge_fixed_links else slice(1, -1)]:
+        assert torch.linalg.norm(link.get_pos() - attach_link.get_pos(), dim=-1) < 0.08
+    if not merge_fixed_links:
+        assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
