@@ -152,15 +152,6 @@ class RigidEntity(Entity):
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
-        self._update_child_idxs()
-
-    def _update_child_idxs(self):
-        for link in self._links:
-            if link.parent_idx != -1:
-                parent_link = self._links[link.parent_idx_local]
-                if link.idx not in parent_link.child_idxs:
-                    parent_link.child_idxs.append(link.idx)
-
     def _load_primitive(self, morph, surface):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
@@ -226,7 +217,7 @@ class RigidEntity(Entity):
                 )
             )
 
-        link, (joint,) = self._add_by_info(
+        self._add_by_info(
             l_info=dict(
                 is_robot=False,
                 name=f"{link_name_prefix}_baselink",
@@ -298,7 +289,7 @@ class RigidEntity(Entity):
 
         link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
 
-        link, (joint,) = self._add_by_info(
+        self._add_by_info(
             l_info=dict(
                 is_robot=False,
                 name=f"{link_name}_baselink",
@@ -346,7 +337,7 @@ class RigidEntity(Entity):
                 )
             )
 
-        link, (joint,) = self._add_by_info(
+        self._add_by_info(
             l_info=dict(
                 is_robot=False,
                 name="baselink",
@@ -880,6 +871,73 @@ class RigidEntity(Entity):
         )
         self._equalities.append(equality)
         return equality
+
+    @gs.assert_unbuilt
+    def attach(self, parent_entity, parent_link_name: str | None = None):
+        """
+        Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
+        another entity.
+
+        Parameters
+        ----------
+        parent_entity : genesis.Entity
+            The entity in the scene that will be a parent of kinematic tree.
+        parent_link_name : str
+            The name of the link in the parent entity to be linked. Default to the latest link the parent kinematic
+            tree.
+        """
+        if not isinstance(parent_entity, RigidEntity):
+            gs.raise_exception("Parent entity must derive from 'RigidEntity'.")
+
+        # Check if base link was fixed but no longer is
+        base_link = self.links[0]
+        parent_link = parent_entity.get_link(parent_link_name)
+        if base_link.is_fixed and not parent_link.is_fixed:
+            if not self._batch_fixed_verts:
+                gs.raise_exception(
+                    "Attaching fixed-based entity to parent link requires setting Morph option 'batch_fixed_verts=True'."
+                )
+
+        # Remove all root joints if necessary.
+        # The requires shifting joint and dof indices of all subsequent entities.
+        # Note that we do not remove world link if any, but rather remove all base joints. This is to avoid altering
+        # the parent entity by moving all fixed geometries to the new parent link.
+        if not base_link.is_fixed:
+            n_base_joints = base_link.n_joints
+            n_base_dofs = base_link.n_dofs
+            n_base_qs = base_link.n_qs
+
+            base_link._n_joints = 0
+            self._joints[0].clear()
+            for entity in self._solver.entities[(self.idx + 1) :]:
+                entity._joint_start -= n_base_joints
+                entity._dof_start -= n_base_dofs
+                entity._q_start -= n_base_qs
+            for joint in self._solver.joints[self.joint_start :]:
+                joint._dof_start -= n_base_dofs
+                joint._q_start -= n_base_qs
+            for link in self._solver.links[(self.link_start + 1) :]:
+                link._joint_start -= n_base_joints
+
+        # Overwrite parent link
+        base_link._parent_idx = parent_link.idx
+
+        for link in self.links:
+            # Break as soon as the root idx is -1, because the following links correspond to a different kinematic tree
+            if link.root_idx == -1:
+                break
+
+            # Override root idx for child links
+            assert link.root_idx == base_link.idx
+            link._root_idx = parent_link.root_idx
+
+            # Update fixed link flag
+            link._is_fixed &= parent_link.is_fixed
+
+            # Must invalidate invweight for all child links and joints
+            link._invweight[:] = -1.0
+            for joint in link.joints:
+                joint._dofs_invweight[:] = -1.0
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Jacobian & IK ------------------------------------
