@@ -129,19 +129,19 @@ P \\
 \end{bmatrix}
 $$
 
-Convert to Genesis Link 0 Local Space, for concise, the homogeneous 1 is ignored.
+Convert to Genesis Link 1 Local Space, for concise, the homogeneous 1 is ignored.
 
 $$
-P^{0'} = (Q^w_{0'})^{-1} \cdot P^w
+P^{1'} = (Q^w_{1'})^{-1} \cdot P^w
 $$
 
 ### Distance Limit Scaling
 
 $$
-\beta \| \hat{e}^{0'} \| = \| \hat{e}^w \| = \alpha \|\hat{e}\|
+\beta \| \hat{e}^{1'} \| = \| \hat{e}^w \| = \alpha \|\hat{e}\|
 $$
 
-Because $Q^w_{0'}$ keep the distance (Rigid Transform), and $\|\hat{e}\|$ is $1$ by definition, so we have:
+Because $Q^w_{1'}$ keep the distance (Rigid Transform), and $\|\hat{e}\|$ is $1$ by definition, so we have:
 
 $$
 \beta = \alpha = \| \hat{e}^w \|
@@ -149,10 +149,13 @@ $$
 
 The distance limit should be scaled by $\beta$.
 
-Unfortunately, if parent and child link are not in the same scale, the distance limit is hard to determine.
+Unfortunately, if parent and child link are not in the same scale, the distance limit is hard to determine, we don't know which one to choose.
 
 📌 So now we don't scale the distance limit just keep it as is (world space size). 
 
 ### Angle Limit
 
-Under **proportional scaling**, the angle limit is preserved, NOW we just assume the **synthesis** transform is **proportional scaling**.
+Under **proportional scaling**, the angle limit is preserved, now we just assume the **synthesis** transform is **proportional scaling**.
+
+
+📌 So now we don't modify the angle limit just keep it as is (world space size).
