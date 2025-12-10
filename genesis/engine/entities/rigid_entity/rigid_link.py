@@ -146,9 +146,9 @@ class RigidLink(RBC):
 
             # Process each geom individually and compose their properties
             if len(geom_list) > 0:
-                total_mass = 0.0
+                total_mass = gs.EPS
                 total_com = np.zeros(3, dtype=gs.np_float)
-                total_inertia = np.zeros((3, 3), dtype=gs.np_float)
+                total_inertia = np.eye(3, dtype=gs.np_float) * gs.EPS
 
                 for geom in geom_list:
                     # Create mesh based on geom type
@@ -172,17 +172,10 @@ class RigidLink(RBC):
                     geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
                     geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
 
-                    # Compose with accumulated properties
-                    if total_mass < gs.EPS:
-                        # First geom
-                        total_mass = geom_mass
-                        total_com = geom_com_link
-                        total_inertia = geom_inertia_link
-                    else:
-                        # Compose with existing properties
-                        total_mass, total_com, total_inertia = compose_inertial_properties(
-                            total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
-                        )
+                    # Compose with existing properties
+                    total_mass, total_com, total_inertia = compose_inertial_properties(
+                        total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
+                    )
 
                 self._inertial_mass = total_mass
                 self._inertial_pos = total_com
