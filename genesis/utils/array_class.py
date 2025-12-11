@@ -232,6 +232,8 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     bw_Ju: V_ANNOTATION
     bw_y: V_ANNOTATION
     bw_w: V_ANNOTATION
+    # Timers for profiling
+    timers: V_ANNOTATION
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -316,6 +318,8 @@ def get_constraint_state(constraint_solver, solver):
         bw_Ju=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_y=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_w=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        # Timers
+        timers=V(dtype=ti.i64 if gs.backend != gs.metal else ti.i32, shape=(10, _B)),
     )
 
 
