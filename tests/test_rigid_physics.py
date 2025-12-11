@@ -862,8 +862,8 @@ def test_box_box_dynamics(gs_sim):
         assert_allclose(qpos[8], 0.6, atol=2e-3)
 
 
-@pytest.mark.slow  # ~840s
-@pytest.mark.debug(False)
+@pytest.mark.slow  # ~200s
+@pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
     [
@@ -2534,21 +2534,24 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
 
 
-def test_urdf_color_overwrite():
+@pytest.mark.required
+@pytest.mark.required
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_urdf_color_overwrite(overwrite):
     scene = gs.Scene()
     robot = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",
         ),
         surface=gs.surfaces.Default(
-            color=(1.0, 0.0, 0.0, 1.0),
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
     for vgeom in robot.vgeoms:
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
-        assert_array_equal(color, (255, 0, 0, 255))
+        assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
     for geom in robot.geoms:
         visual = geom.mesh.trimesh.visual
         assert visual.defined

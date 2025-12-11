@@ -225,7 +225,8 @@ class Mesh(RBC):
         try:  # always parse uvs because roughness and normal map also need uvs
             uvs = mesh.visual.uv.copy()
             uvs[:, 1] = 1.0 - uvs[:, 1]  # trimesh uses uvs starting from top left corner
-        except:
+        except AttributeError:
+            # Visual may not have uv, e.g. ColorVisuals
             uvs = None
 
         roughness_factor = None
@@ -271,11 +272,15 @@ class Mesh(RBC):
             else:
                 # TODO: support vertex/face colors in luisa
                 color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
-        elif isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0:
+        elif (isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined) or (
+            isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0
+        ):
             color = np.unique(visual.vertex_colors, axis=0)
             if len(color) > 1:
                 gs.raise_exception("Loading point clouds with heterogeneous colors is not supported.")
-            color_factor = tuple(np.array(color, dtype=np.float32) / 255.0)
+            color_factor = tuple(np.array(color[0], dtype=np.float32) / 255.0)
+        elif surface.color is not None:
+            color_factor = surface.color
         else:
             # use white color as default
             color_factor = (1.0, 1.0, 1.0, 1.0)
