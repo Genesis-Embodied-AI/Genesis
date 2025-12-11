@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
+IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
+
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
@@ -124,7 +127,7 @@ class ConstraintSolver:
             n_constraints_equality = ti_to_torch(self.constraint_state.n_constraints_equality, copy=False)
             n_constraints_frictionloss = ti_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
             qacc_ws = ti_to_torch(self.constraint_state.qacc_ws, copy=False)
-            if isinstance(envs_idx, torch.Tensor):
+            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
                     n_constraints.masked_fill_(envs_idx, 0)
                     n_constraints_equality.masked_fill_(envs_idx, 0)

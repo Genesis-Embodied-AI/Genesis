@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
+
+IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
 # minimum constraint impedance
 IMP_MIN = 0.0001
 # maximum constraint impedance
@@ -1976,7 +1979,10 @@ class RigidSolver(Solver):
             if (
                 (not dofs_mask or isinstance(dofs_mask[0], slice))
                 and isinstance(envs_idx, torch.Tensor)
-                and (velocity is None or (velocity.ndim == 2 and envs_idx.dtype == torch.bool))
+                and (
+                    (velocity is None and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
+                    or (velocity.ndim == 2 and envs_idx.dtype == torch.bool)
+                )
             ):
                 dofs_vel = vel[(slice(None), *dofs_mask)]
                 if velocity is None:
