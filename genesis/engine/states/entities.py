@@ -204,13 +204,19 @@ class RigidEntityState(RBC):
         scene = self._entity.scene
         self._pos = gs.zeros((num_batch, 3), dtype=float, requires_grad=requires_grad, scene=scene)
         self._quat = gs.zeros((num_batch, 4), dtype=float, requires_grad=requires_grad, scene=scene)
+        self._qpos = gs.zeros((num_batch, entity.n_qs), dtype=float, requires_grad=requires_grad, scene=scene)
+        self._dofs_vel = gs.zeros((num_batch, entity.n_dofs), dtype=float, requires_grad=requires_grad, scene=scene)
+        self._dofs_acc = gs.zeros((num_batch, entity.n_dofs), dtype=float, requires_grad=requires_grad, scene=scene)
 
     def serializable(self):
         self._entity = None
 
         self._pos = self._pos.detach()
         self._quat = self._quat.detach()
-
+        self._qpos = self._qpos.detach()
+        self._dofs_vel = self._dofs_vel.detach()
+        self._dofs_acc = self._dofs_acc.detach()
+        
     @property
     def entity(self):
         return self._entity
@@ -226,3 +232,15 @@ class RigidEntityState(RBC):
     @property
     def quat(self):
         return self._quat
+
+    @property
+    def qpos(self):
+        return self._qpos
+
+    @property
+    def dofs_vel(self):
+        return self._dofs_vel
+
+    @property
+    def dofs_acc(self):
+        return self._dofs_acc

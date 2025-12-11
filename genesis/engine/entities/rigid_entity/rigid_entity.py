@@ -1727,10 +1727,16 @@ class RigidEntity(Entity):
         solver_state = self._solver.get_state()
         pos = solver_state.links_pos[:, self.base_link_idx]
         quat = solver_state.links_quat[:, self.base_link_idx]
+        qpos = solver_state.qpos[:, self._q_start:self._q_start + self.n_qs]
+        dofs_vel = solver_state.dofs_vel[:, self._dof_start:self._dof_start + self.n_dofs]
+        dofs_acc = solver_state.dofs_acc[:, self._dof_start:self._dof_start + self.n_dofs]
 
         state._pos = pos
         state._quat = quat
-
+        state._qpos = qpos
+        state._dofs_vel = dofs_vel
+        state._dofs_acc = dofs_acc
+        
         return state
 
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):

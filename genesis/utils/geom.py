@@ -82,6 +82,7 @@ def ti_rotvec_to_R(rotvec, eps):
 @ti.func
 def ti_rotvec_to_quat(rotvec, eps):
     quat = ti.Vector.zero(gs.ti_float, 4)
+    res = ti.Vector.zero(gs.ti_float, 4)
 
     # We need to use [norm_sqr] instead of [norm] to avoid nan gradients in the backward pass. Even when theta = 0,
     # the gradient of [norm] operation is computed and used (note that the gradient becomes NaN when theta = 0). This
@@ -98,11 +99,12 @@ def ti_rotvec_to_quat(rotvec, eps):
             quat[i + 1] = xyz[i]
 
         # First order quaternion normalization is accurate enough yet necessary
-        quat *= 0.5 * (3.0 - quat.norm_sqr())
+        # quat *= 0.5 * (3.0 - quat.norm_sqr())
+        res = quat * 0.5 * (3.0 - quat.norm_sqr())
     else:
-        quat[0] = 1.0
+        res[0] = 1.0
 
-    return quat
+    return res
 
 
 @ti.func
@@ -221,7 +223,12 @@ def ti_transform_quat_by_quat(v, u):
     This is equivalent to quatmul(quat_u, quat_v) or R_u @ R_v
     """
     vec = ti_quat_mul(u, v)
-    return vec.normalized()
+    res = ti.Vector([1.0, 0.0, 0.0, 0.0], dt=gs.ti_float)
+    vec_norm_sqr = vec.norm_sqr()
+    if vec_norm_sqr > gs.EPS ** 2:
+        res = vec / (ti.sqrt(vec_norm_sqr) + gs.EPS)
+    return res
+    # return vec.normalized()
 
 
 @ti.func
@@ -239,7 +246,7 @@ def ti_transform_by_quat(v, quat):
             v.x * (-2.0 * q_wy + 2.0 * q_xz) + v.y * (2.0 * q_wx + 2.0 * q_yz) + v.z * (q_ww - q_xx - q_yy + q_zz),
         ],
         dt=gs.ti_float,
-    ) / (q_ww + q_xx + q_yy + q_zz)
+    ) / (q_ww + q_xx + q_yy + q_zz + gs.EPS)
 
 
 @ti.func
