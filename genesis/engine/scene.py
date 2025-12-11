@@ -452,9 +452,15 @@ class Scene(RBC):
         return entity
 
     @gs.assert_unbuilt
-    def add_stage(self, file: str, vis_mode: Literal["visual", "collision"] = "visual"):
+    def add_stage(
+        self,
+        morph: gs.morphs.USDMorph,
+        vis_mode: Literal["visual", "collision"] = "visual",
+        visualize_contact: bool = False,
+    ):
         from ..utils.usd import import_from_usd
-        return import_from_usd(self, file, vis_mode)
+
+        return import_from_usd(self, morph, vis_mode, visualize_contact)
 
     @gs.assert_unbuilt
     def link_entities(self, parent_entity: "Entity", child_entity: "Entity", parent_link_name="", child_link_name=""):
