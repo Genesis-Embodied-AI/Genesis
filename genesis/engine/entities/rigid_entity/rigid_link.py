@@ -487,43 +487,11 @@ class RigidLink(RBC):
         return self._root_idx
 
     @property
-    def child_idxs(self):
-        """
-        The global indices of the link's child links in the RigidSolver.
-        """
-        return self._child_idxs
-
-    @property
     def idx_local(self):
         """
         The local index of the link in the entity.
         """
         return self._idx - self._entity.link_start
-
-    @property
-    def parent_idx_local(self):
-        """
-        The local index of the link's parent link in the entity. If the link is the root link, return -1.
-        """
-        # TODO: check for parent links outside of the current entity (caused by scene.link_entities())
-        if self._parent_idx >= 0:
-            return self._parent_idx - self._entity.link_start
-        return self._parent_idx
-
-    @property
-    def child_idxs_local(self):
-        """
-        The local indices of the link's child links in the entity.
-        """
-        # TODO: check for child links outside of the current entity (caused by scene.link_entities())
-        return [idx - self._entity.link_start if idx >= 0 else idx for idx in self._child_idxs]
-
-    @property
-    def is_leaf(self):
-        """
-        Whether the link is a leaf link (i.e., has no child links).
-        """
-        return len(self._child_idxs) == 0
 
     @property
     def is_fixed(self):
