@@ -12,7 +12,7 @@ import sys
 import types
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import field
 from itertools import combinations
 from typing import Any, Callable, NoReturn, Optional, Type, Sequence
 

@@ -4,8 +4,6 @@ from pathlib import Path
 
 import numpy as np
 import trimesh
-from trimesh.visual import ColorVisuals, TextureVisuals
-from trimesh.visual.color import VertexColor
 
 import genesis as gs
 from genesis.ext import urdfpy
@@ -116,6 +114,16 @@ def parse_urdf(morph, surface):
                     if geom.geometry.geometry.scale is not None:
                         scale *= geom.geometry.geometry.scale
 
+                    # Overwrite surface color by original color specified in URDF file only if necessary
+                    if (
+                        not geom_is_col
+                        and getattr(geom, "material") is not None
+                        and geom.material.color is not None
+                        and (morph.prioritize_urdf_material or surface.color is None)
+                    ):
+                        surface = surface.copy()
+                        surface.color = geom.material.color
+
                     mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geom.geometry.geometry.filename)
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
@@ -132,14 +140,6 @@ def parse_urdf(morph, surface):
                                 "This file contains GLTF mesh, which is using y-up while Genesis uses z-up. Please set "
                                 "'parse_glb_with_zup=True' in morph options if you find the mesh is 90-degree rotated. "
                             )
-
-                    visual = mesh.trimesh.visual
-                    has_color_override = (isinstance(visual, (ColorVisuals, TextureVisuals)) and visual.defined) or (
-                        isinstance(visual, VertexColor) and visual.vertex_colors.size > 0
-                    )
-                    if not geom_is_col and (morph.prioritize_urdf_material or not has_color_override):
-                        if geom.material is not None and geom.material.color is not None:
-                            mesh.set_color(geom.material.color)
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)

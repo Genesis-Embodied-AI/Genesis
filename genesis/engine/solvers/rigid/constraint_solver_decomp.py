@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
+IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
+
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
@@ -124,7 +127,7 @@ class ConstraintSolver:
             n_constraints_equality = ti_to_torch(self.constraint_state.n_constraints_equality, copy=False)
             n_constraints_frictionloss = ti_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
             qacc_ws = ti_to_torch(self.constraint_state.qacc_ws, copy=False)
-            if isinstance(envs_idx, torch.Tensor):
+            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
                     n_constraints.masked_fill_(envs_idx, 0)
                     n_constraints_equality.masked_fill_(envs_idx, 0)
@@ -1428,9 +1431,8 @@ def func_solve(
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        # this safeguard seems not necessary in normal execution
-        # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
-        if constraint_state.n_constraints[i_b] > 0:
+        # t0_start = ti.simt.timer.cuda_clock_i64()
+        if constraint_state.n_constraints[i_b] > 0 or constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
             for _ in range(rigid_global_info.iterations[None]):
                 func_solve_body(
                     i_b,
@@ -1444,6 +1446,8 @@ def func_solve(
                     break
         else:
             constraint_state.improved[i_b] = False
+        # t0_end = ti.simt.timer.cuda_clock_i64()
+        # constraint_state.timers[0, i_b_] = t0_end - t0_start
 
 
 @ti.func

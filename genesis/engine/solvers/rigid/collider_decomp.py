@@ -28,6 +28,9 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
 
 
+IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
+
 class CCD_ALGORITHM_CODE(IntEnum):
     # Our MPR (with SDF)
     MPR = 0
@@ -334,7 +337,7 @@ class Collider:
                     first_time[envs_idx] = True
 
             normal = ti_to_torch(self._collider_state.contact_cache.normal, copy=False)
-            if isinstance(envs_idx, torch.Tensor):
+            if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
                     normal.masked_fill_(envs_idx[None, :, None], 0.0)
                 else:

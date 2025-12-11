@@ -5,6 +5,7 @@ import atexit
 import logging as _logging
 import traceback
 import weakref
+from warnings import warn
 from contextlib import redirect_stdout
 
 # Import gstaichi while collecting its output without printing directly
@@ -22,9 +23,7 @@ except ImportError as e:
         "'torch' module not available. Please install pytorch manually: https://pytorch.org/get-started/locally/"
     ) from e
 if tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8):
-    raise ImportError(
-        "'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/"
-    )
+    warn("'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/")
 
 import numpy as np
 
@@ -298,6 +297,11 @@ def init(
         logger.debug("[GsTaichi] Enabling GsTaichi dynamic array type to avoid scene-specific compilation.")
     if backend == gs_backend.metal:
         logger.debug("[GsTaichi] Beware Apple Metal backend may be unstable.")
+
+    if tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8):
+        logger.warning(
+            "'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/"
+        )
 
     msg_options = ", ".join(
         f"{name}: ~~<{val}>~~"

@@ -840,7 +840,7 @@ class Scene(RBC):
             - for non-batched env, we only parallelize certain loops that have big loop size
             - for batched env, we parallelize all loops
         - When using cpu, we serialize everything.
-            - Parallelization only provides a boost for n_envs >= num_threads and ti_num_threads > 1.
+            - Parallelization only provides a boost for n_envs >= num_threads.
               It is always disabled by default but can be enforced by setting the env var `GS_PARA_LEVEL=2`.
             - In order to exploit full cpu power, users are encouraged to launch multiple processes manually and set
               env var `TI_NUM_THREADS=1`, so that each process uses a single cpu thread.
