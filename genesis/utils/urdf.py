@@ -419,6 +419,33 @@ def rotate_inertia(I, R):
     return R @ I @ R.T
 
 
+def compose_inertial_properties(mass1, com1, inertia1, mass2, com2, inertia2):
+    """
+    Compose inertial properties of two bodies.
+
+    Args:
+        mass1: Mass of first body
+        com1: Center of mass of first body (3,) array
+        inertia1: Inertia tensor of first body (3,3) array
+        mass2: Mass of second body
+        com2: Center of mass of second body (3,) array
+        inertia2: Inertia tensor of second body (3,3) array
+
+    Returns:
+        combined_mass: Combined mass
+        combined_com: Combined center of mass (3,) array
+        combined_inertia: Combined inertia tensor (3,3) array
+    """
+    combined_mass = mass1 + mass2
+    if combined_mass < gs.EPS:
+        gs.raise_exception("Combined mass is less than EPS")
+    combined_com = (mass1 * com1 + mass2 * com2) / combined_mass
+    inertia1_new = translate_inertia(inertia1, mass1, combined_com - com1)
+    inertia2_new = translate_inertia(inertia2, mass2, combined_com - com2)
+    combined_inertia = inertia1_new + inertia2_new
+    return combined_mass, combined_com, combined_inertia
+
+
 def merge_inertia(link1, link2):
     """Combine two links with fixed joint."""
     if link2.inertial is None:
