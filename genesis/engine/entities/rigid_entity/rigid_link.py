@@ -146,7 +146,7 @@ class RigidLink(RBC):
 
             # Process each geom individually and compose their properties
             if len(geom_list) > 0:
-                total_mass = gs.EPS
+                total_mass = gs.EPS  # to avoid nan in inv_mass in interactive mode
                 total_com = np.zeros(3, dtype=gs.np_float)
                 total_inertia = np.eye(3, dtype=gs.np_float) * gs.EPS
 
