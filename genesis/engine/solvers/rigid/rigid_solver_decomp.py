@@ -5973,6 +5973,9 @@ def func_torque_and_passive_force(
                                 func_add_safe_backward(
                                     dofs_state.qf_passive,
                                     [dof_start + j_d, i_b],
+                                    # dofs_state.pos = qpos - qpos0
+                                    # using dofs_state instead of qpos here allows
+                                    # qpos to be pulled into qpos0 instead 0
                                     -dofs_state.pos[dof_start + j_d, i_b] * dofs_info.stiffness[I_d],
                                     BW,
                                 )
