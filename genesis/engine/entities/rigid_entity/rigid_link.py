@@ -163,7 +163,9 @@ class RigidLink(RBC):
                     if not inertia_mesh.is_watertight:
                         inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
-                    # If the volume is negative, it means the mesh is inverted.
+                    # TODO: without this check, some geom will have negative volume
+                    # even after the above convex hull operation.
+                    # tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]
                     if inertia_mesh.volume < -gs.EPS:
                         inertia_mesh.invert()
 
