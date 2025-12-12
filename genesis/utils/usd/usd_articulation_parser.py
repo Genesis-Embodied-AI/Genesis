@@ -27,6 +27,7 @@ from .usd_geo_adapter import BatchedUsdGeometryAdapater, UsdGeometryAdapter
 from .. import geom as gu
 from .. import urdf as urdf_utils
 
+
 class UsdArticulationParser:
     """
     A parser to extract articulation information from a USD stage.
@@ -174,9 +175,9 @@ class UsdArticulationParser:
                     context, link, UsdArticulationParser.all_pattern, "vmesh"
                 )
         elif context.vis_mode == "collision":
-                vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
-                    context, link, UsdArticulationParser.collision_pattern, "vmesh"
-                )
+            vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+                context, link, UsdArticulationParser.collision_pattern, "vmesh"
+            )
         else:
             gs.raise_exception(f"Unsupported visualization mode {context.vis_mode}.")
         return vis_geo_infos
@@ -284,6 +285,7 @@ def _create_link_info(link: Usd.Prim) -> Dict:
     l_info["inertial_i"] = None
     l_info["inertial_mass"] = None
     return l_info
+
 
 def _parse_revolute_joint(
     revolute_joint: UsdPhysics.RevoluteJoint, parent_link: Usd.Prim, child_link: Usd.Prim
@@ -525,7 +527,7 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int) -> Dict:
         "dofs_frictionloss": np.full(n_dofs, 0.0),
         "dofs_damping": np.full(n_dofs, 0.0),
         "dofs_armature": np.zeros(n_dofs),
-    } 
+    }
 
     # Check for damping attribute on the joint
     # Note: Standard USD Physics may not have damping directly on Joint,
@@ -534,7 +536,7 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int) -> Dict:
     if not damping_attr or not damping_attr.IsValid():
         # Try alternative attribute names
         damping_attr = joint_prim.GetAttribute("damping")
-    
+
     if damping_attr and damping_attr.IsValid() and damping_attr.HasAuthoredValue():
         damping = damping_attr.Get()
         if damping is not None:
@@ -548,7 +550,7 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int) -> Dict:
         friction_attr = joint_prim.GetAttribute("jointFriction")
     if not friction_attr or not friction_attr.IsValid():
         friction_attr = joint_prim.GetAttribute("friction")
-    
+
     if friction_attr and friction_attr.IsValid() and friction_attr.HasAuthoredValue():
         friction = friction_attr.Get()
         if friction is not None:
@@ -558,7 +560,7 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int) -> Dict:
     armature_attr = joint_prim.GetAttribute("physics:armature")
     if not armature_attr or not armature_attr.IsValid():
         armature_attr = joint_prim.GetAttribute("armature")
-    
+
     if armature_attr and armature_attr.IsValid() and armature_attr.HasAuthoredValue():
         armature = armature_attr.Get()
         if armature is not None:
@@ -649,6 +651,97 @@ def _parse_drive_api(joint_prim: Usd.Prim, joint_type: str, n_dofs: int) -> Dict
     return drive_params
 
 
+def _parse_joint_target(joint_prim: Usd.Prim, joint_type: str) -> np.ndarray | None:
+    """
+    Parse the target value from UsdPhysics.DriveAPI to set initial joint position.
+    The target in USD is relative to the lower limit, so we add the lower limit to get the absolute position.
+
+    Parameters
+    ----------
+    joint_prim : Usd.Prim
+        The joint prim.
+    joint_type : str
+        The joint type (REVOLUTE, PRISMATIC, SPHERICAL, etc.).
+    n_qs : int
+        Number of position coordinates for the joint.
+    dofs_limit : np.ndarray
+        Joint limits array with shape (n_dofs, 2) where each row is [lower_limit, upper_limit].
+
+    Returns
+    -------
+    np.ndarray or None
+        Target value as numpy array if found, None otherwise.
+        For revolute joints: target in radians (scalar), relative to lower limit
+        For prismatic joints: target in linear units (scalar), relative to lower limit
+        For spherical joints: target as quaternion (4 elements), absolute
+    """
+    # Determine the primary drive name based on joint type
+    # For revolute and spherical joints, use "angular" drive
+    # For prismatic joints, use "linear" drive
+    if joint_type == gs.JOINT_TYPE.REVOLUTE or joint_type == gs.JOINT_TYPE.SPHERICAL:
+        primary_drive_name = "angular"
+        fallback_drive_names = ["linear"]  # Try linear as fallback
+    elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+        primary_drive_name = "linear"
+        fallback_drive_names = ["angular"]  # Try angular as fallback
+    else:
+        # For fixed or other joint types, try both
+        primary_drive_name = "angular"
+        fallback_drive_names = ["linear"]
+
+    # Try primary drive name first, then fallbacks
+    drive_names_to_try = [primary_drive_name] + fallback_drive_names
+    drive_api = None
+
+    for drive_name in drive_names_to_try:
+        if joint_prim.HasAPI(UsdPhysics.DriveAPI, drive_name):
+            drive_api = UsdPhysics.DriveAPI(joint_prim, drive_name)
+            break
+
+    # If no DriveAPI found, return None
+    if drive_api is None:
+        return None
+
+    # Extract target value
+    target_attr = drive_api.GetTargetPositionAttr()
+    if target_attr and target_attr.HasAuthoredValue():
+        target = target_attr.Get()
+        if target is not None:
+            # Convert target to numpy array
+            if joint_type == gs.JOINT_TYPE.SPHERICAL:
+                # For spherical joints, target is absolute quaternion (not relative to lower limit)
+                # Try to get as quaternion first
+                if hasattr(target, "__len__") and len(target) == 4:
+                    return np.array(target, dtype=gs.np_float)
+                elif hasattr(target, "__len__") and len(target) == 3:
+                    # If it's a rotation vector (axis-angle), convert to quaternion
+                    # For now, just return identity quaternion and log warning
+                    gs.logger.warning(
+                        f"Spherical joint target at {joint_prim.GetPath()} is axis-angle format. "
+                        "Quaternion conversion not yet implemented. Using identity quaternion."
+                    )
+                    return gu.identity_quat()
+                else:
+                    # Single value - treat as angle around some axis (not fully supported)
+                    gs.logger.warning(
+                        f"Spherical joint target at {joint_prim.GetPath()} has unexpected format. "
+                        "Using identity quaternion."
+                    )
+                    return gu.identity_quat()
+            else:
+                # For revolute and prismatic joints, target is a scalar relative to lower limit
+                target_val = float(target)
+
+                # For revolute joints, target is typically in degrees in USD, convert to radians
+                if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                    target_val = np.deg2rad(target_val)
+
+                absolute_target = target_val
+                return np.array([absolute_target], dtype=gs.np_float)
+
+    return None
+
+
 def _get_parent_child_links(stage: Usd.Stage, joint: UsdPhysics.Joint) -> Tuple[Usd.Prim, Usd.Prim]:
     """
     Get the parent and child links from a joint.
@@ -700,7 +793,9 @@ def _parse_link_geometries(
             gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
             continue
         if len(collision_g_infos) == 0:
-            gs.logger.warning(f"No collision geometries found for link {link.GetPath()}, using visual geometries instead.")
+            gs.logger.warning(
+                f"No collision geometries found for link {link.GetPath()}, using visual geometries instead."
+            )
         # Add all visual geometries
         link_g_infos.extend(visual_g_infos)
         # Add all collision geometries
@@ -781,13 +876,26 @@ def _parse_joints(
             joint_type_info = _parse_fixed_joint(joint_prim, parent_link, child_link)
             j_info.update(joint_type_info)
 
-        
         n_dofs = j_info["n_dofs"]
-        
+        n_qs = j_info["n_qs"]
+
+        # Parse joint target from DriveAPI to set initial position
+        # Target is relative to lower limit, so we pass dofs_limit to add it
+        target = _parse_joint_target(joint_prim, j_info["type"])
+        if target is not None:
+            # Override init_qpos with target value if found
+            if target.shape[0] == n_qs:
+                j_info["init_qpos"] = -target
+            else:
+                gs.logger.warning(
+                    f"Joint target at {joint_prim.GetPath()} has shape {target.shape}, "
+                    f"but expected {n_qs} elements. Ignoring target value."
+                )
+
         # NOTE: Cuz we don't implement all the joint physics properties, we need to finalize the joint info with common properties.
         # TODO: Implement all the joint physics properties.
         j_info["dofs_invweight"] = np.full((n_dofs,), fill_value=-1.0)
-        
+
         # Default values
         j_info["dofs_frictionloss"] = np.full((n_dofs,), fill_value=0.0)
         j_info["dofs_damping"] = np.full((n_dofs,), fill_value=0.0)
@@ -799,7 +907,7 @@ def _parse_joints(
         # Parse joint dynamics properties (friction, damping, armature)
         dynamics_params = _parse_joint_dynamics(joint_prim, n_dofs)
         j_info.update(dynamics_params)
-        
+
         # Parse DriveAPI
         drive_params = _parse_drive_api(joint_prim, j_info["type"], n_dofs)
         j_info.update(drive_params)
