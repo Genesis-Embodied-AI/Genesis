@@ -562,7 +562,12 @@ def ti_to_python(
         copy = False
 
     # Leverage zero-copy if enabled
-    batch_shape = value.shape
+    try:
+        batch_shape = value.shape
+    except AttributeError:
+        if isinstance(value, ti.Matrix):
+            raise ValueError("Tensor of type 'ti.Vector', 'ti.Matrix' not supported.")
+        raise
     if use_zerocopy:
         while True:
             try:

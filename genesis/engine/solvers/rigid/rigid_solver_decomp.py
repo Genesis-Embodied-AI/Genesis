@@ -1242,6 +1242,7 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            errno=self._errno,
         )
 
         # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
