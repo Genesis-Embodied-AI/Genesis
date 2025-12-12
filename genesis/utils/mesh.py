@@ -504,10 +504,9 @@ def tonemapped(image):
 def create_texture(image, factor, encoding):
     if image is not None:
         return gs.textures.ImageTexture(image_array=image, image_color=factor, encoding=encoding)
-    elif factor is not None:
+    if factor is not None:
         return gs.textures.ColorTexture(color=factor)
-    else:
-        return None
+    return None
 
 
 def apply_transform(transform, positions, normals=None):

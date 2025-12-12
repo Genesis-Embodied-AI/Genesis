@@ -2543,7 +2543,7 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
 @pytest.mark.parametrize("overwrite", [False, True])
 def test_urdf_color_overwrite(overwrite):
     scene = gs.Scene()
-    robot = scene.add_entity(
+    box = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",
         ),
@@ -2551,18 +2551,35 @@ def test_urdf_color_overwrite(overwrite):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
-    for vgeom in robot.vgeoms:
+    axis = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/axis.obj",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
+    for vgeom in box.vgeoms:
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
-    for geom in robot.geoms:
-        visual = geom.mesh.trimesh.visual
+    for vgeom in axis.vgeoms:
+        visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
-        # Collision geometry meshes have randomized colors with partial transparency to ease debugging
-        with pytest.raises(AssertionError):
+        if overwrite:
             assert_array_equal(color, (255, 0, 0, 255))
+        else:
+            assert_array_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+    for entity in scene.entities:
+        for geom in entity.geoms:
+            visual = geom.mesh.trimesh.visual
+            assert visual.defined
+            color = np.unique(visual.vertex_colors, axis=0)
+            # Collision geometry meshes have randomized colors with partial transparency to ease debugging
+            with pytest.raises(AssertionError):
+                assert_array_equal(color, (255, 0, 0, 255))
 
 
 @pytest.mark.required
