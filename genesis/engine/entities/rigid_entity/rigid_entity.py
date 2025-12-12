@@ -2386,7 +2386,7 @@ class RigidEntity(Entity):
 
     @gs.assert_built
     def set_dofs_velocity_grad(self, dofs_idx_local, envs_idx, velocity_grad):
-        dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
 
     @gs.assert_built
