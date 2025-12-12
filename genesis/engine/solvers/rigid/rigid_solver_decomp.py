@@ -905,6 +905,7 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                errno=self._errno,
             )
             if self._requires_grad:
                 kernel_save_adjoint_cache(
@@ -934,6 +935,8 @@ class RigidSolver(Solver):
                 "RigidSolver's option 'max_collision_pairs'."
             )
         if errno & 0b00000000000000000000000000000100:
+            gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
+        if errno & 0b00000000000000000000000000001000:
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
 
     def _kernel_detect_collision(self):
@@ -1334,6 +1337,7 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
             # For IPCCoupler, perform full rigid body computation in post-coupling phase
@@ -4397,6 +4401,7 @@ def kernel_step_2(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
+    errno: array_class.V_ANNOTATION,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4455,6 +4460,7 @@ def kernel_step_2(
             dofs_state=dofs_state,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            errno=errno,
         )
 
         if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
@@ -5509,11 +5515,9 @@ def kernel_update_vgeoms(
     _B = links_state.pos.shape[1]
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_g, i_b in ti.ndrange(n_vgeoms, _B):
+        i_l = vgeoms_info.link_idx[i_g]
         vgeoms_state.pos[i_g, i_b], vgeoms_state.quat[i_g, i_b] = gu.ti_transform_pos_quat_by_trans_quat(
-            vgeoms_info.pos[i_g],
-            vgeoms_info.quat[i_g],
-            links_state.pos[vgeoms_info.link_idx[i_g], i_b],
-            links_state.quat[vgeoms_info.link_idx[i_g], i_b],
+            vgeoms_info.pos[i_g], vgeoms_info.quat[i_g], links_state.pos[i_l, i_b], links_state.quat[i_l, i_b]
         )
 
 
@@ -6404,14 +6408,9 @@ def func_integrate(
                     else i_0
                 )
 
-                # Prevent nan propagation
-                is_valid = True
-                if ti.static(not BW):
-                    is_valid = ~ti.math.isnan(dofs_state.acc[i_d, i_b])
-                if is_valid:
-                    dofs_state.vel_next[i_d, i_b] = (
-                        dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
-                    )
+                dofs_state.vel_next[i_d, i_b] = (
+                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
+                )
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
@@ -6518,14 +6517,31 @@ def func_copy_next_to_curr(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*dofs_state.vel.shape)):
-        dofs_state.vel[I] = dofs_state.vel_next[I]
+    n_qs = rigid_global_info.qpos.shape[0]
+    n_dofs = dofs_state.vel.shape[0]
+    _B = dofs_state.vel.shape[1]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*rigid_global_info.qpos.shape)):
-        rigid_global_info.qpos[I] = rigid_global_info.qpos_next[I]
+    for i_b in range(_B):
+        # Prevent nan propagation
+        is_valid = True
+        for i_d in range(n_dofs):
+            e = dofs_state.vel_next[i_d, i_b]
+            is_valid &= not ti.math.isnan(e)
+        for i_q in range(n_qs):
+            e = rigid_global_info.qpos_next[i_q, i_b]
+            is_valid &= not ti.math.isnan(e)
+
+        if is_valid:
+            for i_d in range(n_dofs):
+                dofs_state.vel[i_d, i_b] = dofs_state.vel_next[i_d, i_b]
+
+            for i_q in range(n_qs):
+                rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
+        else:
+            errno[None] = errno[None] | 0b00000000000000000000000000001000
 
 
 @ti.func
@@ -6921,8 +6937,9 @@ def kernel_update_geoms_render_T(
         geom_T = gu.ti_trans_quat_to_T(
             geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], geoms_state.quat[i_g, i_b], EPS
         )
-        for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
-            geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
+        if (ti.abs(geom_T) < 1e20).all():
+            for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
+                geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6943,8 +6960,9 @@ def kernel_update_vgeoms_render_T(
         geom_T = gu.ti_trans_quat_to_T(
             vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], vgeoms_state.quat[i_g, i_b], EPS
         )
-        for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
-            vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
+        if (ti.abs(geom_T) < 1e20).all():
+            for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
+                vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
