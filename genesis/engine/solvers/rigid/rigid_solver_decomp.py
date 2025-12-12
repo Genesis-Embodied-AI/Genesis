@@ -916,27 +916,25 @@ class RigidSolver(Solver):
                 )
 
     def check_errno(self):
-        # Note that errno must be evaluated BEFORE match because otherwise it will be evaluated for each case...
-        # See official documentation: https://docs.python.org/3.10/reference/compound_stmts.html#overview
         if gs.use_zerocopy:
             errno = ti_to_torch(self._errno, copy=None).item()
         else:
             errno = kernel_get_errno(self._errno)
-        match errno:
-            case 1:
-                max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
-                gs.raise_exception(
-                    f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
-                    f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
-                )
-            case 2:
-                max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
-                gs.raise_exception(
-                    f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
-                    "RigidSolver's option 'max_collision_pairs'."
-                )
-            case 3:
-                gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+
+        if errno & 0b00000000000000000000000000000001:
+            max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
+            gs.raise_exception(
+                f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
+                f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
+            )
+        if errno & 0b00000000000000000000000000000010:
+            max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
+            gs.raise_exception(
+                f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
+                "RigidSolver's option 'max_collision_pairs'."
+            )
+        if errno & 0b00000000000000000000000000000100:
+            gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
 
     def _kernel_detect_collision(self):
         self.collider.reset(cache_only=True)
