@@ -1,14 +1,13 @@
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
 import numpy as np
 import torch
 import trimesh
-from numpy.typing import ArrayLike
 
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils import geom as gu
+from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 
 from genesis.utils.misc import DeprecationError, tensor_to_array
 
@@ -42,11 +41,11 @@ class RigidLink(RBC):
         vgeom_start: int,
         vvert_start: int,
         vface_start: int,
-        pos: ArrayLike,
-        quat: ArrayLike,
-        inertial_pos: ArrayLike | None,
-        inertial_quat: ArrayLike | None,
-        inertial_i: ArrayLike | None,  # may be None, eg. for plane; NDArray is 3x3 matrix
+        pos: "np.typing.ArrayLike",
+        quat: "np.typing.ArrayLike",
+        inertial_pos: "np.typing.ArrayLike | None",
+        inertial_quat: "np.typing.ArrayLike | None",
+        inertial_i: "np.typing.ArrayLike | None",  # may be None, eg. for plane; NDArray is 3x3 matrix
         inertial_mass: float | None,  # may be None, eg. for plane
         parent_idx: int,
         root_idx: int | None,
@@ -98,17 +97,17 @@ class RigidLink(RBC):
         self._vface_start: int = vface_start
 
         # Link position & rotation at creation time:
-        self._pos: ArrayLike = pos
-        self._quat: ArrayLike = quat
+        self._pos: "np.typing.ArrayLike" = pos
+        self._quat: "np.typing.ArrayLike" = quat
         # Link's center-of-mass position & principal axes frame rotation at creation time:
         if inertial_pos is not None:
             inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
-        self._inertial_pos: ArrayLike | None = inertial_pos
+        self._inertial_pos: "np.typing.ArrayLike | None" = inertial_pos
         if inertial_quat is not None:
             inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
-        self._inertial_quat: ArrayLike | None = inertial_quat
+        self._inertial_quat: "np.typing.ArrayLike | None" = inertial_quat
         self._inertial_mass: float | None = inertial_mass
-        self._inertial_i: ArrayLike | None = inertial_i
+        self._inertial_i: "np.typing.ArrayLike | None" = inertial_i
         self._invweight: float | None = invweight
 
         self._visualize_contact = visualize_contact
@@ -123,82 +122,78 @@ class RigidLink(RBC):
         for vgeom in self._vgeoms:
             vgeom._build()
 
-        self._init_mesh = self._compose_init_mesh()
-
-        # inertial_mass and inertia_i
-        if self._inertial_mass is None:
-            if len(self._geoms) == 0 and len(self._vgeoms) == 0:
-                self._inertial_mass = 0.0
+        if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
+            # Determine which geom list to use: geoms first, then vgeoms, then fallback
+            if len(self._geoms) > 0:
+                geom_list = self._geoms
+                is_visual = False
+            elif len(self._vgeoms) > 0:
+                gs.logger.info(
+                    f"Link mass is not specified and collision geoms can not be found for "
+                    f"link '{self.name}'. Using visual geoms to compute inertial properties."
+                )
+                geom_list = self._vgeoms
+                is_visual = True
             else:
-                if self._init_mesh.is_watertight:
-                    self._inertial_mass = self._init_mesh.volume * self.entity.material.rho
-                else:  # TODO: handle non-watertight mesh
-                    self._inertial_mass = 1.0
+                gs.logger.info(
+                    f"Link mass is not specified and no geoms found for "
+                    f"link '{self.name}'. Inertial and mass are set to zero."
+                )
+                self._inertial_mass = gs.EPS
+                self._inertial_pos = np.zeros(3, dtype=gs.np_float)
+                self._inertial_i = np.eye(3, dtype=gs.np_float) * gs.EPS
+                geom_list = []
+
+            # Process each geom individually and compose their properties
+            if len(geom_list) > 0:
+                total_mass = gs.EPS  # to avoid nan in inv_mass in interactive mode
+                total_com = np.zeros(3, dtype=gs.np_float)
+                total_inertia = np.eye(3, dtype=gs.np_float) * gs.EPS
+
+                for geom in geom_list:
+                    # Create mesh based on geom type
+                    if is_visual:
+                        inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces)
+                    else:
+                        inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces)
+
+                    geom_pos = geom._init_pos
+                    geom_quat = geom._init_quat
+
+                    if not inertia_mesh.is_watertight:
+                        inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+
+                    # TODO: without this check, some geom will have negative volume
+                    # even after the above convex hull operation.
+                    # tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]
+                    if inertia_mesh.volume < -gs.EPS:
+                        inertia_mesh.invert()
+
+                    geom_mass = inertia_mesh.volume * self.entity.material.rho
+                    geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+
+                    geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+
+                    # Transform geom properties to link frame
+                    geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
+                    geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
+
+                    # Compose with existing properties
+                    total_mass, total_com, total_inertia = compose_inertial_properties(
+                        total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
+                    )
+
+                self._inertial_mass = total_mass
+                self._inertial_pos = total_com
+                self._inertial_i = total_inertia
 
         # Postpone computation of inverse weight if not specified
         if self._invweight is None:
             self._invweight = np.full((2,), fill_value=-1.0, dtype=gs.np_float)
 
-        # inertial_pos
-        if self._inertial_pos is None:
-            if self._init_mesh is None:
-                self._inertial_pos = gu.zero_pos()
-            else:
-                self._inertial_pos = np.array(self._init_mesh.center_mass, dtype=gs.np_float)
-
-        # inertial_i
-        if self._inertial_i is None:
-            # FIXME: Why coef 0.4 ???
-            if self._init_mesh is None:  # use sphere inertia with radius 0.1
-                self._inertial_i = 0.4 * self._inertial_mass * 0.1**2 * np.eye(3)
-
-            else:
-                # attempt to fix non-watertight mesh by convexifying
-                inertia_mesh = self._init_mesh.copy()
-                if not inertia_mesh.is_watertight:
-                    inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
-
-                if inertia_mesh.is_watertight and self._init_mesh.mass > 0:
-                    # TODO: check if this is correct. This is correct if the inertia frame is w.r.t to link frame
-                    T_inertia = gu.trans_quat_to_T(self._inertial_pos, self._inertial_quat)
-                    self._inertial_i = (
-                        self._init_mesh.moment_inertia_frame(T_inertia) / self._init_mesh.mass * self._inertial_mass
-                    )
-
-                else:  # approximate with a sphere
-                    self._inertial_i = (
-                        0.4
-                        * self._inertial_mass
-                        * (max(self._init_mesh.bounds[1] - self._init_mesh.bounds[0]) / 2.0) ** 2
-                        * np.eye(3)
-                    )
-
-        self._inertial_i = np.asarray(self._inertial_i, dtype=gs.np_float)
-
         # override invweight if fixed
         if self._is_fixed:
             self._invweight = np.zeros((2,), dtype=gs.np_float)
-
-    def _compose_init_mesh(self):
-        if len(self._geoms) == 0 and len(self._vgeoms) == 0:
-            return None
-        else:
-            init_verts = []
-            init_faces = []
-            vert_offset = 0
-            if len(self._geoms) > 0:
-                for geom in self._geoms:
-                    init_verts.append(gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat))
-                    init_faces.append(geom.init_faces + vert_offset)
-                    vert_offset += geom.init_verts.shape[0]
-            elif len(self._vgeoms) > 0:  # use vgeom if there's no geom
-                for vgeom in self._vgeoms:
-                    init_verts.append(gu.transform_by_trans_quat(vgeom.init_vverts, vgeom.init_pos, vgeom.init_quat))
-                    init_faces.append(vgeom.init_vfaces + vert_offset)
-                    vert_offset += vgeom.init_vverts.shape[0]
-            init_verts = np.concatenate(init_verts)
-            init_faces = np.concatenate(init_faces)
-            return trimesh.Trimesh(init_verts, init_faces)
 
     def _add_geom(
         self,
@@ -494,43 +489,11 @@ class RigidLink(RBC):
         return self._root_idx
 
     @property
-    def child_idxs(self):
-        """
-        The global indices of the link's child links in the RigidSolver.
-        """
-        return self._child_idxs
-
-    @property
     def idx_local(self):
         """
         The local index of the link in the entity.
         """
         return self._idx - self._entity.link_start
-
-    @property
-    def parent_idx_local(self):
-        """
-        The local index of the link's parent link in the entity. If the link is the root link, return -1.
-        """
-        # TODO: check for parent links outside of the current entity (caused by scene.link_entities())
-        if self._parent_idx >= 0:
-            return self._parent_idx - self._entity.link_start
-        return self._parent_idx
-
-    @property
-    def child_idxs_local(self):
-        """
-        The local indices of the link's child links in the entity.
-        """
-        # TODO: check for child links outside of the current entity (caused by scene.link_entities())
-        return [idx - self._entity.link_start if idx >= 0 else idx for idx in self._child_idxs]
-
-    @property
-    def is_leaf(self):
-        """
-        Whether the link is a leaf link (i.e., has no child links).
-        """
-        return len(self._child_idxs) == 0
 
     @property
     def is_fixed(self):
@@ -549,28 +512,28 @@ class RigidLink(RBC):
         return self._invweight
 
     @property
-    def pos(self) -> ArrayLike:
+    def pos(self) -> "np.typing.ArrayLike":
         """
         The initial position of the link. For real-time position, use `link.get_pos()`.
         """
         return self._pos
 
     @property
-    def quat(self) -> ArrayLike:
+    def quat(self) -> "np.typing.ArrayLike":
         """
         The initial quaternion of the link. For real-time quaternion, use `link.get_quat()`.
         """
         return self._quat
 
     @property
-    def inertial_pos(self) -> ArrayLike | None:
+    def inertial_pos(self) -> "np.typing.ArrayLike | None":
         """
         The initial position of the link's inertial frame.
         """
         return self._inertial_pos
 
     @property
-    def inertial_quat(self) -> ArrayLike | None:
+    def inertial_quat(self) -> "np.typing.ArrayLike | None":
         """
         The initial quaternion of the link's inertial frame.
         """
@@ -584,7 +547,7 @@ class RigidLink(RBC):
         return self._inertial_mass
 
     @property
-    def inertial_i(self) -> ArrayLike | None:
+    def inertial_i(self) -> "np.typing.ArrayLike | None":
         """
         The inerial matrix of the link.
         """

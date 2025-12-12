@@ -12,7 +12,7 @@ import sys
 import types
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import field
 from itertools import combinations
 from typing import Any, Callable, NoReturn, Optional, Type, Sequence
 
@@ -549,13 +549,8 @@ def ti_to_python(
     # Check if copy mode is supported while setting default mode if not specified.
     # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
     # See: https://github.com/pytorch/pytorch/pull/168193
-    # FIXME: Zero-copy is currently broken for ti.Field for some reason...
     data_type = type(value)
-    use_zerocopy = (
-        gs.use_zerocopy
-        and not issubclass(data_type, ti.Field)
-        # and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
-    )
+    use_zerocopy = gs.use_zerocopy and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
         if copy is False:
             gs.raise_exception(
@@ -577,19 +572,27 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
-                value._tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
-                if (batch_ndim := len(batch_shape)) > 1:
-                    value._T_tc = value._tc.movedim(batch_ndim - 1, 0)
-                else:
-                    value._T_tc = value._tc
+                # FIXME: Field data is not properly initialized (not materialized) in memory at this point.
+                # DLPack will return garbage at best, or segfault right away if `ti.sync` is not called beforehand.
+                if issubclass(data_type, ti.Field):
+                    ti.sync()
+
+                # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
+                value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
+                if issubclass(data_type, ti.MatrixField) and value.m == 1:
+                    value_tc = value_tc.reshape((*batch_shape, value.n))
+                value._tc = value_tc
+                value._T_tc = value_tc.movedim(batch_ndim - 1, 0) if (batch_ndim := len(batch_shape)) > 1 else value_tc
                 if gs.backend == gs.cpu:
-                    value._np = value._tc.numpy()
+                    value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
         if copy:
             if to_torch:
                 out = out.clone()
-            else:
+            elif gs.backend != gs.cpu:
                 out = tensor_to_array(out)
+            else:
+                out = out.copy()
         return out
 
     # Keep track of taichi runtime to automatically clear cache if destroyed
@@ -643,13 +646,15 @@ def ti_to_python(
 
 
 def indices_to_mask(
-    *indices: Any, keepdim: bool = True, to_torch: bool = True, raise_if_fancy: bool = False
+    *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = False, raise_if_fancy: bool = False
 ) -> tuple[slice | int | torch.Tensor, ...]:
     """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product.
 
     Args:
         keepdim (bool): Whether to keep all dimensions even if masks are integers. Defaults to True.
         to_torch (bool): Whether to force casting collections to torch.Tensor.
+        boolean_mask (bool): Whether boolean mask are supported more must be converted to indices via `torch.nonzero`.
+        raise_if_fancy (bool): Whether fancy indexing is supported for should raise an exception.
         copy (bool, optional): Wether to raise an exception if the resulting mask requires advanced indexing (aka. fancy
         indexing), which would trigger a copy when extracting slice.
     """
@@ -677,7 +682,9 @@ def indices_to_mask(
                 try:
                     is_torch_, is_numpy_ = False, False
                     if isinstance(arg, torch.Tensor):
-                        is_scalar_ = arg.numel() == 1
+                        if not boolean_mask and arg.dtype == torch.bool:
+                            arg = arg.nonzero()[:, 0]
+                        is_scalar_ = arg.dtype != torch.bool and arg.numel() == 1
                         is_torch_ = True
                     elif isinstance(arg, np.ndarray):
                         is_scalar_ = arg.size == 1
@@ -861,7 +868,7 @@ def sanitize_indices(
 
 
 def broadcast_tensor(
-    tensor: np.typing.ArrayLike | None,
+    tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
     expected_shape: tuple[int, ...] | list[int],
     dim_names: tuple[str, ...] | list[str] | None = None,
@@ -885,7 +892,9 @@ def broadcast_tensor(
     # Expand current tensor shape with extra dims of size 1 if necessary before expanding to expected shape
     if tensor_ndim == 0:
         tensor_ = tensor_[None]
-    elif 2 <= tensor_ndim < expected_ndim:
+    elif tensor_ndim < expected_ndim and not all(
+        [d1 == d2 or d2 == -1 for d1, d2 in zip(tensor_shape, expected_shape[-tensor_ndim:])]
+    ):
         # Try expanding first dimensions if priority
         for dims_valid in tuple(combinations(range(expected_ndim), tensor_ndim))[::-1]:
             curr_idx = 0
@@ -893,7 +902,7 @@ def broadcast_tensor(
             for i in range(expected_ndim):
                 if i in dims_valid:
                     dim, size = tensor_.shape[curr_idx], expected_shape[i]
-                    if dim == size or dim == 1:
+                    if dim == size or dim == 1 or size == -1:
                         expanded_shape.append(dim)
                         curr_idx += 1
                     else:
@@ -913,21 +922,23 @@ def broadcast_tensor(
         msg_err = f"Invalid input shape: {tuple(tensor_.shape)}."
         msg_infos: list[str] = []
         for i, name in enumerate(dim_names):
-            dim, size = tensor_.shape[i], expected_shape[i]
-            if size > 0 and i < tensor_.ndim and dim != 1 and dim != size:
+            size = expected_shape[i]
+            if size > 0 and i < tensor_.ndim and (dim := tensor_.shape[i]) != 1 and dim != size:
                 if name:
-                    msg_infos.append(f"Dimension {i} consistent with len({name})(={size})")
+                    msg_infos.append(f"Dimension {i} consistent with len({name})={size}")
                 else:
                     msg_infos.append(f"Dimension {i} consistent with required size {size}")
         if msg_infos:
             msg_err += f" {' & '.join(msg_infos)}."
+        else:
+            msg_err += f" Expected shape: {tuple(expected_shape)}."
         gs.raise_exception_from(msg_err, e)
 
     return tensor_
 
 
 def sanitize_indexed_tensor(
-    tensor: np.typing.ArrayLike | None,
+    tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
     indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
     expected_shape: tuple[int, ...] | list[int],
@@ -988,7 +999,7 @@ def get_indexed_shape(tensor_shape, indices):
 def assign_indexed_tensor(
     tensor: torch.Tensor,
     indices: tuple[int | slice | torch.Tensor, ...],
-    value: np.typing.ArrayLike,
+    value: "np.typing.ArrayLike",
     dim_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
     try:

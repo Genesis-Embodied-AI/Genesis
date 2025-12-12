@@ -131,9 +131,11 @@ class FEMEntity(Entity):
             verts_idx_local = range(self.n_vertices)
 
         if envs_idx is None:
-            verts_idx_local_ = broadcast_tensor(verts_idx_local, gs.tc_int, (-1,), ("envs_idx",))
+            verts_idx_local_ = broadcast_tensor(verts_idx_local, gs.tc_int, (-1,), ("verts_idx",))
         else:
-            verts_idx_local_ = broadcast_tensor(verts_idx_local, gs.tc_int, (len(envs_idx), -1), ("envs_idx", ""))
+            verts_idx_local_ = broadcast_tensor(
+                verts_idx_local, gs.tc_int, (len(envs_idx), -1), ("envs_idx", "verts_idx")
+            )
 
         # FIXME: This check is too expensive
         # if not (0 <= verts_idx_local_ & verts_idx_local_ < self.n_vertices).all():

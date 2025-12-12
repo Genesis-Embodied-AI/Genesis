@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.7"
+version = "0.3.9"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==4.2.0",
+    "gstaichi==4.3.1",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
@@ -166,7 +166,6 @@ markers = [
     "examples: example scripts.",
     "benchmarks: benchmarks for profiling and monitoring.",
     "required: minimal test set that must pass systematically on any environment before merging.",
-    "field_only: tests that are not compatible with gstaichi ndarrays.",
     "slow: tests that are slow to run (> 100s).",
 ]
 log_cli_level = "WARNING"

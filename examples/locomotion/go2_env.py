@@ -1,11 +1,15 @@
-import torch
 import math
+
+import torch
+
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
+from genesis.utils.misc import tensor_to_array
 
 
-def gs_rand_float(lower, upper, shape, device):
-    return (upper - lower) * torch.rand(size=shape, device=device) + lower
+def gs_rand(lower, upper, batch_shape):
+    assert lower.shape == upper.shape
+    return (upper - lower) * torch.rand(size=(*batch_shape, *lower.shape), dtype=gs.tc_float, device=gs.device) + lower
 
 
 class Go2Env:
@@ -31,38 +35,44 @@ class Go2Env:
 
         # create scene
         self.scene = gs.Scene(
-            sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
+            sim_options=gs.options.SimOptions(
+                dt=self.dt,
+                substeps=2,
+            ),
+            rigid_options=gs.options.RigidOptions(
+                enable_self_collision=False,
+                tolerance=1e-5,
+                # For this locomotion policy, there are usually no more than 20 collision pairs. Setting a low value
+                # can save memory. Violating this condition will raise an exception.
+                max_collision_pairs=20,
+            ),
             viewer_options=gs.options.ViewerOptions(
-                max_FPS=int(0.5 / self.dt),
                 camera_pos=(2.0, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=40,
+                max_FPS=int(1.0 / self.dt),
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(1))),
-            rigid_options=gs.options.RigidOptions(
-                dt=self.dt,
-                constraint_solver=gs.constraint_solver.Newton,
-                enable_collision=True,
-                enable_joint_limit=True,
-                # for this locomotion policy there are usually no more than 30 collision pairs
-                # set a low value can save memory
-                max_collision_pairs=30,
-            ),
+            vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
             show_viewer=show_viewer,
         )
 
         # add plain
-        self.scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        self.scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/plane/plane.urdf",
+                fixed=True,
+            )
+        )
 
         # add robot
-        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], device=gs.device)
-        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], device=gs.device)
+        self.base_init_pos = torch.tensor(self.env_cfg["base_init_pos"], dtype=gs.tc_float, device=gs.device)
+        self.base_init_quat = torch.tensor(self.env_cfg["base_init_quat"], dtype=gs.tc_float, device=gs.device)
         self.inv_base_init_quat = inv_quat(self.base_init_quat)
         self.robot = self.scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/go2/urdf/go2.urdf",
-                pos=self.base_init_pos.cpu().numpy(),
-                quat=self.base_init_quat.cpu().numpy(),
+                pos=tensor_to_array(self.base_init_pos),
+                quat=tensor_to_array(self.base_init_quat),
             ),
         )
 
@@ -70,7 +80,12 @@ class Go2Env:
         self.scene.build(n_envs=num_envs)
 
         # names to indices
-        self.motors_dof_idx = [self.robot.get_joint(name).dof_start for name in self.env_cfg["joint_names"]]
+        self.motors_dof_idx = torch.tensor(
+            [self.robot.get_joint(name).dof_start for name in self.env_cfg["joint_names"]],
+            dtype=gs.tc_int,
+            device=gs.device,
+        )
+        self.actions_dof_idx = torch.argsort(self.motors_dof_idx)
 
         # PD control parameters
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
@@ -81,109 +96,123 @@ class Go2Env:
         for name in self.reward_scales.keys():
             self.reward_scales[name] *= self.dt
             self.reward_functions[name] = getattr(self, "_reward_" + name)
-            self.episode_sums[name] = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
+            self.episode_sums[name] = torch.zeros((self.num_envs,), dtype=gs.tc_float, device=gs.device)
 
         # initialize buffers
-        self.base_lin_vel = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.base_ang_vel = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.projected_gravity = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.global_gravity = torch.tensor([0.0, 0.0, -1.0], device=gs.device, dtype=gs.tc_float).repeat(
+        self.base_lin_vel = torch.zeros((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self.base_ang_vel = torch.zeros((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self.projected_gravity = torch.zeros((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
+        self.global_gravity = torch.tensor([0.0, 0.0, -1.0], dtype=gs.tc_float, device=gs.device).repeat(
             self.num_envs, 1
         )
-        self.obs_buf = torch.zeros((self.num_envs, self.num_obs), device=gs.device, dtype=gs.tc_float)
-        self.rew_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
-        self.reset_buf = torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_int)
-        self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
-        self.commands = torch.zeros((self.num_envs, self.num_commands), device=gs.device, dtype=gs.tc_float)
+        self.obs_buf = torch.zeros((self.num_envs, self.num_obs), dtype=gs.tc_float, device=gs.device)
+        self.rew_buf = torch.zeros((self.num_envs,), dtype=gs.tc_float, device=gs.device)
+        self.reset_buf = torch.ones((self.num_envs,), dtype=gs.tc_bool, device=gs.device)
+        self.episode_length_buf = torch.zeros((self.num_envs,), dtype=gs.tc_int, device=gs.device)
+        self.commands = torch.zeros((self.num_envs, self.num_commands), dtype=gs.tc_float, device=gs.device)
         self.commands_scale = torch.tensor(
             [self.obs_scales["lin_vel"], self.obs_scales["lin_vel"], self.obs_scales["ang_vel"]],
             device=gs.device,
             dtype=gs.tc_float,
         )
-        self.actions = torch.zeros((self.num_envs, self.num_actions), device=gs.device, dtype=gs.tc_float)
+        self.commands_limits = [
+            torch.tensor(values, dtype=gs.tc_float, device=gs.device)
+            for values in zip(
+                self.command_cfg["lin_vel_x_range"],
+                self.command_cfg["lin_vel_y_range"],
+                self.command_cfg["ang_vel_range"],
+            )
+        ]
+        self.actions = torch.zeros((self.num_envs, self.num_actions), dtype=gs.tc_float, device=gs.device)
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.zeros_like(self.actions)
         self.dof_vel = torch.zeros_like(self.actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
-        self.base_pos = torch.zeros((self.num_envs, 3), device=gs.device, dtype=gs.tc_float)
-        self.base_quat = torch.zeros((self.num_envs, 4), device=gs.device, dtype=gs.tc_float)
+        self.base_pos = torch.tensor((), dtype=gs.tc_float, device=gs.device)
+        self.base_quat = torch.zeros((), dtype=gs.tc_float, device=gs.device)
         self.default_dof_pos = torch.tensor(
             [self.env_cfg["default_joint_angles"][name] for name in self.env_cfg["joint_names"]],
-            device=gs.device,
             dtype=gs.tc_float,
+            device=gs.device,
+        )
+        self.init_qpos = torch.concatenate(
+            (
+                self.base_init_pos,
+                self.base_init_quat,
+                torch.tensor(
+                    [self.env_cfg["default_joint_angles"][joint.name] for joint in self.robot.joints[1:]],
+                    dtype=gs.tc_float,
+                    device=gs.device,
+                ),
+            )
         )
         self.extras = dict()  # extra information for logging
         self.extras["observations"] = dict()
 
     def _resample_commands(self, envs_idx):
-        self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["lin_vel_x_range"], (len(envs_idx),), gs.device)
-        self.commands[envs_idx, 1] = gs_rand_float(*self.command_cfg["lin_vel_y_range"], (len(envs_idx),), gs.device)
-        self.commands[envs_idx, 2] = gs_rand_float(*self.command_cfg["ang_vel_range"], (len(envs_idx),), gs.device)
+        commands = gs_rand(*self.commands_limits, (self.num_envs,))
+        if envs_idx is None:
+            self.commands.copy_(commands)
+        else:
+            torch.where(envs_idx[:, None], commands, self.commands, out=self.commands)
 
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
         target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
-        self.robot.control_dofs_position(target_dof_pos, self.motors_dof_idx)
+        self.robot.control_dofs_position(target_dof_pos[:, self.actions_dof_idx], slice(6, 18))
         self.scene.step()
 
         # update buffers
         self.episode_length_buf += 1
-        self.base_pos[:] = self.robot.get_pos()
-        self.base_quat[:] = self.robot.get_quat()
+        self.base_pos = self.robot.get_pos()
+        self.base_quat = self.robot.get_quat()
         self.base_euler = quat_to_xyz(
-            transform_quat_by_quat(torch.ones_like(self.base_quat) * self.inv_base_init_quat, self.base_quat),
-            rpy=True,
-            degrees=True,
+            transform_quat_by_quat(self.inv_base_init_quat, self.base_quat), rpy=True, degrees=True
         )
         inv_base_quat = inv_quat(self.base_quat)
-        self.base_lin_vel[:] = transform_by_quat(self.robot.get_vel(), inv_base_quat)
-        self.base_ang_vel[:] = transform_by_quat(self.robot.get_ang(), inv_base_quat)
+        self.base_lin_vel = transform_by_quat(self.robot.get_vel(), inv_base_quat)
+        self.base_ang_vel = transform_by_quat(self.robot.get_ang(), inv_base_quat)
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
-        self.dof_pos[:] = self.robot.get_dofs_position(self.motors_dof_idx)
-        self.dof_vel[:] = self.robot.get_dofs_velocity(self.motors_dof_idx)
+        self.dof_pos = self.robot.get_dofs_position(self.motors_dof_idx)
+        self.dof_vel = self.robot.get_dofs_velocity(self.motors_dof_idx)
 
         # resample commands
-        envs_idx = (
-            (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
-            .nonzero(as_tuple=False)
-            .reshape((-1,))
-        )
-        self._resample_commands(envs_idx)
+        self._resample_commands(self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
 
         # check termination and reset
         self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
         self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
 
-        time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero(as_tuple=False).reshape((-1,))
-        self.extras["time_outs"] = torch.zeros_like(self.reset_buf, device=gs.device, dtype=gs.tc_float)
-        self.extras["time_outs"][time_out_idx] = 1.0
+        # Compute timeout
+        self.extras["time_outs"] = (self.episode_length_buf > self.max_episode_length).to(dtype=gs.tc_float)
 
-        self.reset_idx(self.reset_buf.nonzero(as_tuple=False).reshape((-1,)))
+        # Reset environment if necessary
+        self.reset(self.reset_buf)
 
         # compute reward
-        self.rew_buf[:] = 0.0
+        self.rew_buf.zero_()
         for name, reward_func in self.reward_functions.items():
             rew = reward_func() * self.reward_scales[name]
             self.rew_buf += rew
             self.episode_sums[name] += rew
 
         # compute observations
-        self.obs_buf = torch.cat(
-            [
+        self.obs_buf = torch.concatenate(
+            (
                 self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
                 self.projected_gravity,  # 3
                 self.commands * self.commands_scale,  # 3
                 (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
                 self.dof_vel * self.obs_scales["dof_vel"],  # 12
                 self.actions,  # 12
-            ],
-            axis=-1,
+            ),
+            dim=-1,
         )
 
-        self.last_actions[:] = self.actions[:]
-        self.last_dof_vel[:] = self.dof_vel[:]
+        self.last_actions.copy_(self.actions)
+        self.last_dof_vel.copy_(self.dof_vel)
 
         self.extras["observations"]["critic"] = self.obs_buf
 
@@ -196,48 +225,36 @@ class Go2Env:
     def get_privileged_observations(self):
         return None
 
-    def reset_idx(self, envs_idx):
-        if len(envs_idx) == 0:
-            return
-
-        # reset dofs
-        self.dof_pos[envs_idx] = self.default_dof_pos
-        self.dof_vel[envs_idx] = 0.0
-        self.robot.set_dofs_position(
-            position=self.dof_pos[envs_idx],
-            dofs_idx_local=self.motors_dof_idx,
-            zero_velocity=True,
-            envs_idx=envs_idx,
-        )
-
-        # reset base
-        self.base_pos[envs_idx] = self.base_init_pos
-        self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
-        self.robot.set_pos(self.base_pos[envs_idx], zero_velocity=False, envs_idx=envs_idx)
-        self.robot.set_quat(self.base_quat[envs_idx], zero_velocity=False, envs_idx=envs_idx)
-        self.base_lin_vel[envs_idx] = 0
-        self.base_ang_vel[envs_idx] = 0
-        self.robot.zero_all_dofs_velocity(envs_idx)
+    def reset(self, envs_idx=None):
+        # reset state
+        self.robot.set_qpos(self.init_qpos, envs_idx=envs_idx, zero_velocity=True, skip_forward=True)
 
         # reset buffers
-        self.last_actions[envs_idx] = 0.0
-        self.last_dof_vel[envs_idx] = 0.0
-        self.episode_length_buf[envs_idx] = 0
-        self.reset_buf[envs_idx] = True
+        if envs_idx is None:
+            self.last_actions.zero_()
+            self.last_dof_vel.zero_()
+            self.episode_length_buf.zero_()
+            self.reset_buf.fill_(True)
+        else:
+            self.last_actions.masked_fill_(envs_idx[:, None], 0.0)
+            self.last_dof_vel.masked_fill_(envs_idx[:, None], 0.0)
+            self.episode_length_buf.masked_fill_(envs_idx, 0)
+            self.reset_buf.masked_fill_(envs_idx, True)
 
         # fill extras
+        n_envs = envs_idx.sum() if envs_idx is not None else self.num_envs
         self.extras["episode"] = {}
-        for key in self.episode_sums.keys():
-            self.extras["episode"]["rew_" + key] = (
-                torch.mean(self.episode_sums[key][envs_idx]).item() / self.env_cfg["episode_length_s"]
-            )
-            self.episode_sums[key][envs_idx] = 0.0
+        for key, value in self.episode_sums.items():
+            if envs_idx is None:
+                mean = value.mean()
+            else:
+                mean = torch.where(n_envs > 0, value[envs_idx].sum() / n_envs, 0.0)
+            self.extras["episode"]["rew_" + key] = mean / self.env_cfg["episode_length_s"]
+            value.masked_fill_(envs_idx, 0.0)
 
+        # random sample command upon reset
         self._resample_commands(envs_idx)
 
-    def reset(self):
-        self.reset_buf[:] = True
-        self.reset_idx(torch.arange(self.num_envs, device=gs.device))
         return self.obs_buf, None
 
     # ------------ reward functions----------------

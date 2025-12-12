@@ -163,15 +163,6 @@ class RigidEntity(Entity):
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
-        self._update_child_idxs()
-
-    def _update_child_idxs(self):
-        for link in self._links:
-            if link.parent_idx != -1:
-                parent_link = self._links[link.parent_idx_local]
-                if link.idx not in parent_link.child_idxs:
-                    parent_link.child_idxs.append(link.idx)
-
     def _load_primitive(self, morph, surface):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
@@ -237,7 +228,7 @@ class RigidEntity(Entity):
                 )
             )
 
-        link, (joint,) = self._add_by_info(
+        self._add_by_info(
             l_info=dict(
                 is_robot=False,
                 name=f"{link_name_prefix}_baselink",
@@ -309,7 +300,7 @@ class RigidEntity(Entity):
 
         link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
 
-        link, (joint,) = self._add_by_info(
+        self._add_by_info(
             l_info=dict(
                 is_robot=False,
                 name=f"{link_name}_baselink",
@@ -375,7 +366,7 @@ class RigidEntity(Entity):
                 )
             )
 
-        link, (joint,) = self._add_by_info(
+        self._add_by_info(
             l_info=dict(
                 is_robot=False,
                 name="baselink",
@@ -659,10 +650,6 @@ class RigidEntity(Entity):
         self._n_free_verts = len(self._free_verts_idx_local)
         self._n_fixed_verts = len(self._fixed_verts_idx_local)
 
-        self._dofs_idx = torch.arange(
-            self._dof_start, self._dof_start + self._n_dofs, dtype=gs.tc_int, device=gs.device
-        )
-
         self._geoms = self.geoms
         self._vgeoms = self.vgeoms
 
@@ -928,6 +915,73 @@ class RigidEntity(Entity):
         self._equalities.append(equality)
         return equality
 
+    @gs.assert_unbuilt
+    def attach(self, parent_entity, parent_link_name: str | None = None):
+        """
+        Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
+        another entity.
+
+        Parameters
+        ----------
+        parent_entity : genesis.Entity
+            The entity in the scene that will be a parent of kinematic tree.
+        parent_link_name : str
+            The name of the link in the parent entity to be linked. Default to the latest link the parent kinematic
+            tree.
+        """
+        if not isinstance(parent_entity, RigidEntity):
+            gs.raise_exception("Parent entity must derive from 'RigidEntity'.")
+
+        # Check if base link was fixed but no longer is
+        base_link = self.links[0]
+        parent_link = parent_entity.get_link(parent_link_name)
+        if base_link.is_fixed and not parent_link.is_fixed:
+            if not self._batch_fixed_verts:
+                gs.raise_exception(
+                    "Attaching fixed-based entity to parent link requires setting Morph option 'batch_fixed_verts=True'."
+                )
+
+        # Remove all root joints if necessary.
+        # The requires shifting joint and dof indices of all subsequent entities.
+        # Note that we do not remove world link if any, but rather remove all base joints. This is to avoid altering
+        # the parent entity by moving all fixed geometries to the new parent link.
+        if not base_link.is_fixed:
+            n_base_joints = base_link.n_joints
+            n_base_dofs = base_link.n_dofs
+            n_base_qs = base_link.n_qs
+
+            base_link._n_joints = 0
+            self._joints[0].clear()
+            for entity in self._solver.entities[(self.idx + 1) :]:
+                entity._joint_start -= n_base_joints
+                entity._dof_start -= n_base_dofs
+                entity._q_start -= n_base_qs
+            for joint in self._solver.joints[self.joint_start :]:
+                joint._dof_start -= n_base_dofs
+                joint._q_start -= n_base_qs
+            for link in self._solver.links[(self.link_start + 1) :]:
+                link._joint_start -= n_base_joints
+
+        # Overwrite parent link
+        base_link._parent_idx = parent_link.idx
+
+        for link in self.links:
+            # Break as soon as the root idx is -1, because the following links correspond to a different kinematic tree
+            if link.root_idx == -1:
+                break
+
+            # Override root idx for child links
+            assert link.root_idx == base_link.idx
+            link._root_idx = parent_link.root_idx
+
+            # Update fixed link flag
+            link._is_fixed &= parent_link.is_fixed
+
+            # Must invalidate invweight for all child links and joints
+            link._invweight[:] = -1.0
+            for joint in link.joints:
+                joint._dofs_invweight[:] = -1.0
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- Jacobian & IK ------------------------------------
     # ------------------------------------------------------------------------------------
@@ -981,7 +1035,7 @@ class RigidEntity(Entity):
                 links_state=sol.links_state,
             )
 
-        jacobian = ti_to_torch(self._jacobian, transpose=True)
+        jacobian = ti_to_torch(self._jacobian, transpose=True, copy=True)
         if self._solver.n_envs == 0:
             jacobian = jacobian[0]
 
@@ -1767,18 +1821,15 @@ class RigidEntity(Entity):
     def _get_global_idx(self, idx_local, idx_local_max, idx_global_start=0, *, unsafe=False):
         # Handling default argument and special cases
         if idx_local is None:
-            if unsafe:
-                idx_global = slice(idx_global_start, idx_local_max + idx_global_start)
-            else:
-                idx_global = range(idx_global_start, idx_local_max + idx_global_start)
-        elif isinstance(idx_local, (range, slice)):
+            idx_global = range(idx_global_start, idx_local_max + idx_global_start)
+        elif isinstance(idx_local, (slice, range)):
             idx_global = range(
                 (idx_local.start or 0) + idx_global_start,
                 (idx_local.stop if idx_local.stop is not None else idx_local_max) + idx_global_start,
                 idx_local.step or 1,
             )
         elif isinstance(idx_local, (int, np.integer)):
-            idx_global = idx_local + idx_global_start
+            idx_global = (idx_local + idx_global_start,)
         elif isinstance(idx_local, (list, tuple)):
             try:
                 idx_global = [i + idx_global_start for i in idx_local]
@@ -1796,16 +1847,21 @@ class RigidEntity(Entity):
             return idx_global
 
         # Perform a bunch of sanity checks
-        idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
-        ndim = idx_global.ndim
-        if ndim == 0:
-            idx_global = idx_global[None]
-        elif ndim > 1:
-            gs.raise_exception("Expecting a 1D tensor for `idx_local`.")
+        if isinstance(idx_global, torch.Tensor) and idx_global.dtype == torch.bool:
+            if idx_global.shape != (idx_local_max - idx_global_start,):
+                gs.raise_exception("Boolean masks must be 1D tensors of fixed size.")
+            idx_global = idx_global_start + idx_global.nonzero()[:, 0]
+        else:
+            idx_global = torch.as_tensor(idx_global, dtype=gs.tc_int, device=gs.device).contiguous()
+            ndim = idx_global.ndim
+            if ndim == 0:
+                idx_global = idx_global[None]
+            elif ndim > 1:
+                gs.raise_exception("Expecting a 1D tensor for local index.")
 
-        # FIXME: This check is too expensive
-        # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
-        #     gs.raise_exception("`idx_local` exceeds valid range.")
+            # FIXME: This check is too expensive
+            # if (idx_global < 0).any() or (idx_global >= idx_global_start + idx_local_max).any():
+            #     gs.raise_exception("`idx_local` exceeds valid range.")
 
         return idx_global
 
@@ -2151,7 +2207,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_base_links_pos(pos, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
@@ -2183,7 +2239,7 @@ class RigidEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_base_links_quat(quat, self._base_links_idx_, envs_idx, relative=relative)
 
     @gs.assert_built
@@ -2258,7 +2314,7 @@ class RigidEntity(Entity):
         """
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
 
     @gs.assert_built
@@ -2394,7 +2450,7 @@ class RigidEntity(Entity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
-            self._solver.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=True)
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
 
     @gs.assert_built
@@ -2711,7 +2767,7 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        self.set_dofs_velocity(None, self._dofs_idx, envs_idx, skip_forward=skip_forward)
+        self.set_dofs_velocity(None, slice(0, self._n_dofs), envs_idx, skip_forward=skip_forward)
 
     @gs.assert_built
     def detect_collision(self, env_idx=0):
@@ -2847,7 +2903,7 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        links_idx_local = self._get_global_idx(links_idx_local, self.n_links, 0)
+        links_idx_local = self._get_global_idx(links_idx_local, self.n_links, 0, unsafe=True)
 
         links_n_geoms = torch.tensor(
             [self._links[i_l].n_geoms for i_l in links_idx_local], dtype=gs.tc_int, device=gs.device

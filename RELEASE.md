@@ -1,5 +1,72 @@
 # Genesis Release Note
 
+## 0.3.9
+
+Small release mainly polishing features that were introduced in previous release.
+
+### New Features
+
+* [CHANGING] Replace SDF fallback by GJK. (@duburcqa) (#2081)
+* [CHANGING] Improve inertial estimation if undefined. (@YilingQiao) (#2100)
+* Add support of boolean masking as index. (@duburcqa) (#2087)
+* Fix and improve merging of rigid entities. (@duburcqa) (#2098)
+
+### Bug Fixes
+
+* Fix increased memory usage due to differentiable simulation. (@duburcqa) (#2074)
+* Fix 'envs_idx' in motion planning. (@duburcqa) (#2093)
+* Fix 'DroneEntity.set_propellels_rpm'. (@duburcqa) (#2095)
+* Fix extended broadcasting. (@duburcqa) (#2096)
+* Fix 'RigidEntity.set_dofs_velocity'. (@robin271828) (#2102)
+* Fix joint stiffness not taking into account neutral position. (@YilingQiao) (#2105)
+* Fix explicit URDF material color being ignored. (@duburcqa) (#2107)
+
+### Miscellaneous
+
+* Speed up torch-based geom utils via 'torch.jit.script'. (@duburcqa) (#2075)
+* Improve scalability wrt number of contacts. (@duburcqa) (#2085, #2103)
+* Make Go2 RL env GPU-sync free. (@duburcqa) (#2092)
+
+## 0.3.8
+
+The performance of data accessors have been dramatically improved by leveraging zero-copy memory sharing between GsTaichi and Torch. Beyond that, the robustness of the default contact algorithm has been improved, and differentiable forward dynamics for Rigid Body simulation is not partially available. Last, but not least, GsTaichi dynamic array mode is finally enabled back by default!
+
+### New Features
+
+* [CHANGING] More robust MPR+SDF collision detection algorithm. (@duburcqa) (#1983, #1985)
+* [CHANGING] Disable box-box by default. (@duburcqa) (#1982)
+* Enable back GsTaichi dynamic array mode by default except for MacOS. (@duburcqa) (#1977)
+* Add error code to rigid solver. (@duburcqa) (#1979)
+* Add option to force batching of fixed vertices. (@duburcqa) (#1998)
+* Leverage GsTaichi zero-copy in data accessors. (@duburcqa) (#2011, #2019, #2021, #2023, #2025, #2030, #2037, #2048, #2054)
+* Add an option to disable keyboard shortcuts (@YilingQiao) (#2026)
+* Add support of 'capsule' primitive in URDF file. (@duburcqa) (#2045)
+* Add full support of tensor broadcasting in getters. (@duburcqa) (#2051)
+* Add rasterizer, batch renderer, and raytracer as sensor (@YilingQiao) (#2010)
+* Differentiable forward dynamics for rigid body sim. (@SonSang) (#1808, #2063, #2068)
+
+### Bug Fixes
+
+* Fix sensor IMU accelerometer signal. (@Milotrince) (#1962)
+* Fix 'RigidJoint.(get_anchor_pos | get_anchor_axis)' getters. (@alexis779) (#2012)
+* Prevent nan to propagate in position and raise exception. (@duburcqa) (#2033)
+* Fix camera following entity for 'fix_orientation=True'. (@duburcqa) (#2038)
+* Fix support of Hybrid entity with non-fixed base link. (@duburcqa) (#2040)
+* Raise exception if trying to load PointCloud as Mesh. (@duburcqa) (#2042)
+* Fix boolean mask inversion for PyTorch 2.x (@yoneken) (#2056)
+* Fix URDF color overwrite. (@duburcqa) (#2065)
+
+### Miscellaneous
+
+* Reduce memory footprint. (@duburcqa) (#2000, #2031)
+* Only enable GJK by default if gradient computation is required. (@duburcqa) (#1984)
+* Bump GsTaichi Support Nvidia GPU Blackwell. (@johnnynunez) (#2002)
+* Add dependency version upper-bound 'tetgen< 0.7.0'. (@YilingQiao) (#2029)
+* Bump up min version requirement for Torch after introducing zero-copy. (@duburcqa) (#2034)
+* Add 'parse_glb_with_zup' option to all file-based Morph. (@ACMLCZH) (#1938)
+* Enable more example scripts in CI. (@duburcqa) (#2057)
+* Fix fast cache and zero-copy bugs. (@hughperkins) (#2050)
+
 ## 0.3.7
 
 The performance of GsTaichi dynamic array mode has been greatly improved. Now it should be on par with fixed-size array mode (aka performance mode) for very large batch sizes, and up to 30% slower for non-batched simulations. This mode is still considered experimental and must be enabled manually by setting the env var 'GS_ENABLE_NDARRAY=1'. Just try it if you are tired of endlessly waiting for the simulation to compile!

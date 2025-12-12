@@ -8,7 +8,6 @@ import numpy as np
 import skimage
 import torch
 import trimesh
-from numpy.typing import NDArray
 
 import genesis as gs
 import genesis.utils.array_class as array_class

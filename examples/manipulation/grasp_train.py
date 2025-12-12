@@ -177,7 +177,7 @@ def main():
     args = parser.parse_args()
 
     # === init ===
-    gs.init(logging_level="warning", precision="32")
+    gs.init(backend=gs.gpu, precision="32", logging_level="warning", performance_mode=True)
 
     # === task cfgs and trainning algos cfgs ===
     env_cfg, reward_scales, robot_cfg = get_task_cfgs()
@@ -218,8 +218,8 @@ if __name__ == "__main__":
 # training
 
 # to train the RL policy
-python examples/manipulation/grasp_train.py --stage=rl  
+python examples/manipulation/grasp_train.py --stage=rl
 
 # to train the BC policy (requires RL policy to be trained first)
-python examples/manipulation/grasp_train.py --stage=bc 
+python examples/manipulation/grasp_train.py --stage=bc
 """

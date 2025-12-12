@@ -309,6 +309,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         sim_options=gs.options.SimOptions(
             dt=0.04,
         ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
