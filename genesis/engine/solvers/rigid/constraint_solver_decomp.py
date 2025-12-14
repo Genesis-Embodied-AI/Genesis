@@ -1415,7 +1415,7 @@ def func_update_qacc(
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[None] = 3
+            errno[None] = errno[None] | 0b00000000000000000000000000000100
 
 
 @ti.kernel(fastcache=gs.use_fastcache)

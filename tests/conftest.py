@@ -131,7 +131,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         # Limit CPU threading
         if is_benchmarks:
             # FIXME: Enabling multi-threading in benchmark is making compile time estimation unreliable
-            num_cpu_per_worker = 1
+            num_cpu_per_worker = "1"
         else:
             physical_core_count = psutil.cpu_count(logical=config.option.logical)
             num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])

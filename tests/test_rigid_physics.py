@@ -316,6 +316,18 @@ def double_ball_pendulum():
     )
     ee = ET.SubElement(link2, "body", name="end_effector", pos="0 0 0.3")
     ET.SubElement(ee, "geom", name="ee_geom", type="sphere", size="0.02", density="200", rgba="1.0 0.8 0.2 1.0")
+    ET.SubElement(
+        ee,
+        "geom",
+        name="marker",
+        type="sphere",
+        contype="0",
+        conaffinity="0",
+        size="0.01",
+        density="0",
+        pos="0 -0.02 0",
+        rgba="0.0 0.0 0.0 1.0",
+    )
 
     return mjcf
 
@@ -1684,7 +1696,13 @@ def test_contact_forces(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["double_ball_pendulum"])
 def test_apply_external_forces(xml_path, show_viewer):
+    GRAVITY = 2.0
+
     scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            substeps=2,
+            gravity=(0, 0, -GRAVITY),
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3.5, 2.5),
             camera_lookat=(0.0, 0.0, 1.0),
@@ -1702,28 +1720,66 @@ def test_apply_external_forces(xml_path, show_viewer):
             quat=(1.0, 0, 1.0, 0),
         ),
     )
+    duck = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.04,
+            pos=(1.0, 0.0, 1.0),
+            euler=(90, 0, 0),
+            collision=False,
+        ),
+    )
     scene.build()
+    rigid_solver = scene.rigid_solver
 
-    tol = 5e-3
     end_effector_link_idx = robot.links[-1].idx
+    duck_link_idx = duck.links[0].idx
+    duck_mass = duck.get_mass()
     for step in range(801):
-        ee_pos = scene.rigid_solver.get_links_pos([end_effector_link_idx])[0]
+        ee_pos = rigid_solver.get_links_pos([end_effector_link_idx])[0]
+        duck_pos = rigid_solver.get_links_pos([duck_link_idx])[0]
         if step == 0:
-            assert_allclose(ee_pos, [0.8, 0.0, 0.02], tol=tol)
-        elif step == 600:
-            assert_allclose(ee_pos, [0.0, 0.0, 0.82], tol=tol)
+            assert_allclose(ee_pos, (0.8, 0.0, 0.02), tol=1e-4)
+        elif step in (500, 600):
+            assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=1e-2)
         elif step == 800:
-            assert_allclose(ee_pos, [-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02], tol=tol)
+            assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=1e-2)
+        assert_allclose(duck_pos, (1.0, 0.0, 1.0), tol=1e-3)
 
         if step >= 600:
-            force = np.array([[-5.0, 5.0, 0.0]])
-        elif step >= 100:
-            force = np.array([[0.0, 0.0, 10.0]])
+            force = [-4.0, 4.0, 0.0]
+            torque = [0.0, 0.0, 0.0]
+        elif step >= 500:
+            force = [0.0, 0.0, 0.0]
+            torque = [0.0, 0.0, 2.0]
+        elif step >= 50:
+            force = [0.0, 0.0, 10.0]
+            torque = [0.0, 0.0, 0.0]
         else:
-            force = np.array([[0.0, 0.0, 0.0]])
+            force = [0.0, 0.0, 0.0]
+            torque = [0.0, 0.0, 0.0]
 
-        scene.rigid_solver.apply_links_external_force(force=force, links_idx=[end_effector_link_idx])
+        rigid_solver.apply_links_external_force(
+            force=(0, duck_mass * GRAVITY, 0), links_idx=[duck_link_idx], ref="link_com", local=True
+        )
+        rigid_solver.apply_links_external_force(
+            force=force, links_idx=[end_effector_link_idx], ref="link_origin", local=False
+        )
+        rigid_solver.apply_links_external_torque(
+            torque=torque, links_idx=[end_effector_link_idx], ref="link_origin", local=False
+        )
         scene.step()
+
+    rigid_solver.apply_links_external_torque(torque=(0, 1, 0), links_idx=[duck_link_idx], ref="link_com", local=True)
+    assert_allclose(rigid_solver.links_state.cfrc_applied_vel[duck_link_idx, 0].to_numpy(), 0, tol=gs.EPS)
+    assert_allclose(rigid_solver.links_state.cfrc_applied_ang[duck_link_idx, 0].to_numpy(), (0, 0, -1), tol=gs.EPS)
+
+    with np.testing.assert_raises(ValueError):
+        rigid_solver.apply_links_external_force(force=(0, 0, 0), links_idx=[duck_link_idx], ref="root_com", local=True)
+    with np.testing.assert_raises(ValueError):
+        rigid_solver.apply_links_external_torque(
+            torque=(0, 0, 0), links_idx=[duck_link_idx], ref="root_com", local=True
+        )
 
 
 @pytest.mark.required
@@ -2543,7 +2599,7 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
 @pytest.mark.parametrize("overwrite", [False, True])
 def test_urdf_color_overwrite(overwrite):
     scene = gs.Scene()
-    robot = scene.add_entity(
+    box = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",
         ),
@@ -2551,18 +2607,35 @@ def test_urdf_color_overwrite(overwrite):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
-    for vgeom in robot.vgeoms:
+    axis = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/axis.obj",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
+    for vgeom in box.vgeoms:
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
-    for geom in robot.geoms:
-        visual = geom.mesh.trimesh.visual
+    for vgeom in axis.vgeoms:
+        visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
-        # Collision geometry meshes have randomized colors with partial transparency to ease debugging
-        with pytest.raises(AssertionError):
+        if overwrite:
             assert_array_equal(color, (255, 0, 0, 255))
+        else:
+            assert_array_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+    for entity in scene.entities:
+        for geom in entity.geoms:
+            visual = geom.mesh.trimesh.visual
+            assert visual.defined
+            color = np.unique(visual.vertex_colors, axis=0)
+            # Collision geometry meshes have randomized colors with partial transparency to ease debugging
+            with pytest.raises(AssertionError):
+                assert_array_equal(color, (255, 0, 0, 255))
 
 
 @pytest.mark.required
