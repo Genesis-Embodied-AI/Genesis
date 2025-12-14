@@ -13,7 +13,7 @@ def gs_rand(lower, upper, batch_shape):
 
 
 class Go2Env:
-    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
+    def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False, headless_render= False):
         self.num_envs = num_envs
         self.num_obs = obs_cfg["num_obs"]
         self.num_privileged_obs = None
@@ -55,6 +55,15 @@ class Go2Env:
             vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
             show_viewer=show_viewer,
         )
+
+        if headless_render:
+            self.camera = self.scene.add_camera(
+                res = (1280, 960),
+                pos    = (10.0, 0.0, 3.0),
+                lookat = (0.0, 0.0, 0.0),
+                fov    = 30,
+                GUI=False 
+            )
 
         # add plain
         self.scene.add_entity(
@@ -156,15 +165,8 @@ class Go2Env:
         else:
             torch.where(envs_idx[:, None], commands, self.commands, out=self.commands)
 
-    def step(self, actions):
-        self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
-        exec_actions = self.last_actions if self.simulate_action_latency else self.actions
-        target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
-        self.robot.control_dofs_position(target_dof_pos[:, self.actions_dof_idx], slice(6, 18))
-        self.scene.step()
+    def _update_state(self):
 
-        # update buffers
-        self.episode_length_buf += 1
         self.base_pos = self.robot.get_pos()
         self.base_quat = self.robot.get_quat()
         self.base_euler = quat_to_xyz(
@@ -175,7 +177,32 @@ class Go2Env:
         self.base_ang_vel = transform_by_quat(self.robot.get_ang(), inv_base_quat)
         self.projected_gravity = transform_by_quat(self.global_gravity, inv_base_quat)
         self.dof_pos = self.robot.get_dofs_position(self.motors_dof_idx)
-        self.dof_vel = self.robot.get_dofs_velocity(self.motors_dof_idx)
+        self.dof_vel = self.robot.get_dofs_velocity(self.motors_dof_idx) 
+
+        # compute observations
+        self.obs_buf = torch.concatenate(
+            (
+                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
+                self.projected_gravity,  # 3
+                self.commands * self.commands_scale,  # 3
+                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
+                self.dof_vel * self.obs_scales["dof_vel"],  # 12
+                self.actions,  # 12
+            ),
+            dim=-1,
+        )       
+
+    def step(self, actions):
+        self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
+        exec_actions = self.last_actions if self.simulate_action_latency else self.actions
+        target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
+        self.robot.control_dofs_position(target_dof_pos[:, self.actions_dof_idx], slice(6, 18))
+        self.scene.step()
+
+        # update buffers
+        self.episode_length_buf += 1
+        self._update_state()
+        
 
         # resample commands
         self._resample_commands(self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
@@ -198,18 +225,6 @@ class Go2Env:
             self.rew_buf += rew
             self.episode_sums[name] += rew
 
-        # compute observations
-        self.obs_buf = torch.concatenate(
-            (
-                self.base_ang_vel * self.obs_scales["ang_vel"],  # 3
-                self.projected_gravity,  # 3
-                self.commands * self.commands_scale,  # 3
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales["dof_pos"],  # 12
-                self.dof_vel * self.obs_scales["dof_vel"],  # 12
-                self.actions,  # 12
-            ),
-            dim=-1,
-        )
 
         self.last_actions.copy_(self.actions)
         self.last_dof_vel.copy_(self.dof_vel)
@@ -254,6 +269,7 @@ class Go2Env:
 
         # random sample command upon reset
         self._resample_commands(envs_idx)
+        self._update_state()
 
         return self.obs_buf, None
 
