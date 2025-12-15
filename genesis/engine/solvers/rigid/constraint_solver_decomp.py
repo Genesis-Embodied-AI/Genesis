@@ -106,42 +106,24 @@ class ConstraintSolver:
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
 
-    def clear(self, envs_idx=None, cache_only: bool = False):
-        self._eq_const_info_cache.clear()
-        if cache_only:
-            return
-
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
-        constraint_solver_kernel_clear(
-            envs_idx=envs_idx,
-            constraint_state=self.constraint_state,
-            static_rigid_sim_config=self._solver._static_rigid_sim_config,
-        )
-
-    def reset(self, envs_idx=None, clear_contraints_info=True):
+    def clear(self):
         self._eq_const_info_cache.clear()
 
-        if gs.use_zerocopy and not clear_contraints_info:
-            n_constraints = ti_to_torch(self.constraint_state.n_constraints, copy=False)
-            n_constraints_equality = ti_to_torch(self.constraint_state.n_constraints_equality, copy=False)
-            n_constraints_frictionloss = ti_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
+    def reset(self, envs_idx=None):
+        self._eq_const_info_cache.clear()
+
+        if gs.use_zerocopy:
+            is_warmstart = ti_to_torch(self.constraint_state.is_warmstart, copy=False)
             qacc_ws = ti_to_torch(self.constraint_state.qacc_ws, copy=False)
             if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
-                    n_constraints.masked_fill_(envs_idx, 0)
-                    n_constraints_equality.masked_fill_(envs_idx, 0)
-                    n_constraints_frictionloss.masked_fill_(envs_idx, 0)
+                    is_warmstart.masked_fill_(envs_idx, False)
                     qacc_ws.masked_fill_(envs_idx[None], 0.0)
                 else:
-                    n_constraints.scatter_(0, envs_idx, 0)
-                    n_constraints_equality.scatter_(0, envs_idx, 0)
-                    n_constraints_frictionloss.scatter_(0, envs_idx, 0)
+                    is_warmstart.scatter_(0, envs_idx, False)
                     qacc_ws.scatter_(1, envs_idx[None].expand((qacc_ws.shape[0], -1)), 0.0)
             else:
-                n_constraints[envs_idx] = 0
-                n_constraints_equality[envs_idx] = 0
-                n_constraints_frictionloss[envs_idx] = 0
+                is_warmstart[envs_idx] = False
                 qacc_ws[:, envs_idx] = 0.0
             return
 
@@ -154,6 +136,8 @@ class ConstraintSolver:
         )
 
     def add_equality_constraints(self):
+        self._eq_const_info_cache.clear()
+
         add_equality_constraints(
             links_info=self._solver.links_info,
             links_state=self._solver.links_state,
@@ -394,40 +378,18 @@ class ConstraintSolver:
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def constraint_solver_kernel_clear(
-    envs_idx: ti.types.ndarray(),
-    static_rigid_sim_config: ti.template(),
-    constraint_state: array_class.ConstraintState,
-):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        constraint_state.n_constraints[i_b] = 0
-        constraint_state.n_constraints_equality[i_b] = 0
-        constraint_state.n_constraints_frictionloss[i_b] = 0
-
-
-@ti.kernel(fastcache=gs.use_fastcache)
 def constraint_solver_kernel_reset(
     envs_idx: ti.types.ndarray(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
     n_dofs = constraint_state.qacc_ws.shape[0]
-    len_constraints = constraint_state.jac.shape[0]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        constraint_state.n_constraints[i_b] = 0
-        constraint_state.n_constraints_equality[i_b] = 0
-        constraint_state.n_constraints_frictionloss[i_b] = 0
+        constraint_state.is_warmstart[i_b] = False
         for i_d in range(n_dofs):
             constraint_state.qacc_ws[i_d, i_b] = 0.0
-            for i_c in range(len_constraints):
-                constraint_state.jac[i_c, i_d, i_b] = 0.0
-        if ti.static(static_rigid_sim_config.sparse_solve):
-            for i_c in range(len_constraints):
-                constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
 @ti.func
@@ -1399,6 +1361,7 @@ def func_update_qacc(
 ):
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
@@ -1407,6 +1370,10 @@ def func_update_qacc(
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
             errno[None] = errno[None] | 0b00000000000000000000000000000100
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        constraint_state.is_warmstart[i_b] = True
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -2115,13 +2082,25 @@ def func_init_solver(
         for i_d, i_b in ti.ndrange(n_dofs, _B):
             if constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
                 constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+                constraint_state.Ma[i_d, i_b] = constraint_state.Ma_ws[i_d, i_b]
             else:
                 constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
     else:
         # Always initialize from warmstart
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(n_dofs, _B):
-            constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+            if constraint_state.is_warmstart[i_b]:
+                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+            else:
+                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+
+        initialize_Ma(
+            Ma=constraint_state.Ma,
+            qacc=constraint_state.qacc,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
     # Initialize solver accordingly
     initialize_Jaref(

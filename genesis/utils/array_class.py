@@ -170,6 +170,7 @@ def get_rigid_global_info(solver):
 
 @DATA_ORIENTED
 class StructConstraintState(metaclass=BASE_METACLASS):
+    is_warmstart: V_ANNOTATION
     n_constraints: V_ANNOTATION
     ti_n_equalities: V_ANNOTATION
     jac: V_ANNOTATION
@@ -263,6 +264,7 @@ def get_constraint_state(constraint_solver, solver):
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
+        is_warmstart=V(dtype=gs.ti_bool, shape=(_B,)),
         improved=V(dtype=gs.ti_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.ti_float, shape=(_B,)),
         gauss=V(dtype=gs.ti_float, shape=(_B,)),

@@ -1016,10 +1016,6 @@ def _np_transform_by_quat(v, quat, out=None):
 
 @torch.jit.script
 def _tc_transform_by_quat(v, quat, out: torch.Tensor | None = None):
-    if out is None:
-        out = torch.empty(v.shape, dtype=v.dtype, device=v.device)
-    u_x, u_y, u_z = out[..., :1], out[..., 1:2], out[..., 2:]
-
     q_w, q_x, q_y, q_z = quat[..., :1], quat[..., 1:2], quat[..., 2:3], quat[..., 3:]
     q_ww, q_wx, q_wy, q_wz = q_w * q_w, q_w * q_x, q_w * q_y, q_w * q_z
     q_xx, q_xy, q_xz = q_x * q_x, q_x * q_y, q_x * q_z
@@ -1028,6 +1024,10 @@ def _tc_transform_by_quat(v, quat, out: torch.Tensor | None = None):
 
     vs = v / (q_ww + q_xx + q_yy + q_zz)
     v_x, v_y, v_z = vs[..., :1], vs[..., 1:2], vs[..., 2:]
+
+    if out is None:
+        out = torch.empty(vs.shape, dtype=vs.dtype, device=vs.device)
+    u_x, u_y, u_z = out[..., :1], out[..., 1:2], out[..., 2:]
 
     u_x.copy_(v_x * (q_xx + q_ww - q_yy - q_zz) + v_y * (2.0 * q_xy - 2.0 * q_wz) + v_z * (2.0 * q_xz + 2.0 * q_wy))
     u_y.copy_(v_x * (2.0 * q_wz + 2.0 * q_xy) + v_y * (q_ww - q_xx + q_yy - q_zz) + v_z * (2.0 * q_yz - 2.0 * q_wx))

@@ -960,7 +960,6 @@ class RigidSolver(Solver):
             if self._use_contact_island:
                 self.constraint_solver.clear()
             else:
-                self.constraint_solver.clear(cache_only=True)
                 self.constraint_solver.add_equality_constraints()
 
         if self._enable_collision:
@@ -1770,7 +1769,7 @@ class RigidSolver(Solver):
             friction_ratio, geoms_idx, envs_idx, self.geoms_state, self._static_rigid_sim_config
         )
 
-    def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
+    def set_qpos(self, qpos, qs_idx=None, envs_idx=None):
         if gs.use_zerocopy:
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
             qs_mask = indices_to_mask(qs_idx)
@@ -1799,30 +1798,29 @@ class RigidSolver(Solver):
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
         self.collider.reset(envs_idx, cache_only=True)
-        if not isinstance(envs_idx, torch.Tensor) or (not skip_forward and envs_idx.dtype == torch.bool):
+        if not isinstance(envs_idx, torch.Tensor):
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        if not skip_forward:
-            self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
-            if self._use_contact_island:
-                self.constraint_solver.reset(envs_idx)
-            else:
-                self.constraint_solver.reset(envs_idx, clear_contraints_info=not skip_forward)
-        if not skip_forward:
-            kernel_forward_kinematics_links_geoms(
-                envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_state=self.joints_state,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
-                entities_info=self.entities_info,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+            self.constraint_solver.reset(envs_idx)
+
+        if envs_idx.dtype == torch.bool:
+            fn = kernel_masked_forward_kinematics_links_geoms
+        else:
+            fn = kernel_forward_kinematics_links_geoms
+        fn(
+            envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            geoms_state=self.geoms_state,
+            geoms_info=self.geoms_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
     def set_global_sol_params(self, sol_params):
         """
@@ -2007,7 +2005,7 @@ class RigidSolver(Solver):
                     assign_indexed_tensor(vel, mask, velocity)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
-            if not skip_forward and (not isinstance(envs_idx, torch.Tensor) or envs_idx.dtype == torch.bool):
+            if not skip_forward and not isinstance(envs_idx, torch.Tensor):
                 envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         else:
             velocity, dofs_idx, envs_idx = self._sanitize_io_variables(
@@ -2021,7 +2019,11 @@ class RigidSolver(Solver):
                 kernel_set_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
         if not skip_forward:
-            kernel_forward_velocity(
+            if envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_velocity
+            else:
+                fn = kernel_forward_velocity
+            fn(
                 envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
@@ -2061,9 +2063,9 @@ class RigidSolver(Solver):
         )
 
         self.collider.reset(envs_idx, cache_only=True)
-        self.collider.clear(envs_idx)
         if self.constraint_solver is not None:
             self.constraint_solver.reset(envs_idx)
+
         kernel_forward_kinematics_links_geoms(
             envs_idx,
             links_state=self.links_state,
@@ -4542,6 +4544,50 @@ def kernel_forward_kinematics_links_geoms(
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
+def kernel_masked_forward_kinematics_links_geoms(
+    envs_mask: ti.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            func_update_cartesian_space(
+                i_b=i_b,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                geoms_info=geoms_info,
+                geoms_state=geoms_state,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                force_update_fixed_geoms=True,
+            )
+            func_forward_velocity(
+                i_b=i_b,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_forward_velocity(
     envs_idx: ti.types.ndarray(),
     links_state: array_class.LinksState,
@@ -4564,6 +4610,31 @@ def kernel_forward_velocity(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
         )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_masked_forward_velocity(
+    envs_mask: ti.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            func_forward_velocity(
+                i_b=i_b,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
 
 @ti.func
