@@ -68,7 +68,7 @@ cam = scene.add_camera(
 scene.build()
 
 num_iter = 300
-lr = 1e-2
+lr = 1e-4
 
 init_pos = gs.tensor([0.0, 0.0, 0.0], requires_grad=True)
 init_quat = gs.tensor([1.0, 0.0, 0.0, 0.0], requires_grad=True)
@@ -121,6 +121,8 @@ for iter in range(num_iter):
     losses.append(loss.item())
 
     plt.plot(losses)
+    # set y axis to log scale
+    plt.yscale('log')
     plt.savefig("loss.png")
     plt.close()
 

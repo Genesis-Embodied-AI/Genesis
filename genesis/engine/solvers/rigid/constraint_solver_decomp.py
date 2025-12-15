@@ -452,10 +452,10 @@ def add_collision_constraints(
     static_rigid_sim_config: ti.template(),
 ):
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b, i_0 in (
-        ti.ndrange(dofs_state.ctrl_mode.shape[1], 1)
+    for i_b, i_0, i_4 in (
+        ti.ndrange(dofs_state.ctrl_mode.shape[1], 1, 4)
         if ti.static(not static_rigid_sim_config.is_backward)
-        else ti.ndrange(dofs_state.ctrl_mode.shape[1], static_rigid_sim_config.max_contact_pairs)
+        else ti.ndrange(dofs_state.ctrl_mode.shape[1], static_rigid_sim_config.max_contact_pairs, 4)
     ):
         EPS = rigid_global_info.EPS[None]
         n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -487,87 +487,88 @@ def add_collision_constraints(
                 if link_b > -1:
                     invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-                for i in range(4) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(4)):
-                    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                    n = d * contact_data_friction - contact_data_normal
+                #for i in range(4) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(4)):
+                i = i_4
+                d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+                n = d * contact_data_friction - contact_data_normal
 
-                    n_con = i_col * 4 + i  # + constraint_state.n_constraints[i_b]
-                    if ti.static(static_rigid_sim_config.sparse_solve):
-                        for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                            i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
-                            constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
-                    else:
-                        for i_d in (
-                            range(n_dofs)
-                            if ti.static(not static_rigid_sim_config.is_backward)
-                            else ti.static(range(static_rigid_sim_config.n_dofs))
-                        ):
-                            constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
+                n_con = i_col * 4 + i  # + constraint_state.n_constraints[i_b]
+                if ti.static(static_rigid_sim_config.sparse_solve):
+                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
+                        i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+                        constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
+                else:
+                    for i_d in (
+                        range(n_dofs)
+                        if ti.static(not static_rigid_sim_config.is_backward)
+                        else ti.static(range(static_rigid_sim_config.n_dofs))
+                    ):
+                        constraint_state.jac[n_con, i_d, i_b] = gs.ti_float(0.0)
 
-                    con_n_relevant_dofs = 0
-                    jac_qvel = gs.ti_float(0.0)
-                    for i_ab in range(2) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(2)):
-                        sign = gs.ti_float(-1.0)
-                        link = link_a
-                        if i_ab == 1:
-                            sign = gs.ti_float(1.0)
-                            link = link_b
+                con_n_relevant_dofs = 0
+                jac_qvel = gs.ti_float(0.0)
+                for i_ab in range(2) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(2)):
+                    sign = gs.ti_float(-1.0)
+                    link = link_a
+                    if i_ab == 1:
+                        sign = gs.ti_float(1.0)
+                        link = link_b
 
-                        # FIXME: Set number of iterations to look for parent to certain value for autodiff
-                        for i_parent in (
-                            range(20) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(1))
-                        ):
-                            if link > -1:
-                                link_maybe_batch = (
-                                    [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
+                    # FIXME: Set number of iterations to look for parent to certain value for autodiff
+                    for i_parent in (
+                        range(20) if ti.static(not static_rigid_sim_config.is_backward) else ti.static(range(5))
+                    ):
+                        if link > -1:
+                            link_maybe_batch = (
+                                [link, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link
+                            )
+
+                            # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                            for i_d_ in (
+                                range(links_info.n_dofs[link_maybe_batch])
+                                if ti.static(not static_rigid_sim_config.is_backward)
+                                else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
+                            ):
+                                if i_d_ < links_info.n_dofs[link_maybe_batch]:
+                                    i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
+
+                                    cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                                    cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+
+                                    t_quat = gu.ti_identity_quat()
+                                    t_pos = contact_data_pos - links_state.root_COM[link, i_b]
+                                    _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+
+                                    diff = sign * vel
+                                    jac = diff @ n
+                                    jac_qvel += jac * dofs_state.vel[i_d, i_b]
+                                    constraint_state.jac[n_con, i_d, i_b] += jac
+
+                                    if ti.static(static_rigid_sim_config.sparse_solve):
+                                        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
+                                        con_n_relevant_dofs += 1
+
+                            link = links_info.parent_idx[link_maybe_batch]
+
+                        if ti.static(static_rigid_sim_config.is_backward):
+                            if i_parent == 4 and link > -1:
+                                print(
+                                    "Warning: Number of parents is too large for backward mode in add_collision_constraints"
                                 )
 
-                                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
-                                for i_d_ in (
-                                    range(links_info.n_dofs[link_maybe_batch])
-                                    if ti.static(not static_rigid_sim_config.is_backward)
-                                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_link))
-                                ):
-                                    if i_d_ < links_info.n_dofs[link_maybe_batch]:
-                                        i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
+                if ti.static(static_rigid_sim_config.sparse_solve):
+                    constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                imp, aref = gu.imp_aref(
+                    contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
+                )
 
-                                        cdof_ang = dofs_state.cdof_ang[i_d, i_b]
-                                        cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+                diag_0 = invweight + contact_data_friction * contact_data_friction * invweight
+                diag_1 = diag_0 * 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
+                diag = ti.max(diag_1, EPS)
 
-                                        t_quat = gu.ti_identity_quat()
-                                        t_pos = contact_data_pos - links_state.root_COM[link, i_b]
-                                        _, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
-
-                                        diff = sign * vel
-                                        jac = diff @ n
-                                        jac_qvel += jac * dofs_state.vel[i_d, i_b]
-                                        constraint_state.jac[n_con, i_d, i_b] += jac
-
-                                        if ti.static(static_rigid_sim_config.sparse_solve):
-                                            constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                                            con_n_relevant_dofs += 1
-
-                                link = links_info.parent_idx[link_maybe_batch]
-
-                            if ti.static(static_rigid_sim_config.is_backward):
-                                if i_parent == 4 and link > -1:
-                                    print(
-                                        "Warning: Number of parents is too large for backward mode in add_collision_constraints"
-                                    )
-
-                    if ti.static(static_rigid_sim_config.sparse_solve):
-                        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-                    imp, aref = gu.imp_aref(
-                        contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
-                    )
-
-                    diag_0 = invweight + contact_data_friction * contact_data_friction * invweight
-                    diag_1 = diag_0 * 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
-                    diag = ti.max(diag_1, EPS)
-
-                    constraint_state.diag[n_con, i_b] = diag
-                    constraint_state.aref[n_con, i_b] = aref
-                    constraint_state.efc_D[n_con, i_b] = 1 / diag
+                constraint_state.diag[n_con, i_b] = diag
+                constraint_state.aref[n_con, i_b] = aref
+                constraint_state.efc_D[n_con, i_b] = 1 / diag
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(dofs_state.ctrl_mode.shape[1]):
@@ -858,16 +859,16 @@ def add_inequality_constraints(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
         )
-    if ti.static(static_rigid_sim_config.enable_joint_limit):
-        add_joint_limit_constraints(
-            links_info=links_info,
-            joints_info=joints_info,
-            dofs_info=dofs_info,
-            dofs_state=dofs_state,
-            rigid_global_info=rigid_global_info,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
+    # if ti.static(static_rigid_sim_config.enable_joint_limit):
+    #     add_joint_limit_constraints(
+    #         links_info=links_info,
+    #         joints_info=joints_info,
+    #         dofs_info=dofs_info,
+    #         dofs_state=dofs_state,
+    #         rigid_global_info=rigid_global_info,
+    #         constraint_state=constraint_state,
+    #         static_rigid_sim_config=static_rigid_sim_config,
+    #     )
 
 
 @ti.func

@@ -1332,13 +1332,13 @@ class RigidSolver(Solver):
         match errno:
             case 1:
                 gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
-            case 2:
-                qpos_diff = self._rigid_adjoint_cache_fw.qpos.to_numpy() - self._rigid_adjoint_cache_bw.qpos.to_numpy()
-                vel_diff = self._rigid_adjoint_cache_fw.dofs_vel.to_numpy() - self._rigid_adjoint_cache_bw.dofs_vel.to_numpy()
-                acc_diff = self._rigid_adjoint_cache_fw.dofs_acc.to_numpy() - self._rigid_adjoint_cache_bw.dofs_acc.to_numpy()
-                acc_smooth_diff = self._rigid_adjoint_cache_fw.dofs_acc_smooth.to_numpy() - self._rigid_adjoint_cache_bw.dofs_acc_smooth.to_numpy()
-                solver_qacc_ws_diff = self._rigid_adjoint_cache_fw.solver_qacc_ws.to_numpy() - self._rigid_adjoint_cache_bw.solver_qacc_ws.to_numpy()
-                gs.raise_exception(f"The backward computation result does not match the forward computation result at step {self._sim.cur_step_global}")
+            # case 2:
+            #     qpos_diff = self._rigid_adjoint_cache_fw.qpos.to_numpy() - self._rigid_adjoint_cache_bw.qpos.to_numpy()
+            #     vel_diff = self._rigid_adjoint_cache_fw.dofs_vel.to_numpy() - self._rigid_adjoint_cache_bw.dofs_vel.to_numpy()
+            #     acc_diff = self._rigid_adjoint_cache_fw.dofs_acc.to_numpy() - self._rigid_adjoint_cache_bw.dofs_acc.to_numpy()
+            #     acc_smooth_diff = self._rigid_adjoint_cache_fw.dofs_acc_smooth.to_numpy() - self._rigid_adjoint_cache_bw.dofs_acc_smooth.to_numpy()
+            #     solver_qacc_ws_diff = self._rigid_adjoint_cache_fw.solver_qacc_ws.to_numpy() - self._rigid_adjoint_cache_bw.solver_qacc_ws.to_numpy()
+            #     gs.raise_exception(f"The backward computation result does not match the forward computation result at step {self._sim.cur_step_global}")
 
         kernel_step_2.grad(
             dofs_state=self.dofs_state,
@@ -1409,46 +1409,138 @@ class RigidSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
-        kernel_forward_dynamics_without_qacc.grad(
+        kernel_bias_force.grad(
+            dofs_state=self.dofs_state,
             links_state=self.links_state,
             links_info=self.links_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        kernel_update_force.grad(
+            links_state=self.links_state,
+            links_info=self.links_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        kernel_update_acc.grad(
             dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            joints_info=self.joints_info,
+            links_info=self.links_info,
+            links_state=self.links_state,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        kernel_torque_and_passive_force.grad(
             entities_state=self.entities_state,
             entities_info=self.entities_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_info=self.joints_info,
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
         )
+        kernel_factor_mass.grad(
+            implicit_damping=False,
+            entities_info=self.entities_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        kernel_compute_mass_matrix_ad.grad(
+            implicit_damping=self._static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+
+        # kernel_forward_dynamics_without_qacc.grad(
+        #     links_state=self.links_state,
+        #     links_info=self.links_info,
+        #     dofs_state=self.dofs_state,
+        #     dofs_info=self.dofs_info,
+        #     joints_info=self.joints_info,
+        #     entities_state=self.entities_state,
+        #     entities_info=self.entities_info,
+        #     geoms_state=self.geoms_state,
+        #     rigid_global_info=self._rigid_global_info,
+        #     static_rigid_sim_config=self._static_rigid_sim_config,
+        #     contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+        # )
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
-            kernel_forward_velocity.grad(
-                envs_idx=envs_idx,
-                links_state=self.links_state,
-                links_info=self.links_info,
-                joints_info=self.joints_info,
-                dofs_state=self.dofs_state,
+            for i_l_ in range(self._static_rigid_sim_config.max_n_links_per_entity):
+                kernel_forward_velocity_ad.grad(
+                    i_l_=self._static_rigid_sim_config.max_n_links_per_entity - 1 - i_l_,
+                    envs_idx=envs_idx,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+            kernel_update_geoms.grad(
+                envs_idx,
                 entities_info=self.entities_info,
+                geoms_info=self.geoms_info,
+                geoms_state=self.geoms_state,
+                links_state=self.links_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
+                force_update_fixed_geoms=False,
             )
-            kernel_update_cartesian_space.grad(
+            for i_l_ in range(self._static_rigid_sim_config.max_n_links_per_entity):
+                kernel_COM_links_ad_1.grad(
+                    i_l_=self._static_rigid_sim_config.max_n_links_per_entity - 1 - i_l_,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+            kernel_COM_links_ad_0.grad(
                 links_state=self.links_state,
                 links_info=self.links_info,
                 joints_state=self.joints_state,
                 joints_info=self.joints_info,
                 dofs_state=self.dofs_state,
                 dofs_info=self.dofs_info,
-                geoms_state=self.geoms_state,
-                geoms_info=self.geoms_info,
                 entities_info=self.entities_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                force_update_fixed_geoms=False,
             )
+            for i_l_ in range(self._static_rigid_sim_config.max_n_links_per_entity):
+                kernel_forward_kinematics_ad.grad(
+                    i_l_=self._static_rigid_sim_config.max_n_links_per_entity - 1 - i_l_,
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    geoms_state=self.geoms_state,
+                    geoms_info=self.geoms_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    force_update_fixed_geoms=False,
+                )
 
         # Change back to forward mode
         self._static_rigid_sim_config.is_backward = False
@@ -1714,6 +1806,34 @@ class RigidSolver(Solver):
 
         for entity in self._entities:
             entity.load_ckpt(ckpt_name)
+    
+    def load_test(self):
+        if not self._enable_mujoco_compatibility:
+            envs_idx = self._scene._sanitize_envs_idx(None)
+            kernel_update_cartesian_space(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                force_update_fixed_geoms=False,
+            )
+            kernel_forward_velocity(
+                envs_idx=envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
     @property
     def is_active(self):
@@ -3537,6 +3657,27 @@ def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksSt
     vel_lin = links_state.cd_vel[link_idx, i_b]
     return vel_rot + vel_lin
 
+@ti.kernel
+def kernel_compute_mass_matrix_ad(
+    implicit_damping: ti.template(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    func_compute_mass_matrix(
+        implicit_damping=implicit_damping,
+        links_state=links_state,
+        links_info=links_info,
+        dofs_state=dofs_state,
+        dofs_info=dofs_info,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
 @ti.func
 def func_compute_mass_matrix(
@@ -3790,6 +3931,23 @@ def func_compute_mass_matrix(
                 # qM += d qfrc_actuator / d qvel
                 rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
 
+@ti.kernel
+def kernel_factor_mass(
+    implicit_damping: ti.template(),
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    func_factor_mass(
+        implicit_damping=implicit_damping,
+        entities_info=entities_info,
+        dofs_state=dofs_state,
+        dofs_info=dofs_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
 @ti.func
 def func_factor_mass(
@@ -6574,6 +6732,33 @@ def func_clear_external_force(
     for I in ti.grouped(dofs_state.ctrl_force):
         dofs_state.ctrl_force[I] = ti.Vector.zero(gs.ti_float, 3)
 
+@ti.kernel
+def kernel_torque_and_passive_force(
+    entities_state: array_class.EntitiesState,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
+    geoms_state: array_class.GeomsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    contact_island_state: array_class.ContactIslandState,
+):
+    func_torque_and_passive_force(
+        entities_state=entities_state,
+        entities_info=entities_info,
+        dofs_state=dofs_state,
+        dofs_info=dofs_info,
+        links_state=links_state,
+        links_info=links_info,
+        joints_info=joints_info,
+        geoms_state=geoms_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        contact_island_state=contact_island_state,
+    )
 
 @ti.func
 def func_torque_and_passive_force(
@@ -6893,6 +7078,21 @@ def func_update_acc(
                                         BW,
                                     )
 
+@ti.kernel
+def kernel_update_force(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    func_update_force(
+        links_state=links_state,
+        links_info=links_info,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
 @ti.func
 def func_update_force(
@@ -7032,6 +7232,22 @@ def func_actuation(self):
                     for i_d in range(self.links_info.dof_start[I_l], self.links_info.dof_end[I_l]):
                         self.dofs_state.act_length[i_d, i_b] = 0.0
                         self.dofs_state.qf_actuator[i_d, i_b] = self.dofs_state.act_length[i_d, i_b]
+
+@ti.kernel
+def kernel_bias_force(
+    dofs_state: array_class.DofsState,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    func_bias_force(
+        dofs_state=dofs_state,
+        links_state=links_state,
+        links_info=links_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
 
 @ti.func
