@@ -5167,21 +5167,17 @@ def func_forward_kinematics_entity(
                         pos = W(links_state.pos_bw, next_I, pos_, BW)
                     elif joint_type == gs.JOINT_TYPE.REVOLUTE:
                         axis = dofs_info.motion_ang[I_d]
-                        dofs_state.pos[dof_start, i_b] = (
-                            rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
-                        )
-                        qloc = gu.ti_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], EPS)
+                        dofs_state.pos[dof_start, i_b] = rigid_global_info.qpos[q_start, i_b]
+                        qloc = gu.ti_rotvec_to_quat(axis * rigid_global_info.qpos[q_start, i_b], EPS)
                         quat_ = gu.ti_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
                         quat = WR(links_state.quat_bw, next_I, quat_, BW)
                         pos_ = joints_state.xanchor[i_j, i_b] - gu.ti_transform_by_quat(joints_info.pos[I_j], quat)
                         pos = W(links_state.pos_bw, next_I, pos_, BW)
                     else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
-                        dofs_state.pos[dof_start, i_b] = (
-                            rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
-                        )
+                        dofs_state.pos[dof_start, i_b] = rigid_global_info.qpos[q_start, i_b]
                         pos_ = (
                             R(links_state.pos_bw, curr_I, pos, BW)
-                            + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
+                            + joints_state.xaxis[i_j, i_b] * rigid_global_info.qpos[q_start, i_b]
                         )
                         pos = W(links_state.pos_bw, next_I, pos_, BW)
 
@@ -5825,7 +5821,7 @@ def func_torque_and_passive_force(
                                 joint_type == gs.JOINT_TYPE.FREE and i_d >= links_info.dof_start[I_l] + 3
                             ):
                                 force = dofs_info.kp[I_d] * (
-                                    dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]
+                                    dofs_state.ctrl_pos[i_d, i_b] - rigid_global_info.qpos[q_start + i_d, i_b]
                                 ) + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
 
                             dofs_state.qf_applied[i_d, i_b] = ti.math.clamp(
@@ -5979,13 +5975,14 @@ def func_torque_and_passive_force(
                                     if ti.static(static_rigid_sim_config.batch_dofs_info)
                                     else dof_start + j_d
                                 )
+                                offset = (
+                                    rigid_global_info.qpos[q_start + j_d, i_b]
+                                    - rigid_global_info.qpos0[q_start + j_d, i_b]
+                                )
                                 func_add_safe_backward(
                                     dofs_state.qf_passive,
                                     [dof_start + j_d, i_b],
-                                    # dofs_state.pos = qpos - qpos0
-                                    # using dofs_state instead of qpos here allows
-                                    # qpos to be pulled into qpos0 instead 0
-                                    -dofs_state.pos[dof_start + j_d, i_b] * dofs_info.stiffness[I_d],
+                                    -offset * dofs_info.stiffness[I_d],
                                     BW,
                                 )
 
@@ -7623,7 +7620,7 @@ def kernel_set_dofs_position(
                 for i_d_ in range(links_info.dof_end[I_l] - dof_start):
                     i_q = q_start + i_d_
                     i_d = dof_start + i_d_
-                    rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos0[i_q, i_b] + dofs_state.pos[i_d, i_b]
+                    rigid_global_info.qpos[i_q, i_b] = dofs_state.pos[i_d, i_b]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
