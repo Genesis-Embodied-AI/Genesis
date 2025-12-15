@@ -246,6 +246,7 @@ class RigidSolver(Solver):
         is_rigid_solver = type(self) is RigidSolver
         if is_rigid_solver:
             static_rigid_sim_config = dict(
+                backend=gs.backend,
                 para_level=self.sim._para_level,
                 requires_grad=self.sim.options.requires_grad,
                 use_hibernation=self._use_hibernation,
@@ -277,6 +278,7 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
         else:
             self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
+                backend=gs.backend,
                 para_level=self.sim._para_level,
                 requires_grad=self.sim.options.requires_grad,
                 enable_collision=self._enable_collision,
@@ -532,6 +534,10 @@ class RigidSolver(Solver):
         has_dofs = sum(joint.n_dofs for joint in joints) > 0
         if has_dofs:  # handle the case where there is a link with no dofs -- otherwise may cause invalid memory
             kernel_init_dof_fields(
+                entity_idx=np.concatenate(
+                    [(joint.link._entity_idx_in_solver,) * joint.n_dofs for joint in joints if joint.n_dofs],
+                    dtype=gs.np_int,
+                ),
                 dofs_motion_ang=np.concatenate([joint.dofs_motion_ang for joint in joints], dtype=gs.np_float),
                 dofs_motion_vel=np.concatenate([joint.dofs_motion_vel for joint in joints], dtype=gs.np_float),
                 dofs_limit=np.concatenate([joint.dofs_limit for joint in joints], dtype=gs.np_float),
@@ -2828,6 +2834,7 @@ def kernel_init_meaninertia(
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_init_dof_fields(
     # input np array
+    entity_idx: ti.types.ndarray(),
     dofs_motion_ang: ti.types.ndarray(),
     dofs_motion_vel: ti.types.ndarray(),
     dofs_limit: ti.types.ndarray(),
@@ -2867,6 +2874,7 @@ def kernel_init_dof_fields(
         dofs_info.frictionloss[I_d] = dofs_frictionloss[i_d]
         dofs_info.kp[I_d] = dofs_kp[i_d]
         dofs_info.kv[I_d] = dofs_kv[i_d]
+        dofs_info.entity_idx[I_d] = entity_idx[i_d]
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d, i_b in ti.ndrange(n_dofs, _B):

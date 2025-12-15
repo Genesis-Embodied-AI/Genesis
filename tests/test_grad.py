@@ -258,6 +258,7 @@ def test_diff_solver(monkeypatch):
     # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
     def constraint_solver_resolve():
         func_init_solver(
+            dofs_info=rigid_solver.dofs_info,
             dofs_state=rigid_solver.dofs_state,
             entities_info=rigid_solver.entities_info,
             constraint_state=constraint_solver.constraint_state,

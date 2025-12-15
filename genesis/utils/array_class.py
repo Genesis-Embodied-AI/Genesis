@@ -271,7 +271,7 @@ def get_constraint_state(constraint_solver, solver):
         cost=V(dtype=gs.ti_float, shape=(_B,)),
         prev_cost=V(dtype=gs.ti_float, shape=(_B,)),
         gtol=V(dtype=gs.ti_float, shape=(_B,)),
-        ls_it=V(dtype=gs.ti_float, shape=(_B,)),
+        ls_it=V(dtype=gs.ti_int, shape=(_B,)),
         ls_result=V(dtype=gs.ti_int, shape=(_B,)),
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
@@ -1124,6 +1124,7 @@ def get_sdf_info(n_geoms, n_cells):
 
 @DATA_ORIENTED
 class StructDofsInfo(metaclass=BASE_METACLASS):
+    entity_idx: V_ANNOTATION
     stiffness: V_ANNOTATION
     invweight: V_ANNOTATION
     armature: V_ANNOTATION
@@ -1141,6 +1142,7 @@ def get_dofs_info(solver):
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
     return StructDofsInfo(
+        entity_idx=V(dtype=gs.ti_int, shape=shape),
         stiffness=V(dtype=gs.ti_float, shape=shape),
         invweight=V(dtype=gs.ti_float, shape=shape),
         armature=V(dtype=gs.ti_float, shape=shape),
@@ -1799,6 +1801,7 @@ def get_rigid_adjoint_cache(solver):
 
 @ti.data_oriented
 class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
+    backend: int
     para_level: int
     enable_collision: bool
     use_hibernation: bool = False

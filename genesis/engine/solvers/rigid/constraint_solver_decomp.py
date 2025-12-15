@@ -174,6 +174,7 @@ class ConstraintSolver:
 
     def resolve(self):
         func_init_solver(
+            dofs_info=self._solver.dofs_info,
             dofs_state=self._solver.dofs_state,
             entities_info=self._solver.entities_info,
             constraint_state=self.constraint_state,
@@ -1303,14 +1304,14 @@ def func_nt_chol_factor(
     for i_d in range(n_dofs):
         tmp = constraint_state.nt_H[i_d, i_d, i_b]
         for j_d in range(i_d):
-            tmp = tmp - constraint_state.nt_H[i_d, j_d, i_b] ** 2
+            tmp -= constraint_state.nt_H[i_d, j_d, i_b] ** 2
         constraint_state.nt_H[i_d, i_d, i_b] = ti.sqrt(ti.max(tmp, EPS))
 
         tmp = 1.0 / constraint_state.nt_H[i_d, i_d, i_b]
         for j_d in range(i_d + 1, n_dofs):
             dot = gs.ti_float(0.0)
             for k_d in range(i_d):
-                dot = dot + constraint_state.nt_H[j_d, k_d, i_b] * constraint_state.nt_H[i_d, k_d, i_b]
+                dot += constraint_state.nt_H[j_d, k_d, i_b] * constraint_state.nt_H[i_d, k_d, i_b]
             constraint_state.nt_H[j_d, i_d, i_b] = (constraint_state.nt_H[j_d, i_d, i_b] - dot) * tmp
 
 
@@ -2026,24 +2027,27 @@ def initialize_Jaref(
 def initialize_Ma(
     Ma: array_class.V_ANNOTATION,
     qacc: array_class.V_ANNOTATION,
+    dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     _B = rigid_global_info.mass_mat.shape[2]
-    n_entities = entities_info.n_links.shape[0]
+    n_dofs = qacc.shape[0]
+
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_e, i_b in ti.ndrange(n_entities, _B):
-        for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            Ma_ = gs.ti_float(0.0)
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                Ma_ += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
-            Ma[i_d1, i_b] = Ma_
+    for i_d1, i_b in ti.ndrange(n_dofs, _B):
+        I_d1 = [i_d1, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d1
+        i_e = dofs_info.entity_idx[I_d1]
+        Ma_ = gs.ti_float(0.0)
+        for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+            Ma_ += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+        Ma[i_d1, i_b] = Ma_
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def func_init_solver(
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
@@ -2058,6 +2062,7 @@ def func_init_solver(
         initialize_Ma(
             Ma=constraint_state.Ma_ws,
             qacc=constraint_state.qacc_ws,
+            dofs_info=dofs_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -2084,6 +2089,7 @@ def func_init_solver(
         initialize_Ma(
             Ma=constraint_state.Ma,
             qacc=dofs_state.acc_smooth,
+            dofs_info=dofs_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -2126,6 +2132,7 @@ def func_init_solver(
         initialize_Ma(
             Ma=constraint_state.Ma,
             qacc=constraint_state.qacc,
+            dofs_info=dofs_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -2150,7 +2157,7 @@ def func_init_solver(
         )
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        if ti.static(static_rigid_sim_config.sparse_solve):
+        if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
                 func_nt_hessian_direct(
