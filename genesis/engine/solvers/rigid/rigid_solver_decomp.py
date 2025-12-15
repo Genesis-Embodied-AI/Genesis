@@ -847,11 +847,10 @@ class RigidSolver(Solver):
             self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def _init_constraint_solver(self):
-        if self.links:
-            if self._use_contact_island:
-                self.constraint_solver = ConstraintSolverIsland(self)
-            else:
-                self.constraint_solver = ConstraintSolver(self)
+        if self._use_contact_island:
+            self.constraint_solver = ConstraintSolverIsland(self)
+        else:
+            self.constraint_solver = ConstraintSolver(self)
 
     def substep(self, f):
         # from genesis.utils.tools import create_timer
@@ -940,7 +939,6 @@ class RigidSolver(Solver):
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
 
     def _kernel_detect_collision(self):
-        self.collider.reset(cache_only=True)
         self.collider.clear()
         self.collider.detection()
 
@@ -1478,10 +1476,8 @@ class RigidSolver(Solver):
             )
 
             self._errno[None] = 0
-            self.collider.reset(envs_idx, cache_only=False)
             self.collider.clear(envs_idx)
-            if self.constraint_solver is not None:
-                self.constraint_solver.reset(envs_idx)
+            self.constraint_solver.clear(envs_idx)
 
             for entity in self.entities:
                 if isinstance(entity, DroneEntity):
@@ -1797,12 +1793,11 @@ class RigidSolver(Solver):
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
-        self.collider.reset(envs_idx, cache_only=True)
+        self.collider.reset(envs_idx)
+        self.constraint_solver.reset(envs_idx)
+
         if not isinstance(envs_idx, torch.Tensor):
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        if self.constraint_solver is not None:
-            self.constraint_solver.reset(envs_idx)
-
         if envs_idx.dtype == torch.bool:
             fn = kernel_masked_forward_kinematics_links_geoms
         else:
@@ -2062,9 +2057,8 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
-        self.collider.reset(envs_idx, cache_only=True)
-        if self.constraint_solver is not None:
-            self.constraint_solver.reset(envs_idx)
+        self.collider.reset(envs_idx)
+        self.constraint_solver.reset(envs_idx)
 
         kernel_forward_kinematics_links_geoms(
             envs_idx,
@@ -2797,13 +2791,13 @@ def kernel_init_invweight(
 
     if ti.static(static_rigid_sim_config.batch_dofs_info):
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-        for i_d, i_b_ in ti.ndrange(dofs_info.dof_start.shape[0], envs_idx.shape[0]):
+        for i_d, i_b_ in ti.ndrange(dofs_info.invweight.shape[0], envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             if force_update or dofs_info.invweight[i_d, i_b] < EPS:
                 dofs_info.invweight[i_d, i_b] = dofs_invweight[i_b_, i_d]
     else:
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-        for i_d in range(dofs_info.dof_start.shape[0]):
+        for i_d in range(dofs_info.invweight.shape[0]):
             if force_update or dofs_info.invweight[i_d] < EPS:
                 dofs_info.invweight[i_d] = dofs_invweight[i_d]
 
@@ -2854,6 +2848,7 @@ def kernel_init_dof_fields(
 ):
     n_dofs = dofs_state.ctrl_mode.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
+
     for I_d in ti.grouped(dofs_info.invweight):
         i_d = I_d[0]  # batching (if any) will be the second dim
 
@@ -3273,13 +3268,6 @@ def kernel_init_entity_fields(
 
         entities_info.gravity_compensation[i_e] = entities_gravity_compensation[i_e]
         entities_info.is_local_collision_mask[i_e] = entities_is_local_collision_mask[i_e]
-
-        if ti.static(static_rigid_sim_config.batch_dofs_info):
-            for i_d, i_b in ti.ndrange((entities_dof_start[i_e], entities_dof_end[i_e]), _B):
-                dofs_info.dof_start[i_d, i_b] = entities_dof_start[i_e]
-        else:
-            for i_d in range(entities_dof_start[i_e], entities_dof_end[i_e]):
-                dofs_info.dof_start[i_d] = entities_dof_start[i_e]
 
     if ti.static(static_rigid_sim_config.use_hibernation):
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))

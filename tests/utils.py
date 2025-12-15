@@ -300,7 +300,7 @@ def init_simulators(gs_sim, mj_sim=None, qpos=None, qvel=None):
         gs_robot.set_qpos(qpos)
     if qvel is not None:
         gs_robot.set_dofs_velocity(qvel)
-    # TODO: This should be moved in `set_state`, `set_qpos`, `set_dofs_position`, `set_dofs_velocity`
+
     gs_sim.rigid_solver.dofs_state.qf_constraint.fill(0.0)
     gs_sim.rigid_solver._func_forward_dynamics()
     gs_sim.rigid_solver._func_constraint_force()

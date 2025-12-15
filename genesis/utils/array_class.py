@@ -443,7 +443,7 @@ class StructAggList(metaclass=BASE_METACLASS):
 
 def get_agg_list(solver):
     _B = solver._B
-    n_entities = solver.n_entities
+    n_entities = max(solver.n_entities, 1)
 
     return StructAggList(
         curr=V(dtype=gs.ti_int, shape=(n_entities, _B)),
@@ -474,6 +474,7 @@ class StructContactIslandState(metaclass=BASE_METACLASS):
 def get_contact_island_state(solver, collider):
     _B = solver._B
     max_contact_pairs = max(collider._collider_info.max_contact_pairs[None], 1)
+    n_entities = max(solver.n_entities, 1)
 
     return StructContactIslandState(
         ci_edges=V(dtype=gs.ti_int, shape=(max_contact_pairs, 2, _B)),
@@ -482,15 +483,15 @@ def get_contact_island_state(solver, collider):
         constraint_id=V(dtype=gs.ti_int, shape=(max_contact_pairs * 2, _B)),
         entity_edge=get_agg_list(solver),
         island_col=get_agg_list(solver),
-        island_hibernated=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        island_hibernated=V(dtype=gs.ti_int, shape=(n_entities, _B)),
         island_entity=get_agg_list(solver),
-        entity_id=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        entity_id=V(dtype=gs.ti_int, shape=(n_entities, _B)),
         n_edges=V(dtype=gs.ti_int, shape=(_B,)),
         n_islands=V(dtype=gs.ti_int, shape=(_B,)),
         n_stack=V(dtype=gs.ti_int, shape=(_B,)),
-        entity_island=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
-        stack=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        entity_island=V(dtype=gs.ti_int, shape=(n_entities, _B)),
+        stack=V(dtype=gs.ti_int, shape=(n_entities, _B)),
+        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.ti_int, shape=(n_entities, _B)),
     )
 
 
@@ -1131,7 +1132,6 @@ class StructDofsInfo(metaclass=BASE_METACLASS):
     motion_ang: V_ANNOTATION
     motion_vel: V_ANNOTATION
     limit: V_ANNOTATION
-    dof_start: V_ANNOTATION
     kp: V_ANNOTATION
     kv: V_ANNOTATION
     force_range: V_ANNOTATION
@@ -1149,7 +1149,6 @@ def get_dofs_info(solver):
         motion_ang=V(dtype=gs.ti_vec3, shape=shape),
         motion_vel=V(dtype=gs.ti_vec3, shape=shape),
         limit=V(dtype=gs.ti_vec2, shape=shape),
-        dof_start=V(dtype=gs.ti_int, shape=shape),
         kp=V(dtype=gs.ti_float, shape=shape),
         kv=V(dtype=gs.ti_float, shape=shape),
         force_range=V(dtype=gs.ti_vec2, shape=shape),
