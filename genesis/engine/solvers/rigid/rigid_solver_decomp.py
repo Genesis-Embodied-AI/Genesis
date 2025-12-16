@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
 import numpy as np
-import numpy.typing as npt
 import torch
 
 import genesis as gs
@@ -36,6 +35,9 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
+
+IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
 # minimum constraint impedance
 IMP_MIN = 0.0001
 # maximum constraint impedance
@@ -46,7 +48,9 @@ TIME_CONSTANT_SAFETY_FACTOR = 2.0
 
 
 def _sanitize_sol_params(
-    sol_params: npt.NDArray[np.float64] | torch.Tensor, min_timeconst: float, default_timeconst: float | None = None
+    sol_params,
+    min_timeconst: float,
+    default_timeconst: float | None = None,
 ):
     timeconst, dampratio, dmin, dmax, width, mid, power = sol_params.reshape((-1, 7)).T
     if default_timeconst is None:
@@ -128,8 +132,6 @@ class RigidSolver(Solver):
             )
 
         self._options = options
-
-        self._cur_step = -1
 
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
@@ -903,6 +905,7 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                errno=self._errno,
             )
             if self._requires_grad:
                 kernel_save_adjoint_cache(
@@ -914,27 +917,27 @@ class RigidSolver(Solver):
                 )
 
     def check_errno(self):
-        # Note that errno must be evaluated BEFORE match because otherwise it will be evaluated for each case...
-        # See official documentation: https://docs.python.org/3.10/reference/compound_stmts.html#overview
         if gs.use_zerocopy:
             errno = ti_to_torch(self._errno, copy=None).item()
         else:
             errno = kernel_get_errno(self._errno)
-        match errno:
-            case 1:
-                max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
-                gs.raise_exception(
-                    f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
-                    f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
-                )
-            case 2:
-                max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
-                gs.raise_exception(
-                    f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
-                    "RigidSolver's option 'max_collision_pairs'."
-                )
-            case 3:
-                gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+
+        if errno & 0b00000000000000000000000000000001:
+            max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
+            gs.raise_exception(
+                f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
+                f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
+            )
+        if errno & 0b00000000000000000000000000000010:
+            max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
+            gs.raise_exception(
+                f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
+                "RigidSolver's option 'max_collision_pairs'."
+            )
+        if errno & 0b00000000000000000000000000000100:
+            gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
+        if errno & 0b00000000000000000000000000001000:
+            gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
 
     def _kernel_detect_collision(self):
         self.collider.reset(cache_only=True)
@@ -1239,6 +1242,7 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            errno=self._errno,
         )
 
         # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
@@ -1334,6 +1338,7 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
             # For IPCCoupler, perform full rigid body computation in post-coupling phase
@@ -1478,7 +1483,10 @@ class RigidSolver(Solver):
             self.collider.clear(envs_idx)
             if self.constraint_solver is not None:
                 self.constraint_solver.reset(envs_idx)
-            self._cur_step = -1
+
+            for entity in self.entities:
+                if isinstance(entity, DroneEntity):
+                    entity._prev_prop_t = -1
 
     def process_input(self, in_backward=False):
         for entity in self._entities:
@@ -1536,7 +1544,7 @@ class RigidSolver(Solver):
 
     def _sanitize_io_variables(
         self,
-        tensor: np.typing.ArrayLike | None,
+        tensor: "np.typing.ArrayLike | None",
         inputs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
         input_size: int,
         idx_name: str,
@@ -1764,11 +1772,24 @@ class RigidSolver(Solver):
 
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
-            mask = (0, *indices_to_mask(qs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, qs_idx)
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
-            assign_indexed_tensor(data, mask, qpos)
-            if mask and isinstance(mask[0], torch.Tensor):
-                envs_idx = mask[0].reshape((-1,))
+            qs_mask = indices_to_mask(qs_idx)
+            if (
+                (not qs_mask or isinstance(qs_mask[0], slice))
+                and isinstance(envs_idx, torch.Tensor)
+                and envs_idx.dtype == torch.bool
+            ):
+                qs_data = data[(slice(None), *qs_mask)]
+                if qpos.ndim == 2:
+                    qs_data.masked_scatter_(envs_idx[:, None], qpos)
+                else:
+                    qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
+                    torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
+            else:
+                mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
+                assign_indexed_tensor(data, mask, qpos)
+                if mask and isinstance(mask[0], torch.Tensor):
+                    envs_idx = mask[0].reshape((-1,))
         else:
             qpos, qs_idx, envs_idx = self._sanitize_io_variables(
                 qpos, qs_idx, self.n_qs, "qs_idx", envs_idx, skip_allocation=True
@@ -1778,7 +1799,7 @@ class RigidSolver(Solver):
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
         self.collider.reset(envs_idx, cache_only=True)
-        if not isinstance(envs_idx, torch.Tensor):
+        if not isinstance(envs_idx, torch.Tensor) or (not skip_forward and envs_idx.dtype == torch.bool):
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         if not skip_forward:
             self.collider.clear(envs_idx)
@@ -1957,18 +1978,37 @@ class RigidSolver(Solver):
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             vel = ti_to_torch(self.dofs_state.vel, transpose=True, copy=False)
-            if velocity is None and isinstance(dofs_idx, slice) and isinstance(envs_idx, torch.Tensor):
-                (vel := vel[:, dofs_idx]).scatter_(0, envs_idx[:, None].expand((-1, vel.shape[1])), 0.0)
+            dofs_mask = indices_to_mask(dofs_idx)
+            if (
+                (not dofs_mask or isinstance(dofs_mask[0], slice))
+                and isinstance(envs_idx, torch.Tensor)
+                and (
+                    (velocity is None and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
+                    or (velocity.ndim == 2 and envs_idx.dtype == torch.bool)
+                )
+            ):
+                dofs_vel = vel[(slice(None), *dofs_mask)]
+                if velocity is None:
+                    if envs_idx.dtype == torch.bool:
+                        dofs_vel.masked_fill_(envs_idx[:, None], 0.0)
+                    else:
+                        dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
+                else:
+                    if velocity.ndim == 2:
+                        dofs_vel.masked_scatter_(envs_idx[:, None], velocity)
+                    else:
+                        velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)
+                        torch.where(envs_idx[:, None], velocity, dofs_vel, out=dofs_vel)
             else:
-                mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
+                mask = (0, *dofs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *dofs_mask)
                 if velocity is None:
                     vel[mask] = 0.0
                 else:
                     assign_indexed_tensor(vel, mask, velocity)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
-                elif not isinstance(envs_idx, torch.Tensor):
-                    envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            if not skip_forward and (not isinstance(envs_idx, torch.Tensor) or envs_idx.dtype == torch.bool):
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         else:
             velocity, dofs_idx, envs_idx = self._sanitize_io_variables(
                 velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
@@ -2354,14 +2394,8 @@ class RigidSolver(Solver):
 
     def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False):
         tensor = ti_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True)
-
         if dofs_idx is not None:
-            if isinstance(dofs_idx, (slice, int, np.integer)) or (dofs_idx.ndim == 0):
-                tensor = tensor[:, dofs_idx, dofs_idx]
-                if tensor.ndim == 1:
-                    tensor = tensor.reshape((-1, 1, 1))
-            else:
-                tensor = tensor[:, dofs_idx[:, None], dofs_idx]
+            tensor = tensor[indices_to_mask(None, dofs_idx, dofs_idx)]
         if self.n_envs == 0:
             tensor = tensor[0]
 
@@ -4368,6 +4402,7 @@ def kernel_step_2(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
+    errno: array_class.V_ANNOTATION,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -4426,6 +4461,7 @@ def kernel_step_2(
             dofs_state=dofs_state,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
+            errno=errno,
         )
 
         if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
@@ -5480,11 +5516,9 @@ def kernel_update_vgeoms(
     _B = links_state.pos.shape[1]
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_g, i_b in ti.ndrange(n_vgeoms, _B):
+        i_l = vgeoms_info.link_idx[i_g]
         vgeoms_state.pos[i_g, i_b], vgeoms_state.quat[i_g, i_b] = gu.ti_transform_pos_quat_by_trans_quat(
-            vgeoms_info.pos[i_g],
-            vgeoms_info.quat[i_g],
-            links_state.pos[vgeoms_info.link_idx[i_g], i_b],
-            links_state.quat[vgeoms_info.link_idx[i_g], i_b],
+            vgeoms_info.pos[i_g], vgeoms_info.quat[i_g], links_state.pos[i_l, i_b], links_state.quat[i_l, i_b]
         )
 
 
@@ -5948,7 +5982,10 @@ def func_torque_and_passive_force(
                                 func_add_safe_backward(
                                     dofs_state.qf_passive,
                                     [dof_start + j_d, i_b],
-                                    -rigid_global_info.qpos[q_start + j_d, i_b] * dofs_info.stiffness[I_d],
+                                    # dofs_state.pos = qpos - qpos0
+                                    # using dofs_state instead of qpos here allows
+                                    # qpos to be pulled into qpos0 instead 0
+                                    -dofs_state.pos[dof_start + j_d, i_b] * dofs_info.stiffness[I_d],
                                     BW,
                                 )
 
@@ -6372,14 +6409,9 @@ def func_integrate(
                     else i_0
                 )
 
-                # Prevent nan propagation
-                is_valid = True
-                if ti.static(not BW):
-                    is_valid = ~ti.math.isnan(dofs_state.acc[i_d, i_b])
-                if is_valid:
-                    dofs_state.vel_next[i_d, i_b] = (
-                        dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
-                    )
+                dofs_state.vel_next[i_d, i_b] = (
+                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
+                )
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
@@ -6486,14 +6518,31 @@ def func_copy_next_to_curr(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
 ):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*dofs_state.vel.shape)):
-        dofs_state.vel[I] = dofs_state.vel_next[I]
+    n_qs = rigid_global_info.qpos.shape[0]
+    n_dofs = dofs_state.vel.shape[0]
+    _B = dofs_state.vel.shape[1]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for I in ti.grouped(ti.ndrange(*rigid_global_info.qpos.shape)):
-        rigid_global_info.qpos[I] = rigid_global_info.qpos_next[I]
+    for i_b in range(_B):
+        # Prevent nan propagation
+        is_valid = True
+        for i_d in range(n_dofs):
+            e = dofs_state.vel_next[i_d, i_b]
+            is_valid &= not ti.math.isnan(e)
+        for i_q in range(n_qs):
+            e = rigid_global_info.qpos_next[i_q, i_b]
+            is_valid &= not ti.math.isnan(e)
+
+        if is_valid:
+            for i_d in range(n_dofs):
+                dofs_state.vel[i_d, i_b] = dofs_state.vel_next[i_d, i_b]
+
+            for i_q in range(n_qs):
+                rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
+        else:
+            errno[None] = errno[None] | 0b00000000000000000000000000001000
 
 
 @ti.func
@@ -6889,8 +6938,9 @@ def kernel_update_geoms_render_T(
         geom_T = gu.ti_trans_quat_to_T(
             geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], geoms_state.quat[i_g, i_b], EPS
         )
-        for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
-            geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
+        if (ti.abs(geom_T) < 1e20).all():
+            for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
+                geoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -6911,8 +6961,9 @@ def kernel_update_vgeoms_render_T(
         geom_T = gu.ti_trans_quat_to_T(
             vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], vgeoms_state.quat[i_g, i_b], EPS
         )
-        for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
-            vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
+        if (ti.abs(geom_T) < 1e20).all():
+            for J in ti.static(ti.grouped(ti.ndrange(4, 4))):
+                vgeoms_render_T[(i_g, i_b, *J)] = ti.cast(geom_T[J], ti.float32)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -7000,6 +7051,8 @@ def kernel_set_state(
         for j in ti.static(range(3)):
             links_state.pos[i_l, envs_idx[i_b_]][j] = links_pos[envs_idx[i_b_], i_l, j]
             links_state.i_pos_shift[i_l, envs_idx[i_b_]][j] = i_pos_shift[envs_idx[i_b_], i_l, j]
+            links_state.cfrc_applied_vel[i_l, envs_idx[i_b_]][j] = gs.ti_float(0.0)
+            links_state.cfrc_applied_ang[i_l, envs_idx[i_b_]][j] = gs.ti_float(0.0)
         for j in ti.static(range(4)):
             links_state.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
         links_state.mass_shift[i_l, envs_idx[i_b_]] = mass_shift[envs_idx[i_b_], i_l]

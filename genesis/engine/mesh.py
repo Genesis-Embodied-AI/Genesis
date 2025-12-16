@@ -3,7 +3,6 @@ import pickle as pkl
 
 import fast_simplification
 import numpy as np
-import numpy.typing as npt
 import trimesh
 
 import genesis as gs
@@ -45,7 +44,7 @@ class Mesh(RBC):
         self,
         mesh,
         surface: Surface | None = None,
-        uvs: npt.NDArray | None = None,
+        uvs: "np.typing.NDArray | None" = None,
         convexify=False,
         decimate=False,
         decimate_face_num=500,
@@ -226,9 +225,11 @@ class Mesh(RBC):
         try:  # always parse uvs because roughness and normal map also need uvs
             uvs = mesh.visual.uv.copy()
             uvs[:, 1] = 1.0 - uvs[:, 1]  # trimesh uses uvs starting from top left corner
-        except:
+        except AttributeError:
+            # Visual may not have uv, e.g. ColorVisuals
             uvs = None
 
+        must_update_surface = True
         roughness_factor = None
         color_image = None
         color_factor = None
@@ -242,8 +243,6 @@ class Mesh(RBC):
                 # TODO: Parsing PBR in obj or not
                 # trimesh from .obj file will never use PBR material, but that from .glb file will
                 if isinstance(material, trimesh.visual.material.PBRMaterial):
-                    # color_image = None
-                    # color_factor = None
                     if material.baseColorTexture is not None:
                         color_image = mu.PIL_to_array(material.baseColorTexture)
                     if material.baseColorFactor is not None:
@@ -272,27 +271,31 @@ class Mesh(RBC):
             else:
                 # TODO: support vertex/face colors in luisa
                 color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
-        elif isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0:
-            color = np.unique(visual.vertex_colors, axis=0)
-            if len(color) > 1:
-                gs.raise_exception("Loading point clouds with heterogeneous colors is not supported.")
-            color_factor = tuple(np.array(color, dtype=np.float32) / 255.0)
+        elif (isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined) or (
+            isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0
+        ):
+            # Color is already vertex-based. No need to create a new texture to keep the original one, unless a color
+            # overwrite has been specified as surface-level.
+            must_update_surface = surface.color is not None
+        elif surface.color is not None:
+            color_factor = surface.color
         else:
             # use white color as default
             color_factor = (1.0, 1.0, 1.0, 1.0)
 
-        color_texture = mu.create_texture(color_image, color_factor, "srgb")
-        opacity_texture = None
-        if color_texture is not None:
-            opacity_texture = color_texture.check_dim(3)
-        roughness_texture = mu.create_texture(None, roughness_factor, "linear")
+        if must_update_surface:
+            color_texture = mu.create_texture(color_image, color_factor, "srgb")
+            opacity_texture = None
+            if color_texture is not None:
+                opacity_texture = color_texture.check_dim(3)
+            roughness_texture = mu.create_texture(None, roughness_factor, "linear")
 
-        surface.update_texture(
-            color_texture=color_texture,
-            opacity_texture=opacity_texture,
-            roughness_texture=roughness_texture,
-        )
-        mesh.visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(mesh.vertices))
+            surface.update_texture(
+                color_texture=color_texture,
+                opacity_texture=opacity_texture,
+                roughness_texture=roughness_texture,
+            )
+            mesh.visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(mesh.vertices))
 
         if scale is not None:
             mesh.vertices *= scale

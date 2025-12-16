@@ -1,5 +1,44 @@
 # Genesis Release Note
 
+## 0.3.10
+
+Small release mainly fixing bugs.
+
+### Bug Fixes
+
+* Fix parsing for special material properties in glTF meshes (@duburcqa) (#2110)
+
+### Miscellaneous
+
+* More robust detection of invalid simulation state. (@duburcqa) (#2112)
+
+## 0.3.9
+
+Small release mainly polishing features that were introduced in previous release.
+
+### New Features
+
+* [CHANGING] Replace SDF fallback by GJK. (@duburcqa) (#2081)
+* [CHANGING] Improve inertial estimation if undefined. (@YilingQiao) (#2100)
+* Add support of boolean masking as index. (@duburcqa) (#2087)
+* Fix and improve merging of rigid entities. (@duburcqa) (#2098)
+
+### Bug Fixes
+
+* Fix increased memory usage due to differentiable simulation. (@duburcqa) (#2074)
+* Fix 'envs_idx' in motion planning. (@duburcqa) (#2093)
+* Fix 'DroneEntity.set_propellels_rpm'. (@duburcqa) (#2095)
+* Fix extended broadcasting. (@duburcqa) (#2096)
+* Fix 'RigidEntity.set_dofs_velocity'. (@robin271828) (#2102)
+* Fix joint stiffness not taking into account neutral position. (@YilingQiao) (#2105)
+* Fix explicit URDF material color being ignored. (@duburcqa) (#2107)
+
+### Miscellaneous
+
+* Speed up torch-based geom utils via 'torch.jit.script'. (@duburcqa) (#2075)
+* Improve scalability wrt number of contacts. (@duburcqa) (#2085, #2103)
+* Make Go2 RL env GPU-sync free. (@duburcqa) (#2092)
+
 ## 0.3.8
 
 The performance of data accessors have been dramatically improved by leveraging zero-copy memory sharing between GsTaichi and Torch. Beyond that, the robustness of the default contact algorithm has been improved, and differentiable forward dynamics for Rigid Body simulation is not partially available. Last, but not least, GsTaichi dynamic array mode is finally enabled back by default!

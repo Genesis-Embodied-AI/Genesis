@@ -249,14 +249,12 @@ class Surface(Options):
             if isinstance(color_texture, ColorTexture):
                 if isinstance(opacity_texture, ColorTexture):
                     rgba_texture = ColorTexture(color=(*color_texture.color, *opacity_texture.color))
-
                 elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
                     rgb_color = np.round(np.array(color_texture.color) * 255).astype(np.uint8)
                     rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
                     rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
                     rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
                     rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
-
                 else:
                     rgba_texture = ColorTexture(color=(*color_texture.color, 1.0))
 
@@ -266,7 +264,6 @@ class Surface(Options):
                     a_array = np.full((*color_texture.image_array.shape[:2],), a_color, dtype=np.uint8)
                     rgba_array = np.dstack((color_texture.image_array, a_array))
                     rgba_scale = (*color_texture.image_color, 1.0)
-
                 elif (
                     isinstance(opacity_texture, ImageTexture)
                     and opacity_texture.image_array is not None
@@ -274,7 +271,6 @@ class Surface(Options):
                 ):
                     rgba_array = np.dstack((color_texture.image_array, opacity_texture.image_array))
                     rgba_scale = (*color_texture.image_color, *opacity_texture.image_color)
-
                 else:
                     if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
                         gs.logger.warning(
@@ -283,7 +279,6 @@ class Surface(Options):
                     a_array = np.full(color_texture.image_array.shape[:2], 255, dtype=np.uint8)
                     rgba_array = np.dstack((color_texture.image_array, a_array))
                     rgba_scale = (*color_texture.image_color, 1.0)
-
                 rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
 
             else:

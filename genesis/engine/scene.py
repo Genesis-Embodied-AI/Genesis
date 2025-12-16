@@ -9,7 +9,6 @@ import numpy as np
 import torch
 import gstaichi as ti
 from gstaichi.lang import impl
-from numpy.typing import ArrayLike
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -460,54 +459,10 @@ class Scene(RBC):
         return entity
 
     @gs.assert_unbuilt
-    def link_entities(
-        self,
-        parent_entity: "Entity",
-        child_entity: "Entity",
-        parent_link_name="",
-        child_link_name="",
-    ):
-        """
-        links two entities to act as single entity.
-
-        Parameters
-        ----------
-        parent_entity : genesis.Entity
-            The entity in the scene that will be a parent of kinematic tree.
-        child_entity : genesis.Entity
-            The entity in the scene that will be a child of kinematic tree.
-        parent_link_name : str
-            The name of the link in the parent entity to be linked.
-        child_link_name : str
-            The name of the link in the child entity to be linked.
-        """
-        if not isinstance(parent_entity, gs.engine.entities.RigidEntity):
-            gs.raise_exception("Currently only rigid entities are supported for merging.")
-        if not isinstance(child_entity, gs.engine.entities.RigidEntity):
-            gs.raise_exception("Currently only rigid entities are supported for merging.")
-
-        if not child_link_name:
-            for link in child_entity._links:
-                if link.parent_idx == -1:
-                    child_link = link
-                    break
-        else:
-            child_link = child_entity.get_link(child_link_name)
-        parent_link = parent_entity.get_link(parent_link_name)
-
-        if child_link._parent_idx != -1:
-            gs.logger.warning(
-                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure "
-                "this operation is intended."
-            )
-        child_link._parent_idx = parent_link.idx
-        parent_link._child_idxs.append(child_link.idx)
-
-    @gs.assert_unbuilt
     def add_mesh_light(
         self,
         morph: Morph | None = None,
-        color: ArrayLike | None = (1.0, 1.0, 1.0, 1.0),
+        color: "np.typing.ArrayLike | None" = (1.0, 1.0, 1.0, 1.0),
         intensity: float = 20.0,
         revert_dir: bool | None = False,
         double_sided: bool | None = False,
@@ -544,9 +499,9 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_light(
         self,
-        pos: ArrayLike,
-        dir: ArrayLike,
-        color: ArrayLike = (1.0, 1.0, 1.0),
+        pos: "np.typing.ArrayLike | None",
+        dir: "np.typing.ArrayLike | None",
+        color: "np.typing.ArrayLike | None" = (1.0, 1.0, 1.0),
         intensity: float = 1.0,
         directional: bool = False,
         castshadow: bool = True,
@@ -885,7 +840,7 @@ class Scene(RBC):
             - for non-batched env, we only parallelize certain loops that have big loop size
             - for batched env, we parallelize all loops
         - When using cpu, we serialize everything.
-            - Parallelization only provides a boost for n_envs >= num_threads and ti_num_threads > 1.
+            - Parallelization only provides a boost for n_envs >= num_threads.
               It is always disabled by default but can be enforced by setting the env var `GS_PARA_LEVEL=2`.
             - In order to exploit full cpu power, users are encouraged to launch multiple processes manually and set
               env var `TI_NUM_THREADS=1`, so that each process uses a single cpu thread.

@@ -39,6 +39,13 @@ class Go2Env:
                 dt=self.dt,
                 substeps=2,
             ),
+            rigid_options=gs.options.RigidOptions(
+                enable_self_collision=False,
+                tolerance=1e-5,
+                # For this locomotion policy, there are usually no more than 20 collision pairs. Setting a low value
+                # can save memory. Violating this condition will raise an exception.
+                max_collision_pairs=20,
+            ),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=(2.0, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
@@ -46,15 +53,6 @@ class Go2Env:
                 max_FPS=int(1.0 / self.dt),
             ),
             vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
-            rigid_options=gs.options.RigidOptions(
-                dt=self.dt,
-                constraint_solver=gs.constraint_solver.Newton,
-                enable_collision=True,
-                enable_joint_limit=True,
-                # for this locomotion policy there are usually no more than 30 collision pairs
-                # set a low value can save memory
-                max_collision_pairs=30,
-            ),
             show_viewer=show_viewer,
         )
 
@@ -87,6 +85,7 @@ class Go2Env:
             dtype=gs.tc_int,
             device=gs.device,
         )
+        self.actions_dof_idx = torch.argsort(self.motors_dof_idx)
 
         # PD control parameters
         self.robot.set_dofs_kp([self.env_cfg["kp"]] * self.num_actions, self.motors_dof_idx)
@@ -108,8 +107,8 @@ class Go2Env:
         )
         self.obs_buf = torch.zeros((self.num_envs, self.num_obs), dtype=gs.tc_float, device=gs.device)
         self.rew_buf = torch.zeros((self.num_envs,), dtype=gs.tc_float, device=gs.device)
-        self.reset_buf = torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_int)
-        self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
+        self.reset_buf = torch.ones((self.num_envs,), dtype=gs.tc_bool, device=gs.device)
+        self.episode_length_buf = torch.zeros((self.num_envs,), dtype=gs.tc_int, device=gs.device)
         self.commands = torch.zeros((self.num_envs, self.num_commands), dtype=gs.tc_float, device=gs.device)
         self.commands_scale = torch.tensor(
             [self.obs_scales["lin_vel"], self.obs_scales["lin_vel"], self.obs_scales["ang_vel"]],
@@ -151,13 +150,17 @@ class Go2Env:
         self.extras["observations"] = dict()
 
     def _resample_commands(self, envs_idx):
-        self.commands[envs_idx] = gs_rand(*self.commands_limits, (len(envs_idx),))
+        commands = gs_rand(*self.commands_limits, (self.num_envs,))
+        if envs_idx is None:
+            self.commands.copy_(commands)
+        else:
+            torch.where(envs_idx[:, None], commands, self.commands, out=self.commands)
 
     def step(self, actions):
         self.actions = torch.clip(actions, -self.env_cfg["clip_actions"], self.env_cfg["clip_actions"])
         exec_actions = self.last_actions if self.simulate_action_latency else self.actions
         target_dof_pos = exec_actions * self.env_cfg["action_scale"] + self.default_dof_pos
-        self.robot.control_dofs_position(target_dof_pos, self.motors_dof_idx)
+        self.robot.control_dofs_position(target_dof_pos[:, self.actions_dof_idx], slice(6, 18))
         self.scene.step()
 
         # update buffers
@@ -175,19 +178,18 @@ class Go2Env:
         self.dof_vel = self.robot.get_dofs_velocity(self.motors_dof_idx)
 
         # resample commands
-        envs_idx = (self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0).nonzero()[:, 0]
-        self._resample_commands(envs_idx)
+        self._resample_commands(self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
 
         # check termination and reset
         self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
         self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
 
-        time_out_idx = (self.episode_length_buf > self.max_episode_length).nonzero()[:, 0]
-        self.extras["time_outs"] = torch.zeros_like(self.reset_buf, dtype=gs.tc_float, device=gs.device)
-        self.extras["time_outs"].scatter_(0, time_out_idx, 1.0)
+        # Compute timeout
+        self.extras["time_outs"] = (self.episode_length_buf > self.max_episode_length).to(dtype=gs.tc_float)
 
-        self.reset_idx(self.reset_buf.nonzero()[:, 0])
+        # Reset environment if necessary
+        self.reset(self.reset_buf)
 
         # compute reward
         self.rew_buf.zero_()
@@ -223,32 +225,36 @@ class Go2Env:
     def get_privileged_observations(self):
         return None
 
-    def reset_idx(self, envs_idx):
-        if len(envs_idx) == 0:
-            return
-
+    def reset(self, envs_idx=None):
         # reset state
         self.robot.set_qpos(self.init_qpos, envs_idx=envs_idx, zero_velocity=True, skip_forward=True)
 
         # reset buffers
-        self.last_actions.scatter_(0, envs_idx[:, None], 0.0)
-        self.last_dof_vel.scatter_(0, envs_idx[:, None], 0.0)
-        self.episode_length_buf.scatter_(0, envs_idx, 0)
-        self.reset_buf.scatter_(0, envs_idx, True)
+        if envs_idx is None:
+            self.last_actions.zero_()
+            self.last_dof_vel.zero_()
+            self.episode_length_buf.zero_()
+            self.reset_buf.fill_(True)
+        else:
+            self.last_actions.masked_fill_(envs_idx[:, None], 0.0)
+            self.last_dof_vel.masked_fill_(envs_idx[:, None], 0.0)
+            self.episode_length_buf.masked_fill_(envs_idx, 0)
+            self.reset_buf.masked_fill_(envs_idx, True)
 
         # fill extras
+        n_envs = envs_idx.sum() if envs_idx is not None else self.num_envs
         self.extras["episode"] = {}
-        for key in self.episode_sums.keys():
-            self.extras["episode"]["rew_" + key] = (
-                torch.mean(self.episode_sums[key][envs_idx]).item() / self.env_cfg["episode_length_s"]
-            )
-            self.episode_sums[key].scatter_(0, envs_idx, 0)
+        for key, value in self.episode_sums.items():
+            if envs_idx is None:
+                mean = value.mean()
+            else:
+                mean = torch.where(n_envs > 0, value[envs_idx].sum() / n_envs, 0.0)
+            self.extras["episode"]["rew_" + key] = mean / self.env_cfg["episode_length_s"]
+            value.masked_fill_(envs_idx, 0.0)
 
+        # random sample command upon reset
         self._resample_commands(envs_idx)
 
-    def reset(self):
-        self.reset_buf[:] = True
-        self.reset_idx(torch.arange(self.num_envs, device=gs.device))
         return self.obs_buf, None
 
     # ------------ reward functions----------------

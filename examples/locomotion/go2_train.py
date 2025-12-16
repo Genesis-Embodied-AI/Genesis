@@ -152,7 +152,7 @@ def main():
     parser.add_argument("--max_iterations", type=int, default=101)
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, logging_level="warning")
+    gs.init(backend=gs.gpu, precision="32", logging_level="warning", performance_mode=True)
 
     log_dir = f"logs/{args.exp_name}"
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()

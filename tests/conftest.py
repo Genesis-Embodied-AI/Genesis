@@ -129,9 +129,13 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
-        physical_core_count = psutil.cpu_count(logical=config.option.logical)
-        num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
-        num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
+        if is_benchmarks:
+            # FIXME: Enabling multi-threading in benchmark is making compile time estimation unreliable
+            num_cpu_per_worker = "1"
+        else:
+            physical_core_count = psutil.cpu_count(logical=config.option.logical)
+            num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+            num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
         os.environ["TI_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OMP_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OPENBLAS_NUM_THREADS"] = num_cpu_per_worker

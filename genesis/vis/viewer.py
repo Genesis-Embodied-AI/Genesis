@@ -146,6 +146,7 @@ class Viewer(RBC):
     def setup_camera(self):
         yfov = self._camera_fov / 180.0 * np.pi
         pose = gu.pos_lookat_up_to_T(self._camera_init_pos, self._camera_init_lookat, self._camera_up)
+        self._camera_up = pose[:3, 1].copy()
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
     def update(self, auto_refresh=None, force=False):
@@ -197,6 +198,7 @@ class Viewer(RBC):
             up = self._camera_up
 
             pose = gu.pos_lookat_up_to_T(pos, lookat, up)
+            self._camera_up = pose[:3, 1].copy()
         else:
             if np.array(pose).shape != (4, 4):
                 gs.raise_exception("pose should be a 4x4 matrix.")

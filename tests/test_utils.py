@@ -11,6 +11,7 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
+from genesis.utils.urdf import compose_inertial_properties
 
 from .utils import assert_allclose
 
@@ -435,3 +436,33 @@ def test_fps_tracker():
     fps = tracker.step(current_time=10.45)
     # num envs * [num steps] / (delta time)
     assert math.isclose(fps, n_envs * 4 / 0.14)
+
+
+@pytest.mark.required
+def test_compose_inertial_properties():
+    """Test composition of inertial properties combining multiple effects."""
+    mass1, com1 = 1.0, np.array([1.0, 0.0, 0.0])
+    inertia1 = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+    mass2, com2 = 2.0, np.array([0.0, 2.0, 0.0])
+    inertia2 = np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]])
+
+    # Analytical calculations: mass=3.0, COM=[1/3, 4/3, 0]
+    expected_mass, expected_com = 3.0, np.array([1.0 / 3.0, 4.0 / 3.0, 0.0])
+
+    # Translate inertias to combined COM using parallel axis theorem
+    def translate_inertia(I, m, r):  # I + m*(||r||²*I - r⊗r)
+        return I + m * (np.dot(r, r) * np.eye(3) - np.outer(r, r))
+
+    expected_inertia = translate_inertia(inertia1, mass1, expected_com - com1) + translate_inertia(
+        inertia2, mass2, expected_com - com2
+    )
+
+    # Now call the function and verify results
+    combined_mass, combined_com, combined_inertia = compose_inertial_properties(
+        mass1, com1, inertia1, mass2, com2, inertia2
+    )
+
+    assert_allclose(combined_mass, expected_mass, tol=TOL)
+    assert_allclose(combined_com, expected_com, tol=TOL)
+    assert_allclose(combined_inertia, expected_inertia, tol=TOL)
