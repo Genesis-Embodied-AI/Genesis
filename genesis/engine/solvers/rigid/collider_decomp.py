@@ -325,7 +325,7 @@ class Collider:
             self._collider_info.terrain_scale.from_numpy(scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
-    def reset(self, envs_idx=None, cache_only: bool = False) -> None:
+    def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
         self._contacts_info_cache.clear()
         if gs.use_zerocopy:
             envs_idx = slice(None) if envs_idx is None else envs_idx
@@ -353,6 +353,8 @@ class Collider:
         collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
 
     def clear(self, envs_idx=None):
+        self.reset(envs_idx, cache_only=False)
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
         kernel_collider_clear(
