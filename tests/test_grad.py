@@ -291,6 +291,8 @@ def test_diff_solver(monkeypatch):
         rigid_global_info=rigid_solver._rigid_global_info,
         static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
         contact_island_state=constraint_solver.contact_island.contact_island_state,
+        is_forward_pos_updated=True,
+        is_forward_vel_updated=True,
     )
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()

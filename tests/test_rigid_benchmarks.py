@@ -487,10 +487,6 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
     while True:
         scene.step()
         if accessors:
-            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
-            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False)
-            franka.set_dofs_stiffness(dofs_stiffness)
-            franka.set_dofs_damping(dofs_damping)
             franka.get_ang()
             franka.get_vel()
             franka.get_dofs_position()
@@ -500,6 +496,10 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
             franka.get_links_vel()
             franka.get_contacts()
             franka.control_dofs_position(ctrl)
+            franka.set_dofs_stiffness(dofs_stiffness)
+            franka.set_dofs_damping(dofs_damping)
+            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
+            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
 
         time_elapsed = time.time() - time_start
         if is_recording:

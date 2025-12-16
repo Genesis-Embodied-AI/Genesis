@@ -215,7 +215,7 @@ class Go2Env:
 
     def _reset_idx(self, envs_idx=None):
         # reset state
-        self.robot.set_qpos(self.init_qpos, envs_idx=envs_idx, zero_velocity=True)
+        self.robot.set_qpos(self.init_qpos, envs_idx=envs_idx, zero_velocity=True, skip_forward=True)
 
         # reset buffers
         if envs_idx is None:

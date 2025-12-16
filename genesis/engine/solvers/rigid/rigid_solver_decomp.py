@@ -135,6 +135,9 @@ class RigidSolver(Solver):
 
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
+        self._is_forward_pos_updated: bool = False
+        self._is_forward_vel_updated: bool = False
+
         self._queried_states = QueriedStates()
 
         self._ckpt = dict()
@@ -885,6 +888,8 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
             contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            is_forward_pos_updated=self._is_forward_pos_updated,
+            is_forward_vel_updated=self._is_forward_vel_updated,
         )
 
         if isinstance(self.sim.coupler, SAPCoupler):
@@ -912,6 +917,8 @@ class RigidSolver(Solver):
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 errno=self._errno,
             )
+            self._is_forward_pos_updated = self._enable_mujoco_compatibility
+            self._is_forward_vel_updated = self._enable_mujoco_compatibility
             if self._requires_grad:
                 kernel_save_adjoint_cache(
                     f=f + 1,
@@ -1480,6 +1487,8 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            self._is_forward_pos_updated = True
+            self._is_forward_vel_updated = True
 
             self._errno[None] = 0
             self.collider.clear(envs_idx)
@@ -1635,6 +1644,8 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
+        self._is_forward_pos_updated = True
+        self._is_forward_vel_updated = True
 
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
         if links_idx is None:
@@ -1704,6 +1715,8 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
+        self._is_forward_pos_updated = True
+        self._is_forward_vel_updated = True
 
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
         if links_idx is None:
@@ -1771,7 +1784,7 @@ class RigidSolver(Solver):
             friction_ratio, geoms_idx, envs_idx, self.geoms_state, self._static_rigid_sim_config
         )
 
-    def set_qpos(self, qpos, qs_idx=None, envs_idx=None):
+    def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
             qs_mask = indices_to_mask(qs_idx)
@@ -1802,26 +1815,32 @@ class RigidSolver(Solver):
         self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)
 
-        if not isinstance(envs_idx, torch.Tensor):
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        if envs_idx.dtype == torch.bool:
-            fn = kernel_masked_forward_kinematics_links_geoms
+        if not skip_forward:
+            if not isinstance(envs_idx, torch.Tensor):
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            if envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_kinematics_links_geoms
+            else:
+                fn = kernel_forward_kinematics_links_geoms
+            fn(
+                envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+            self._is_forward_pos_updated = True
+            self._is_forward_vel_updated = True
         else:
-            fn = kernel_forward_kinematics_links_geoms
-        fn(
-            envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            geoms_state=self.geoms_state,
-            geoms_info=self.geoms_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
     def set_global_sol_params(self, sol_params):
         """
@@ -2034,6 +2053,9 @@ class RigidSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            self._is_forward_vel_updated = True
+        else:
+            self._is_forward_vel_updated = False
 
     def set_dofs_velocity_grad(self, dofs_idx, envs_idx, velocity_grad):
         velocity_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
@@ -2080,6 +2102,8 @@ class RigidSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
+        self._is_forward_pos_updated = True
+        self._is_forward_vel_updated = True
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy:
@@ -4268,8 +4292,10 @@ def kernel_step_1(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
+    is_forward_pos_updated: ti.template(),
+    is_forward_vel_updated: ti.template(),
 ):
-    if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
+    if ti.static(is_forward_pos_updated):
         _B = links_state.pos.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -4288,6 +4314,11 @@ def kernel_step_1(
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=False,
             )
+
+    if ti.static(is_forward_vel_updated):
+        _B = links_state.pos.shape[1]
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
             func_forward_velocity(
                 i_b=i_b,
                 entities_info=entities_info,
