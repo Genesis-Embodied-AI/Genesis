@@ -537,7 +537,8 @@ def test_splashsurf_surface_reconstruction(show_viewer):
     cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
 
 
-@pytest.mark.required
+# FIXME: This test is taking too much time on some platform (~1200s)
+# @pytest.mark.required
 def test_convex_decompose_cache(monkeypatch):
     # Check if the convex decomposition cache is correctly tracked regardless of the scale
 
@@ -568,7 +569,7 @@ def test_convex_decompose_cache(monkeypatch):
         show_viewer=False,
     )
     first_scale = 2.0
-    duck = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
             scale=first_scale,
@@ -583,7 +584,7 @@ def test_convex_decompose_cache(monkeypatch):
         show_viewer=False,
     )
     second_scale = 4.0
-    duck = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
             scale=second_scale,
