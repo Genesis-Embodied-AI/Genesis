@@ -224,11 +224,17 @@ def init(
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
 
-    ti_num_cpu_threads = 1 if debug else os.environ.get("TI_NUM_THREADS")
+    # FIXME: Enforcing Taichi num threads to 1 by default when running on CPU
+    # because it significantly improve performance.
+    ti_num_cpu_threads = os.environ.get("TI_NUM_THREADS")
     if ti_num_cpu_threads is not None:
         taichi_kwargs.update(
             cpu_max_num_threads=int(ti_num_cpu_threads),
             num_compile_threads=int(ti_num_cpu_threads),
+        )
+    else:
+        taichi_kwargs.update(
+            cpu_max_num_threads=1,
         )
 
     if seed is not None:
