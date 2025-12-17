@@ -897,9 +897,12 @@ def _parse_joints(
         if target is not None:
             # Override init_qpos with target value if found
             if target.shape[0] == n_qs:
-                j_info["init_qpos"] = target
                 j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=10.0)
                 j_info["dofs_damping"] = np.full((n_dofs,), fill_value=10.0)
+                j_info["init_qpos"] = target
+                # in mujoco convention, transformation of one joint is qpos - qpos0
+                # so the actual limit for qpos is qpos0 + limit
+                j_info["dofs_limit"] += target
 
             else:
                 gs.logger.warning(
