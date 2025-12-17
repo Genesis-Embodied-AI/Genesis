@@ -917,8 +917,8 @@ class RigidSolver(Solver):
                 contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 errno=self._errno,
             )
-            self._is_forward_pos_updated = self._enable_mujoco_compatibility
-            self._is_forward_vel_updated = self._enable_mujoco_compatibility
+            self._is_forward_pos_updated = not self._enable_mujoco_compatibility
+            self._is_forward_vel_updated = not self._enable_mujoco_compatibility
             if self._requires_grad:
                 kernel_save_adjoint_cache(
                     f=f + 1,
@@ -4295,7 +4295,7 @@ def kernel_step_1(
     is_forward_pos_updated: ti.template(),
     is_forward_vel_updated: ti.template(),
 ):
-    if ti.static(is_forward_pos_updated):
+    if ti.static(not is_forward_pos_updated):
         _B = links_state.pos.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -4315,7 +4315,7 @@ def kernel_step_1(
                 force_update_fixed_geoms=False,
             )
 
-    if ti.static(is_forward_vel_updated):
+    if ti.static(not is_forward_vel_updated):
         _B = links_state.pos.shape[1]
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
