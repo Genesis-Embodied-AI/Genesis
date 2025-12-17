@@ -1816,6 +1816,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int = gs.integrator.approximate_implicitfast
     solver_type: int = gs.constraint_solver.CG
     requires_grad: bool = False
+    is_backward: bool = False
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1
