@@ -293,6 +293,7 @@ def test_diff_solver(monkeypatch):
         contact_island_state=constraint_solver.contact_island.contact_island_state,
         is_forward_pos_updated=True,
         is_forward_vel_updated=True,
+        is_backward=False,
     )
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()
