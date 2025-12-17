@@ -876,60 +876,60 @@ class RigidSolver(Solver):
             )
 
         kernel_step_1(
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            geoms_state=self.geoms_state,
-            geoms_info=self.geoms_info,
-            entities_state=self.entities_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-            is_forward_pos_updated=self._is_forward_pos_updated,
-            is_forward_vel_updated=self._is_forward_vel_updated,
-            is_backward=self._is_backward,
+            self.links_state,
+            self.links_info,
+            self.joints_state,
+            self.joints_info,
+            self.dofs_state,
+            self.dofs_info,
+            self.geoms_state,
+            self.geoms_info,
+            self.entities_state,
+            self.entities_info,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
+            self.constraint_solver.contact_island.contact_island_state,
+            self._is_forward_pos_updated,
+            self._is_forward_vel_updated,
+            self._is_backward,
         )
 
         if isinstance(self.sim.coupler, SAPCoupler):
             update_qvel(
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=self._is_backward,
+                self.dofs_state,
+                self._rigid_global_info,
+                self._static_rigid_sim_config,
+                self._is_backward,
             )
         else:
             self._func_constraint_force()
             kernel_step_2(
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                links_info=self.links_info,
-                links_state=self.links_state,
-                joints_info=self.joints_info,
-                joints_state=self.joints_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                geoms_info=self.geoms_info,
-                geoms_state=self.geoms_state,
-                collider_state=self.collider._collider_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                is_backward=self._is_backward,
-                errno=self._errno,
+                self.dofs_state,
+                self.dofs_info,
+                self.links_info,
+                self.links_state,
+                self.joints_info,
+                self.joints_state,
+                self.entities_state,
+                self.entities_info,
+                self.geoms_info,
+                self.geoms_state,
+                self.collider._collider_state,
+                self._rigid_global_info,
+                self._static_rigid_sim_config,
+                self.constraint_solver.contact_island.contact_island_state,
+                self._is_backward,
+                self._errno,
             )
             self._is_forward_pos_updated = not self._enable_mujoco_compatibility
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
             if self._requires_grad:
                 kernel_save_adjoint_cache(
-                    f=f + 1,
-                    dofs_state=self.dofs_state,
-                    rigid_global_info=self._rigid_global_info,
-                    rigid_adjoint_cache=self._rigid_adjoint_cache,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    f + 1,
+                    self.dofs_state,
+                    self._rigid_global_info,
+                    self._rigid_adjoint_cache,
+                    self._static_rigid_sim_config,
                 )
 
     def check_errno(self):
@@ -990,42 +990,42 @@ class RigidSolver(Solver):
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
-            links_state=self.links_state,
-            links_info=self.links_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            joints_info=self.joints_info,
-            entities_state=self.entities_state,
-            entities_info=self.entities_info,
-            geoms_state=self.geoms_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            self.links_state,
+            self.links_info,
+            self.dofs_state,
+            self.dofs_info,
+            self.joints_info,
+            self.entities_state,
+            self.entities_info,
+            self.geoms_state,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
+            self.constraint_solver.contact_island.contact_island_state,
         )
 
     def _func_update_acc(self):
         kernel_update_acc(
-            dofs_state=self.dofs_state,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            self.dofs_state,
+            self.links_info,
+            self.links_state,
+            self.entities_info,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
         )
 
     def _func_forward_kinematics_entity(self, i_e, envs_idx):
         kernel_forward_kinematics_entity(
             i_e,
             envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
+            self.links_state,
+            self.links_info,
+            self.joints_state,
+            self.joints_info,
+            self.dofs_state,
+            self.dofs_info,
+            self.entities_info,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
         )
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
@@ -1045,13 +1045,13 @@ class RigidSolver(Solver):
     def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
         kernel_update_geoms(
             envs_idx,
-            entities_info=self.entities_info,
-            geoms_info=self.geoms_info,
-            geoms_state=self.geoms_state,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-            force_update_fixed_geoms=force_update_fixed_geoms,
+            self.entities_info,
+            self.geoms_info,
+            self.geoms_state,
+            self.links_state,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
+            force_update_fixed_geoms,
         )
 
     def apply_links_external_force(
