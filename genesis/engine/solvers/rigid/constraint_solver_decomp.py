@@ -2036,7 +2036,7 @@ def initialize_Ma(
     _B = rigid_global_info.mass_mat.shape[2]
     n_dofs = qacc.shape[0]
 
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d1, i_b in ti.ndrange(n_dofs, _B):
         I_d1 = [i_d1, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d1
         i_e = dofs_info.entity_idx[I_d1]
@@ -2169,7 +2169,7 @@ def func_init_solver(
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
         else:
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL, block_dim=32)
             for i_b, i_d1 in ti.ndrange(_B, n_dofs):
                 for i_d2 in range(i_d1 + 1):
                     coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
@@ -2217,7 +2217,7 @@ def kernel_add_weld_constraint(
     overflow = gs.ti_bool(False)
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b_ in ti.ndrange(envs_idx.shape[0]):
+    for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_e = constraint_state.ti_n_equalities[i_b]
         if i_e == rigid_global_info.n_candidate_equalities[None]:
@@ -2265,7 +2265,7 @@ def kernel_delete_weld_constraint(
     static_rigid_sim_config: ti.template(),
 ):
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b_ in ti.ndrange(envs_idx.shape[0]):
+    for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         for i_e in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
             if (
