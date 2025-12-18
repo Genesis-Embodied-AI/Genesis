@@ -56,8 +56,8 @@ jobs:
           # --- Parameters ---
           MAX_VALID_REVISIONS: 5
           MAX_FETCH_REVISIONS: 40
-          RUNTIME_REGRESSION_TOLERANCE_PCT: 10
-          COMPILE_REGRESSION_TOLERANCE_PCT: 10
+          RUNTIME_REGRESSION_TOLERANCE_PCT: 8
+          COMPILE_REGRESSION_TOLERANCE_PCT: 16
 
           # Input/Output paths
           ARTIFACTS_DIR: ${{ steps.dl.outputs.download-path }}

@@ -1349,8 +1349,7 @@ def func_broad_phase(
     This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for
     potential collision pairs based on the AABB overlap.
     """
-    _B = collider_state.active_buffer.shape[1]
-    n_geoms = collider_state.active_buffer.shape[0]
+    n_geoms, _B = collider_state.active_buffer.shape
 
     # Clear collider state
     func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
@@ -1418,7 +1417,7 @@ def func_broad_phase(
                     geoms_state.min_buffer_idx[key_i_g, i_b] = j + 1
 
         # sweep over the sorted AABBs to find potential collision pairs
-        collider_state.n_broad_pairs[i_b] = 0
+        n_broad = 0
         if ti.static(not static_rigid_sim_config.use_hibernation):
             n_active = 0
             for i in range(2 * n_geoms):
@@ -1451,13 +1450,12 @@ def func_broad_phase(
                                 collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
                             continue
 
-                        i_p = collider_state.n_broad_pairs[i_b]
-                        if i_p == collider_info.max_collision_pairs_broad[None]:
+                        if n_broad == collider_info.max_collision_pairs_broad[None]:
                             errno[None] = errno[None] | 0b00000000000000000000000000000001
                             break
-                        collider_state.broad_collision_pairs[i_p, i_b][0] = i_ga
-                        collider_state.broad_collision_pairs[i_p, i_b][1] = i_gb
-                        collider_state.n_broad_pairs[i_b] += 1
+                        collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+                        collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+                        n_broad = n_broad + 1
 
                     collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
                     n_active = n_active + 1
@@ -1507,9 +1505,9 @@ def func_broad_phase(
                                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
                                 continue
 
-                            collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][0] = i_ga
-                            collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][1] = i_gb
-                            collider_state.n_broad_pairs[i_b] = collider_state.n_broad_pairs[i_b] + 1
+                            collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+                            collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+                            n_broad = n_broad + 1
 
                         # if incoming geom is awake, also need to check with hibernated geoms
                         if not is_incoming_geom_hibernated:
@@ -1540,9 +1538,9 @@ def func_broad_phase(
                                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
                                     continue
 
-                                collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][0] = i_ga
-                                collider_state.broad_collision_pairs[collider_state.n_broad_pairs[i_b], i_b][1] = i_gb
-                                collider_state.n_broad_pairs[i_b] = collider_state.n_broad_pairs[i_b] + 1
+                                collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+                                collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+                                n_broad = n_broad + 1
 
                         if is_incoming_geom_hibernated:
                             collider_state.active_buffer_hib[n_active_hib, i_b] = collider_state.sort_buffer.i_g[i, i_b]
@@ -1574,6 +1572,7 @@ def func_broad_phase(
                                             )
                                     n_active_awake = n_active_awake - 1
                                     break
+        collider_state.n_broad_pairs[i_b] = n_broad
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -2007,7 +2006,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                                 -collider_info.mc_perturbation[None],
                                                 collider_info.mc_perturbation[None],
                                             )
-                                            normal += twist_rotvec.cross(normal)
+                                            normal = normal + twist_rotvec.cross(normal)
 
                                             # Make sure that the penetration is still positive
                                             penetration = normal.dot(contact_point_b - contact_point_a)
@@ -2037,7 +2036,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                                     collider_info,
                                                     errno,
                                                 )
-                                                n_con += 1
+                                                n_con = n_con + 1
 
                                     geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
                                     geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
@@ -2680,7 +2679,7 @@ def func_convex_convex_contact(
                         -collider_info.mc_perturbation[None],
                         collider_info.mc_perturbation[None],
                     )
-                    normal += twist_rotvec.cross(normal)
+                    normal = normal + twist_rotvec.cross(normal)
 
                     # Make sure that the penetration is still positive before adding contact point.
                     # Note that adding some negative tolerance improves physical stability by encouraging persistent
