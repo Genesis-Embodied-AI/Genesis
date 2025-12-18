@@ -550,6 +550,7 @@ class Scene(RBC):
         sensor_options : SensorOptions
             The options for the sensor.
         """
+        print("sensor_options", sensor_options)
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_unbuilt

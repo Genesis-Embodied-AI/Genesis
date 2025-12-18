@@ -8,6 +8,7 @@ Test the attachment, add light, batch rendering functionalities.
 
 import os
 import matplotlib.pyplot as plt
+import numpy as np
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.options.sensors import RasterizerCameraOptions, RaytracerCameraOptions, BatchRendererCameraOptions
@@ -54,7 +55,7 @@ scene = gs.Scene(
         gravity=(0, 0, -9.8),
     ),
     renderer=renderer,
-    show_viewer=False,
+    show_viewer=True,
 )
 
 ########################## entities ##########################
@@ -113,6 +114,18 @@ CAMERA_SENSORS_KWARGS = [
         },
         "lights": [],
     },
+    {
+        "name": "cam_offset_T",
+        "pos": (0.0, 0.0, 1.0),
+        "lookat": (0.0, 0.0, 0.0),
+        "fov": 70.0,
+        "attachment": {
+            "entity_idx": None,
+            "link_idx_local": 0,
+            "offset_T": np.eye(4),  # Identity transform for testing
+        },
+        "lights": [],
+    },
 ]
 
 
@@ -151,10 +164,17 @@ for backend_name, options_class, enabled in backends:
                 {
                     "entity_idx": sphere.idx,
                     "link_idx_local": attachment["link_idx_local"],
-                    "pos_offset": attachment["pos_offset"],
-                    "euler_offset": attachment["euler_offset"],
                 }
             )
+            if "offset_T" in attachment:
+                options_kwargs["offset_T"] = attachment["offset_T"]
+            else:
+                options_kwargs.update(
+                    {
+                        "pos_offset": attachment["pos_offset"],
+                        "euler_offset": attachment["euler_offset"],
+                    }
+                )
 
         # Add backend-specific parameters
         if backend_name == "raster":

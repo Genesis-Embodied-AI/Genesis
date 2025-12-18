@@ -549,7 +549,11 @@ def xyz_to_quat(xyz, rpy=False, degrees=False):
             xyz = np.deg2rad(xyz)
         return _np_xyz_to_quat(xyz, rpy)
     else:
-        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(xyz)=}")
+        # Convert lists, tuples, etc. to numpy array
+        xyz = np.asarray(xyz)
+        if degrees:
+            xyz = np.deg2rad(xyz)
+        return _np_xyz_to_quat(xyz, rpy)
 
 
 @nb.jit(nopython=True, cache=True)
@@ -1328,7 +1332,7 @@ def T_to_pos_lookat_up(T):
 
 
 def euler_to_quat(euler_xyz):
-    return xyz_to_quat(np.asarray(euler_xyz), rpy=True, degrees=True)
+    return xyz_to_quat(euler_xyz, rpy=True, degrees=True)
 
 
 @nb.jit(nopython=True, cache=True)

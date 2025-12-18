@@ -4,7 +4,9 @@ Camera sensor options for Rasterizer, Raytracer, and Batch Renderer backends.
 
 from typing import Any, Optional
 
+import numpy as np
 import genesis as gs
+from pydantic import ConfigDict
 from .options import SensorOptions, Tuple3FType, RigidSensorOptionsMixin
 
 
@@ -28,11 +30,16 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     lights : list[dict], optional
         List of lights to add for this camera backend. Each light is a dict with
         backend-specific parameters. Default is empty list.
+    offset_T : np.ndarray, optional
+        4x4 transformation matrix specifying the camera's pose relative to the attached link.
+        If provided, this takes priority over pos_offset and euler_offset. Default is None.
     entity_idx : int
         The global entity index of the RigidEntity to which this sensor is attached. -1 or None for static sensors.
     link_idx_local : int, optional
         The local index of the RigidLink of the RigidEntity to which this sensor is attached.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     res: tuple[int, int] = (512, 512)
     pos: Tuple3FType = (3.5, 0.0, 1.5)
@@ -40,6 +47,7 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     up: Tuple3FType = (0.0, 0.0, 1.0)
     fov: float = 60.0
     lights: list[dict] = []
+    offset_T: Optional[np.ndarray] = None
 
     def model_post_init(self, _):
         if not isinstance(self.res, (tuple, list)) or len(self.res) != 2:
@@ -53,6 +61,10 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
         for i, light in enumerate(self.lights):
             if not isinstance(light, dict):
                 gs.raise_exception(f"lights[{i}] must be a dict, got: {type(light)}")
+        if self.offset_T is not None:
+            offset_T_np = np.array(self.offset_T)
+            if offset_T_np.shape != (4, 4):
+                gs.raise_exception(f"offset_T must be a 4x4 array, got shape: {offset_T_np.shape}")
 
 
 class RasterizerCameraOptions(BaseCameraOptions):

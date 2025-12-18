@@ -2,6 +2,7 @@
 Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 """
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
 
@@ -240,9 +241,28 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
         if self._link is None:
             gs.raise_exception("Camera not attached to any rigid link.")
 
-        # Use pos directly as offset from link
-        pos_offset = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-        offset_T = trans_quat_to_T(pos_offset, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
+        if self._options.offset_T is not None:
+            # Check for conflicts with pos_offset and euler_offset
+            if tuple(self._options.pos_offset) != (0.0, 0.0, 0.0):
+                gs.raise_exception("Cannot specify both offset_T and pos_offset")
+            if tuple(self._options.euler_offset) != (0.0, 0.0, 0.0):
+                gs.raise_exception("Cannot specify both offset_T and euler_offset")
+            # Use the provided 4x4 transformation matrix
+            offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
+        else:
+            # Use pos_offset and euler_offset (legacy behavior)
+            pos_offset = torch.tensor(self._options.pos_offset, dtype=gs.tc_float, device=gs.device)
+            # Convert euler_offset to quaternion
+            from genesis.utils.geom import euler_to_quat
+
+            euler_offset_rad = (
+                torch.tensor(self._options.euler_offset, dtype=gs.tc_float, device=gs.device) * torch.pi / 180.0
+            )
+            quat_offset = euler_to_quat(euler_offset_rad)
+            # Ensure both are torch tensors for trans_quat_to_T
+            if isinstance(quat_offset, np.ndarray):
+                quat_offset = torch.tensor(quat_offset, dtype=gs.tc_float, device=gs.device)
+            offset_T = trans_quat_to_T(pos_offset, quat_offset)
 
         camera_T = _camera_compute_T_from_link(self._link, offset_T)
         self._apply_camera_transform(camera_T)
@@ -397,9 +417,14 @@ class RasterizerCameraSensor(BaseCameraSensor):
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
 
+            # Create standalone rasterizer
             self._shared_metadata.context = self._create_standalone_context(scene)
 
             from genesis.vis.rasterizer import Rasterizer
+
+            # If a visualizer exists, prefer pyglet platform for better OpenGL context sharing
+            if hasattr(scene, "visualizer") and scene.visualizer is not None:
+                os.environ["PYOPENGL_PLATFORM"] = "pyglet"
 
             self._shared_metadata.renderer = Rasterizer(viewer=None, context=self._shared_metadata.context)
             self._shared_metadata.renderer.build()
