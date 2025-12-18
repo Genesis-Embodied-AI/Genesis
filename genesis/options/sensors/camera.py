@@ -62,8 +62,7 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
             if not isinstance(light, dict):
                 gs.raise_exception(f"lights[{i}] must be a dict, got: {type(light)}")
         if self.offset_T is not None:
-            offset_T_np = np.array(self.offset_T)
-            if offset_T_np.shape != (4, 4):
+            if self.offset_T.shape != (4, 4):
                 gs.raise_exception(f"offset_T must be a 4x4 array, got shape: {offset_T_np.shape}")
 
 

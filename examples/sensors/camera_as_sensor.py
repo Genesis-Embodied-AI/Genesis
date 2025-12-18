@@ -55,7 +55,7 @@ scene = gs.Scene(
         gravity=(0, 0, -9.8),
     ),
     renderer=renderer,
-    show_viewer=True,
+    show_viewer=False,
 )
 
 ########################## entities ##########################
