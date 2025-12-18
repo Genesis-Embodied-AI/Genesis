@@ -408,21 +408,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
             from genesis.vis.rasterizer import Rasterizer
 
-            # Set PyOpenGL platform for offscreen rendering, consistent with rasterizer.py logic
-            if not os.environ.get("PYOPENGL_PLATFORM"):
-                platform = "egl" if gs.platform == "Linux" else "pyglet"
-
-                # On Linux with interactive visualizer, pyglet for consistency
-                if gs.platform == "Linux" and hasattr(scene, "visualizer") and scene.visualizer is not None:
-                    platform = "pyglet"
-
-                if platform not in ("osmesa", "pyglet", "egl"):
-                    platform = "pyglet"
-                if sys.platform == "win32" and platform == "osmesa":
-                    platform = "pyglet"
-
-                os.environ["PYOPENGL_PLATFORM"] = platform
-
             self._shared_metadata.renderer = Rasterizer(viewer=None, context=self._shared_metadata.context)
             self._shared_metadata.renderer.build()
 
