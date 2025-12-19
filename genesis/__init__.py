@@ -22,9 +22,6 @@ except ImportError as e:
     raise ImportError(
         "'torch' module not available. Please install pytorch manually: https://pytorch.org/get-started/locally/"
     ) from e
-if tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8):
-    warn("'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/")
-
 import numpy as np
 
 from .constants import GS_ARCH, TI_ARCH
@@ -32,6 +29,11 @@ from .constants import backend as gs_backend
 from .logging import Logger
 from .version import __version__
 from .utils import redirect_libc_stderr, set_random_seed, get_platform, get_device
+
+
+_IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+if _IS_OLD_TORCH:
+    warn("'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/")
 
 
 # Global state
@@ -146,7 +148,7 @@ def init(
             _use_zerocopy = True
     else:
         if _use_zerocopy:
-            raise_exception(f"Zero-copy only support by GsTaichi dynamic array mode on CPU and CUDA backend.")
+            raise_exception(f"Zero-copy not supported on {backend} backend.")
         _use_zerocopy = False
     use_zerocopy = _use_zerocopy and (_use_ndarray or backend != gs_backend.metal)
 
@@ -304,7 +306,7 @@ def init(
     if backend == gs_backend.metal:
         logger.debug("[GsTaichi] Beware Apple Metal backend may be unstable.")
 
-    if tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8):
+    if _IS_OLD_TORCH:
         logger.warning(
             "'torch<2.8.0' is not supported. Please update pytorch manually: https://pytorch.org/get-started/locally/"
         )
