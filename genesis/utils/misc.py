@@ -500,6 +500,7 @@ def _launch_kernel(self, t_kernel, compiled_kernel_data, *args):
         if compiled_kernel_data is None:
             compile_result = prog.compile_kernel(prog.config(), prog.get_device_caps(), t_kernel)
             compiled_kernel_data = compile_result.compiled_kernel_data
+        self._last_compiled_kernel_data = compiled_kernel_data
         prog.launch_kernel(compiled_kernel_data, launch_ctx)
     except Exception as e:
         e = handle_exception_from_cpp(e)
