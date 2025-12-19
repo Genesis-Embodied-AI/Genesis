@@ -109,8 +109,6 @@ CAMERA_SENSORS_KWARGS = [
         "attachment": {
             "entity_idx": None,
             "link_idx_local": 0,
-            "pos_offset": (0.0, 0.0, 0.0),
-            "euler_offset": (0.0, 0.0, 0.0),
         },
         "lights": [],
     },
@@ -168,13 +166,6 @@ for backend_name, options_class, enabled in backends:
             )
             if "offset_T" in attachment:
                 options_kwargs["offset_T"] = attachment["offset_T"]
-            else:
-                options_kwargs.update(
-                    {
-                        "pos_offset": attachment["pos_offset"],
-                        "euler_offset": attachment["euler_offset"],
-                    }
-                )
 
         # Add backend-specific parameters
         if backend_name == "raster":

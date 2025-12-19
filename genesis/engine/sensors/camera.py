@@ -245,12 +245,20 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
         if self._options.offset_T is not None:
             offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
         else:
-            pos_offset = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_quat_to_T(
-                pos_offset, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
-            )
+            pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
+            offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
 
-        camera_T = _camera_compute_T_from_link(self._link, offset_T)
+        link_pos = self._link.get_pos()
+        link_quat = self._link.get_quat()
+
+        # Handle batched case - use first environment
+        if link_pos.ndim > 1:
+            link_pos = link_pos[0]
+            link_quat = link_quat[0]
+
+        link_T = trans_quat_to_T(link_pos, link_quat)
+        camera_T = torch.matmul(link_T, offset_T)
+
         self._apply_camera_transform(camera_T)
 
     # ========================== Hooks for subclasses ==========================
@@ -347,24 +355,6 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
     return sensor._return_data_class(rgb=cached_image[envs_idx])
 
 
-def _camera_compute_T_from_link(attached_link, attached_offset_T: torch.Tensor) -> torch.Tensor:
-    """
-    Compute camera transform from an attached link pose and offset.
-
-    Uses env 0 if the link pose is batched.
-    """
-    link_pos = attached_link.get_pos()
-    link_quat = attached_link.get_quat()
-
-    # Handle batched case - use first environment
-    if link_pos.ndim > 1:
-        link_pos = link_pos[0]
-        link_quat = link_quat[0]
-
-    link_T = trans_quat_to_T(link_pos, link_quat)
-    return torch.matmul(link_T, attached_offset_T)
-
-
 # ========================== Rasterizer Camera Sensor ==========================
 
 
@@ -421,7 +411,9 @@ class RasterizerCameraSensor(BaseCameraSensor):
                 # self._shared_metadata.lights.append(light_dict)
                 self._shared_metadata.context.add_light(light_dict)
 
-        self._add_camera_to_rasterizer()
+        camera_wrapper = self._get_camera_wrapper()
+        self._shared_metadata.renderer.add_camera(camera_wrapper)
+        self._update_camera_pose()
 
         n_envs = max(self._manager._sim._B, 1)
         h, w = self._options.res[1], self._options.res[0]
@@ -459,13 +451,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
             "color": tuple(np.array(color) * intensity),
             "intensity": intensity,
         }
-
-    def _add_camera_to_rasterizer(self):
-        """Add this camera to the rasterizer."""
-        camera_wrapper = self._get_camera_wrapper()
-        self._shared_metadata.renderer.add_camera(camera_wrapper)
-
-        self._update_camera_pose()
 
     def _update_camera_pose(self):
         """Update camera pose based on options."""
@@ -639,10 +624,8 @@ class RaytracerCameraSensor(BaseCameraSensor):
         if self._link is not None:
             from genesis.utils.geom import trans_quat_to_T
 
-            pos_offset = torch.tensor(opts.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_quat_to_T(
-                pos_offset, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
-            )
+            pos = torch.tensor(opts.pos, dtype=gs.tc_float, device=gs.device)
+            offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
             self._camera_obj.attach(self._link, offset_T)
 
         h, w = self._options.res[1], self._options.res[0]

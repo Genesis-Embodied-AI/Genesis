@@ -65,10 +65,10 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             fov=70.0,
             entity_idx=sphere.idx,  # Attach to sphere
             link_idx_local=0,
-            pos_offset=(0.0, 0.0, 0.0),
-            euler_offset=(0.0, 0.0, 0.0),
         )
     )
+    offset_T = np.eye(4)
+    offset_T[2, 3] = 1.0
     raster_cam_offset_T = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(320, 240),
@@ -78,7 +78,7 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             fov=70.0,
             entity_idx=sphere.idx,
             link_idx_local=0,
-            offset_T=np.eye(4),
+            offset_T=offset_T,
         )
     )
 
@@ -99,7 +99,6 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         rgb = data.rgb
         rgb_np = tensor_to_array(rgb)
         mean_value = np.mean(rgb_np)
-        print(cam_name, mean_value, np.var(rgb_np))
         assert mean_value > 1.0
         assert mean_value < 254.0
         variance = np.var(rgb_np)
