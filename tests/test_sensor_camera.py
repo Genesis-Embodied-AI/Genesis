@@ -99,6 +99,7 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         rgb = data.rgb
         rgb_np = tensor_to_array(rgb)
         mean_value = np.mean(rgb_np)
+        print(cam_name, mean_value, np.var(rgb_np))
         assert mean_value > 1.0
         assert mean_value < 254.0
         variance = np.var(rgb_np)

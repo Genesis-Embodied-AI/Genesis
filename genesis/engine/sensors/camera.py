@@ -672,16 +672,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
             cutoff=cutoff,
         )
 
-    def _on_attach_backend(self, rigid_link, offset_T):
-        """Keep the underlying visualizer camera in sync when attaching."""
-        if self._camera_obj is not None:
-            self._camera_obj.attach(rigid_link, offset_T)
-
-    def _on_detach_backend(self):
-        """Keep the underlying visualizer camera in sync when detaching."""
-        if self._camera_obj is not None:
-            self._camera_obj.detach()
-
     def _render_current_state(self):
         """Perform the actual render for the current state."""
         if self._link is not None:
