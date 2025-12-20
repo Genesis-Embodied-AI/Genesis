@@ -36,20 +36,20 @@ def func_matvec_Ap(
         if ti.static(static_rigid_sim_config.sparse_solve):
             for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
-                jv += constraint_state.jac[i_b, i_c, i_d] * constraint_state.bw_p[i_d, i_b]
+                jv += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_p[i_d, i_b]
         else:
             for i_d in range(n_dofs):
-                jv += constraint_state.jac[i_b, i_c, i_d] * constraint_state.bw_p[i_d, i_b]
+                jv += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_p[i_d, i_b]
         # only active constraints contribute
-        jv *= constraint_state.efc_D[i_b, i_c] * constraint_state.active[i_b, i_c]
+        jv *= constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         # out += J^T (D * J v)
         if ti.static(static_rigid_sim_config.sparse_solve):
             for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
-                constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_b, i_c, i_d] * jv
+                constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_c, i_d, i_b] * jv
         else:
             for i_d in range(n_dofs):
-                constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_b, i_c, i_d] * jv
+                constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_c, i_d, i_b] * jv
 
 
 @ti.kernel
@@ -84,8 +84,8 @@ def kernel_solve_adjoint_u(
             for i_d in range(n_dofs):
                 z = constraint_state.dL_dqacc[i_d, i_b]
                 for j_d in range(i_d):
-                    z -= constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.bw_r[j_d, i_b]
-                z /= constraint_state.nt_H[i_b, i_d, i_d]
+                    z -= constraint_state.nt_H[i_d, j_d, i_b] * constraint_state.bw_r[j_d, i_b]
+                z /= constraint_state.nt_H[i_d, i_d, i_b]
                 constraint_state.bw_r[i_d, i_b] = z
 
             # u = L^{-T} z  (back substitution)
@@ -93,8 +93,8 @@ def kernel_solve_adjoint_u(
                 i_d = n_dofs - 1 - i_d_
                 u = constraint_state.bw_r[i_d, i_b]
                 for j_d in range(i_d + 1, n_dofs):
-                    u -= constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.bw_u[j_d, i_b]
-                u /= constraint_state.nt_H[i_b, i_d, i_d]
+                    u -= constraint_state.nt_H[j_d, i_d, i_b] * constraint_state.bw_u[j_d, i_b]
+                u /= constraint_state.nt_H[i_d, i_d, i_b]
                 constraint_state.bw_u[i_d, i_b] = u
     else:
         # Use CG solver for solving A * u = g.
@@ -192,10 +192,10 @@ def kernel_compute_gradients(
             if ti.static(static_rigid_sim_config.sparse_solve):
                 for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
-                    s += constraint_state.jac[i_b, i_c, i_d] * constraint_state.bw_u[i_d, i_b]
+                    s += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_u[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
-                    s += constraint_state.jac[i_b, i_c, i_d] * constraint_state.bw_u[i_d, i_b]
+                    s += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_u[i_d, i_b]
             constraint_state.bw_Ju[i_c, i_b] = s
 
         # w = J qacc - aref
@@ -205,12 +205,12 @@ def kernel_compute_gradients(
             if ti.static(static_rigid_sim_config.sparse_solve):
                 for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
-                    t += constraint_state.jac[i_b, i_c, i_d] * constraint_state.qacc[i_d, i_b]
+                    t += constraint_state.jac[i_c, i_d, i_b] * constraint_state.qacc[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
-                    t += constraint_state.jac[i_b, i_c, i_d] * constraint_state.qacc[i_d, i_b]
+                    t += constraint_state.jac[i_c, i_d, i_b] * constraint_state.qacc[i_d, i_b]
             constraint_state.bw_w[i_c, i_b] = t - constraint_state.aref[i_c, i_b]
-            constraint_state.bw_y[i_c, i_b] = constraint_state.efc_D[i_b, i_c] * constraint_state.bw_w[i_c, i_b]
+            constraint_state.bw_y[i_c, i_b] = constraint_state.efc_D[i_c, i_b] * constraint_state.bw_w[i_c, i_b]
 
         # grads
         # force: u
@@ -222,10 +222,10 @@ def kernel_compute_gradients(
         # D: -Ju \odot w
         # J: -[u * y^T + qacc * (D \odot (Ju)^T)]
         for i_c in range(constraint_state.n_constraints[i_b]):
-            if constraint_state.active[i_b, i_c] != 0:
+            if constraint_state.active[i_c, i_b] != 0:
                 # aref: Ju \odot D
                 constraint_state.dL_daref[i_c, i_b] += (
-                    constraint_state.efc_D[i_b, i_c] * constraint_state.bw_Ju[i_c, i_b]
+                    constraint_state.efc_D[i_c, i_b] * constraint_state.bw_Ju[i_c, i_b]
                 )
                 # D: -Ju \odot w
                 constraint_state.dL_defc_D[i_c, i_b] -= (
@@ -233,18 +233,18 @@ def kernel_compute_gradients(
                 )
 
                 # J: -[u * y^T + qacc * (D \odot (Ju))^T]
-                DJu_i = constraint_state.efc_D[i_b, i_c] * constraint_state.bw_Ju[i_c, i_b]
+                DJu_i = constraint_state.efc_D[i_c, i_b] * constraint_state.bw_Ju[i_c, i_b]
                 y_i = constraint_state.bw_y[i_c, i_b]
 
                 if ti.static(static_rigid_sim_config.sparse_solve):
                     for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                         i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
-                        constraint_state.dL_djac[i_b, i_c, i_d] += -(
+                        constraint_state.dL_djac[i_c, i_d, i_b] += -(
                             constraint_state.bw_u[i_d, i_b] * y_i + constraint_state.qacc[i_d, i_b] * DJu_i
                         )
                 else:
                     for i_d in range(n_dofs):
-                        constraint_state.dL_djac[i_b, i_c, i_d] += -(
+                        constraint_state.dL_djac[i_c, i_d, i_b] += -(
                             constraint_state.bw_u[i_d, i_b] * y_i + constraint_state.qacc[i_d, i_b] * DJu_i
                         )
 
