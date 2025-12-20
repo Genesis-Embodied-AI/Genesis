@@ -2249,10 +2249,60 @@ def func_init_solver(
                             constraint_state.nt_H[i_b, d1, d2] = rigid_global_info.mass_mat[d1, d2, i_b]
                             pair_idx += HESSIAN_BLOCK_DIM
 
-            # Cholesky factorization in separate loop
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(_B):
-                func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
+            # Cholesky factorization with shared memory
+            # Each block handles one batch element, loads matrix to shared memory,
+            # performs factorization, then writes back
+            ti.loop_config(
+                serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=HESSIAN_BLOCK_DIM
+            )
+            for i in range(_B * HESSIAN_BLOCK_DIM):
+                tid = i % HESSIAN_BLOCK_DIM
+                i_b = i // HESSIAN_BLOCK_DIM
+
+                if i_b < _B:
+                    EPS = rigid_global_info.EPS[None]
+
+                    # Load lower triangular part into shared memory
+                    H_shared = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+
+                    # Cooperative load of lower triangular elements
+                    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+                    pair_idx = tid
+                    while pair_idx < n_lower_tri:
+                        d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * pair_idx)) / 2.0), gs.ti_int)
+                        d2 = pair_idx - d1 * (d1 + 1) // 2
+                        H_shared[d1, d2] = constraint_state.nt_H[i_b, d1, d2]
+                        pair_idx += HESSIAN_BLOCK_DIM
+                    ti.simt.block.sync()
+
+                    # Cholesky factorization (column by column, sequential)
+                    for i_d in range(n_dofs):
+                        # Thread 0 computes diagonal element
+                        if tid == 0:
+                            tmp = H_shared[i_d, i_d]
+                            for j_d in range(i_d):
+                                tmp -= H_shared[i_d, j_d] ** 2
+                            H_shared[i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
+                        ti.simt.block.sync()
+
+                        # All threads update elements below diagonal in parallel
+                        inv_diag = 1.0 / H_shared[i_d, i_d]
+                        j_d = i_d + 1 + tid
+                        while j_d < n_dofs:
+                            dot = gs.ti_float(0.0)
+                            for k_d in range(i_d):
+                                dot += H_shared[j_d, k_d] * H_shared[i_d, k_d]
+                            H_shared[j_d, i_d] = (H_shared[j_d, i_d] - dot) * inv_diag
+                            j_d += HESSIAN_BLOCK_DIM
+                        ti.simt.block.sync()
+
+                    # Write back to global memory
+                    pair_idx = tid
+                    while pair_idx < n_lower_tri:
+                        d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * pair_idx)) / 2.0), gs.ti_int)
+                        d2 = pair_idx - d1 * (d1 + 1) // 2
+                        constraint_state.nt_H[i_b, d1, d2] = H_shared[d1, d2]
+                        pair_idx += HESSIAN_BLOCK_DIM
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
