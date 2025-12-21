@@ -241,7 +241,7 @@ def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
-    jac_shape = (len_constraints_, solver.n_dofs_, _B)
+    jac_shape = (_B, len_constraints_, solver.n_dofs_)
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
     jac_relevant_dofs_shape = maybe_shape((len_constraints_, solver.n_dofs_, _B), constraint_solver.sparse_solve)
@@ -290,26 +290,26 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         cg_prev_Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
+        nt_H=V(dtype=gs.ti_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
         efc_b=V(dtype=gs.ti_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.ti_float, shape=efc_AR_shape),
-        active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
-        prev_active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
+        active=V(dtype=gs.ti_bool, shape=(_B, len_constraints_)),
+        prev_active=V(dtype=gs.ti_bool, shape=(_B, len_constraints_)),
         diag=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         aref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         Jaref=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         efc_frictionloss=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
+        efc_D=V(dtype=gs.ti_float, shape=(_B, len_constraints_)),
         jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
-        jac=V(dtype=gs.ti_float, shape=jac_shape),
+        jac=V(dtype=gs.ti_float, shape=(_B, len_constraints_, solver.n_dofs_)),
         jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
         # Backward gradients
         dL_dqacc=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
-        dL_djac=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, solver.n_dofs_, _B), solver._requires_grad)),
+        dL_djac=V(dtype=gs.ti_float, shape=maybe_shape((_B, len_constraints_, solver.n_dofs_), solver._requires_grad)),
         dL_daref=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         dL_defc_D=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         dL_dforce=V(dtype=gs.ti_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),

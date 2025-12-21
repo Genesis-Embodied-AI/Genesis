@@ -856,9 +856,9 @@ def check_mujoco_data_consistency(
         # FIXME: It is not always possible to reshape Mujoco jacobian because joint bound constraints are computed in
         # "sparse" dof space, unlike contact constraints.
         error = None
-        gs_jac = gs_sim.rigid_solver.constraint_solver.jac.to_numpy()[:gs_n_constraints, :, 0]
+        gs_jac = gs_sim.rigid_solver.constraint_solver.jac.to_numpy()[0, :gs_n_constraints, :]
         mj_jac = mj_sim.data.efc_J.reshape([mj_n_constraints, -1])
-        gs_efc_D = gs_sim.rigid_solver.constraint_solver.efc_D.to_numpy()[:gs_n_constraints, 0]
+        gs_efc_D = gs_sim.rigid_solver.constraint_solver.efc_D.to_numpy()[0, :gs_n_constraints]
         mj_efc_D = mj_sim.data.efc_D
         gs_efc_aref = gs_sim.rigid_solver.constraint_solver.aref.to_numpy()[:gs_n_constraints, 0]
         mj_efc_aref = mj_sim.data.efc_aref

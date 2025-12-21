@@ -14,8 +14,8 @@ def kernel_build_efc_AR_b(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
+    _B = constraint_state.jac.shape[0]
+    n_dofs = constraint_state.jac.shape[2]
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
@@ -30,7 +30,7 @@ def kernel_build_efc_AR_b(
         for i_row in range(nefc):
             # tmp = M^{-1} * Jr^T
             for i_d in range(n_dofs):
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_b, i_row, i_d]
 
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
@@ -47,13 +47,13 @@ def kernel_build_efc_AR_b(
             for i_col in range(nefc):
                 s = gs.ti_float(0.0)
                 for i_d in range(n_dofs):
-                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                    s += constraint_state.jac[i_b, i_col, i_d] * constraint_state.Mgrad[i_d, i_b]
                 constraint_state.efc_AR[i_row, i_col, i_b] = s
 
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
             for i_d in range(n_dofs):
-                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+                v += constraint_state.jac[i_b, i_c, i_d] * dofs_state.acc_smooth[i_d, i_b]
             constraint_state.efc_b[i_c, i_b] = v
 
 
@@ -65,8 +65,8 @@ def kernel_noslip(
     static_rigid_sim_config: ti.template(),
 ):
     EPS = rigid_global_info.EPS[None]
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
+    _B = constraint_state.jac.shape[0]
+    n_dofs = constraint_state.jac.shape[2]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -187,7 +187,7 @@ def kernel_dual_finish(
             for i_c in range(constraint_state.n_constraints[i_b]):
                 constraint_state.qfrc_constraint[i_d, i_b] = (
                     constraint_state.qfrc_constraint[i_d, i_b]
-                    + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                    + constraint_state.jac[i_b, i_c, i_d] * constraint_state.efc_force[i_c, i_b]
                 )
 
         rigid_solver.func_solve_mass_batched(
@@ -274,15 +274,15 @@ def compute_A_diag(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
+    _B = constraint_state.jac.shape[0]
+    n_dofs = constraint_state.jac.shape[2]
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # For each constraint row i: Ai = Ji * M^{-1} * Ji^T
         for i_c in range(constraint_state.n_constraints[i_b]):
             # tmp = M^{-1} * Ji^T
             for i_d in range(n_dofs):
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b]
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_b, i_c, i_d]
 
             rigid_solver.func_solve_mass_batched(
                 constraint_state.Mgrad,
@@ -300,8 +300,8 @@ def compute_A_diag(
             if ti.static(static_rigid_sim_config.sparse_solve):
                 for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    aii += constraint_state.jac[i_c, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                    aii += constraint_state.jac[i_b, i_c, i_d] * constraint_state.Mgrad[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
-                    aii += constraint_state.jac[i_c, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                    aii += constraint_state.jac[i_b, i_c, i_d] * constraint_state.Mgrad[i_d, i_b]
             constraint_state.efc_A_diag[i_c, i_b] = aii
