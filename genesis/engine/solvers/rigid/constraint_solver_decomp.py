@@ -1289,6 +1289,13 @@ def func_nt_hessian_direct(
     func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
 
 
+# Configuration for shared memory tiled Hessian computation
+# Note: shared memory = MAX_CONSTRAINTS_PER_BLOCK * MAX_DOFS_PER_BLOCK * 4 bytes, must fit in ~48KB limit
+HESSIAN_BLOCK_DIM: int = 128
+MAX_CONSTRAINTS_PER_BLOCK: int = 128
+MAX_DOFS_PER_BLOCK: int = 64
+
+
 @ti.func
 def func_nt_chol_factor(
     i_b,
@@ -2166,20 +2173,84 @@ def func_init_solver(
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
         else:
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_d1, i_b in ti.ndrange(n_dofs, _B):
-                for i_d2 in range(i_d1 + 1):
-                    coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                    for i_c in range(constraint_state.n_constraints[i_b]):
-                        coef += (
-                            constraint_state.jac[i_b, i_c, i_d1]
-                            * constraint_state.jac[i_b, i_c, i_d2]
-                            * constraint_state.efc_D[i_b, i_c]
-                            * constraint_state.active[i_b, i_c]
-                        )
-                    constraint_state.nt_H[i_b, i_d1, i_d2] = coef
+            # GPU path: use shared memory tiled Hessian computation for H = M + J'*D*J
+            # Each block handles one batch element, threads cooperatively load constraints
+            # into shared memory and compute contributions to all (d1, d2) pairs.
+            # Tiles over both constraints and DOFs to handle arbitrary sizes.
 
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=2)
+            ti.loop_config(
+                serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=HESSIAN_BLOCK_DIM
+            )
+            for i in range(_B * HESSIAN_BLOCK_DIM):
+                tid = i % HESSIAN_BLOCK_DIM
+                i_b = i // HESSIAN_BLOCK_DIM
+
+                if i_b < _B:
+                    n_c = constraint_state.n_constraints[i_b]
+
+                    # Shared memory for tiles (fixed sizes for compile-time allocation)
+                    jac_shared = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+                    efc_shared = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
+
+                    # Tile over constraints
+                    tile_start_c = 0
+                    while tile_start_c < n_c:
+                        tile_size_c = min(MAX_CONSTRAINTS_PER_BLOCK, n_c - tile_start_c)
+
+                        # Cooperatively load constraint tile into shared memory
+                        c = tid
+                        while c < tile_size_c:
+                            efc_shared[c] = (
+                                constraint_state.efc_D[i_b, tile_start_c + c]
+                                * constraint_state.active[i_b, tile_start_c + c]
+                            )
+                            for d in range(MAX_DOFS_PER_BLOCK):
+                                if d < n_dofs:
+                                    jac_shared[c, d] = constraint_state.jac[i_b, tile_start_c + c, d]
+                            c += HESSIAN_BLOCK_DIM
+                        ti.simt.block.sync()
+
+                        # Tile over DOFs
+                        tile_start_d = 0
+                        while tile_start_d < n_dofs:
+                            tile_size_d = min(MAX_DOFS_PER_BLOCK, n_dofs - tile_start_d)
+                            total = tile_size_d * tile_size_d
+
+                            pid = tid
+                            while pid < total:
+                                d1 = pid // tile_size_d + tile_start_d
+                                d2 = pid % tile_size_d + tile_start_d
+                                if d2 <= d1:
+                                    coef = rigid_global_info.mass_mat[d1, d2, i_b]
+                                    for cc in range(tile_size_c):
+                                        coef += (
+                                            jac_shared[cc, d1 - tile_start_d]
+                                            * jac_shared[cc, d2 - tile_start_d]
+                                            * efc_shared[cc]
+                                        )
+                                    if tile_start_c == 0 and tile_start_d == 0:
+                                        constraint_state.nt_H[i_b, d1, d2] = coef
+                                    else:
+                                        constraint_state.nt_H[i_b, d1, d2] += coef
+                                pid += HESSIAN_BLOCK_DIM
+                            ti.simt.block.sync()
+
+                            tile_start_d += tile_size_d
+
+                        tile_start_c += tile_size_c
+
+                    # Handle case with no constraints: H = M
+                    if n_c == 0:
+                        n_lower_tri = n_dofs * (n_dofs + 1) // 2
+                        pair_idx = tid
+                        while pair_idx < n_lower_tri:
+                            d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * pair_idx)) / 2.0), gs.ti_int)
+                            d2 = pair_idx - d1 * (d1 + 1) // 2
+                            constraint_state.nt_H[i_b, d1, d2] = rigid_global_info.mass_mat[d1, d2, i_b]
+                            pair_idx += HESSIAN_BLOCK_DIM
+
+            # Cholesky factorization in separate loop
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(_B):
                 func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
 
