@@ -170,6 +170,7 @@ def get_rigid_global_info(solver):
 
 @DATA_ORIENTED
 class StructConstraintState(metaclass=BASE_METACLASS):
+    is_warmstart: V_ANNOTATION
     n_constraints: V_ANNOTATION
     ti_n_equalities: V_ANNOTATION
     jac: V_ANNOTATION
@@ -263,13 +264,14 @@ def get_constraint_state(constraint_solver, solver):
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
+        is_warmstart=V(dtype=gs.ti_bool, shape=(_B,)),
         improved=V(dtype=gs.ti_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.ti_float, shape=(_B,)),
         gauss=V(dtype=gs.ti_float, shape=(_B,)),
         cost=V(dtype=gs.ti_float, shape=(_B,)),
         prev_cost=V(dtype=gs.ti_float, shape=(_B,)),
         gtol=V(dtype=gs.ti_float, shape=(_B,)),
-        ls_it=V(dtype=gs.ti_float, shape=(_B,)),
+        ls_it=V(dtype=gs.ti_int, shape=(_B,)),
         ls_result=V(dtype=gs.ti_int, shape=(_B,)),
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
@@ -441,7 +443,7 @@ class StructAggList(metaclass=BASE_METACLASS):
 
 def get_agg_list(solver):
     _B = solver._B
-    n_entities = solver.n_entities
+    n_entities = max(solver.n_entities, 1)
 
     return StructAggList(
         curr=V(dtype=gs.ti_int, shape=(n_entities, _B)),
@@ -472,6 +474,7 @@ class StructContactIslandState(metaclass=BASE_METACLASS):
 def get_contact_island_state(solver, collider):
     _B = solver._B
     max_contact_pairs = max(collider._collider_info.max_contact_pairs[None], 1)
+    n_entities = max(solver.n_entities, 1)
 
     return StructContactIslandState(
         ci_edges=V(dtype=gs.ti_int, shape=(max_contact_pairs, 2, _B)),
@@ -480,15 +483,15 @@ def get_contact_island_state(solver, collider):
         constraint_id=V(dtype=gs.ti_int, shape=(max_contact_pairs * 2, _B)),
         entity_edge=get_agg_list(solver),
         island_col=get_agg_list(solver),
-        island_hibernated=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        island_hibernated=V(dtype=gs.ti_int, shape=(n_entities, _B)),
         island_entity=get_agg_list(solver),
-        entity_id=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        entity_id=V(dtype=gs.ti_int, shape=(n_entities, _B)),
         n_edges=V(dtype=gs.ti_int, shape=(_B,)),
         n_islands=V(dtype=gs.ti_int, shape=(_B,)),
         n_stack=V(dtype=gs.ti_int, shape=(_B,)),
-        entity_island=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
-        stack=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        entity_island=V(dtype=gs.ti_int, shape=(n_entities, _B)),
+        stack=V(dtype=gs.ti_int, shape=(n_entities, _B)),
+        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.ti_int, shape=(n_entities, _B)),
     )
 
 
@@ -1121,6 +1124,7 @@ def get_sdf_info(n_geoms, n_cells):
 
 @DATA_ORIENTED
 class StructDofsInfo(metaclass=BASE_METACLASS):
+    entity_idx: V_ANNOTATION
     stiffness: V_ANNOTATION
     invweight: V_ANNOTATION
     armature: V_ANNOTATION
@@ -1129,7 +1133,6 @@ class StructDofsInfo(metaclass=BASE_METACLASS):
     motion_ang: V_ANNOTATION
     motion_vel: V_ANNOTATION
     limit: V_ANNOTATION
-    dof_start: V_ANNOTATION
     kp: V_ANNOTATION
     kv: V_ANNOTATION
     force_range: V_ANNOTATION
@@ -1139,6 +1142,7 @@ def get_dofs_info(solver):
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
     return StructDofsInfo(
+        entity_idx=V(dtype=gs.ti_int, shape=shape),
         stiffness=V(dtype=gs.ti_float, shape=shape),
         invweight=V(dtype=gs.ti_float, shape=shape),
         armature=V(dtype=gs.ti_float, shape=shape),
@@ -1147,7 +1151,6 @@ def get_dofs_info(solver):
         motion_ang=V(dtype=gs.ti_vec3, shape=shape),
         motion_vel=V(dtype=gs.ti_vec3, shape=shape),
         limit=V(dtype=gs.ti_vec2, shape=shape),
-        dof_start=V(dtype=gs.ti_int, shape=shape),
         kp=V(dtype=gs.ti_float, shape=shape),
         kv=V(dtype=gs.ti_float, shape=shape),
         force_range=V(dtype=gs.ti_vec2, shape=shape),
@@ -1798,6 +1801,7 @@ def get_rigid_adjoint_cache(solver):
 
 @ti.data_oriented
 class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
+    backend: int
     para_level: int
     enable_collision: bool
     use_hibernation: bool = False
@@ -1812,7 +1816,6 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int = gs.integrator.approximate_implicitfast
     solver_type: int = gs.constraint_solver.CG
     requires_grad: bool = False
-    is_backward: bool = False
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1

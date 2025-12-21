@@ -845,8 +845,8 @@ class Scene(RBC):
         - When using cpu, we serialize everything.
             - Parallelization only provides a boost for n_envs >= num_threads.
               It is always disabled by default but can be enforced by setting the env var `GS_PARA_LEVEL=2`.
-            - In order to exploit full cpu power, users are encouraged to launch multiple processes manually and set
-              env var `TI_NUM_THREADS=1`, so that each process uses a single cpu thread.
+            - In order to exploit full cpu power, users are encouraged to launch multiple processes manually, so that
+              each process uses a single cpu thread.
         """
         if gs.backend == gs.cpu:
             para_level = gs.PARA_LEVEL.NEVER

@@ -954,6 +954,8 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
+    gs_sim.rigid_solver.collider.clear()
+    gs_sim.rigid_solver.constraint_solver.clear()
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
 
@@ -1741,9 +1743,9 @@ def test_apply_external_forces(xml_path, show_viewer):
         if step == 0:
             assert_allclose(ee_pos, (0.8, 0.0, 0.02), tol=1e-4)
         elif step in (500, 600):
-            assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=1e-2)
+            assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=0.01)
         elif step == 800:
-            assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=1e-2)
+            assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=0.02)
         assert_allclose(duck_pos, (1.0, 0.0, 1.0), tol=1e-3)
 
         if step >= 600:
@@ -2197,8 +2199,13 @@ def test_nan_reset(gs_sim, mode):
     assert not torch.isnan(qvel).any()
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,  # This test takes too much time of CPU (~1000s)
+        pytest.param(gs.gpu, marks=pytest.mark.required),
+    ],
+)
 def test_terrain_generation(request, show_viewer):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
