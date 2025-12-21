@@ -2868,7 +2868,7 @@ def kernel_init_meaninertia(
             for i_e in range(n_entities):
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                    rigid_global_info.meaninertia[i_b] += rigid_global_info.mass_mat[i_d, i_d, i_b]
+                    ti.atomic_add(rigid_global_info.meaninertia[i_b], rigid_global_info.mass_mat[i_d, i_d, i_b])
                 rigid_global_info.meaninertia[i_b] = rigid_global_info.meaninertia[i_b] / n_dofs
         else:
             rigid_global_info.meaninertia[i_b] = 1.0
@@ -3663,13 +3663,13 @@ def func_compute_mass_matrix(
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-            rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+            ti.atomic_add(rigid_global_info.mass_mat[i_d, i_d, i_b], dofs_info.damping[I_d] * rigid_global_info.substep_dt[None])
             if (
                 dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
                 or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
             ):
                 # qM += d qfrc_actuator / d qvel
-                rigid_global_info.mass_mat[i_d, i_d, i_b] += dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
+                ti.atomic_add(rigid_global_info.mass_mat[i_d, i_d, i_b], dofs_info.kv[I_d] * rigid_global_info.substep_dt[None])
 
 
 @ti.func
@@ -3746,14 +3746,14 @@ def func_factor_mass(
 
                                 if ti.static(implicit_damping):
                                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                                    rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
+                                    ti.atomic_add(rigid_global_info.mass_mat_L[i_d, i_d, i_b], (
                                         dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
-                                    )
+                                    ))
                                     if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                         if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                             dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                         ):
-                                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] += (
+                                            ti.atomic_add(rigid_global_info.mass_mat_L[i_d, i_d, i_b], (
                                                 dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                             )
 
@@ -3834,15 +3834,15 @@ def func_factor_mass(
 
                         if ti.static(implicit_damping):
                             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                            rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b] += (
+                            ti.atomic_add(rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b], (
                                 dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
-                            )
+                            ))
                             if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                 if (
                                     dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
                                     or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                 ):
-                                    rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b] += (
+                                    ti.atomic_add(rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b], (
                                         dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                     )
 
@@ -3874,7 +3874,7 @@ def func_factor_mass(
                                 # k_pr < j_pr
                                 if func_check_index_range(p_k0, 0, p_j0, BW):
                                     k_pr = entity_dof_start + p_k0
-                                    sum += (
+                                    sum = sum + (
                                         rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
                                         * rigid_global_info.mass_mat_L_bw[1, j_pr, k_pr, i_b]
                                     )
@@ -3982,9 +3982,9 @@ def func_solve_mass_batched(
                                 # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
                                 # finalized at this point, we don't need to care about AD mutation rule.
                                 if ti.static(BW):
-                                    out_bw[0, i_d, i_b] += -(
+                                    out_bw[0, i_d, i_b] = out_bw[0, i_d, i_b] + (-(
                                         rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-                                    )
+                                    ))
                                 else:
                                     out[i_d, i_b] -= rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
 
@@ -4021,7 +4021,7 @@ def func_solve_mass_batched(
                             j_d = j_d_ if ti.static(not BW) else (j_d_ + entities_info.dof_start[i_e])
                             if func_check_index_range(j_d, entity_dof_start, i_d, BW):
                                 if ti.static(BW):
-                                    curr_out += -(rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b])
+                                    curr_out = curr_out + (-(rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]))
                                 else:
                                     out[i_d, i_b] -= rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
 
@@ -4808,8 +4808,8 @@ def func_COM_links(
             )
 
             i_r = links_info.root_idx[I_l]
-            links_state.mass_sum[i_r, i_b] += mass
-            links_state.root_COM_bw[i_r, i_b] += mass * links_state.i_pos_bw[i_l, i_b]
+            ti.atomic_add(links_state.mass_sum[i_r, i_b], mass)
+            ti.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_ in (
@@ -6652,7 +6652,7 @@ def func_integrate(
                         )
                         # Backward pass requires atomic add
                         if ti.static(BW):
-                            pos += vel * rigid_global_info.substep_dt[None]
+                            ti.atomic_add(pos, vel * rigid_global_info.substep_dt[None])
                         else:
                             pos = pos + vel * rigid_global_info.substep_dt[None]
                         for j in ti.static(range(3)):
@@ -7264,18 +7264,18 @@ def kernel_get_state_grad(
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_q, i_b in ti.ndrange(n_qs, _B):
-        rigid_global_info.qpos.grad[i_q, i_b] += qpos_grad[i_b, i_q]
+        ti.atomic_add(rigid_global_info.qpos.grad[i_q, i_b], qpos_grad[i_b, i_q])
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
-        dofs_state.vel.grad[i_d, i_b] += vel_grad[i_b, i_d]
+        ti.atomic_add(dofs_state.vel.grad[i_d, i_b], vel_grad[i_b, i_d])
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b in ti.ndrange(n_links, _B):
         for j in ti.static(range(3)):
-            links_state.pos.grad[i_l, i_b][j] += links_pos_grad[i_b, i_l, j]
+            ti.atomic_add(links_state.pos.grad[i_l, i_b][j], links_pos_grad[i_b, i_l, j])
         for j in ti.static(range(4)):
-            links_state.quat.grad[i_l, i_b][j] += links_quat_grad[i_b, i_l, j]
+            ti.atomic_add(links_state.quat.grad[i_l, i_b][j], links_quat_grad[i_b, i_l, j])
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -8046,7 +8046,7 @@ def kernel_get_errno(errno: array_class.V_ANNOTATION) -> ti.i32:
 @ti.func
 def func_atomic_add_if(field: array_class.V_ANNOTATION, I, value, cond: ti.template()):
     if ti.static(cond):
-        field[I] += value
+        ti.atomic_add(field[I], value)
     return value
 
 
@@ -8056,7 +8056,7 @@ def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: ti.t
     # write, use atomic add directly. For reference, see official Taichi documentation:
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
     if ti.static(cond):
-        field[I] += value
+        ti.atomic_add(field[I], value)
     else:
         field[I] = field[I] + value
 
