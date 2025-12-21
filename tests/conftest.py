@@ -526,7 +526,8 @@ def initialize_genesis(
     if not taichi_offline_cache:
         monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
-        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache"))
+        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "taichi"))
+        monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence

@@ -90,8 +90,6 @@ def test_to_torch(ti_type_spec, batch_shape, arg_shape):
 
 
 def gs_static_child(args: list[str]):
-    import gstaichi as ti
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--enable-multi-contact", action="store_true")
@@ -352,9 +350,8 @@ def change_scene(args: list[str]):
         ("cpu", [(1, 0), (2, 1), (2, 2), (3, 3)]),
     ],
 )
-@pytest.mark.parametrize("enable_fastcache", [True])
 def test_ndarray_no_compile(
-    enable_fastcache: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
+    list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
     # Iterate to make sure stuff is really being read from cache
     for i, (n_objs, n_envs) in enumerate(list_n_objs_n_envs):
@@ -368,14 +365,14 @@ def test_ndarray_no_compile(
             "--n_envs",
             str(n_envs),
             "--expected-src-ll-cache-hit",
-            "1" if enable_fastcache and i > 0 else "0",
+            "1" if i > 0 else "0",
             "--backend",
             test_backend,
         ]
         env = dict(os.environ)
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1"
-        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
+        env["GS_ENABLE_FASTCACHE"] = "1"
         env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
