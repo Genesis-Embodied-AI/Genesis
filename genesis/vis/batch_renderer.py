@@ -315,6 +315,9 @@ class BatchRenderer(RBC):
             cam_fovs_tensor=_make_tensor([camera.fov for camera in self._cameras]),
             cam_znears_tensor=_make_tensor([camera.near for camera in self._cameras]),
             cam_zfars_tensor=_make_tensor([camera.far for camera in self.cameras]),
+            cam_proj_types_tensor=_make_tensor(
+                [camera.model == "fisheye" for camera in self._cameras], dtype=torch.uint32
+            ),
             batch_render_view_width=camera_width,
             batch_render_view_height=camera_height,
             add_cam_debug_geo=False,

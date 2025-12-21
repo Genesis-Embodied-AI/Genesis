@@ -133,7 +133,7 @@ class Camera(RBC):
         self._follow_smoothing = None
         self._follow_fix_orientation = None
 
-        if self._model not in ["pinhole", "thinlens"]:
+        if self._model not in ["pinhole", "thinlens", "fisheye"]:
             gs.raise_exception(f"Invalid camera model: {self._model}")
 
         if self._focus_dist is None:
@@ -809,7 +809,7 @@ class Camera(RBC):
 
     @property
     def model(self):
-        """The camera model: `pinhole` or `thinlens`."""
+        """The camera model: `pinhole`, `thinlens` or `fisheye`."""
         return self._model
 
     @property
@@ -838,7 +838,7 @@ class Camera(RBC):
                 projected_pixel_size = min(0.036 / self._res[1], 0.024 / self._res[0])
             image_dist = self._res[1] * projected_pixel_size / (2 * tan_half_fov)
             return 1.0 / (1.0 / image_dist + 1.0 / self._focus_dist)
-        elif self.model == "pinhole":
+        elif self.model in ["pinhole", "fisheye"]:
             return self._res[0] / (2.0 * tan_half_fov)
 
     @property

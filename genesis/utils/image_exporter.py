@@ -196,9 +196,10 @@ class FrameImageExporter:
                 imgs_data = np.asarray(imgs_data)
 
             # Make sure that image data has shape `(n_env, H, W [, C>1])``
-            if imgs_data.ndim < 4:
+            is_single_channel = img_type in (IMAGE_TYPE.DEPTH, IMAGE_TYPE.SEGMENTATION)
+            if imgs_data.ndim == (2 if is_single_channel else 3):
                 imgs_data = imgs_data[None]
-            if imgs_data.ndim == 4 and imgs_data.shape[-1] == 1:
+            if imgs_data.ndim == 4 and is_single_channel:
                 imgs_data = imgs_data[..., 0]
             if imgs_data.ndim not in (3, 4):
                 gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W [, C>1])")
