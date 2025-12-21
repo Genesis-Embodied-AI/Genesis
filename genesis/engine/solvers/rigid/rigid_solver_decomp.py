@@ -3753,7 +3753,7 @@ def func_factor_mass(
                                         if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                             dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                         ):
-                                            ti.atomic_add(rigid_global_info.mass_mat_L[i_d, i_d, i_b], (
+                                            ti.atomic_add(rigid_global_info.mass_mat_L[i_d, i_d, i_b],
                                                 dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                             )
 
