@@ -3,7 +3,7 @@ import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Literal
 
 import numpy as np
 import torch
@@ -457,6 +457,17 @@ class Scene(RBC):
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
         return entity
+
+    @gs.assert_unbuilt
+    def add_stage(
+        self,
+        morph: gs.morphs.USDMorph,
+        vis_mode: Literal["visual", "collision"] = "visual",
+        visualize_contact: bool = False,
+    ):
+        from ..utils.usd import import_from_usd
+
+        return import_from_usd(self, morph, vis_mode, visualize_contact)
 
     @gs.assert_unbuilt
     def add_mesh_light(
