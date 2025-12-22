@@ -507,14 +507,15 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     # Verify that the output is correct pixel-wise over multiple simulation steps
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot
+            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [2, 3])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+@pytest.mark.parametrize("camera_model", ["pinhole", "fisheye"])
 @pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
-def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
+def test_madrona_features(tmp_path, n_envs, show_viewer, png_snapshot, renderer, camera_model):
     NUM_STEPS = 2
     CAM_RES = (512, 512)
 
@@ -526,7 +527,7 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
     )
     plane = scene.add_entity(
         gs.morphs.Plane(),
-        surface=gs.surfaces.Default(
+        surface=gs.surfaces.Default(  # Feature 1: Batch Texture
             diffuse_texture=gs.textures.BatchTexture.from_images(image_folder=os.path.join(asset_path, "ci_assets"))
         ),
     )
@@ -538,6 +539,7 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
         pos=(1.5, -0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
+        model=camera_model,  # Feature 2: Fisheye camera
         GUI=show_viewer,
     )
     scene.add_light(
@@ -572,7 +574,7 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
 
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot
+            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
 
 
 @pytest.mark.parametrize(
@@ -1259,7 +1261,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot
+            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
 
 
 @pytest.mark.required

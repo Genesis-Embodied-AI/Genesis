@@ -67,10 +67,11 @@ def main():
         GUI=args.vis,
     )
     cam_2 = scene.add_camera(
-        res=(512, 512),
-        pos=(0.0, 0.1, 5.0),
+        res=(1280, 720),
+        pos=(0.0, 0.0, 1.0),
         lookat=(0.0, 0.0, 0.0),
-        fov=45,
+        fov=70,
+        model="fisheye",
         GUI=args.vis,
     )
 
