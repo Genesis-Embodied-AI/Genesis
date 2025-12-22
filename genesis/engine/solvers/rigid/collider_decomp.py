@@ -2686,7 +2686,7 @@ def func_convex_convex_contact(
                     # contact points and thefore more continuous contact forces, without changing the mean-field
                     # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
-                elif ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                     # Only change penetration to the initial one, because the normal vector could change abruptly
                     # under MuJoCo's GJK-EPA.
                     penetration = penetration_0
