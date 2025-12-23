@@ -879,19 +879,6 @@ def _parse_joints(
         n_dofs = j_info["n_dofs"]
         n_qs = j_info["n_qs"]
 
-        # Parse joint target from DriveAPI to set initial position
-        # Target is relative to lower limit, so we pass dofs_limit to add it
-        target = _parse_joint_target(joint_prim, j_info["type"])
-        if target is not None:
-            # Override init_qpos with target value if found
-            if target.shape[0] == n_qs:
-                j_info["init_qpos"] = -target
-            else:
-                gs.logger.warning(
-                    f"Joint target at {joint_prim.GetPath()} has shape {target.shape}, "
-                    f"but expected {n_qs} elements. Ignoring target value."
-                )
-
         # NOTE: Cuz we don't implement all the joint physics properties, we need to finalize the joint info with common properties.
         # TODO: Implement all the joint physics properties.
         j_info["dofs_invweight"] = np.full((n_dofs,), fill_value=-1.0)
@@ -903,6 +890,22 @@ def _parse_joints(
         j_info["dofs_kp"] = np.full((n_dofs,), fill_value=0.0)
         j_info["dofs_kv"] = np.full((n_dofs,), fill_value=0.0)
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
+
+        # Parse joint target from DriveAPI to set initial position
+        # Target is relative to lower limit, so we pass dofs_limit to add it
+        target = _parse_joint_target(joint_prim, j_info["type"])
+        if target is not None:
+            # Override init_qpos with target value if found
+            if target.shape[0] == n_qs:
+                j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=10.0)
+                j_info["dofs_damping"] = np.full((n_dofs,), fill_value=10.0)
+                j_info["init_qpos"] = np.full((n_dofs,), fill_value=0.0)
+                j_info["dofs_target"] = target
+            else:
+                gs.logger.warning(
+                    f"Joint target at {joint_prim.GetPath()} has shape {target.shape}, "
+                    f"but expected {n_qs} elements. Ignoring target value."
+                )
 
         # Parse joint dynamics properties (friction, damping, armature)
         dynamics_params = _parse_joint_dynamics(joint_prim, n_dofs)

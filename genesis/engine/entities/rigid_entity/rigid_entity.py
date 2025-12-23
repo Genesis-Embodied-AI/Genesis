@@ -783,6 +783,7 @@ class RigidEntity(Entity):
                 dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
                 dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
+                dofs_target=j_info.get("dofs_target", np.zeros(n_dofs)),
             )
             joints.append(joint)
 
