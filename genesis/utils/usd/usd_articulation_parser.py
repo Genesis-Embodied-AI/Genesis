@@ -899,11 +899,8 @@ def _parse_joints(
             if target.shape[0] == n_qs:
                 j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=10.0)
                 j_info["dofs_damping"] = np.full((n_dofs,), fill_value=10.0)
-                j_info["init_qpos"] = target
-                # in mujoco convention, transformation of one joint is qpos - qpos0
-                # so the actual limit for qpos is qpos0 + limit
-                j_info["dofs_limit"] += target
-
+                j_info["init_qpos"] = np.full((n_dofs,), fill_value=0.0)
+                j_info["dofs_target"] = target
             else:
                 gs.logger.warning(
                     f"Joint target at {joint_prim.GetPath()} has shape {target.shape}, "

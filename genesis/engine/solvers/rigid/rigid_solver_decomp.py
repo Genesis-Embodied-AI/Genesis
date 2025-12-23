@@ -543,6 +543,7 @@ class RigidSolver(Solver):
                 dofs_kp=np.concatenate([joint.dofs_kp for joint in joints], dtype=gs.np_float),
                 dofs_kv=np.concatenate([joint.dofs_kv for joint in joints], dtype=gs.np_float),
                 dofs_force_range=np.concatenate([joint.dofs_force_range for joint in joints], dtype=gs.np_float),
+                dofs_target=np.concatenate([joint.dofs_target for joint in joints], dtype=gs.np_float),
                 dofs_info=self.dofs_info,
                 dofs_state=self.dofs_state,
                 rigid_global_info=self._rigid_global_info,
@@ -591,7 +592,6 @@ class RigidSolver(Solver):
             joints = self.joints
             joints_sol_params = np.array([joint.sol_params for joint in joints], dtype=gs.np_float)
             _sanitize_sol_params(joints_sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
-
             kernel_init_joint_fields(
                 joints_type=np.array([joint.type for joint in joints], dtype=gs.np_int),
                 joints_sol_params=joints_sol_params,
@@ -2843,6 +2843,7 @@ def kernel_init_dof_fields(
     dofs_kp: ti.types.ndarray(),
     dofs_kv: ti.types.ndarray(),
     dofs_force_range: ti.types.ndarray(),
+    dofs_target: ti.types.ndarray(),
     # taichi variables
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
@@ -2870,6 +2871,7 @@ def kernel_init_dof_fields(
         dofs_info.frictionloss[I_d] = dofs_frictionloss[i_d]
         dofs_info.kp[I_d] = dofs_kp[i_d]
         dofs_info.kv[I_d] = dofs_kv[i_d]
+        dofs_info.target[I_d] = dofs_target[i_d]
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d, i_b in ti.ndrange(n_dofs, _B):
@@ -5985,7 +5987,8 @@ def func_torque_and_passive_force(
                                     # dofs_state.pos = qpos - qpos0
                                     # using dofs_state instead of qpos here allows
                                     # qpos to be pulled into qpos0 instead 0
-                                    -dofs_state.pos[dof_start + j_d, i_b] * dofs_info.stiffness[I_d],
+                                    (dofs_info.target[I_d] - dofs_state.pos[dof_start + j_d, i_b])
+                                    * dofs_info.stiffness[I_d],
                                     BW,
                                 )
 

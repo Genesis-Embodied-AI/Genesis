@@ -1133,6 +1133,7 @@ class StructDofsInfo(metaclass=BASE_METACLASS):
     kp: V_ANNOTATION
     kv: V_ANNOTATION
     force_range: V_ANNOTATION
+    target: V_ANNOTATION
 
 
 def get_dofs_info(solver):
@@ -1151,6 +1152,7 @@ def get_dofs_info(solver):
         kp=V(dtype=gs.ti_float, shape=shape),
         kv=V(dtype=gs.ti_float, shape=shape),
         force_range=V(dtype=gs.ti_vec2, shape=shape),
+        target=V(dtype=gs.ti_float, shape=shape),
     )
 
 
