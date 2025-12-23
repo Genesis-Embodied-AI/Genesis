@@ -259,7 +259,7 @@ class Collider:
                     continue
 
                 collision_pair_idx[i_ga, i_gb] = n_possible_pairs
-                n_possible_pairs += 1
+                n_possible_pairs = n_possible_pairs + 1
 
         return n_possible_pairs, collision_pair_idx
 
@@ -275,7 +275,7 @@ class Collider:
             vert_neighbors.append(geom.vert_neighbors + geom.vert_start)
             vert_neighbor_start.append(geom.vert_neighbor_start + offset)
             vert_n_neighbors.append(geom.vert_n_neighbors)
-            offset += len(geom.vert_neighbors)
+            offset = offset + len(geom.vert_neighbors)
 
         if self._solver.n_verts > 0:
             vert_neighbors = np.concatenate(vert_neighbors, dtype=gs.np_int)
@@ -829,7 +829,7 @@ def func_contact_vertex_sdf(
         )
 
         # The contact point must be offsetted by half the penetration depth
-        contact_pos += 0.5 * penetration * normal
+        contact_pos = contact_pos + 0.5 * penetration * normal
 
     return is_col, normal, penetration, contact_pos
 
@@ -925,7 +925,7 @@ def func_contact_edge_sdf(
                         penetration = new_penetration
 
     # The contact point must be offsetted by half the penetration depth, for consistency with MPR
-    contact_pos += 0.5 * penetration * normal
+    contact_pos = contact_pos + 0.5 * penetration * normal
 
     return is_col, normal, penetration, contact_pos
 
@@ -2686,7 +2686,7 @@ def func_convex_convex_contact(
                     # contact points and thefore more continuous contact forces, without changing the mean-field
                     # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
-                elif ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                     # Only change penetration to the initial one, because the normal vector could change abruptly
                     # under MuJoCo's GJK-EPA.
                     penetration = penetration_0
