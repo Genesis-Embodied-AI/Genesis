@@ -180,8 +180,8 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            self._solver.n_dofs >= 32,  # enable_tiling
-            self._solver.n_dofs <= 64,  # enable_tiled_cholesky
+            True,  # enable_tiled_hessian
+            32 <= self._solver.n_dofs <= 64,  # enable_tiled_cholesky
         )
         func_solve(
             self._solver.entities_info,
@@ -2052,7 +2052,7 @@ def func_init_solver(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    enable_tiling: ti.template(),
+    enable_tiled_hessian: ti.template(),
     enable_tiled_cholesky: ti.template(),
 ):
     EPS = rigid_global_info.EPS[None]
@@ -2193,7 +2193,7 @@ def func_init_solver(
 
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
-        if ti.static(enable_tiling):
+        if ti.static(enable_tiled_hessian):
             # FIXME: Adding `serialize=False` is causing sync failing for some reason...
             ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
             for i in range(_B * HESSIAN_BLOCK_DIM):
@@ -2297,7 +2297,7 @@ def func_init_solver(
                     constraint_state.nt_H[i_d1, i_d2, i_b] = coef
                     constraint_state.nt_H[i_d2, i_d1, i_b] = coef
 
-        if ti.static(enable_tiling and enable_tiled_cholesky):
+        if ti.static(enable_tiled_cholesky):
             ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
             for i in range(_B * HESSIAN_BLOCK_DIM):
                 tid = i % HESSIAN_BLOCK_DIM

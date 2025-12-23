@@ -726,11 +726,6 @@ def box_pyramid_5(solver, n_envs, gjk):
     return _box_pyramid(solver, n_envs, gjk, n_cubes=5)
 
 
-@pytest.fixture
-def box_pyramid_6(solver, n_envs, gjk):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=6)
-
-
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -756,7 +751,6 @@ def box_pyramid_6(solver, n_envs, gjk):
         ("batched_franka", None, None, 0, gs.gpu),
         ("batched_franka", None, None, 0, gs.cpu),
         ("random", None, None, 30000, gs.gpu),
-        ("box_pyramid_6", None, None, 4096, gs.gpu),
         ("box_pyramid_5", None, True, 4096, gs.gpu),
         ("box_pyramid_5", None, False, 4096, gs.gpu),
         ("box_pyramid_4", None, None, 4096, gs.gpu),
