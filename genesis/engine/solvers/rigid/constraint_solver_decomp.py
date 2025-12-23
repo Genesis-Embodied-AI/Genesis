@@ -2174,6 +2174,17 @@ def func_init_solver(
                     constraint_state=constraint_state,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
+
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            func_update_gradient(
+                i_b,
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
     else:
         # Note that MAX_CONSTRAINTS_PER_BLOCK * MAX_DOFS_PER_BLOCK * 4 bytes, must fit in ~48KB shared memory limit
         HESSIAN_BLOCK_DIM = ti.static(64)
@@ -2327,22 +2338,91 @@ def func_init_solver(
                     i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     constraint_state.nt_H[i_d1, i_d2, i_b] = H[i_d1, i_d2]
-                    i_pair += HESSIAN_BLOCK_DIM
+                    i_pair = i_pair + HESSIAN_BLOCK_DIM
+
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in ti.ndrange(n_dofs, _B):
+                constraint_state.grad[i_d, i_b] = (
+                    constraint_state.Ma[i_d, i_b]
+                    - dofs_state.force[i_d, i_b]
+                    - constraint_state.qfrc_constraint[i_d, i_b]
+                )
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+
+            ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
+            for i in range(_B * HESSIAN_BLOCK_DIM):
+                tid = i % HESSIAN_BLOCK_DIM
+                i_b = i // HESSIAN_BLOCK_DIM
+                if i_b >= _B:
+                    continue
+
+                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+                v = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.ti_float)
+                partial = ti.simt.block.SharedArray((HESSIAN_BLOCK_DIM,), gs.ti_float)
+
+                i_pair = tid
+                while i_pair < n_lower_tri:
+                    i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
+                    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+                    H[i_d1, i_d2] = constraint_state.nt_H[i_d1, i_d2, i_b]
+                    i_pair = i_pair + HESSIAN_BLOCK_DIM
+                k_d = tid
+                while k_d < n_dofs:
+                    v[k_d] = constraint_state.Mgrad[k_d, i_b]
+                    k_d = k_d + HESSIAN_BLOCK_DIM
+                ti.simt.block.sync()
+
+                for i_d in range(n_dofs):
+                    dot = gs.ti_float(0.0)
+                    j_d = tid
+                    while j_d < i_d:
+                        dot = dot + H[i_d, j_d] * v[j_d]
+                        j_d = j_d + HESSIAN_BLOCK_DIM
+                    partial[tid] = dot
+                    ti.simt.block.sync()
+
+                    if tid == 0:
+                        total = gs.ti_float(0.0)
+                        for k in range(HESSIAN_BLOCK_DIM):
+                            total = total + partial[k]
+                        v[i_d] = (v[i_d] - total) / H[i_d, i_d]
+                    ti.simt.block.sync()
+
+                for i_d_ in range(n_dofs):
+                    i_d = n_dofs - 1 - i_d_
+                    dot = gs.ti_float(0.0)
+                    j_d = i_d + 1 + tid
+                    while j_d < n_dofs:
+                        dot = dot + H[j_d, i_d] * v[j_d]
+                        j_d = j_d + HESSIAN_BLOCK_DIM
+                    partial[tid] = dot
+                    ti.simt.block.sync()
+
+                    if tid == 0:
+                        total = gs.ti_float(0.0)
+                        for k in range(HESSIAN_BLOCK_DIM):
+                            total = total + partial[k]
+                        v[i_d] = (v[i_d] - total) / H[i_d, i_d]
+                    ti.simt.block.sync()
+
+                k_d = tid
+                while k_d < n_dofs:
+                    constraint_state.Mgrad[k_d, i_b] = v[k_d]
+                    k_d = k_d + HESSIAN_BLOCK_DIM
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
                 func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_update_gradient(
-            i_b,
-            dofs_state=dofs_state,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b in range(_B):
+                for i_d in range(n_dofs):
+                    constraint_state.grad[i_d, i_b] = (
+                        constraint_state.Ma[i_d, i_b]
+                        - dofs_state.force[i_d, i_b]
+                        - constraint_state.qfrc_constraint[i_d, i_b]
+                    )
+                func_nt_chol_solve(i_b, constraint_state)
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
