@@ -7551,7 +7551,7 @@ def kernel_set_sol_params(
         for i_g_ in range(inputs_idx.shape[0]):
             for j in ti.static(range(7)):
                 geoms_info.sol_params[inputs_idx[i_g_]][j] = sol_params[i_g_, j]
-    elif ti.static(constraint_type == 1):  # joints
+    if ti.static(constraint_type == 1):  # joints
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         if ti.static(static_rigid_sim_config.batch_joints_info):
             for i_j_, i_b_ in ti.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
@@ -7561,7 +7561,7 @@ def kernel_set_sol_params(
             for i_j_ in range(inputs_idx.shape[0]):
                 for j in ti.static(range(7)):
                     joints_info.sol_params[inputs_idx[i_j_]][j] = sol_params[i_j_, j]
-    else:  # equalities
+    if ti.static(constraint_type == 2):  # equalities
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_eq_, i_b_ in ti.ndrange(inputs_idx.shape[0], envs_idx.shape[0]):
             for j in ti.static(range(7)):
