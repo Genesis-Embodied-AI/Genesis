@@ -1450,13 +1450,13 @@ def func_delete_face_from_polytope(
 @ti.func
 def func_epa_insert_vertex_to_polytope(
     gjk_state: array_class.GJKState,
-    i_b,
+    i_b: int,
     obj1_point,
     obj2_point,
     obj1_localpos,
     obj2_localpos,
-    obj1_id,
-    obj2_id,
+    obj1_id: int,
+    obj2_id: int,
     minkowski_point,
 ):
     """
@@ -1866,26 +1866,42 @@ def func_epa_support(
     if dir_norm > gjk_info.FLOAT_MIN[None]:
         d = dir / dir_norm
 
+    (
+        support_point_obj1,
+        support_point_obj2,
+        support_point_localpos1,
+        support_point_localpos2,
+        support_point_id_obj1,
+        support_point_id_obj2,
+        support_point_minkowski,
+    ) = func_support(
+        geoms_state,
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        i_b,
+        d,
+        False,
+    )
+
     # Insert the support points into the polytope
     v_index = func_epa_insert_vertex_to_polytope(
         gjk_state,
         i_b,
-        *func_support(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            d,
-            False,
-        ),
+        support_point_obj1,
+        support_point_obj2,
+        support_point_localpos1,
+        support_point_localpos2,
+        support_point_id_obj1,
+        support_point_id_obj2,
+        support_point_minkowski,
     )
 
     return v_index
