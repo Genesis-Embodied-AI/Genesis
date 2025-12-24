@@ -309,6 +309,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         sim_options=gs.options.SimOptions(
             dt=0.04,
         ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
@@ -1091,6 +1094,50 @@ def test_interactive_viewer_disable_keyboard_shortcuts():
 
     # Verify the flag is set correctly
     assert pyrender_viewer._disable_keyboard_shortcuts is True
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_camera_gimbal_lock_singularity(renderer, show_viewer):
+    """
+    Test that camera maintains continuous orientation when moving through singularity conditions.
+    """
+
+    # Minimal scene
+    scene = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
+    cam = scene.add_camera(pos=(0.0, -1.5, 5.0), lookat=(0.0, 0.0, 0.0))
+    scene.build()
+
+    prev_right = None
+
+    # Move camera through singularity along y-axis: y=-1.5 to y=1.5 (singularity at y=0)
+    for i in range(7):
+        cam.set_pose(pos=(0.0, -1.5 + i * 0.5, 5.0), lookat=(0.0, 0.0, 0.0))
+
+        # Get the right vector (x-axis) from camera transform
+        transform = cam.get_transform()
+        right = transform[:3, 0]
+
+        # Check direction with the previous one
+        if prev_right is not None:
+            assert torch.dot(prev_right, right) > 0.0
+
+        prev_right = right
+
+    # Move camera through singularity along x-axis: x=-1.5 to x=1.5 (singularity at x=0)
+    prev_right = None
+    for i in range(7):
+        cam.set_pose(pos=(-1.5 + i * 0.5, 0.0, 5.0), lookat=(0.0, 0.0, 0.0))
+
+        # Get the right vector (x-axis) from camera transform
+        transform = cam.get_transform()
+        right = transform[:3, 0]
+
+        # Check direction with the previous one
+        if prev_right is not None:
+            assert torch.dot(prev_right, right) > 0.0
+
+        prev_right = right
 
 
 @pytest.mark.parametrize(

@@ -911,7 +911,7 @@ class ConstraintSolverIsland:
                     i_e = self.contact_island.entity_id[i_e_, i_b]
                     for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                         self.search[i_d, i_b] = -self.Mgrad[i_d, i_b] + self.cg_beta[i_b] * self.search[i_d, i_b]
-            elif ti.static(self._solver_type == gs.constraint_solver.Newton):
+            if ti.static(self._solver_type == gs.constraint_solver.Newton):
                 improvement = self.prev_cost[i_b] - self.cost[i_b]
                 if improvement > 0:
                     # TODO
@@ -993,7 +993,7 @@ class ConstraintSolverIsland:
             self._solver._func_solve_mass_batched(self.grad, self.Mgrad, array_class.PLACEHOLDER, i_b)
             for i_e in range(self._solver.n_entities):
                 self._solver.mass_mat_mask[i_e, i_b] = True
-        elif ti.static(self._solver_type == gs.constraint_solver.Newton):
+        if ti.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_chol_solve(island, i_b)
 
     @ti.func

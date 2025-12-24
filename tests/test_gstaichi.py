@@ -90,8 +90,6 @@ def test_to_torch(ti_type_spec, batch_shape, arg_shape):
 
 
 def gs_static_child(args: list[str]):
-    import gstaichi as ti
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--enable-multi-contact", action="store_true")
@@ -124,7 +122,6 @@ def gs_static_child(args: list[str]):
     scene.build()
 
     scene.rigid_solver.collider.detection()
-    ti.sync()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
     from genesis.engine.solvers.rigid.collider_decomp import func_narrow_phase_convex_vs_convex
@@ -307,19 +304,19 @@ def change_scene(args: list[str]):
         ),
         show_viewer=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     for i_obj in range(args.n_objs):
-        cube = scene.add_entity(
+        scene.add_entity(
             gs.morphs.Box(
                 size=(0.4, 0.4, 0.4),
-                pos=(0.0, 0.5 * i_obj, 0.8),
+                pos=(0.0, 0.5 * i_obj, 0.5),
             )
         )
     scene.build(n_envs=args.n_envs)
 
-    for i in range(500):
+    for _ in range(60):
         scene.step()
 
     qpos = scene.sim.rigid_solver.get_qpos()
@@ -331,7 +328,7 @@ def change_scene(args: list[str]):
     assert qpos.shape[-1] == args.n_objs * 7
 
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
-    assert_allclose(z, 0.2, atol=1e-2, err_msg=f"zs {z} is not close to 0.2.")
+    assert_allclose(z, 0.2, atol=1e-3)
 
     from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_step_1
 
@@ -353,9 +350,8 @@ def change_scene(args: list[str]):
         ("cpu", [(1, 0), (2, 1), (2, 2), (3, 3)]),
     ],
 )
-@pytest.mark.parametrize("enable_fastcache", [True])
 def test_ndarray_no_compile(
-    enable_fastcache: bool, list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
+    list_n_objs_n_envs: list[tuple[int, int]], test_backend: str, tmp_path: pathlib.Path
 ) -> None:
     # Iterate to make sure stuff is really being read from cache
     for i, (n_objs, n_envs) in enumerate(list_n_objs_n_envs):
@@ -369,14 +365,14 @@ def test_ndarray_no_compile(
             "--n_envs",
             str(n_envs),
             "--expected-src-ll-cache-hit",
-            "1" if enable_fastcache and i > 0 else "0",
+            "1" if i > 0 else "0",
             "--backend",
             test_backend,
         ]
         env = dict(os.environ)
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1"
-        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
+        env["GS_ENABLE_FASTCACHE"] = "1"
         env["TI_OFFLINE_CACHE"] = "1"
         env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 

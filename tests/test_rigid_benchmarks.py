@@ -325,6 +325,68 @@ def factory_logger(stream_writers):
 
 
 @pytest.fixture
+def go2(solver, n_envs, gjk):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                **(dict(constraint_solver=solver) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+            )
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf"),
+        vis_mode="collision",
+    )
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    ctrl_pos = torch.tensor(
+        [0.0, 0.0, 0.0, 0.0, 0.8, 0.8, 1.0, 1.0, -1.5, -1.5, -1.5, -1.5],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+    robot.control_dofs_position(ctrl_pos, dofs_idx_local=slice(6, None))
+
+    init_qpos = torch.tensor(
+        [[0.0, 0.0, 0.42, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.8, 1.0, 1.0, -1.5, -1.5, -1.5, -1.5]],
+        dtype=gs.tc_float,
+        device=gs.device,
+    ).repeat((scene.n_envs, 1))
+    dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+    init_qpos[:, 7:] = dofs_lower_bound[6:] + (dofs_upper_bound[6:] - dofs_lower_bound[6:]) * torch.rand(
+        (scene.n_envs, robot.n_dofs - 6), dtype=gs.tc_float, device=gs.device
+    )
+    robot.set_qpos(init_qpos)
+
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
+        scene.step()
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
+@pytest.fixture
 def anymal_c(solver, n_envs, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -351,26 +413,9 @@ def anymal_c(solver, n_envs, gjk):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    joints_name = (
-        "RH_HAA",
-        "LH_HAA",
-        "RF_HAA",
-        "LF_HAA",
-        "RH_HFE",
-        "LH_HFE",
-        "RF_HFE",
-        "LF_HFE",
-        "RH_KFE",
-        "LH_KFE",
-        "RF_KFE",
-        "LF_KFE",
-    )
-    motors_dof_idx = [robot.get_joint(name).dof_start for name in joints_name]
-    robot.set_dofs_kp(np.full(12, 1000), motors_dof_idx)
-    if n_envs > 0:
-        robot.control_dofs_position(np.zeros((n_envs, 12)), motors_dof_idx)
-    else:
-        robot.control_dofs_position(np.zeros(12), motors_dof_idx)
+    motors_dof_idx = slice(6, None)
+    robot.set_dofs_kp(1000.0, motors_dof_idx)
+    robot.control_dofs_position(0.0, motors_dof_idx)
 
     num_steps = 0
     is_recording = False
@@ -442,10 +487,6 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
     while True:
         scene.step()
         if accessors:
-            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
-            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
-            franka.set_dofs_stiffness(dofs_stiffness)
-            franka.set_dofs_damping(dofs_damping)
             franka.get_ang()
             franka.get_vel()
             franka.get_dofs_position()
@@ -455,6 +496,10 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
             franka.get_links_vel()
             franka.get_contacts()
             franka.control_dofs_position(ctrl)
+            franka.set_dofs_stiffness(dofs_stiffness)
+            franka.set_dofs_damping(dofs_damping)
+            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
+            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
 
         time_elapsed = time.time() - time_start
         if is_recording:
@@ -494,7 +539,7 @@ def _duck_in_box(solver, n_envs, gjk, hard):
         show_viewer=False,
         show_FPS=False,
     )
-    tank = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
             scale=5.0,
@@ -525,6 +570,9 @@ def _duck_in_box(solver, n_envs, gjk, hard):
     time_start = time.time()
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
+
+    if n_envs > 0:
+        duck.set_dofs_velocity(0.5 * torch.rand((n_envs, 6), dtype=gs.tc_float, device=gs.device))
 
     num_steps = 0
     is_recording = False
@@ -582,18 +630,19 @@ def random(solver, n_envs, gjk):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    robot.set_dofs_kp(np.full((12,), fill_value=1000.0), np.arange(6, 18))
-    dofs = torch.arange(6, 18, device=gs.device)
-    robot.control_dofs_position(torch.zeros((n_envs, 12), device=gs.device), dofs)
+    motors_dof_idx = slice(6, None)
+    robot.set_dofs_kp(1000.0, motors_dof_idx)
+    robot.control_dofs_position(0.0, motors_dof_idx)
 
     num_steps = 0
     is_recording = False
     time_start = time.time()
     while True:
         robot.control_dofs_position(
-            torch.as_tensor(np.random.rand(n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, dofs
+            torch.rand((n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
         )
         scene.step()
+
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
@@ -608,13 +657,12 @@ def random(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.fixture
-def box_pyramid(n_envs, n_cubes, enable_island, gjk):
+def _box_pyramid(solver, n_envs, gjk, n_cubes):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
-                use_contact_island=enable_island,
+                **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
@@ -645,6 +693,10 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
+    if n_envs > 0:
+        for box in scene.entities[1:]:
+            box.set_dofs_velocity(0.04 * torch.rand((n_envs, 6), dtype=gs.tc_float, device=gs.device))
+
     num_steps = 0
     is_recording = False
     time_start = time.time()
@@ -664,6 +716,16 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
+@pytest.fixture
+def box_pyramid_4(solver, n_envs, gjk):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=4)
+
+
+@pytest.fixture
+def box_pyramid_5(solver, n_envs, gjk):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=5)
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -673,11 +735,12 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
         ("duck_in_box_hard", None, False, 30000, gs.gpu),
         ("duck_in_box_hard", None, None, 0, gs.gpu),
         ("duck_in_box_hard", None, None, 0, gs.cpu),
-        ("anymal_c", None, True, 30000, gs.gpu),
-        ("anymal_c", gs.constraint_solver.CG, None, 30000, gs.gpu),
-        ("anymal_c", gs.constraint_solver.Newton, None, 30000, gs.gpu),
+        ("anymal_c", None, None, 30000, gs.gpu),
         ("anymal_c", None, None, 0, gs.gpu),
         ("anymal_c", None, None, 0, gs.cpu),
+        ("go2", None, True, 4096, gs.gpu),
+        ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
+        ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
         ("batched_franka_accessors", None, None, 0, gs.cpu),
         ("batched_franka_accessors", None, None, 30000, gs.gpu),
         ("batched_franka_free", None, False, 30000, gs.gpu),
@@ -688,6 +751,9 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
         ("batched_franka", None, None, 0, gs.gpu),
         ("batched_franka", None, None, 0, gs.cpu),
         ("random", None, None, 30000, gs.gpu),
+        ("box_pyramid_5", None, True, 4096, gs.gpu),
+        ("box_pyramid_5", None, False, 4096, gs.gpu),
+        ("box_pyramid_4", None, None, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
@@ -701,20 +767,3 @@ def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
         }
     ) as logger:
         logger.write(request.getfixturevalue(runnable))
-
-
-@pytest.mark.parametrize("backend", [gs.gpu])
-@pytest.mark.parametrize("n_cubes", [5])
-@pytest.mark.parametrize("enable_island", [False])
-@pytest.mark.parametrize("n_envs", [2048])
-@pytest.mark.parametrize("gjk", [False, True])
-def test_box_pyramid(factory_logger, request, n_cubes, enable_island, gjk, n_envs):
-    with factory_logger(
-        {
-            "env": f"box_pyramid#{n_cubes}",
-            "batch_size": n_envs,
-            "use_contact_island": enable_island,
-            "gjk_collision": gjk,
-        }
-    ) as logger:
-        logger.write(request.getfixturevalue("box_pyramid"))

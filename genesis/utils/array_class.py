@@ -116,12 +116,17 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
 
 def get_rigid_global_info(solver):
     _B = solver._B
-    requires_grad = solver._requires_grad
 
     mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
     if math.prod(mass_mat_shape) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+        )
+    requires_grad = solver._requires_grad
+    mass_mat_shape_bw = maybe_shape((2, *mass_mat_shape), requires_grad)
+    if math.prod(mass_mat_shape_bw) > np.iinfo(np.int32).max:
+        gs.raise_exception(
+            f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
 
     return StructRigidGlobalInfo(
@@ -141,7 +146,7 @@ def get_rigid_global_info(solver):
         geoms_init_AABB=V_VEC(3, dtype=gs.ti_float, shape=(solver.n_geoms_, 8)),
         mass_mat=V(dtype=gs.ti_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L=V(dtype=gs.ti_float, shape=mass_mat_shape, needs_grad=requires_grad),
-        mass_mat_L_bw=V(dtype=gs.ti_float, shape=(2, solver.n_dofs_, solver.n_dofs_, _B), needs_grad=requires_grad),
+        mass_mat_L_bw=V(dtype=gs.ti_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.ti_bool, shape=(solver.n_entities_, _B)),
         mass_parent_mask=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_)),
@@ -165,6 +170,7 @@ def get_rigid_global_info(solver):
 
 @DATA_ORIENTED
 class StructConstraintState(metaclass=BASE_METACLASS):
+    is_warmstart: V_ANNOTATION
     n_constraints: V_ANNOTATION
     ti_n_equalities: V_ANNOTATION
     jac: V_ANNOTATION
@@ -227,6 +233,8 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     bw_Ju: V_ANNOTATION
     bw_y: V_ANNOTATION
     bw_w: V_ANNOTATION
+    # Timers for profiling
+    timers: V_ANNOTATION
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -256,13 +264,14 @@ def get_constraint_state(constraint_solver, solver):
         ti_n_equalities=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.ti_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.ti_int, shape=(_B,)),
+        is_warmstart=V(dtype=gs.ti_bool, shape=(_B,)),
         improved=V(dtype=gs.ti_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.ti_float, shape=(_B,)),
         gauss=V(dtype=gs.ti_float, shape=(_B,)),
         cost=V(dtype=gs.ti_float, shape=(_B,)),
         prev_cost=V(dtype=gs.ti_float, shape=(_B,)),
         gtol=V(dtype=gs.ti_float, shape=(_B,)),
-        ls_it=V(dtype=gs.ti_float, shape=(_B,)),
+        ls_it=V(dtype=gs.ti_int, shape=(_B,)),
         ls_result=V(dtype=gs.ti_int, shape=(_B,)),
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
@@ -311,6 +320,8 @@ def get_constraint_state(constraint_solver, solver):
         bw_Ju=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_y=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         bw_w=V(dtype=gs.ti_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        # Timers
+        timers=V(dtype=ti.i64 if gs.backend != gs.metal else ti.i32, shape=(10, _B)),
     )
 
 
@@ -413,14 +424,12 @@ def get_sort_buffer(solver):
 
 @DATA_ORIENTED
 class StructContactCache(metaclass=BASE_METACLASS):
-    i_va_ws: V_ANNOTATION
     normal: V_ANNOTATION
 
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
     return StructContactCache(
-        i_va_ws=V(dtype=gs.ti_int, shape=(2, n_possible_pairs, _B)),
         normal=V_VEC(3, dtype=gs.ti_float, shape=(n_possible_pairs, _B)),
     )
 
@@ -434,7 +443,7 @@ class StructAggList(metaclass=BASE_METACLASS):
 
 def get_agg_list(solver):
     _B = solver._B
-    n_entities = solver.n_entities
+    n_entities = max(solver.n_entities, 1)
 
     return StructAggList(
         curr=V(dtype=gs.ti_int, shape=(n_entities, _B)),
@@ -465,6 +474,7 @@ class StructContactIslandState(metaclass=BASE_METACLASS):
 def get_contact_island_state(solver, collider):
     _B = solver._B
     max_contact_pairs = max(collider._collider_info.max_contact_pairs[None], 1)
+    n_entities = max(solver.n_entities, 1)
 
     return StructContactIslandState(
         ci_edges=V(dtype=gs.ti_int, shape=(max_contact_pairs, 2, _B)),
@@ -473,15 +483,15 @@ def get_contact_island_state(solver, collider):
         constraint_id=V(dtype=gs.ti_int, shape=(max_contact_pairs * 2, _B)),
         entity_edge=get_agg_list(solver),
         island_col=get_agg_list(solver),
-        island_hibernated=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        island_hibernated=V(dtype=gs.ti_int, shape=(n_entities, _B)),
         island_entity=get_agg_list(solver),
-        entity_id=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        entity_id=V(dtype=gs.ti_int, shape=(n_entities, _B)),
         n_edges=V(dtype=gs.ti_int, shape=(_B,)),
         n_islands=V(dtype=gs.ti_int, shape=(_B,)),
         n_stack=V(dtype=gs.ti_int, shape=(_B,)),
-        entity_island=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
-        stack=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.ti_int, shape=(solver.n_entities, _B)),
+        entity_island=V(dtype=gs.ti_int, shape=(n_entities, _B)),
+        stack=V(dtype=gs.ti_int, shape=(n_entities, _B)),
+        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.ti_int, shape=(n_entities, _B)),
     )
 
 
@@ -584,7 +594,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     # multi contact perturbation and tolerance
     mc_perturbation: V_ANNOTATION
     mc_tolerance: V_ANNOTATION
-    mpr_to_sdf_overlap_ratio: V_ANNOTATION
+    mpr_to_gjk_overlap_ratio: V_ANNOTATION
     # differentiable contact tolerance
     diff_pos_tolerance: V_ANNOTATION
     diff_normal_tolerance: V_ANNOTATION
@@ -613,7 +623,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         terrain_xyz_maxmin=V(dtype=gs.ti_float, shape=(6,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mc_tolerance"]),
-        mpr_to_sdf_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_sdf_overlap_ratio"]),
+        mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.ti_float, value=kwargs["diff_normal_tolerance"]),
     )
@@ -621,8 +631,10 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
 
 @ti.data_oriented
 class StructColliderStaticConfig(metaclass=AutoInitMeta):
-    has_nonconvex_nonterrain: bool
     has_terrain: bool
+    has_convex_convex: bool
+    has_convex_specialization: bool
+    has_nonconvex_nonterrain: bool
     # maximum number of contact pairs per collision pair
     n_contacts_per_pair: int
     # ccd algorithm
@@ -1112,6 +1124,7 @@ def get_sdf_info(n_geoms, n_cells):
 
 @DATA_ORIENTED
 class StructDofsInfo(metaclass=BASE_METACLASS):
+    entity_idx: V_ANNOTATION
     stiffness: V_ANNOTATION
     invweight: V_ANNOTATION
     armature: V_ANNOTATION
@@ -1120,7 +1133,6 @@ class StructDofsInfo(metaclass=BASE_METACLASS):
     motion_ang: V_ANNOTATION
     motion_vel: V_ANNOTATION
     limit: V_ANNOTATION
-    dof_start: V_ANNOTATION
     kp: V_ANNOTATION
     kv: V_ANNOTATION
     force_range: V_ANNOTATION
@@ -1130,6 +1142,7 @@ def get_dofs_info(solver):
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
     return StructDofsInfo(
+        entity_idx=V(dtype=gs.ti_int, shape=shape),
         stiffness=V(dtype=gs.ti_float, shape=shape),
         invweight=V(dtype=gs.ti_float, shape=shape),
         armature=V(dtype=gs.ti_float, shape=shape),
@@ -1138,7 +1151,6 @@ def get_dofs_info(solver):
         motion_ang=V(dtype=gs.ti_vec3, shape=shape),
         motion_vel=V(dtype=gs.ti_vec3, shape=shape),
         limit=V(dtype=gs.ti_vec2, shape=shape),
-        dof_start=V(dtype=gs.ti_int, shape=shape),
         kp=V(dtype=gs.ti_float, shape=shape),
         kv=V(dtype=gs.ti_float, shape=shape),
         force_range=V(dtype=gs.ti_vec2, shape=shape),
@@ -1182,6 +1194,7 @@ class StructDofsState(metaclass=BASE_METACLASS):
 def get_dofs_state(solver):
     shape = (solver.n_dofs_, solver._B)
     requires_grad = solver._requires_grad
+    shape_bw = maybe_shape((2, *shape), requires_grad)
 
     return StructDofsState(
         force=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
@@ -1195,9 +1208,9 @@ def get_dofs_state(solver):
         vel_prev=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         vel_next=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         acc=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
-        acc_bw=V(dtype=gs.ti_float, shape=(2, solver.n_dofs_, solver._B), needs_grad=requires_grad),
+        acc_bw=V(dtype=gs.ti_float, shape=shape_bw, needs_grad=requires_grad),
         acc_smooth=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
-        acc_smooth_bw=V(dtype=gs.ti_float, shape=(2, solver.n_dofs_, solver._B), needs_grad=requires_grad),
+        acc_smooth_bw=V(dtype=gs.ti_float, shape=shape_bw, needs_grad=requires_grad),
         qf_smooth=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         qf_constraint=V(dtype=gs.ti_float, shape=shape, needs_grad=requires_grad),
         cdof_ang=V(dtype=gs.ti_vec3, shape=shape, needs_grad=requires_grad),
@@ -1269,9 +1282,8 @@ class StructLinksState(metaclass=BASE_METACLASS):
 def get_links_state(solver):
     max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = (solver.n_links_, solver._B)
-    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
-
     requires_grad = solver._requires_grad
+    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
 
     return StructLinksState(
         cinr_inertial=V(dtype=gs.ti_mat3, shape=shape, needs_grad=requires_grad),
@@ -1789,13 +1801,14 @@ def get_rigid_adjoint_cache(solver):
 
 @ti.data_oriented
 class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
+    backend: int
     para_level: int
     enable_collision: bool
     use_hibernation: bool = False
     batch_links_info: bool = False
     batch_dofs_info: bool = False
     batch_joints_info: bool = False
-    enable_mujoco_compatibility: bool = True
+    enable_mujoco_compatibility: bool = False
     enable_multi_contact: bool = False
     enable_joint_limit: bool = False
     box_box_detection: bool = False
@@ -1803,7 +1816,6 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int = gs.integrator.approximate_implicitfast
     solver_type: int = gs.constraint_solver.CG
     requires_grad: bool = False
-    is_backward: bool = False
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1

@@ -1,3 +1,4 @@
+import platform
 import sys
 
 import numpy as np
@@ -12,12 +13,16 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_differentiable_push(precision, show_viewer):
-    if sys.platform == "linux" and gs.backend == gs.cpu and precision == "64":
-        pytest.skip(reason="GsTaichi segfault when using AutoDiff on CPU backend on Linux for now.")
+# FIXME: Gradient computation is broken if debug mode is enabled and field is used
+pytestmark = [
+    pytest.mark.debug(False),
+]
 
+
+@pytest.mark.required
+@pytest.mark.skipif(platform.machine() == "aarch64", reason="Physics-based particle sampler not supported on ARM.")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_differentiable_push(show_viewer):
     HORIZON = 10
 
     scene = gs.Scene(
@@ -253,11 +258,14 @@ def test_diff_solver(monkeypatch):
     # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
     def constraint_solver_resolve():
         func_init_solver(
+            dofs_info=rigid_solver.dofs_info,
             dofs_state=rigid_solver.dofs_state,
             entities_info=rigid_solver.entities_info,
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            enable_tiled_hessian=True,
+            enable_tiled_cholesky=True,
         )
         func_solve(
             entities_info=rigid_solver.entities_info,
@@ -285,6 +293,9 @@ def test_diff_solver(monkeypatch):
         rigid_global_info=rigid_solver._rigid_global_info,
         static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
         contact_island_state=constraint_solver.contact_island.contact_island_state,
+        is_forward_pos_updated=True,
+        is_forward_vel_updated=True,
+        is_backward=False,
     )
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()

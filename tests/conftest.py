@@ -129,9 +129,13 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
-        physical_core_count = psutil.cpu_count(logical=config.option.logical)
-        num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
-        num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
+        if is_benchmarks:
+            # FIXME: Enabling multi-threading in benchmark is making compile time estimation unreliable
+            num_cpu_per_worker = "1"
+        else:
+            physical_core_count = psutil.cpu_count(logical=config.option.logical)
+            num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+            num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
         os.environ["TI_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OMP_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OPENBLAS_NUM_THREADS"] = num_cpu_per_worker
@@ -493,8 +497,21 @@ def performance_mode(request):
     return performance_mode
 
 
+@pytest.fixture
+def debug(request):
+    debug = None
+    for mark in request.node.iter_markers("debug"):
+        if mark.args:
+            if debug is not None:
+                pytest.fail("'debug' can only be specified once.")
+            (debug,) = mark.args
+    return debug
+
+
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, taichi_offline_cache):
+def initialize_genesis(
+    request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, taichi_offline_cache
+):
     import genesis as gs
 
     # Early return if backend is None
@@ -503,12 +520,14 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         return
 
     logging_level = request.config.getoption("--log-cli-level", logging.INFO)
-    debug = request.config.getoption("--dev")
+    if debug is None:
+        debug = request.config.getoption("--dev")
 
     if not taichi_offline_cache:
         monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
-        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache"))
+        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "taichi"))
+        monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
