@@ -94,13 +94,13 @@ class FrameImageExporter:
         cameras_idx: Iterable, optional
             Sequence of indices of cameras to export. If None, all cameras are exported.
         rgb: Sequence[ndarray[np.floating]], optional
-            RGB image is a sequence of arrays of shape (n_envs, H, W, 3).
+            RGB image is a sequence of arrays of shape ([n_envs,] H, W, 3).
         depth: Sequence[ndarray[np.floating]], optional
-            Depth image is a sequence of arrays of shape (n_envs, H, W).
+            Depth image is a sequence of arrays of shape ([n_envs,] H, W).
         segmentation: Sequence[ndarray[np.integer]], optional
-            Segmentation image is a sequence of arrays of shape (n_envs, H, W).
+            Segmentation image is a sequence of arrays of shape ([n_envs,] H, W).
         normal: Sequence[ndarray[np.floating]], optional
-            Normal image is a sequence of arrays of shape (n_envs, H, W, 3).
+            Normal image is a sequence of arrays of shape ([n_envs,] H, W, 3).
         """
         # Pack frames data for convenience
         frames_data = (rgb, depth, segmentation, normal)
@@ -154,13 +154,13 @@ class FrameImageExporter:
         i_cam: int
             The index of the camera.
         rgb: ndarray[np.floating], optional
-            RGB image array of shape (n_envs, H, W, 3).
+            RGB image array of shape ([n_envs,] H, W, 3).
         depth: ndarray[np.floating], optional
-            Depth image array of shape (n_envs, H, W).
+            Depth image array of shape ([n_envs,] H, W).
         segmentation: ndarray[np.integer], optional
-            Segmentation image array of shape (n_envs, H, W).
+            Segmentation image array of shape ([n_envs,] H, W).
         normal: ndarray[np.floating], optional
-            Normal image array of shape (n_envs, H, W, 3).
+            Normal image array of shape ([n_envs,] H, W, 3).
         compress_level: int, optional
             Compression level when exporting images as PNG. Default to 3.
         executor: Executor, optional
@@ -185,6 +185,7 @@ class FrameImageExporter:
             executor = ThreadPoolExecutor()
 
         # Loop over each image type
+        exported_types = []
         for img_type, imgs_data in zip(IMAGE_TYPE, frame_data):
             if imgs_data is None:
                 continue
@@ -196,12 +197,12 @@ class FrameImageExporter:
                 imgs_data = np.asarray(imgs_data)
 
             # Make sure that image data has shape `(n_env, H, W [, C>1])``
-            if imgs_data.ndim < 4:
-                imgs_data = imgs_data[None]
-            if imgs_data.ndim == 4 and imgs_data.shape[-1] == 1:
+            if imgs_data.shape[-1] == 1:
                 imgs_data = imgs_data[..., 0]
+            if imgs_data.ndim == (3 if imgs_data.shape[-1] <= 4 else 2):
+                imgs_data = imgs_data[None]
             if imgs_data.ndim not in (3, 4):
-                gs.raise_exception("'{imgs_data}' images must be tensors of shape (n_envs, H, W [, C>1])")
+                gs.raise_exception("'{imgs_data}' images must be arrays of shape ([n_envs,] H, W [, C>1])")
 
             # Convert image data to grayscale array if necessary
             if img_type == IMAGE_TYPE.DEPTH:
@@ -222,8 +223,15 @@ class FrameImageExporter:
             cv2_params = [cv2.IMWRITE_PNG_COMPRESSION, compress_level] if compress_level is not None else None
             for i_env, img_data in enumerate(imgs_data):
                 frame_path = os.path.join(self.export_dir, f"{img_type}_cam{i_cam}_env{i_env}_{i_step:03d}.png")
-                gs.logger.info(f"Image saved to ~<{frame_path}>~.")
                 executor.submit(partial(cv2.imwrite, params=cv2_params), frame_path, img_data)
+            exported_types.append((len(imgs_data), img_type.name.lower()))
+
+        if exported_types:
+            types_str = ", ".join(f"{num} {type}" for num, type in exported_types)
+            gs.logger.info(
+                f"Exported ~<{sum(num for num, _ in exported_types)} frame(s) ({types_str})>~ "
+                f"from camera ~<{i_cam}>~ at step ~<{i_step}>~ to ~<{self.export_dir}>~"
+            )
 
         # Shutdown executor if necessary
         if is_local_executor:
