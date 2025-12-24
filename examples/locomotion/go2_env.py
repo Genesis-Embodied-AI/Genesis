@@ -89,7 +89,7 @@ class Go2Env:
         self.robot.set_dofs_kv([self.env_cfg["kd"]] * self.num_actions, self.motors_dof_idx)
 
         # Define global gravity direction vector
-        self.global_gravity = torch.tensor([0.0, 0.0, -1.0], dtype=gs.tc_float, device=gs.device)
+        self.init_global_gravity = torch.tensor([0.0, 0.0, -1.0], dtype=gs.tc_float, device=gs.device)
 
         # Initial state
         self.init_base_pos = torch.tensor(self.env_cfg["base_init_pos"], dtype=gs.tc_float, device=gs.device)
@@ -101,7 +101,7 @@ class Go2Env:
             device=gs.device,
         )
         self.init_qpos = torch.concatenate((self.init_base_pos, self.init_base_quat, self.init_dof_pos))
-        self.init_projected_gravity = transform_by_quat(self.global_gravity, self.inv_base_init_quat)
+        self.init_projected_gravity = transform_by_quat(self.init_global_gravity, self.inv_base_init_quat)
 
         # initialize buffers
         self.base_lin_vel = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
@@ -130,6 +130,7 @@ class Go2Env:
         self.dof_pos = torch.empty_like(self.actions)
         self.dof_vel = torch.empty_like(self.actions)
         self.last_dof_vel = torch.zeros_like(self.actions)
+        self.global_gravity = torch.tensor([[0.0, 0.0, -1.0]] * self.num_envs, dtype=gs.tc_float, device=gs.device)
         self.base_pos = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         self.base_quat = torch.empty((self.num_envs, 4), dtype=gs.tc_float, device=gs.device)
         self.default_dof_pos = torch.tensor(
