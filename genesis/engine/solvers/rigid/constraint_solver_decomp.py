@@ -2190,6 +2190,9 @@ def func_init_solver(
         HESSIAN_BLOCK_DIM = ti.static(64)
         MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
         MAX_DOFS_PER_BLOCK = ti.static(64)
+        ENABLE_WARP_REDUCTION = ti.static(gs.ti_float == ti.f32)
+        WARP_SIZE = ti.static(32)
+        NUM_WARPS = ti.static(HESSIAN_BLOCK_DIM // WARP_SIZE)
 
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
@@ -2202,13 +2205,12 @@ def func_init_solver(
                 if i_b >= _B:
                     continue
 
-                n_c = constraint_state.n_constraints[i_b]
-
                 jac_row = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
                 jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
                 efc = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
 
                 i_c_start = 0
+                n_c = constraint_state.n_constraints[i_b]
                 while i_c_start < n_c:
                     i_c_ = tid
                     n_conts_tile = ti.min(MAX_CONSTRAINTS_PER_BLOCK, n_c - i_c_start)
@@ -2353,16 +2355,20 @@ def func_init_solver(
             for i in range(_B * HESSIAN_BLOCK_DIM):
                 tid = i % HESSIAN_BLOCK_DIM
                 i_b = i // HESSIAN_BLOCK_DIM
+                warp_id = tid // WARP_SIZE
+                lane_id = tid % WARP_SIZE
                 if i_b >= _B:
                     continue
 
                 H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
                 v = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.ti_float)
-                partial = ti.simt.block.SharedArray((HESSIAN_BLOCK_DIM,), gs.ti_float)
+                partial = ti.simt.block.SharedArray(
+                    (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else HESSIAN_BLOCK_DIM,), gs.ti_float
+                )
 
                 i_pair = tid
                 while i_pair < n_lower_tri:
-                    i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
+                    i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     H[i_d1, i_d2] = constraint_state.nt_H[i_d1, i_d2, i_b]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
@@ -2378,12 +2384,22 @@ def func_init_solver(
                     while j_d < i_d:
                         dot = dot + H[i_d, j_d] * v[j_d]
                         j_d = j_d + HESSIAN_BLOCK_DIM
-                    partial[tid] = dot
+                    if ti.static(ENABLE_WARP_REDUCTION):
+                        for offset in ti.static([16, 8, 4, 2, 1]):
+                            dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
+                        if lane_id == 0:
+                            partial[warp_id] = dot
+                    else:
+                        partial[tid] = dot
                     ti.simt.block.sync()
 
                     if tid == 0:
                         total = gs.ti_float(0.0)
-                        for k in range(HESSIAN_BLOCK_DIM):
+                        for k in (
+                            ti.static(range(NUM_WARPS))
+                            if ti.static(ENABLE_WARP_REDUCTION)
+                            else range(HESSIAN_BLOCK_DIM)
+                        ):
                             total = total + partial[k]
                         v[i_d] = (v[i_d] - total) / H[i_d, i_d]
                     ti.simt.block.sync()
@@ -2395,12 +2411,23 @@ def func_init_solver(
                     while j_d < n_dofs:
                         dot = dot + H[j_d, i_d] * v[j_d]
                         j_d = j_d + HESSIAN_BLOCK_DIM
-                    partial[tid] = dot
+
+                    if ti.static(ENABLE_WARP_REDUCTION):
+                        for offset in ti.static([16, 8, 4, 2, 1]):
+                            dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
+                        if lane_id == 0:
+                            partial[warp_id] = dot
+                    else:
+                        partial[tid] = dot
                     ti.simt.block.sync()
 
                     if tid == 0:
                         total = gs.ti_float(0.0)
-                        for k in range(HESSIAN_BLOCK_DIM):
+                        for k in (
+                            ti.static(range(NUM_WARPS))
+                            if ti.static(ENABLE_WARP_REDUCTION)
+                            else range(HESSIAN_BLOCK_DIM)
+                        ):
                             total = total + partial[k]
                         v[i_d] = (v[i_d] - total) / H[i_d, i_d]
                     ti.simt.block.sync()
