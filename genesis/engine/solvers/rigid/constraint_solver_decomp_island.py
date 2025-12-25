@@ -312,7 +312,7 @@ class ConstraintSolverIsland:
                         rank = self._solver.n_dofs
                         for k_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
                             k = self.jac_relevant_dofs[i_c, k_, i_b]
-                            Lkk = self.nt_H[k, k, i_b]
+                            Lkk = self.nt_H[i_b, k, k]
                             tmp = Lkk * Lkk + self.nt_vec[k, i_b] * self.nt_vec[k, i_b] * (flag_update * 2 - 1)
                             if tmp < gs.EPS:
                                 tmp = gs.EPS
@@ -321,16 +321,16 @@ class ConstraintSolverIsland:
                             c = r / Lkk
                             cinv = 1 / c
                             s = self.nt_vec[k, i_b] / Lkk
-                            self.nt_H[k, k, i_b] = r
+                            self.nt_H[i_b, k, k] = r
                             for i_ in range(k_):
                                 i = self.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                                self.nt_H[i, k, i_b] = (
-                                    self.nt_H[i, k, i_b] + s * self.nt_vec[i, i_b] * (flag_update * 2 - 1)
+                                self.nt_H[i_b, i, k] = (
+                                    self.nt_H[i_b, i, k] + s * self.nt_vec[i, i_b] * (flag_update * 2 - 1)
                                 ) * cinv
 
                             for i_ in range(k_):
                                 i = self.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                                self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i, k, i_b]
+                                self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i_b, i, k]
 
                         if rank < self._solver.n_dofs:
                             self._func_nt_hessian_direct(island, i_b)
@@ -343,7 +343,7 @@ class ConstraintSolverIsland:
                         rank = self._solver.n_dofs
                         for k in range(self._solver.n_dofs):
                             if ti.abs(self.nt_vec[k, i_b]) > gs.EPS:
-                                Lkk = self.nt_H[k, k, i_b]
+                                Lkk = self.nt_H[i_b, k, k]
                                 tmp = Lkk * Lkk + self.nt_vec[k, i_b] * self.nt_vec[k, i_b] * (flag_update * 2 - 1)
                                 if tmp < gs.EPS:
                                     tmp = gs.EPS
@@ -352,14 +352,14 @@ class ConstraintSolverIsland:
                                 c = r / Lkk
                                 cinv = 1 / c
                                 s = self.nt_vec[k, i_b] / Lkk
-                                self.nt_H[k, k, i_b] = r
+                                self.nt_H[i_b, k, k] = r
                                 for i in range(k + 1, self._solver.n_dofs):
-                                    self.nt_H[i, k, i_b] = (
-                                        self.nt_H[i, k, i_b] + s * self.nt_vec[i, i_b] * (flag_update * 2 - 1)
+                                    self.nt_H[i_b, i, k] = (
+                                        self.nt_H[i_b, i, k] + s * self.nt_vec[i, i_b] * (flag_update * 2 - 1)
                                     ) * cinv
 
                                 for i in range(k + 1, self._solver.n_dofs):
-                                    self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i, k, i_b]
+                                    self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i_b, i, k]
 
                         if rank < self._solver.n_dofs:
                             self._func_nt_hessian_direct(island, i_b)
@@ -376,7 +376,7 @@ class ConstraintSolverIsland:
                     i_e2_ = self.contact_island.island_entity[island, i_b].start + i_island_entity2
                     i_e2 = self.contact_island.entity_id[i_e2_, i_b]
                     for i_d2 in range(self.entities_info.dof_start[i_e2], self.entities_info.dof_end[i_e2]):
-                        self.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
+                        self.nt_H[i_b, i_d1, i_d2] = gs.ti_float(0.0)
 
         for i_c in range(self.n_constraints[i_b]):
             jac_n_relevant_dofs = self.jac_n_relevant_dofs[i_c, i_b]
@@ -408,14 +408,14 @@ class ConstraintSolverIsland:
                     i_e2 = self.contact_island.entity_id[i_e2_, i_b]
                     for i_d2 in range(self.entities_info.dof_start[i_e2], self.entities_info.dof_end[i_e2]):
                         if i_d1 < i_d2:
-                            self.nt_H[i_d1, i_d2, i_b] = self.nt_H[i_d2, i_d1, i_b]
+                            self.nt_H[i_b, i_d1, i_d2] = self.nt_H[i_b, i_d2, i_d1]
 
         for i_island_entity in range(self.contact_island.island_entity[island, i_b].n):
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
             for i_d1 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                 for i_d2 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-                    self.nt_H[i_d1, i_d2, i_b] = self.nt_H[i_d1, i_d2, i_b] + self._solver.mass_mat[i_d1, i_d2, i_b]
+                    self.nt_H[i_b, i_d1, i_d2] = self.nt_H[i_b, i_d1, i_d2] + self._solver.mass_mat[i_d1, i_d2, i_b]
         self._func_nt_chol_factor(island, i_b)
 
     @ti.func
@@ -426,21 +426,21 @@ class ConstraintSolverIsland:
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
             for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-                tmp = self.nt_H[i_d, i_d, i_b]
+                tmp = self.nt_H[i_b, i_d, i_d]
 
                 for j_island_entity in range(i_island_entity + 1):
                     j_e_ = self.contact_island.island_entity[island, i_b].start + j_island_entity
                     j_e = self.contact_island.entity_id[j_e_, i_b]
                     for j_d in range(self.entities_info.dof_start[j_e], ti.min(self.entities_info.dof_end[j_e], i_d)):
-                        tmp = tmp - (self.nt_H[i_d, j_d, i_b] * self.nt_H[i_d, j_d, i_b])
+                        tmp = tmp - (self.nt_H[i_b, i_d, j_d] * self.nt_H[i_b, i_d, j_d])
 
                 mindiag = 1e-8
                 if tmp < mindiag:
                     tmp = mindiag
                     rank = rank - 1
-                self.nt_H[i_d, i_d, i_b] = ti.sqrt(tmp)
+                self.nt_H[i_b, i_d, i_d] = ti.sqrt(tmp)
 
-                tmp = 1 / self.nt_H[i_d, i_d, i_b]
+                tmp = 1 / self.nt_H[i_b, i_d, i_d]
 
                 for j_island_entity in range(i_island_entity, self.contact_island.island_entity[island, i_b].n):
                     j_e_ = self.contact_island.island_entity[island, i_b].start + j_island_entity
@@ -457,9 +457,9 @@ class ConstraintSolverIsland:
                             for k_d in range(
                                 self.entities_info.dof_start[k_e], ti.min(self.entities_info.dof_end[k_e], i_d)
                             ):
-                                dot = dot + self.nt_H[j_d, k_d, i_b] * self.nt_H[i_d, k_d, i_b]
+                                dot = dot + self.nt_H[i_b, j_d, k_d] * self.nt_H[i_b, i_d, k_d]
 
-                        self.nt_H[j_d, i_d, i_b] = (self.nt_H[j_d, i_d, i_b] - dot) * tmp
+                        self.nt_H[i_b, j_d, i_d] = (self.nt_H[i_b, j_d, i_d] - dot) * tmp
 
     @ti.func
     def _func_nt_chol_solve(self, island, i_b):
@@ -478,8 +478,8 @@ class ConstraintSolverIsland:
                     j_e_ = self.contact_island.island_entity[island, i_b].start + j_island_entity
                     j_e = self.contact_island.entity_id[j_e_, i_b]
                     for j_d in range(self.entities_info.dof_start[j_e], ti.min(self.entities_info.dof_end[j_e], i_d)):
-                        self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - (self.nt_H[i_d, j_d, i_b] * self.Mgrad[j_d, i_b])
-                self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
+                        self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - (self.nt_H[i_b, i_d, j_d] * self.Mgrad[j_d, i_b])
+                self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_b, i_d, i_d]
 
         for i_island_entity_ in range(self.contact_island.island_entity[island, i_b].n):
             i_island_entity = self.contact_island.island_entity[island, i_b].n - 1 - i_island_entity_
@@ -494,9 +494,9 @@ class ConstraintSolverIsland:
                     for j_d in range(
                         ti.max(i_d + 1, self.entities_info.dof_start[j_e]), self.entities_info.dof_end[j_e]
                     ):
-                        self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - self.nt_H[j_d, i_d, i_b] * self.Mgrad[j_d, i_b]
+                        self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] - self.nt_H[i_b, j_d, i_d] * self.Mgrad[j_d, i_b]
 
-                self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_d, i_d, i_b]
+                self.Mgrad[i_d, i_b] = self.Mgrad[i_d, i_b] / self.nt_H[i_b, i_d, i_d]
 
     def reset(self, envs_idx=None):
         if envs_idx is None:
