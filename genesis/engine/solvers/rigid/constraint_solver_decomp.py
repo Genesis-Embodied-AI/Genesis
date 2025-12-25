@@ -1,8 +1,11 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import gstaichi as ti
 import torch
+
+import gstaichi as ti
+from gstaichi._lib import core as _ti_core
+from gstaichi.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -2190,7 +2193,9 @@ def func_init_solver(
         HESSIAN_BLOCK_DIM = ti.static(64)
         MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
         MAX_DOFS_PER_BLOCK = ti.static(64)
-        ENABLE_WARP_REDUCTION = ti.static(gs.ti_float == ti.f32)
+        ENABLE_WARP_REDUCTION = ti.static(
+            impl.get_runtime().prog.config().arch == _ti_core.cuda and gs.ti_float == ti.f32
+        )
         WARP_SIZE = ti.static(32)
         NUM_WARPS = ti.static(HESSIAN_BLOCK_DIM // WARP_SIZE)
 
