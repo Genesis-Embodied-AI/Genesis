@@ -1138,105 +1138,77 @@ def func_nt_hessian_incremental(
     EPS = rigid_global_info.EPS[None]
 
     n_dofs = constraint_state.nt_H.shape[1]
-    updated = False
 
+    is_degenerated = False
     for i_c in range(constraint_state.n_constraints[i_b]):
-        if not updated:
-            flag_update = -1
-            # add quad
-            if constraint_state.prev_active[i_c, i_b] == 0 and constraint_state.active[i_c, i_b] == 1:
-                flag_update = 1
-            # sub quad
-            if constraint_state.prev_active[i_c, i_b] == 1 and constraint_state.active[i_c, i_b] == 0:
-                flag_update = 0
+        is_active = constraint_state.active[i_c, i_b]
+        is_active_prev = constraint_state.prev_active[i_c, i_b]
+        if is_active ^ is_active_prev:
+            sign = 1.0 if is_active else -1.0
 
+            efc_D_sqrt = ti.sqrt(constraint_state.efc_D[i_c, i_b])
             if ti.static(static_rigid_sim_config.sparse_solve):
-                if flag_update != -1:
-                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                        i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                        constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * ti.sqrt(
-                            constraint_state.efc_D[i_c, i_b]
-                        )
+                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                    constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-                    rank = n_dofs
-                    for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                        k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
-                        Lkk = constraint_state.nt_H[i_b, k, k]
-                        tmp = Lkk * Lkk + constraint_state.nt_vec[k, i_b] * constraint_state.nt_vec[k, i_b] * (
-                            flag_update * 2 - 1
+                for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                    k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
+                    Lkk = constraint_state.nt_H[i_b, k, k]
+                    tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+                    if tmp < EPS:
+                        is_degenerated = True
+                        break
+                    r = ti.sqrt(tmp)
+                    c = r / Lkk
+                    cinv = 1 / c
+                    s = constraint_state.nt_vec[k, i_b] / Lkk
+                    constraint_state.nt_H[i_b, k, k] = r
+                    for i_ in range(k_):
+                        i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                        constraint_state.nt_H[i_b, i, k] = (
+                            constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                        ) * cinv
+
+                    for i_ in range(k_):
+                        i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                        constraint_state.nt_vec[i, i_b] = (
+                            constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                         )
+            else:
+                for i_d in range(n_dofs):
+                    constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+
+                for k in range(n_dofs):
+                    if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
+                        Lkk = constraint_state.nt_H[i_b, k, k]
+                        tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
                         if tmp < EPS:
-                            tmp = EPS
-                            rank = rank - 1
+                            is_degenerated = True
+                            break
                         r = ti.sqrt(tmp)
                         c = r / Lkk
                         cinv = 1 / c
                         s = constraint_state.nt_vec[k, i_b] / Lkk
                         constraint_state.nt_H[i_b, k, k] = r
-                        for i_ in range(k_):
-                            i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                        for i in range(k + 1, n_dofs):
                             constraint_state.nt_H[i_b, i, k] = (
-                                constraint_state.nt_H[i_b, i, k]
-                                + s * constraint_state.nt_vec[i, i_b] * (flag_update * 2 - 1)
+                                constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                             ) * cinv
 
-                        for i_ in range(k_):
-                            i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                        for i in range(k + 1, n_dofs):
                             constraint_state.nt_vec[i, i_b] = (
                                 constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                             )
 
-                    if rank < n_dofs:
-                        func_nt_hessian_direct(
-                            i_b,
-                            entities_info=entities_info,
-                            constraint_state=constraint_state,
-                            rigid_global_info=rigid_global_info,
-                            static_rigid_sim_config=static_rigid_sim_config,
-                        )
-                        updated = True
-            else:
-                if flag_update != -1:
-                    for i_d in range(n_dofs):
-                        constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * ti.sqrt(
-                            constraint_state.efc_D[i_c, i_b]
-                        )
-
-                    rank = n_dofs
-                    for k in range(n_dofs):
-                        if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                            Lkk = constraint_state.nt_H[i_b, k, k]
-                            tmp = Lkk * Lkk + constraint_state.nt_vec[k, i_b] * constraint_state.nt_vec[k, i_b] * (
-                                flag_update * 2 - 1
-                            )
-                            if tmp < EPS:
-                                tmp = EPS
-                                rank = rank - 1
-                            r = ti.sqrt(tmp)
-                            c = r / Lkk
-                            cinv = 1 / c
-                            s = constraint_state.nt_vec[k, i_b] / Lkk
-                            constraint_state.nt_H[i_b, k, k] = r
-                            for i in range(k + 1, n_dofs):
-                                constraint_state.nt_H[i_b, i, k] = (
-                                    constraint_state.nt_H[i_b, i, k]
-                                    + s * constraint_state.nt_vec[i, i_b] * (flag_update * 2 - 1)
-                                ) * cinv
-
-                            for i in range(k + 1, n_dofs):
-                                constraint_state.nt_vec[i, i_b] = (
-                                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                                )
-
-                    if rank < n_dofs:
-                        func_nt_hessian_direct(
-                            i_b,
-                            entities_info=entities_info,
-                            constraint_state=constraint_state,
-                            rigid_global_info=rigid_global_info,
-                            static_rigid_sim_config=static_rigid_sim_config,
-                        )
-                        updated = True
+    if is_degenerated:
+        func_nt_hessian_direct(
+            i_b,
+            entities_info=entities_info,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
 
 @ti.func
