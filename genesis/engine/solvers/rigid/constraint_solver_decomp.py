@@ -183,7 +183,6 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            True,  # enable_tiled_hessian
             32 <= self._solver.n_dofs <= 64,  # enable_tiled_cholesky
         )
         func_solve(
@@ -2027,7 +2026,6 @@ def func_init_solver(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    enable_tiled_hessian: ti.template(),
     enable_tiled_cholesky: ti.template(),
 ):
     EPS = rigid_global_info.EPS[None]
@@ -2173,107 +2171,90 @@ def func_init_solver(
 
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
-        if ti.static(enable_tiled_hessian):
-            # FIXME: Adding `serialize=False` is causing sync failing for some reason...
-            ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
-            for i in range(_B * HESSIAN_BLOCK_DIM):
-                tid = i % HESSIAN_BLOCK_DIM
-                i_b = i // HESSIAN_BLOCK_DIM
-                if i_b >= _B:
-                    continue
+        # FIXME: Adding `serialize=False` is causing sync failing for some reason...
+        ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
+        for i in range(_B * HESSIAN_BLOCK_DIM):
+            tid = i % HESSIAN_BLOCK_DIM
+            i_b = i // HESSIAN_BLOCK_DIM
+            if i_b >= _B:
+                continue
 
-                jac_row = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
-                jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
-                efc = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
+            jac_row = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+            jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+            efc = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
 
-                i_c_start = 0
-                n_c = constraint_state.n_constraints[i_b]
-                while i_c_start < n_c:
+            i_c_start = 0
+            n_c = constraint_state.n_constraints[i_b]
+            while i_c_start < n_c:
+                i_c_ = tid
+                n_conts_tile = ti.min(MAX_CONSTRAINTS_PER_BLOCK, n_c - i_c_start)
+                while i_c_ < n_conts_tile:
+                    efc[i_c_] = (
+                        constraint_state.efc_D[i_c_start + i_c_, i_b] * constraint_state.active[i_c_start + i_c_, i_b]
+                    )
+                    i_c_ = i_c_ + HESSIAN_BLOCK_DIM
+
+                i_d1_start = 0
+                while i_d1_start < n_dofs:
+                    n_dofs_tile_row = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d1_start)
+
                     i_c_ = tid
-                    n_conts_tile = ti.min(MAX_CONSTRAINTS_PER_BLOCK, n_c - i_c_start)
                     while i_c_ < n_conts_tile:
-                        efc[i_c_] = (
-                            constraint_state.efc_D[i_c_start + i_c_, i_b]
-                            * constraint_state.active[i_c_start + i_c_, i_b]
-                        )
+                        for i_d_ in range(n_dofs_tile_row):
+                            jac_row[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d1_start + i_d_, i_b]
                         i_c_ = i_c_ + HESSIAN_BLOCK_DIM
+                    ti.simt.block.sync()
 
-                    i_d1_start = 0
-                    while i_d1_start < n_dofs:
-                        n_dofs_tile_row = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d1_start)
+                    i_d2_start = 0
+                    while i_d2_start <= i_d1_start:
+                        n_dofs_tile_col = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d2_start)
+                        is_diag_tile = i_d1_start == i_d2_start
 
-                        i_c_ = tid
-                        while i_c_ < n_conts_tile:
-                            for i_d_ in range(n_dofs_tile_row):
-                                jac_row[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d1_start + i_d_, i_b]
-                            i_c_ = i_c_ + HESSIAN_BLOCK_DIM
-                        ti.simt.block.sync()
-
-                        i_d2_start = 0
-                        while i_d2_start <= i_d1_start:
-                            n_dofs_tile_col = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d2_start)
-                            is_diag_tile = i_d1_start == i_d2_start
-
-                            if not is_diag_tile:
-                                i_c_ = tid
-                                while i_c_ < n_conts_tile:
-                                    for i_d_ in range(n_dofs_tile_col):
-                                        jac_col[i_c_, i_d_] = constraint_state.jac[
-                                            i_c_start + i_c_, i_d2_start + i_d_, i_b
-                                        ]
-                                    i_c_ = i_c_ + HESSIAN_BLOCK_DIM
-                                ti.simt.block.sync()
-
-                            pid = tid
-                            numel = n_dofs_tile_row * n_dofs_tile_col
-                            while pid < numel:
-                                i_d1_ = pid // n_dofs_tile_col
-                                i_d2_ = pid % n_dofs_tile_col
-                                i_d1 = i_d1_ + i_d1_start
-                                i_d2 = i_d2_ + i_d2_start
-                                if i_d1 >= i_d2:
-                                    coef = gs.ti_float(0.0)
-                                    if i_c_start == 0:
-                                        coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                                    if is_diag_tile:
-                                        for j_c_ in range(n_conts_tile):
-                                            coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc[j_c_]
-                                    else:
-                                        for j_c_ in range(n_conts_tile):
-                                            coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc[j_c_]
-                                    if i_c_start == 0:
-                                        constraint_state.nt_H[i_b, i_d1, i_d2] = coef
-                                    else:
-                                        constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                                            constraint_state.nt_H[i_b, i_d1, i_d2] + coef
-                                        )
-                                pid = pid + HESSIAN_BLOCK_DIM
+                        if not is_diag_tile:
+                            i_c_ = tid
+                            while i_c_ < n_conts_tile:
+                                for i_d_ in range(n_dofs_tile_col):
+                                    jac_col[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d2_start + i_d_, i_b]
+                                i_c_ = i_c_ + HESSIAN_BLOCK_DIM
                             ti.simt.block.sync()
 
-                            i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
-                        i_d1_start = i_d1_start + MAX_DOFS_PER_BLOCK
-                    i_c_start = i_c_start + MAX_CONSTRAINTS_PER_BLOCK
+                        pid = tid
+                        numel = n_dofs_tile_row * n_dofs_tile_col
+                        while pid < numel:
+                            i_d1_ = pid // n_dofs_tile_col
+                            i_d2_ = pid % n_dofs_tile_col
+                            i_d1 = i_d1_ + i_d1_start
+                            i_d2 = i_d2_ + i_d2_start
+                            if i_d1 >= i_d2:
+                                coef = gs.ti_float(0.0)
+                                if i_c_start == 0:
+                                    coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                                if is_diag_tile:
+                                    for j_c_ in range(n_conts_tile):
+                                        coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc[j_c_]
+                                else:
+                                    for j_c_ in range(n_conts_tile):
+                                        coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc[j_c_]
+                                if i_c_start == 0:
+                                    constraint_state.nt_H[i_b, i_d1, i_d2] = coef
+                                else:
+                                    constraint_state.nt_H[i_b, i_d1, i_d2] = (
+                                        constraint_state.nt_H[i_b, i_d1, i_d2] + coef
+                                    )
+                            pid = pid + HESSIAN_BLOCK_DIM
+                        ti.simt.block.sync()
 
-                if n_c == 0:
-                    i_pair = tid
-                    while i_pair < n_lower_tri:
-                        i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
-                        i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                        constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                        i_pair = i_pair + HESSIAN_BLOCK_DIM
-        else:
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL, block_dim=32)
-            for i_b, i_d1 in ti.ndrange(_B, n_dofs):
-                for i_d2 in range(i_d1 + 1):
-                    coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                    for i_c in range(constraint_state.n_constraints[i_b]):
-                        coef = coef + (
-                            constraint_state.jac[i_c, i_d1, i_b]
-                            * constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.efc_D[i_c, i_b]
-                            * constraint_state.active[i_c, i_b]
-                        )
-                    constraint_state.nt_H[i_b, i_d1, i_d2] = coef
+                        i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
+                    i_d1_start = i_d1_start + MAX_DOFS_PER_BLOCK
+                i_c_start = i_c_start + MAX_CONSTRAINTS_PER_BLOCK
+
+            if n_c == 0:
+                i_pair = tid
+                while i_pair < n_lower_tri:
+                    i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
+                    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                    i_pair = i_pair + HESSIAN_BLOCK_DIM
 
         if ti.static(enable_tiled_cholesky):
             ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
@@ -2283,11 +2264,12 @@ def func_init_solver(
                 if i_b >= _B:
                     continue
 
-                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+                # Padding +1 to avoid memory bank conflicts that would cause access serialization
+                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.ti_float)
 
                 i_pair = tid
                 while i_pair < n_lower_tri:
-                    i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
+                    i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
@@ -2313,7 +2295,7 @@ def func_init_solver(
 
                 i_pair = tid
                 while i_pair < n_lower_tri:
-                    i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
+                    i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
@@ -2336,7 +2318,7 @@ def func_init_solver(
                 if i_b >= _B:
                     continue
 
-                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.ti_float)
                 v = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.ti_float)
                 partial = ti.simt.block.SharedArray(
                     (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else HESSIAN_BLOCK_DIM,), gs.ti_float
@@ -2344,7 +2326,11 @@ def func_init_solver(
 
                 i_pair = tid
                 while i_pair < n_lower_tri:
-                    i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
+                    i_d1 = (
+                        ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
+                        if ti.static(ENABLE_WARP_REDUCTION)
+                        else ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), ti.i32)
+                    )
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
