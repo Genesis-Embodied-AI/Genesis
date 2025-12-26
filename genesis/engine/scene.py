@@ -596,9 +596,12 @@ class Scene(RBC):
         """
         Add a camera to the scene.
 
-        The camera model can be either 'pinhole' or 'thinlens'. The 'pinhole' model is a simple camera model that
-        captures light rays from a single point in space. The 'thinlens' model is a more complex camera model that
-        simulates a lens with a finite aperture size, allowing for depth of field effects.
+        The camera model can be either 'pinhole', 'thinlens' or 'fisheye'.
+        The 'pinhole' model is a simple camera model that captures light rays from a single point in space.
+        The 'thinlens' model is a more complex camera model that simulates a lens with a finite aperture size,
+        allowing for depth of field effects. It is only supported by the Raytracer.
+        The 'fisheye' model is a camera model that simulates a fisheye lens,
+        allowing for wide-angle views. It is only supported by the BatchRenderer.
 
         Warning
         -------

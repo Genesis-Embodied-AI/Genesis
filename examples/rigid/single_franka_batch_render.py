@@ -35,6 +35,7 @@ def main():
     ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
+        surface=gs.surfaces.Default(diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures")),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -67,9 +68,10 @@ def main():
     )
     cam_2 = scene.add_camera(
         res=(512, 512),
-        pos=(0.0, 0.1, 5.0),
+        pos=(0.0, 0.0, 5.0),
         lookat=(0.0, 0.0, 0.0),
-        fov=45,
+        fov=70,
+        model="fisheye",
         GUI=args.vis,
     )
 
