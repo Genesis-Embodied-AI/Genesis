@@ -3664,17 +3664,16 @@ def func_compute_mass_matrix(
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-            # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-            ti.atomic_add(
-                rigid_global_info.mass_mat[i_d, i_d, i_b], dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+            rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+                rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
             )
             if (
                 dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
                 or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
             ):
                 # qM += d qfrc_actuator / d qvel
-                ti.atomic_add(
-                    rigid_global_info.mass_mat[i_d, i_d, i_b], dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
+                rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+                    rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                 )
 
 
@@ -3752,19 +3751,17 @@ def func_factor_mass(
 
                                 if ti.static(implicit_damping):
                                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                                    # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-                                    ti.atomic_add(
-                                        rigid_global_info.mass_mat_L[i_d, i_d, i_b],
-                                        (dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]),
+                                    rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                        rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                        + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                                     )
                                     if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                         if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                             dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                         ):
-                                            # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-                                            ti.atomic_add(
-                                                rigid_global_info.mass_mat_L[i_d, i_d, i_b],
-                                                dofs_info.kv[I_d] * rigid_global_info.substep_dt[None],
+                                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                                rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                                + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                             )
 
                         for i_d_ in (
@@ -4821,7 +4818,7 @@ def func_COM_links(
             )
 
             i_r = links_info.root_idx[I_l]
-            ti.atomic_add(links_state.mass_sum[i_r, i_b], mass)
+            links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
             ti.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
