@@ -1,8 +1,11 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import gstaichi as ti
 import torch
+
+import gstaichi as ti
+from gstaichi._lib import core as _ti_core
+from gstaichi.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -1134,7 +1137,7 @@ def func_nt_hessian_incremental(
 ):
     EPS = rigid_global_info.EPS[None]
 
-    n_dofs = constraint_state.nt_H.shape[0]
+    n_dofs = constraint_state.nt_H.shape[1]
     updated = False
 
     for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1158,7 +1161,7 @@ def func_nt_hessian_incremental(
                     rank = n_dofs
                     for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                         k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
-                        Lkk = constraint_state.nt_H[k, k, i_b]
+                        Lkk = constraint_state.nt_H[i_b, k, k]
                         tmp = Lkk * Lkk + constraint_state.nt_vec[k, i_b] * constraint_state.nt_vec[k, i_b] * (
                             flag_update * 2 - 1
                         )
@@ -1169,18 +1172,18 @@ def func_nt_hessian_incremental(
                         c = r / Lkk
                         cinv = 1 / c
                         s = constraint_state.nt_vec[k, i_b] / Lkk
-                        constraint_state.nt_H[k, k, i_b] = r
+                        constraint_state.nt_H[i_b, k, k] = r
                         for i_ in range(k_):
                             i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                            constraint_state.nt_H[i, k, i_b] = (
-                                constraint_state.nt_H[i, k, i_b]
+                            constraint_state.nt_H[i_b, i, k] = (
+                                constraint_state.nt_H[i_b, i, k]
                                 + s * constraint_state.nt_vec[i, i_b] * (flag_update * 2 - 1)
                             ) * cinv
 
                         for i_ in range(k_):
                             i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
                             constraint_state.nt_vec[i, i_b] = (
-                                constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i, k, i_b]
+                                constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                             )
 
                     if rank < n_dofs:
@@ -1202,7 +1205,7 @@ def func_nt_hessian_incremental(
                     rank = n_dofs
                     for k in range(n_dofs):
                         if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                            Lkk = constraint_state.nt_H[k, k, i_b]
+                            Lkk = constraint_state.nt_H[i_b, k, k]
                             tmp = Lkk * Lkk + constraint_state.nt_vec[k, i_b] * constraint_state.nt_vec[k, i_b] * (
                                 flag_update * 2 - 1
                             )
@@ -1213,16 +1216,16 @@ def func_nt_hessian_incremental(
                             c = r / Lkk
                             cinv = 1 / c
                             s = constraint_state.nt_vec[k, i_b] / Lkk
-                            constraint_state.nt_H[k, k, i_b] = r
+                            constraint_state.nt_H[i_b, k, k] = r
                             for i in range(k + 1, n_dofs):
-                                constraint_state.nt_H[i, k, i_b] = (
-                                    constraint_state.nt_H[i, k, i_b]
+                                constraint_state.nt_H[i_b, i, k] = (
+                                    constraint_state.nt_H[i_b, i, k]
                                     + s * constraint_state.nt_vec[i, i_b] * (flag_update * 2 - 1)
                                 ) * cinv
 
                             for i in range(k + 1, n_dofs):
                                 constraint_state.nt_vec[i, i_b] = (
-                                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i, k, i_b]
+                                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                                 )
 
                     if rank < n_dofs:
@@ -1246,13 +1249,13 @@ def func_nt_hessian_direct(
 ):
     EPS = rigid_global_info.EPS[None]
 
-    n_dofs = constraint_state.nt_H.shape[0]
+    n_dofs = constraint_state.nt_H.shape[1]
     n_entities = entities_info.n_links.shape[0]
 
     # H = M + J'*D*J
     for i_d1 in range(n_dofs):
         for i_d2 in range(i_d1 + 1):
-            constraint_state.nt_H[i_d1, i_d2, i_b] = gs.ti_float(0.0)
+            constraint_state.nt_H[i_b, i_d1, i_d2] = gs.ti_float(0.0)
 
     if ti.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1262,8 +1265,8 @@ def func_nt_hessian_direct(
                 if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
                         i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]  # i_d2 is strictly <= i_d1
-                        constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                            constraint_state.nt_H[i_d1, i_d2, i_b]
+                        constraint_state.nt_H[i_b, i_d1, i_d2] = (
+                            constraint_state.nt_H[i_b, i_d1, i_d2]
                             + constraint_state.jac[i_c, i_d2, i_b]
                             * constraint_state.jac[i_c, i_d1, i_b]
                             * constraint_state.efc_D[i_c, i_b]
@@ -1273,8 +1276,8 @@ def func_nt_hessian_direct(
         for i_d1, i_c in ti.ndrange(n_dofs, constraint_state.n_constraints[i_b]):
             if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                 for i_d2 in range(i_d1 + 1):
-                    constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                        constraint_state.nt_H[i_d1, i_d2, i_b]
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = (
+                        constraint_state.nt_H[i_b, i_d1, i_d2]
                         + constraint_state.jac[i_c, i_d2, i_b]
                         * constraint_state.jac[i_c, i_d1, i_b]
                         * constraint_state.efc_D[i_c, i_b]
@@ -1284,8 +1287,8 @@ def func_nt_hessian_direct(
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             for i_d2 in range(entities_info.dof_start[i_e], i_d1 + 1):
-                constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                    constraint_state.nt_H[i_d1, i_d2, i_b] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                constraint_state.nt_H[i_b, i_d1, i_d2] = (
+                    constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                 )
 
     func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
@@ -1299,19 +1302,19 @@ def func_nt_chol_factor(
 ):
     EPS = rigid_global_info.EPS[None]
 
-    n_dofs = constraint_state.nt_H.shape[0]
+    n_dofs = constraint_state.nt_H.shape[1]
     for i_d in range(n_dofs):
-        tmp = constraint_state.nt_H[i_d, i_d, i_b]
+        tmp = constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d):
-            tmp -= constraint_state.nt_H[i_d, j_d, i_b] ** 2
-        constraint_state.nt_H[i_d, i_d, i_b] = ti.sqrt(ti.max(tmp, EPS))
+            tmp -= constraint_state.nt_H[i_b, i_d, j_d] ** 2
+        constraint_state.nt_H[i_b, i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
 
-        tmp = 1.0 / constraint_state.nt_H[i_d, i_d, i_b]
+        tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d + 1, n_dofs):
             dot = gs.ti_float(0.0)
             for k_d in range(i_d):
-                dot += constraint_state.nt_H[j_d, k_d, i_b] * constraint_state.nt_H[i_d, k_d, i_b]
-            constraint_state.nt_H[j_d, i_d, i_b] = (constraint_state.nt_H[j_d, i_d, i_b] - dot) * tmp
+                dot += constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+            constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
 @ti.func
@@ -1326,18 +1329,18 @@ def func_nt_chol_solve(
     for i_d in range(n_dofs):
         for j_d in range(i_d):
             constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] - (
-                constraint_state.nt_H[i_d, j_d, i_b] * constraint_state.Mgrad[j_d, i_b]
+                constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
             )
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_d, i_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_b, i_d, i_d]
 
     for i_d_ in range(n_dofs):
         i_d = n_dofs - 1 - i_d_
         for j_d in range(i_d + 1, n_dofs):
             constraint_state.Mgrad[i_d, i_b] = (
                 constraint_state.Mgrad[i_d, i_b]
-                - constraint_state.nt_H[j_d, i_d, i_b] * constraint_state.Mgrad[j_d, i_b]
+                - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
             )
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_d, i_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_b, i_d, i_d]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -2190,7 +2193,9 @@ def func_init_solver(
         HESSIAN_BLOCK_DIM = ti.static(64)
         MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
         MAX_DOFS_PER_BLOCK = ti.static(64)
-        ENABLE_WARP_REDUCTION = ti.static(gs.ti_float == ti.f32)
+        ENABLE_WARP_REDUCTION = ti.static(
+            impl.get_runtime().prog.config().arch == _ti_core.cuda and gs.ti_float == ti.f32
+        )
         WARP_SIZE = ti.static(32)
         NUM_WARPS = ti.static(HESSIAN_BLOCK_DIM // WARP_SIZE)
 
@@ -2265,10 +2270,10 @@ def func_init_solver(
                                         for j_c_ in range(n_conts_tile):
                                             coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc[j_c_]
                                     if i_c_start == 0:
-                                        constraint_state.nt_H[i_d1, i_d2, i_b] = coef
+                                        constraint_state.nt_H[i_b, i_d1, i_d2] = coef
                                     else:
-                                        constraint_state.nt_H[i_d1, i_d2, i_b] = (
-                                            constraint_state.nt_H[i_d1, i_d2, i_b] + coef
+                                        constraint_state.nt_H[i_b, i_d1, i_d2] = (
+                                            constraint_state.nt_H[i_b, i_d1, i_d2] + coef
                                         )
                                 pid = pid + HESSIAN_BLOCK_DIM
                             ti.simt.block.sync()
@@ -2282,7 +2287,7 @@ def func_init_solver(
                     while i_pair < n_lower_tri:
                         i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
                         i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                        constraint_state.nt_H[i_d1, i_d2, i_b] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                        constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                         i_pair = i_pair + HESSIAN_BLOCK_DIM
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL, block_dim=32)
@@ -2296,8 +2301,7 @@ def func_init_solver(
                             * constraint_state.efc_D[i_c, i_b]
                             * constraint_state.active[i_c, i_b]
                         )
-                    constraint_state.nt_H[i_d1, i_d2, i_b] = coef
-                    constraint_state.nt_H[i_d2, i_d1, i_b] = coef
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = coef
 
         if ti.static(enable_tiled_cholesky):
             ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
@@ -2313,7 +2317,7 @@ def func_init_solver(
                 while i_pair < n_lower_tri:
                     i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    H[i_d1, i_d2] = constraint_state.nt_H[i_d1, i_d2, i_b]
+                    H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
                 ti.simt.block.sync()
 
@@ -2339,7 +2343,7 @@ def func_init_solver(
                 while i_pair < n_lower_tri:
                     i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    constraint_state.nt_H[i_d1, i_d2, i_b] = H[i_d1, i_d2]
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2370,7 +2374,7 @@ def func_init_solver(
                 while i_pair < n_lower_tri:
                     i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    H[i_d1, i_d2] = constraint_state.nt_H[i_d1, i_d2, i_b]
+                    H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
                     i_pair = i_pair + HESSIAN_BLOCK_DIM
                 k_d = tid
                 while k_d < n_dofs:

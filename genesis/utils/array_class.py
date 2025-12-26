@@ -290,7 +290,7 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         cg_prev_Mgrad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
-        nt_H=V(dtype=gs.ti_float, shape=(solver.n_dofs_, solver.n_dofs_, _B)),
+        nt_H=V(dtype=gs.ti_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
         efc_b=V(dtype=gs.ti_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.ti_float, shape=efc_AR_shape),
         active=V(dtype=gs.ti_bool, shape=(len_constraints_, _B)),
