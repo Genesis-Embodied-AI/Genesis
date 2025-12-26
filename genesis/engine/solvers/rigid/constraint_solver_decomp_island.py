@@ -95,7 +95,7 @@ class ConstraintSolverIsland:
             self.cg_pg_dot_pMg = ti.field(gs.ti_float, shape=(self._B,))
 
         if self._solver_type == gs.constraint_solver.Newton:
-            self.nt_H = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._solver.n_dofs_, self._B))
+            self.nt_H = ti.field(dtype=gs.ti_float, shape=(self._B, self._solver.n_dofs_, self._solver.n_dofs_))
             self.nt_vec = ti.field(dtype=gs.ti_float, shape=(self._solver.n_dofs_, self._B))
 
         self.reset()
@@ -391,8 +391,8 @@ class ConstraintSolverIsland:
                         d1 = ti.max(i_d1, i_d2)
                         d2 = ti.min(i_d1, i_d2)
 
-                        self.nt_H[d1, d2, i_b] = (
-                            self.nt_H[d1, d2, i_b]
+                        self.nt_H[i_b, d1, d2] = (
+                            self.nt_H[i_b, d1, d2]
                             + self.jac[i_c, d2, i_b]
                             * self.jac[i_c, d1, i_b]
                             * self.efc_D[i_c, i_b]
