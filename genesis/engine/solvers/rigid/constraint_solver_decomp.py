@@ -2169,6 +2169,7 @@ def func_init_solver(
         WARP_SIZE = ti.static(32)
         NUM_WARPS = ti.static(HESSIAN_BLOCK_DIM // WARP_SIZE)
 
+        n_dofs_2 = n_dofs**2
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
         # FIXME: Adding `serialize=False` is causing sync failing for some reason...
@@ -2324,16 +2325,13 @@ def func_init_solver(
                     (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else HESSIAN_BLOCK_DIM,), gs.ti_float
                 )
 
-                i_pair = tid
-                while i_pair < n_lower_tri:
-                    i_d1 = (
-                        ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
-                        if ti.static(ENABLE_WARP_REDUCTION)
-                        else ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), ti.i32)
-                    )
-                    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-                    i_pair = i_pair + HESSIAN_BLOCK_DIM
+                i_flat = tid
+                while i_flat < n_dofs_2:
+                    i_d1 = i_flat // n_dofs
+                    i_d2 = i_flat % n_dofs
+                    if i_d2 <= i_d1:
+                        H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
+                    i_flat = i_flat + HESSIAN_BLOCK_DIM
                 k_d = tid
                 while k_d < n_dofs:
                     v[k_d] = constraint_state.Mgrad[k_d, i_b]
