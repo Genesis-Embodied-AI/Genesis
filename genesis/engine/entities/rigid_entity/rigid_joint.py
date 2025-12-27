@@ -6,6 +6,7 @@ import genesis.utils.geom as gu
 from genesis.utils import array_class
 from genesis.utils.misc import DeprecationError
 from genesis.repr_base import RBC
+from genesis.utils.warnings import warn_once
 
 
 class RigidJoint(RBC):
@@ -269,8 +270,8 @@ class RigidJoint(RBC):
         This property either returns a list, an integer, or None depending on whether the joint has multiple DoFs, a
         single one, or none, respectively.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'dofs_idx' instead."
+        warn_once(
+            f"dof_idx is deprecated on {__file__} and will be removed in future release. Please use 'dofs_idx' instead."
         )
         if self.n_dofs == 1:
             return self.dof_start
@@ -293,8 +294,8 @@ class RigidJoint(RBC):
         This property either returns a list, an integer, or None depending on whether the joint has multiple DoFs, a
         single one, or none, respectively.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'dofs_idx_local' instead."
+        warn_once(
+            f"dof_idx_local is deprecated on {__file__} and will be removed in future release. Please use 'dofs_idx_local' instead."
         )
         if self.n_dofs == 1:
             return self.dof_start - self._entity.dof_start
@@ -317,8 +318,8 @@ class RigidJoint(RBC):
         This property either returns a list, an integer, or None depending on whether the joint has multiple position
         indices, a single one, or none, respectively.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'qs_idx' instead."
+        warn_once(
+            f"q_idx is deprecated on {__file__} and will be removed in future release. Please use 'qs_idx' instead."
         )
         if self.n_qs == 1:
             return self.q_start
@@ -339,8 +340,8 @@ class RigidJoint(RBC):
         """
         Returns all the local `q` indices of the joint in the entity.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'qs_idx_local' instead."
+        warn_once(
+            f"q_idx_local is deprecated on {__file__} and will be removed in future release. Please use 'qs_idx_local' instead."
         )
         if self.n_qs == 1:
             return self.q_start - self._entity.q_start
