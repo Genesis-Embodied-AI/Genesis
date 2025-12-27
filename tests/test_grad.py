@@ -264,7 +264,6 @@ def test_diff_solver(monkeypatch):
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-            enable_tiled_hessian=True,
             enable_tiled_cholesky=True,
         )
         func_solve(

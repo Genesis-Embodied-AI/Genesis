@@ -2948,11 +2948,11 @@ def test_constraint_solver_tiling(tol):
         rigid_global_info=scene.rigid_solver._rigid_global_info,
         static_rigid_sim_config=scene.rigid_solver._static_rigid_sim_config,
     )
-    func_init_solver(**kwargs, enable_tiled_hessian=False, enable_tiled_cholesky=False)
+    func_init_solver(**kwargs, enable_tiled_cholesky=False)
     nt_H_ref = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
     assert (np.linalg.norm(nt_H_ref.reshape((-1, 2)), axis=0) > 5.0).all()
 
-    func_init_solver(**kwargs, enable_tiled_hessian=True, enable_tiled_cholesky=True)
+    func_init_solver(**kwargs, enable_tiled_cholesky=True)
     nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
     assert_allclose(nt_H_ref, nt_H, tol=tol)
 
