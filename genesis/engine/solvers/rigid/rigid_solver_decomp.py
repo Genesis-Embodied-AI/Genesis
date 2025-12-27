@@ -2713,7 +2713,7 @@ def update_qacc_from_qvel_delta(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -2754,7 +2754,7 @@ def update_qvel(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -3446,7 +3446,7 @@ def func_compute_mass_matrix(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_links[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -3532,7 +3532,7 @@ def func_compute_mass_matrix(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_links[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -3579,7 +3579,7 @@ def func_compute_mass_matrix(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_entities[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -3664,17 +3664,16 @@ def func_compute_mass_matrix(
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in ti.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
             I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-            # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-            ti.atomic_add(
-                rigid_global_info.mass_mat[i_d, i_d, i_b], dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+            rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+                rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
             )
             if (
                 dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
                 or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
             ):
                 # qM += d qfrc_actuator / d qvel
-                ti.atomic_add(
-                    rigid_global_info.mass_mat[i_d, i_d, i_b], dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
+                rigid_global_info.mass_mat[i_d, i_d, i_b] = (
+                    rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                 )
 
 
@@ -3706,7 +3705,7 @@ def func_factor_mass(
                     # Dynamic inner loop for forward pass
                     range(rigid_global_info.n_awake_entities[i_b])
                     if ti.static(static_rigid_sim_config.use_hibernation)
-                    else range(1)
+                    else ti.static(range(1))
                 )
                 if ti.static(not BW)
                 else (
@@ -3752,19 +3751,17 @@ def func_factor_mass(
 
                                 if ti.static(implicit_damping):
                                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                                    # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-                                    ti.atomic_add(
-                                        rigid_global_info.mass_mat_L[i_d, i_d, i_b],
-                                        (dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]),
+                                    rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                        rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                        + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                                     )
                                     if ti.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                         if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
                                             dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
                                         ):
-                                            # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-                                            ti.atomic_add(
-                                                rigid_global_info.mass_mat_L[i_d, i_d, i_b],
-                                                dofs_info.kv[I_d] * rigid_global_info.substep_dt[None],
+                                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                                rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                                + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
                                             )
 
                         for i_d_ in (
@@ -4821,7 +4818,7 @@ def func_COM_links(
             )
 
             i_r = links_info.root_idx[I_l]
-            ti.atomic_add(links_state.mass_sum[i_r, i_b], mass)
+            links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
             ti.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -5570,7 +5567,7 @@ def func_update_geoms(
                 # Dynamic inner loop for forward pass
                 range(n_geoms)
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -5950,7 +5947,7 @@ def func_clear_external_force(
         for i_1 in (
             range(rigid_global_info.n_awake_links[i_b])
             if ti.static(static_rigid_sim_config.use_hibernation)
-            else range(1)
+            else ti.static(range(1))
         ):
             i_l = rigid_global_info.awake_links[i_1, i_b] if ti.static(static_rigid_sim_config.use_hibernation) else i_0
             links_state.cfrc_applied_ang[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
@@ -6092,7 +6089,7 @@ def func_torque_and_passive_force(
                 # Dynamic inner for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6125,7 +6122,7 @@ def func_torque_and_passive_force(
                 # Dynamic inner for forward pass
                 range(rigid_global_info.n_awake_links[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6202,7 +6199,7 @@ def func_update_acc(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_entities[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6303,7 +6300,7 @@ def func_update_force(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_links[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6358,7 +6355,7 @@ def func_update_force(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_entities[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6444,7 +6441,7 @@ def func_bias_force(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_links[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6534,7 +6531,7 @@ def func_compute_qacc(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_entities[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6585,7 +6582,7 @@ def func_integrate(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
@@ -6619,7 +6616,7 @@ def func_integrate(
                 # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_links[i_b])
                 if ti.static(static_rigid_sim_config.use_hibernation)
-                else range(1)
+                else ti.static(range(1))
             )
             if ti.static(not BW)
             else (
