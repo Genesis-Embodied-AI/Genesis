@@ -96,8 +96,7 @@ class SFSolver(Solver):
 
     @ti.kernel
     def pressure_jacobi(self, pf: ti.template(), new_pf: ti.template()):
-        for I in ti.grouped(ti.ndrange(*self.res)):
-            u, v, w = I
+        for u, v, w in ti.ndrange(*self.res):
             pl = pf[self.compute_location(u, v, w, -1, 0, 0)]
             pr = pf[self.compute_location(u, v, w, 1, 0, 0)]
             pb = pf[self.compute_location(u, v, w, 0, -1, 0)]
@@ -105,7 +104,7 @@ class SFSolver(Solver):
             pp = pf[self.compute_location(u, v, w, 0, 0, -1)]
             pq = pf[self.compute_location(u, v, w, 0, 0, 1)]
 
-            new_pf[I] = (pl + pr + pb + pt + pp + pq - self.grid[I].div) / 6.0
+            new_pf[u, v, w] = (pl + pr + pb + pt + pp + pq - self.grid[u, v, w].div) / 6.0
 
     @ti.kernel
     def advect_and_impulse(self, f: ti.i32, t: ti.f32):
@@ -132,8 +131,7 @@ class SFSolver(Solver):
 
     @ti.kernel
     def divergence(self):
-        for I in ti.grouped(ti.ndrange(*self.res)):
-            u, v, w = I
+        for u, v, w in ti.ndrange(*self.res):
             vl = self.grid.v_tmp[self.compute_location(u, v, w, -1, 0, 0)]
             vr = self.grid.v_tmp[self.compute_location(u, v, w, 1, 0, 0)]
             vb = self.grid.v_tmp[self.compute_location(u, v, w, 0, -1, 0)]
@@ -155,7 +153,7 @@ class SFSolver(Solver):
             if not self.is_free(u, v, w, 0, 0, 1):
                 vq.z = -vc.z
 
-            self.grid.div[I] = 0.5 * (vr.x - vl.x + vt.y - vb.y + vq.z - vp.z)
+            self.grid.div[u, v, w] = 0.5 * (vr.x - vl.x + vt.y - vb.y + vq.z - vp.z)
 
     @ti.kernel
     def pressure_to_swap(self):
