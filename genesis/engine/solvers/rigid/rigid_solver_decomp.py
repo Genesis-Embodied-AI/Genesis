@@ -2,8 +2,6 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
-from gstaichi._lib import core as _ti_core
-from gstaichi.lang import impl
 import numpy as np
 import torch
 
@@ -3739,8 +3737,8 @@ def func_factor_mass(
                         # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
                         rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
         else:
-            BLOCK_DIM = ti.static(64)
-            MAX_DOFS_PER_ENTITY = ti.static(64)
+            BLOCK_DIM = ti.static(32)
+            MAX_DOFS_PER_ENTITY = ti.static(32)
 
             ti.loop_config(block_dim=BLOCK_DIM)
             for i_eb in range(n_entities * _B * BLOCK_DIM):
@@ -3796,14 +3794,26 @@ def func_factor_mass(
                             # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
                             rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
 
-                        j_d_ = i_d_ - 1 - tid
-                        while j_d_ >= 0:
-                            a = mass_mat[i_d_, j_d_] * D_inv
-                            for k_d in range(j_d_ + 1):
-                                mass_mat[j_d_, k_d] = mass_mat[j_d_, k_d] - a * mass_mat[i_d_, k_d]
-                            mass_mat[i_d_, j_d_] = a
-                            j_d_ = j_d_ - BLOCK_DIM
-                        ti.simt.block.sync()
+                        # Warp-level sync is slightly faster than block-level sync but only available on CUDA
+                        if ti.static(static_rigid_sim_config.backend == gs.cuda):
+                            k_d = tid
+                            for j in range(i_d_):
+                                j_d_ = i_d_ - 1 - j
+                                a = mass_mat[i_d_, j_d_] * D_inv
+                                if k_d <= j_d_:
+                                    mass_mat[j_d_, k_d] = mass_mat[j_d_, k_d] - a * mass_mat[i_d_, k_d]
+                                if tid == 0:
+                                    mass_mat[i_d_, j_d_] = a
+                                ti.simt.warp.sync(ti.u32(0xFFFFFFFF))
+                        else:
+                            j_d_ = i_d_ - 1 - tid
+                            while j_d_ >= 0:
+                                a = mass_mat[i_d_, j_d_] * D_inv
+                                for k_d in range(j_d_ + 1):
+                                    mass_mat[j_d_, k_d] = mass_mat[j_d_, k_d] - a * mass_mat[i_d_, k_d]
+                                mass_mat[i_d_, j_d_] = a
+                                j_d_ = j_d_ - BLOCK_DIM
+                            ti.simt.block.sync()
 
                     i_pair = tid
                     n_strict_lower_tri = n_dofs * (n_dofs - 1) // 2
