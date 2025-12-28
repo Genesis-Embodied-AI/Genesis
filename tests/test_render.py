@@ -507,7 +507,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     # Verify that the output is correct pixel-wise over multiple simulation steps
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot
+            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
 
 
 @pytest.mark.required
