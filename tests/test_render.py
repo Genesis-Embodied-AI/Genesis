@@ -530,6 +530,14 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
             diffuse_texture=gs.textures.BatchTexture.from_images(image_folder=os.path.join(asset_path, "ci_assets"))
         ),
     )
+
+    ci_dir = os.path.join(asset_path, "ci_assets")
+    print(len(list(os.listdir(ci_dir))))
+    print(len(plane.vgeoms))
+    print(type(plane.vgeoms[0].surface))
+    for texture in plane.vgeoms[0].surface.diffuse_texture.textures:
+        print(texture.image_path)
+
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
@@ -572,7 +580,7 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
 
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
+            assert png_snapshot == f.read(), f"Image file {image_file} does not match snapshot"
 
 
 @pytest.mark.parametrize(
