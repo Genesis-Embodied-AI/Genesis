@@ -1568,6 +1568,7 @@ class RigidEntity(Entity):
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
+                is_backward=False,
             )
 
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -1597,6 +1598,7 @@ class RigidEntity(Entity):
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
+                is_backward=False,
             )
 
     # ------------------------------------------------------------------------------------
@@ -3373,6 +3375,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     entities_info,
                     rigid_global_info,
                     static_rigid_sim_config,
+                    is_backward=False,
                 )
                 # compute error
                 solved = True
@@ -3501,6 +3504,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     entities_info,
                     rigid_global_info,
                     static_rigid_sim_config,
+                    is_backward=False,
                 )
                 solved = True
                 for i_ee in range(n_links):
@@ -3600,4 +3604,5 @@ def kernel_rigid_entity_inverse_kinematics(
             entities_info,
             rigid_global_info,
             static_rigid_sim_config,
+            is_backward=False,
         )

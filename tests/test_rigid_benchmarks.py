@@ -487,10 +487,6 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
     while True:
         scene.step()
         if accessors:
-            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
-            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
-            franka.set_dofs_stiffness(dofs_stiffness)
-            franka.set_dofs_damping(dofs_damping)
             franka.get_ang()
             franka.get_vel()
             franka.get_dofs_position()
@@ -500,6 +496,10 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
             franka.get_links_vel()
             franka.get_contacts()
             franka.control_dofs_position(ctrl)
+            franka.set_dofs_stiffness(dofs_stiffness)
+            franka.set_dofs_damping(dofs_damping)
+            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
+            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
 
         time_elapsed = time.time() - time_start
         if is_recording:
@@ -657,13 +657,12 @@ def random(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-@pytest.fixture
-def box_pyramid(n_envs, n_cubes, enable_island, gjk):
+def _box_pyramid(solver, n_envs, gjk, n_cubes):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
-                use_contact_island=enable_island,
+                **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
@@ -717,6 +716,16 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
+@pytest.fixture
+def box_pyramid_4(solver, n_envs, gjk):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=4)
+
+
+@pytest.fixture
+def box_pyramid_5(solver, n_envs, gjk):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=5)
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -742,6 +751,9 @@ def box_pyramid(n_envs, n_cubes, enable_island, gjk):
         ("batched_franka", None, None, 0, gs.gpu),
         ("batched_franka", None, None, 0, gs.cpu),
         ("random", None, None, 30000, gs.gpu),
+        ("box_pyramid_5", None, True, 4096, gs.gpu),
+        ("box_pyramid_5", None, False, 4096, gs.gpu),
+        ("box_pyramid_4", None, None, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
@@ -755,20 +767,3 @@ def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
         }
     ) as logger:
         logger.write(request.getfixturevalue(runnable))
-
-
-@pytest.mark.parametrize("backend", [gs.gpu])
-@pytest.mark.parametrize("n_cubes", [5])
-@pytest.mark.parametrize("enable_island", [False])
-@pytest.mark.parametrize("n_envs", [2048])
-@pytest.mark.parametrize("gjk", [False, True])
-def test_box_pyramid(factory_logger, request, n_cubes, enable_island, gjk, n_envs):
-    with factory_logger(
-        {
-            "env": f"box_pyramid#{n_cubes}",
-            "batch_size": n_envs,
-            "use_contact_island": enable_island,
-            "gjk_collision": gjk,
-        }
-    ) as logger:
-        logger.write(request.getfixturevalue("box_pyramid"))
