@@ -180,7 +180,6 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
-            32 <= self._solver.n_dofs <= 64,  # enable_tiled_cholesky
         )
         func_solve(
             self._solver.entities_info,
@@ -2023,7 +2022,6 @@ def func_init_solver(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    enable_tiled_cholesky: ti.template(),
 ):
     EPS = rigid_global_info.EPS[None]
 
@@ -2252,7 +2250,7 @@ def func_init_solver(
                     constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                     i_pair = i_pair + BLOCK_DIM
 
-        if ti.static(enable_tiled_cholesky):
+        if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
             ti.loop_config(block_dim=BLOCK_DIM)
             for i in range(_B * BLOCK_DIM):
                 tid = i % BLOCK_DIM

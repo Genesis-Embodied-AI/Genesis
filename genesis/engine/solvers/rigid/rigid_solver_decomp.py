@@ -249,6 +249,14 @@ class RigidSolver(Solver):
         # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
         is_rigid_solver = type(self) is RigidSolver
         if is_rigid_solver:
+            # TODO: The optimal implementation should be selected based on dynamic timer-based profiling instead
+            # of hard-coded heuristic.
+            # These alternative algorithms are designed to reduce the impact of latency. However, naive
+            # implementation scales slightly better than shared-memory based implementation because the scheduler
+            # of modern GPUs is able to hides latency by swapping warps for sufficient workload.
+            max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
+            workload = (self.n_dofs / max(max_n_dofs_per_entity, 1)) * self.n_envs
+
             static_rigid_sim_config = dict(
                 backend=gs.backend,
                 para_level=self.sim._para_level,
@@ -260,6 +268,8 @@ class RigidSolver(Solver):
                 enable_mujoco_compatibility=self._enable_mujoco_compatibility,
                 enable_multi_contact=self._enable_multi_contact,
                 enable_collision=self._enable_collision,
+                enable_tiled_cholesky_mass_matrix=16 <= max_n_dofs_per_entity <= 32 and workload <= 20000,
+                enable_tiled_cholesky_hessian=16 <= self.n_dofs <= 64 and workload <= 20000,
                 enable_joint_limit=self._enable_joint_limit,
                 box_box_detection=self._box_box_detection,
                 sparse_solve=self._options.sparse_solve,
@@ -273,7 +283,7 @@ class RigidSolver(Solver):
                     max_n_links_per_entity=max(len(entity.links) for entity in self.entities) if self.entities else 0,
                     max_n_joints_per_link=max(len(link.joints) for link in self.links) if self.links else 0,
                     max_n_dofs_per_joint=max(joint.n_dofs for joint in self.joints) if self.joints else 0,
-                    max_n_dofs_per_entity=max(entity.n_dofs for entity in self.entities) if self.entities else 0,
+                    max_n_dofs_per_entity=max_n_dofs_per_entity,
                     max_n_dofs_per_link=max(link.n_dofs for link in self.links) if self.links else 0,
                     max_n_qs_per_link=max(link.n_qs for link in self.links) if self.links else 0,
                     n_links=self._n_links,
@@ -3693,7 +3703,9 @@ def func_factor_mass(
         _B = dofs_state.ctrl_mode.shape[1]
         n_entities = entities_info.n_links.shape[0]
 
-        if ti.static(static_rigid_sim_config.backend == gs.cpu):
+        if ti.static(
+            not static_rigid_sim_config.enable_tiled_cholesky_mass_matrix or static_rigid_sim_config.backend == gs.cpu
+        ):
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
             for i_e, i_b in ti.ndrange(n_entities, _B):
                 if rigid_global_info.mass_mat_mask[i_e, i_b]:
@@ -3741,10 +3753,10 @@ def func_factor_mass(
             MAX_DOFS_PER_ENTITY = ti.static(32)
 
             ti.loop_config(block_dim=BLOCK_DIM)
-            for i_eb in range(n_entities * _B * BLOCK_DIM):
-                tid = i_eb % BLOCK_DIM
-                i_e = (i_eb // BLOCK_DIM) % n_entities
-                i_b = i_eb // (BLOCK_DIM * n_entities)
+            for i in range(n_entities * _B * BLOCK_DIM):
+                tid = i % BLOCK_DIM
+                i_e = (i // BLOCK_DIM) % n_entities
+                i_b = i // (BLOCK_DIM * n_entities)
                 if i_b >= _B:
                     continue
 
@@ -3784,9 +3796,9 @@ def func_factor_mass(
                             i_d_ = i_d_ + BLOCK_DIM
                         ti.simt.block.sync()
 
-                    for i in range(n_dofs):
-                        i_d_ = n_dofs - i - 1
-                        i_d = entity_dof_end - i - 1
+                    for j in range(n_dofs):
+                        i_d_ = n_dofs - j - 1
+                        i_d = entity_dof_end - j - 1
 
                         D_inv = 1.0 / mass_mat[i_d_, i_d_]
                         if tid == 0:
@@ -3797,8 +3809,8 @@ def func_factor_mass(
                         # Warp-level sync is slightly faster than block-level sync but only available on CUDA
                         if ti.static(static_rigid_sim_config.backend == gs.cuda):
                             k_d = tid
-                            for j in range(i_d_):
-                                j_d_ = i_d_ - 1 - j
+                            for k in range(i_d_):
+                                j_d_ = i_d_ - 1 - k
                                 a = mass_mat[i_d_, j_d_] * D_inv
                                 if k_d <= j_d_:
                                     mass_mat[j_d_, k_d] = mass_mat[j_d_, k_d] - a * mass_mat[i_d_, k_d]

@@ -1804,6 +1804,8 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
+    enable_tiled_cholesky_mass_matrix: bool = False
+    enable_tiled_cholesky_hessian: bool = False
     use_hibernation: bool = False
     batch_links_info: bool = False
     batch_dofs_info: bool = False
