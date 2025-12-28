@@ -268,7 +268,7 @@ class BatchTexture(Texture):
                 )
             image_paths = [
                 os.path.join(image_folder, image_path)
-                for image_path in os.listdir(image_folder)
+                for image_path in sorted(os.listdir(image_folder))
                 if image_path.lower().endswith(IMAGE_EXTENSIONS)
             ]
 
