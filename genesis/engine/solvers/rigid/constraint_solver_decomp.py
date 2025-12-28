@@ -1,11 +1,8 @@
 from typing import TYPE_CHECKING
 
+import gstaichi as ti
 import numpy as np
 import torch
-
-import gstaichi as ti
-from gstaichi._lib import core as _ti_core
-from gstaichi.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -2160,23 +2157,21 @@ def func_init_solver(
             )
     else:
         # Note that MAX_CONSTRAINTS_PER_BLOCK * MAX_DOFS_PER_BLOCK * 4 bytes, must fit in ~48KB shared memory limit
-        HESSIAN_BLOCK_DIM = ti.static(64)
+        BLOCK_DIM = ti.static(64)
         MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
         MAX_DOFS_PER_BLOCK = ti.static(64)
-        ENABLE_WARP_REDUCTION = ti.static(
-            impl.get_runtime().prog.config().arch == _ti_core.cuda and gs.ti_float == ti.f32
-        )
+        ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
         WARP_SIZE = ti.static(32)
-        NUM_WARPS = ti.static(HESSIAN_BLOCK_DIM // WARP_SIZE)
+        NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
 
         n_dofs_2 = n_dofs**2
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
         # FIXME: Adding `serialize=False` is causing sync failing for some reason...
-        ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
-        for i in range(_B * HESSIAN_BLOCK_DIM):
-            tid = i % HESSIAN_BLOCK_DIM
-            i_b = i // HESSIAN_BLOCK_DIM
+        ti.loop_config(block_dim=BLOCK_DIM)
+        for i in range(_B * BLOCK_DIM):
+            tid = i % BLOCK_DIM
+            i_b = i // BLOCK_DIM
             if i_b >= _B:
                 continue
 
@@ -2193,7 +2188,7 @@ def func_init_solver(
                     efc[i_c_] = (
                         constraint_state.efc_D[i_c_start + i_c_, i_b] * constraint_state.active[i_c_start + i_c_, i_b]
                     )
-                    i_c_ = i_c_ + HESSIAN_BLOCK_DIM
+                    i_c_ = i_c_ + BLOCK_DIM
 
                 i_d1_start = 0
                 while i_d1_start < n_dofs:
@@ -2203,7 +2198,7 @@ def func_init_solver(
                     while i_c_ < n_conts_tile:
                         for i_d_ in range(n_dofs_tile_row):
                             jac_row[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d1_start + i_d_, i_b]
-                        i_c_ = i_c_ + HESSIAN_BLOCK_DIM
+                        i_c_ = i_c_ + BLOCK_DIM
                     ti.simt.block.sync()
 
                     i_d2_start = 0
@@ -2216,7 +2211,7 @@ def func_init_solver(
                             while i_c_ < n_conts_tile:
                                 for i_d_ in range(n_dofs_tile_col):
                                     jac_col[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d2_start + i_d_, i_b]
-                                i_c_ = i_c_ + HESSIAN_BLOCK_DIM
+                                i_c_ = i_c_ + BLOCK_DIM
                             ti.simt.block.sync()
 
                         pid = tid
@@ -2242,7 +2237,7 @@ def func_init_solver(
                                     constraint_state.nt_H[i_b, i_d1, i_d2] = (
                                         constraint_state.nt_H[i_b, i_d1, i_d2] + coef
                                     )
-                            pid = pid + HESSIAN_BLOCK_DIM
+                            pid = pid + BLOCK_DIM
                         ti.simt.block.sync()
 
                         i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
@@ -2255,13 +2250,13 @@ def func_init_solver(
                     i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                    i_pair = i_pair + HESSIAN_BLOCK_DIM
+                    i_pair = i_pair + BLOCK_DIM
 
         if ti.static(enable_tiled_cholesky):
-            ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
-            for i in range(_B * HESSIAN_BLOCK_DIM):
-                tid = i % HESSIAN_BLOCK_DIM
-                i_b = i // HESSIAN_BLOCK_DIM
+            ti.loop_config(block_dim=BLOCK_DIM)
+            for i in range(_B * BLOCK_DIM):
+                tid = i % BLOCK_DIM
+                i_b = i // BLOCK_DIM
                 if i_b >= _B:
                     continue
 
@@ -2273,7 +2268,7 @@ def func_init_solver(
                     i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-                    i_pair = i_pair + HESSIAN_BLOCK_DIM
+                    i_pair = i_pair + BLOCK_DIM
                 ti.simt.block.sync()
 
                 for i_d in range(n_dofs):
@@ -2291,7 +2286,7 @@ def func_init_solver(
                         for k_d in range(i_d):
                             dot = dot + H[j_d, k_d] * H[i_d, k_d]
                         H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
-                        j_d = j_d + HESSIAN_BLOCK_DIM
+                        j_d = j_d + BLOCK_DIM
                     ti.simt.block.sync()
 
                 i_pair = tid
@@ -2299,7 +2294,7 @@ def func_init_solver(
                     i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
-                    i_pair = i_pair + HESSIAN_BLOCK_DIM
+                    i_pair = i_pair + BLOCK_DIM
 
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_d, i_b in ti.ndrange(n_dofs, _B):
@@ -2310,10 +2305,10 @@ def func_init_solver(
                 )
                 constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
 
-            ti.loop_config(block_dim=HESSIAN_BLOCK_DIM)
-            for i in range(_B * HESSIAN_BLOCK_DIM):
-                tid = i % HESSIAN_BLOCK_DIM
-                i_b = i // HESSIAN_BLOCK_DIM
+            ti.loop_config(block_dim=BLOCK_DIM)
+            for i in range(_B * BLOCK_DIM):
+                tid = i % BLOCK_DIM
+                i_b = i // BLOCK_DIM
                 warp_id = tid // WARP_SIZE
                 lane_id = tid % WARP_SIZE
                 if i_b >= _B:
@@ -2322,7 +2317,7 @@ def func_init_solver(
                 H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.ti_float)
                 v = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.ti_float)
                 partial = ti.simt.block.SharedArray(
-                    (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else HESSIAN_BLOCK_DIM,), gs.ti_float
+                    (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.ti_float
                 )
 
                 i_flat = tid
@@ -2331,11 +2326,11 @@ def func_init_solver(
                     i_d2 = i_flat % n_dofs
                     if i_d2 <= i_d1:
                         H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-                    i_flat = i_flat + HESSIAN_BLOCK_DIM
+                    i_flat = i_flat + BLOCK_DIM
                 k_d = tid
                 while k_d < n_dofs:
                     v[k_d] = constraint_state.Mgrad[k_d, i_b]
-                    k_d = k_d + HESSIAN_BLOCK_DIM
+                    k_d = k_d + BLOCK_DIM
                 ti.simt.block.sync()
 
                 for i_d in range(n_dofs):
@@ -2343,7 +2338,7 @@ def func_init_solver(
                     j_d = tid
                     while j_d < i_d:
                         dot = dot + H[i_d, j_d] * v[j_d]
-                        j_d = j_d + HESSIAN_BLOCK_DIM
+                        j_d = j_d + BLOCK_DIM
                     if ti.static(ENABLE_WARP_REDUCTION):
                         for offset in ti.static([16, 8, 4, 2, 1]):
                             dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
@@ -2355,11 +2350,7 @@ def func_init_solver(
 
                     if tid == 0:
                         total = gs.ti_float(0.0)
-                        for k in (
-                            ti.static(range(NUM_WARPS))
-                            if ti.static(ENABLE_WARP_REDUCTION)
-                            else range(HESSIAN_BLOCK_DIM)
-                        ):
+                        for k in ti.static(range(NUM_WARPS)) if ti.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
                             total = total + partial[k]
                         v[i_d] = (v[i_d] - total) / H[i_d, i_d]
                     ti.simt.block.sync()
@@ -2370,7 +2361,7 @@ def func_init_solver(
                     j_d = i_d + 1 + tid
                     while j_d < n_dofs:
                         dot = dot + H[j_d, i_d] * v[j_d]
-                        j_d = j_d + HESSIAN_BLOCK_DIM
+                        j_d = j_d + BLOCK_DIM
 
                     if ti.static(ENABLE_WARP_REDUCTION):
                         for offset in ti.static([16, 8, 4, 2, 1]):
@@ -2383,11 +2374,7 @@ def func_init_solver(
 
                     if tid == 0:
                         total = gs.ti_float(0.0)
-                        for k in (
-                            ti.static(range(NUM_WARPS))
-                            if ti.static(ENABLE_WARP_REDUCTION)
-                            else range(HESSIAN_BLOCK_DIM)
-                        ):
+                        for k in ti.static(range(NUM_WARPS)) if ti.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
                             total = total + partial[k]
                         v[i_d] = (v[i_d] - total) / H[i_d, i_d]
                     ti.simt.block.sync()
@@ -2395,7 +2382,7 @@ def func_init_solver(
                 k_d = tid
                 while k_d < n_dofs:
                     constraint_state.Mgrad[k_d, i_b] = v[k_d]
-                    k_d = k_d + HESSIAN_BLOCK_DIM
+                    k_d = k_d + BLOCK_DIM
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
