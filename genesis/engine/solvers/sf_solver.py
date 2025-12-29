@@ -171,10 +171,10 @@ class SFSolver(Solver):
             u, v, w = I
             pl = self.grid.p[self.compute_location(u, v, w, -1, 0, 0)]
             pr = self.grid.p[self.compute_location(u, v, w, 1, 0, 0)]
-            pb = self.grid.p[self.compute_location(u, v, w,  0, -1, 0)]
-            pt = self.grid.p[self.compute_location(u, v, w,  0, 1, 0)]
-            pp = self.grid.p[self.compute_location(u, v, w,  0, 0, -1)]
-            pq = self.grid.p[self.compute_location(u, v, w,  0, 0, 1)]
+            pb = self.grid.p[self.compute_location(u, v, w, 0, -1, 0)]
+            pt = self.grid.p[self.compute_location(u, v, w, 0, 1, 0)]
+            pp = self.grid.p[self.compute_location(u, v, w, 0, 0, -1)]
+            pq = self.grid.p[self.compute_location(u, v, w, 0, 0, 1)]
 
             self.grid.v[I] = self.grid.v_tmp[I] - 0.5 * ti.Vector([pr - pl, pt - pb, pq - pp], dt=gs.ti_float)
 
