@@ -152,7 +152,7 @@ jobs:
           echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY }}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
-        if: always()
+        if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
         uses: actions/cache/restore@v4
         with:
           path: .cache
@@ -169,7 +169,8 @@ jobs:
         if: >-
           ${{ always() &&
               (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
-              matrix.PYTHON_VERSION == '3.12' }}
+              matrix.PYTHON_VERSION == '3.12' &&
+              steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
         uses: actions/cache/save@v4
         with:
           path: .cache
