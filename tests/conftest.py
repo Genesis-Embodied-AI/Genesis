@@ -681,9 +681,6 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             buffer.seek(0)
             img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.int32))
         img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
-
-        # Always compute difference image for export if enabled
-        should_export = self._export_diff_dir is not None
         if (
             np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
             and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
