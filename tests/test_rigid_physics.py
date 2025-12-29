@@ -2918,43 +2918,52 @@ def test_get_constraints_api(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_constraint_solver_tiling(tol):
-    from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver
+def test_cholesky_tiling(monkeypatch, tol):
+    import genesis.engine.solvers
 
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            constraint_solver=gs.constraint_solver.Newton,
-            sparse_solve=False,
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-    scene.add_entity(gs.morphs.Plane())
-    gs_robot = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/go2/urdf/go2.urdf",
-        ),
-    )
-    scene.build(n_envs=2)
-    scene.step()
+    rigid_solver_build_orig = genesis.engine.solvers.RigidSolver.build
 
-    assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
+    values = []
+    for enable_tiled_cholesky in (True, False):
 
-    kwargs = dict(
-        dofs_info=scene.rigid_solver.dofs_info,
-        dofs_state=scene.rigid_solver.dofs_state,
-        entities_info=scene.rigid_solver.entities_info,
-        constraint_state=scene.rigid_solver.constraint_solver.constraint_state,
-        rigid_global_info=scene.rigid_solver._rigid_global_info,
-        static_rigid_sim_config=scene.rigid_solver._static_rigid_sim_config,
-    )
-    func_init_solver(**kwargs, enable_tiled_cholesky=False)
-    nt_H_ref = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
-    assert (np.linalg.norm(nt_H_ref.reshape((-1, 2)), axis=0) > 5.0).all()
+        def rigid_solver_build(self):
+            nonlocal enable_tiled_cholesky
 
-    func_init_solver(**kwargs, enable_tiled_cholesky=True)
-    nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
-    assert_allclose(nt_H_ref, nt_H, tol=tol)
+            rigid_solver_build_orig(self)
+            self._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
+            self._static_rigid_sim_config.enable_tiled_cholesky_hessian = enable_tiled_cholesky
+            if enable_tiled_cholesky:
+                self._static_rigid_sim_config.tiled_n_dofs_per_entity = 32
+                self._static_rigid_sim_config.tiled_n_dofs = 32
+
+        monkeypatch.setattr("genesis.engine.solvers.RigidSolver.build", rigid_solver_build)
+
+        scene = gs.Scene(
+            rigid_options=gs.options.RigidOptions(
+                constraint_solver=gs.constraint_solver.Newton,
+                sparse_solve=False,
+            ),
+            show_viewer=False,
+            show_FPS=False,
+        )
+        scene.add_entity(gs.morphs.Plane())
+        gs_robot = scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/go2/urdf/go2.urdf",
+            ),
+        )
+        scene.build(n_envs=2)
+        assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix == enable_tiled_cholesky
+        assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
+
+        scene.step()
+        assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
+
+        nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
+        assert (np.linalg.norm(nt_H.reshape((-1, 2)), axis=0) > 5.0).all()
+        values.append(nt_H)
+
+    assert_allclose(*values, tol=tol)
 
 
 @pytest.mark.slow  # ~100s
