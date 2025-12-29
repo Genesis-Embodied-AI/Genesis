@@ -9,8 +9,10 @@ import genesis.engine.solvers.rigid.support_field_decomp as support_field
 
 
 class MPR:
-    def __init__(self, rigid_solver):
+    def __init__(self, rigid_solver, is_active: bool = True):
         self._solver = rigid_solver
+        self._is_active = is_active
+
         self._mpr_info = array_class.get_mpr_info(
             # It has been observed in practice that increasing this threshold makes collision detection instable,
             # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
@@ -18,13 +20,14 @@ class MPR:
             CCD_TOLERANCE=1e-6,
             CCD_ITERATIONS=50,
         )
-        self.init_state()
-
-    def init_state(self):
         self._mpr_state = array_class.get_mpr_state(self._solver._B)
 
     def reset(self):
         pass
+
+    @property
+    def is_active(self):
+        return self._is_active
 
 
 @ti.kernel

@@ -1,15 +1,14 @@
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .ray import Ray, RayHit, EPSILON
 from .vec3 import Pose, Vec3
 
 class AABB:
-    v: NDArray[np.float32]
+    v: "np.typing.NDArray[np.float32]"
 
-    def __init__(self, v: NDArray[np.float32]):
+    def __init__(self, v: "np.typing.NDArray[np.float32]"):
         assert v.shape == (2, 3,), f"Aabb must be initialized with a (2,3)-element array, got {v.shape}"
         assert v.dtype == np.float32, f"Aabb must be initialized with a float32 array, got {v.dtype}"
         self.v = v

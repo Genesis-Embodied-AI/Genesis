@@ -139,7 +139,7 @@ class IMUSensor(
         )
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
-            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx].unsqueeze(0)
+            self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,)
@@ -161,17 +161,17 @@ class IMUSensor(
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
         ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
-        if acc.ndim == 2:
-            acc = acc.unsqueeze(0)
-            ang = ang.unsqueeze(0)
+        if acc.ndim == 2:  # n_envs = 0
+            acc = acc[None]
+            ang = ang[None]
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
         # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
         if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
             ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
-            if ang_acc.ndim == 2:
-                ang_acc = ang_acc.unsqueeze(0)
+            if ang_acc.ndim == 2:  # n_envs = 0
+                ang_acc = ang_acc[None]
             offset_pos_world = transform_by_quat(shared_metadata.offsets_pos, quats)
             tangential_acc = torch.cross(ang_acc, offset_pos_world, dim=-1)
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
@@ -179,7 +179,7 @@ class IMUSensor(
 
         # Subtract gravity then move to local frame
         # acc/ang shape: (B, n_imus, 3)
-        local_acc = inv_transform_by_quat(acc - gravity.unsqueeze(-2), offset_quats)
+        local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
 
         # cache shape: (B, n_imus * 6)
@@ -223,20 +223,20 @@ class IMUSensor(
 
         Only draws for first rendered environment.
         """
-        env_idx = context.rendered_envs_idx[0]
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        quat = self._link.get_quat(envs_idx=env_idx)
-        pos = self._link.get_pos(envs_idx=env_idx) + transform_by_quat(self.pos_offset, quat)
+        quat = self._link.get_quat(env_idx).reshape((4,))
+        pos = self._link.get_pos(env_idx).reshape((3,)) + transform_by_quat(self.pos_offset, quat)
 
         # cannot specify envs_idx for read() when n_envs=0
-        data = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None)
-        acc_vec = data.lin_acc * self._options.debug_acc_scale
-        gyro_vec = data.ang_vel * self._options.debug_gyro_scale
+        data = self.read(env_idx)
+        acc_vec = data.lin_acc.reshape((3,)) * self._options.debug_acc_scale
+        gyro_vec = data.ang_vel.reshape((3,)) * self._options.debug_gyro_scale
 
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
-        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat)).flatten()
-        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat)).flatten()
+        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
+        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat))
 
         for debug_object in self.debug_objects:
             context.clear_debug_object(debug_object)
@@ -245,7 +245,7 @@ class IMUSensor(
         self.debug_objects += filter(
             None,
             (
-                context.draw_debug_arrow(pos=pos[0], vec=acc_vec, color=self._options.debug_acc_color),
-                context.draw_debug_arrow(pos=pos[0], vec=gyro_vec, color=self._options.debug_gyro_color),
+                context.draw_debug_arrow(pos=pos, vec=acc_vec, color=self._options.debug_acc_color),
+                context.draw_debug_arrow(pos=pos, vec=gyro_vec, color=self._options.debug_gyro_color),
             ),
         )

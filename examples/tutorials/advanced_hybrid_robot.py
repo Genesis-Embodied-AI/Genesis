@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import genesis as gs
 
@@ -77,15 +79,9 @@ ball = scene.add_entity(
 scene.build()
 
 ########################## run ##########################
+horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 scene.reset()
-for i in range(1000):
-    dofs_ctrl = np.array(
-        [
-            1.0 * np.sin(2 * np.pi * i * 0.001),
-        ]
-        * robot.n_dofs
-    )
-
+for i in range(horizon):
+    dofs_ctrl = [1.0 * np.sin(2 * np.pi * i * 0.001)] * robot.n_dofs
     robot.control_dofs_velocity(dofs_ctrl)
-
     scene.step()

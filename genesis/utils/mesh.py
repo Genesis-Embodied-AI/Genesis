@@ -218,12 +218,10 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
         else:
             # fall back to color texture
             visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(texture.mean_color(), [n_verts, 1]))
-
     elif isinstance(texture, gs.textures.ColorTexture):
         if n_verts is None:
             gs.raise_exception("n_verts is required for color texture.")
         visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(np.array(texture.color), [n_verts, 1]))
-
     else:
         gs.raise_exception("Cannot get texture when generating trimesh visual.")
 
@@ -473,8 +471,12 @@ def postprocess_collision_geoms(
 
 def parse_mesh_trimesh(path, group_by_material, scale, surface):
     meshes = []
-    for _, mesh in trimesh.load(path, force="scene", group_material=group_by_material, process=False).geometry.items():
-        meshes.append(gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface, metadata={"mesh_path": path}))
+    scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+    for tmesh in scene.geometry.values():
+        if not isinstance(tmesh, trimesh.Trimesh):
+            gs.raise_exception(f"Mesh type not supported: {path}")
+        mesh = gs.Mesh.from_trimesh(mesh=tmesh, scale=scale, surface=surface, metadata={"mesh_path": path})
+        meshes.append(mesh)
     return meshes
 
 
@@ -502,10 +504,9 @@ def tonemapped(image):
 def create_texture(image, factor, encoding):
     if image is not None:
         return gs.textures.ImageTexture(image_array=image, image_color=factor, encoding=encoding)
-    elif factor is not None:
+    if factor is not None:
         return gs.textures.ColorTexture(color=factor)
-    else:
-        return None
+    return None
 
 
 def apply_transform(transform, positions, normals=None):

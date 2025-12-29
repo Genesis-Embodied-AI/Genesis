@@ -17,10 +17,8 @@ def main():
         "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
     )
     parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-c", "--cpu", action="store_true", default="PYTEST_VERSION" in os.environ)
     args = parser.parse_args()
-
-    args.cpu = args.cpu if "PYTEST_VERSION" not in os.environ else True
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)
 
@@ -115,10 +113,7 @@ def main():
 
         print("cube init pos", cube.init_positions)
         pin_idx = [1, 5]
-        cube.set_vertex_constraints(
-            verts_idx=pin_idx,
-            link=end_joint.link,
-        )
+        cube.set_vertex_constraints(verts_idx_local=pin_idx, link=end_joint.link)
         print("Cube initial positions:", cube.init_positions[pin_idx])
         scene.draw_debug_spheres(poss=cube.init_positions[pin_idx], radius=0.02, color=(1.0, 0.0, 1.0, 0.8))
 

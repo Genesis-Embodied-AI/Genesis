@@ -85,8 +85,8 @@ class MouseSpring:
         # Apply the new force
         total_force = total_impulse * inv_dt
         total_torque = total_torque_impulse * inv_dt
-        force_tensor: torch.Tensor = total_force.as_tensor().unsqueeze(0)
-        torque_tensor: torch.Tensor = total_torque.as_tensor().unsqueeze(0)
+        force_tensor: torch.Tensor = total_force.as_tensor()[None]
+        torque_tensor: torch.Tensor = total_torque.as_tensor()[None]
         link.solver.apply_links_external_force(force_tensor, (link.idx,), ref='link_com', local=False)
         link.solver.apply_links_external_torque(torque_tensor, (link.idx,), ref='link_com', local=False)
 

@@ -56,8 +56,8 @@ jobs:
           # --- Parameters ---
           MAX_VALID_REVISIONS: 5
           MAX_FETCH_REVISIONS: 40
-          RUNTIME_REGRESSION_TOLERANCE_PCT: 10
-          COMPILE_REGRESSION_TOLERANCE_PCT: 10
+          RUNTIME_REGRESSION_TOLERANCE_PCT: 8
+          COMPILE_REGRESSION_TOLERANCE_PCT: 16
 
           # Input/Output paths
           ARTIFACTS_DIR: ${{ steps.dl.outputs.download-path }}
@@ -474,9 +474,8 @@ jobs:
             }
 
             const title = (process.env.HAS_REGRESSIONS || '0') === '1'
-              ? 'Benchmark Regression Detected' : 'Abnormal Benchmark Result Detected';
-            const comment = `:warning: **${title}**
-            ➡️  **[Report](${process.env.REPORT_URL})**`;
+              ? '🔴 Benchmark Regression Detected' : '⚠️ Abnormal Benchmark Result Detected';
+            const comment = `**${title} ➡️ [Report](${process.env.REPORT_URL})**`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,

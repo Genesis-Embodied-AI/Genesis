@@ -84,8 +84,8 @@ def kernel_solve_adjoint_u(
             for i_d in range(n_dofs):
                 z = constraint_state.dL_dqacc[i_d, i_b]
                 for j_d in range(i_d):
-                    z -= constraint_state.nt_H[i_d, j_d, i_b] * constraint_state.bw_r[j_d, i_b]
-                z /= constraint_state.nt_H[i_d, i_d, i_b]
+                    z -= constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.bw_r[j_d, i_b]
+                z /= constraint_state.nt_H[i_b, i_d, i_d]
                 constraint_state.bw_r[i_d, i_b] = z
 
             # u = L^{-T} z  (back substitution)
@@ -93,8 +93,8 @@ def kernel_solve_adjoint_u(
                 i_d = n_dofs - 1 - i_d_
                 u = constraint_state.bw_r[i_d, i_b]
                 for j_d in range(i_d + 1, n_dofs):
-                    u -= constraint_state.nt_H[j_d, i_d, i_b] * constraint_state.bw_u[j_d, i_b]
-                u /= constraint_state.nt_H[i_d, i_d, i_b]
+                    u -= constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.bw_u[j_d, i_b]
+                u /= constraint_state.nt_H[i_b, i_d, i_d]
                 constraint_state.bw_u[i_d, i_b] = u
     else:
         # Use CG solver for solving A * u = g.

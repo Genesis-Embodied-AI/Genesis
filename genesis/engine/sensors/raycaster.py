@@ -437,8 +437,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         links_pos = shared_metadata.solver.get_links_pos(links_idx=shared_metadata.links_idx)
         links_quat = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         if shared_metadata.solver.n_envs == 0:
-            links_pos = links_pos.unsqueeze(0)
-            links_quat = links_quat.unsqueeze(0)
+            links_pos = links_pos[None]
+            links_quat = links_quat[None]
 
         kernel_cast_rays(
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
@@ -482,12 +482,13 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         Only draws for first rendered environment.
         """
-        env_idx = context.rendered_envs_idx[0]
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        points = self.read(envs_idx=env_idx if self._manager._sim.n_envs > 0 else None).points.reshape(-1, 3)
+        data = self.read(env_idx)
+        points = data.points.reshape((-1, 3))
 
-        pos = self._link.get_pos(envs_idx=env_idx)
-        quat = self._link.get_quat(envs_idx=env_idx)
+        pos = self._link.get_pos(env_idx).reshape((3,))
+        quat = self._link.get_quat(env_idx).reshape((4,))
 
         ray_starts = transform_by_trans_quat(self.ray_starts, pos, quat)
 

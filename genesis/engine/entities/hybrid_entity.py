@@ -66,7 +66,6 @@ class HybridEntity(Entity):
 
         if isinstance(morph, gs.morphs.URDF):
             # set up rigid part
-            morph.fixed = material.fixed  # NOTE: use hybrid material to determine this
             if material.use_default_coupling:
                 gs.logger.info("Use default coupling in hybrid. Overwrite `needs_coup` in rigid material to True")
                 material_rigid._needs_coup = True
@@ -84,10 +83,9 @@ class HybridEntity(Entity):
             augment_link_world_coords(part_rigid)
 
             # set soft parts based on rigid links
-            if material._func_instantiate_soft_from_rigid is None:
-                func_instantiate_soft_from_rigid = default_func_instantiate_soft_from_rigid
-            else:
-                func_instantiate_soft_from_rigid = material._func_instantiate_soft_from_rigid
+            func_instantiate_soft_from_rigid = (
+                material._func_instantiate_soft_from_rigid or default_func_instantiate_soft_from_rigid
+            )
             part_soft = func_instantiate_soft_from_rigid(
                 scene=scene,
                 part_rigid=part_rigid,

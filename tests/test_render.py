@@ -9,6 +9,7 @@ import numpy as np
 import pyglet
 import pytest
 import torch
+import OpenGL.error
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -308,6 +309,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         sim_options=gs.options.SimOptions(
             dt=0.04,
         ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
@@ -316,7 +320,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         show_viewer=False,
         show_FPS=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
@@ -389,11 +393,9 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 
     # Attach cameras
     for i in range(0, len(cameras), 3):
-        cam_0, cam_1, cam_2 = cameras[i : (i + 3)]
-        R = np.eye(3)
-        trans = np.array([0.1, 0.0, 0.2])
-        cam_2.attach(robot.get_link("Head_upper"), gu.trans_R_to_T(trans, R))
-        cam_1.follow_entity(robot)
+        cameras[i + 1].follow_entity(robot)
+        pose_rel = gu.trans_R_to_T(np.array([0.1, 0.0, 0.2]), np.eye(3))
+        cameras[i + 2].attach(robot.get_link("Head_upper"), pose_rel)
 
     # Create image exporter
     exporter = FrameImageExporter(tmp_path)
@@ -638,8 +640,12 @@ def test_camera_follow_entity(n_envs, renderer, show_viewer):
             GUI=show_viewer,
         )
         cam.follow_entity(obj, smoothing=None)
+        cam.unfollow_entity()
 
     scene.build(n_envs=n_envs)
+
+    for cam, obj in zip(scene.visualizer.cameras, scene.entities):
+        cam.follow_entity(obj, smoothing=None)
 
     # First render
     seg_mask = None
@@ -991,7 +997,7 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snapshot, show_viewer):
+def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
     # Mock 'get_save_filename' to avoid poping up an interactive dialog
@@ -1068,6 +1074,72 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
         assert f.read() == png_snapshot
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
+def test_interactive_viewer_disable_keyboard_shortcuts():
+    """Test that keyboard shortcuts can be disabled in the interactive viewer."""
+
+    # Test with keyboard shortcuts DISABLED
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            disable_keyboard_shortcuts=True,
+        ),
+        show_viewer=True,
+    )
+    scene.build()
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    # Verify the flag is set correctly
+    assert pyrender_viewer._disable_keyboard_shortcuts is True
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_camera_gimbal_lock_singularity(renderer, show_viewer):
+    """
+    Test that camera maintains continuous orientation when moving through singularity conditions.
+    """
+
+    # Minimal scene
+    scene = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
+    cam = scene.add_camera(pos=(0.0, -1.5, 5.0), lookat=(0.0, 0.0, 0.0))
+    scene.build()
+
+    prev_right = None
+
+    # Move camera through singularity along y-axis: y=-1.5 to y=1.5 (singularity at y=0)
+    for i in range(7):
+        cam.set_pose(pos=(0.0, -1.5 + i * 0.5, 5.0), lookat=(0.0, 0.0, 0.0))
+
+        # Get the right vector (x-axis) from camera transform
+        transform = cam.get_transform()
+        right = transform[:3, 0]
+
+        # Check direction with the previous one
+        if prev_right is not None:
+            assert torch.dot(prev_right, right) > 0.0
+
+        prev_right = right
+
+    # Move camera through singularity along x-axis: x=-1.5 to x=1.5 (singularity at x=0)
+    prev_right = None
+    for i in range(7):
+        cam.set_pose(pos=(-1.5 + i * 0.5, 0.0, 5.0), lookat=(0.0, 0.0, 0.0))
+
+        # Get the right vector (x-axis) from camera transform
+        transform = cam.get_transform()
+        right = transform[:3, 0]
+
+        # Check direction with the previous one
+        if prev_right is not None:
+            assert torch.dot(prev_right, right) > 0.0
+
+        prev_right = right
+
+
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
@@ -1128,7 +1200,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_batch_deformable_render(tmp_path, monkeypatch, png_snapshot):
+def test_batch_deformable_render(monkeypatch, png_snapshot):
     CAM_RES = (640, 480)
 
     # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver

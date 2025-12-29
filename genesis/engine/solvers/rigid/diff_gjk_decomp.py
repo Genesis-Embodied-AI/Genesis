@@ -21,6 +21,8 @@ def func_gjk_contact(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
+    # FIXME: Passing nested data structure as input argument is not supported for now.
+    diff_contact_input: array_class.DiffContactInput,
     i_ga,
     i_gb,
     i_b,
@@ -277,7 +279,7 @@ def func_gjk_contact(
         if i_c > 0:
             ref_penetration = default_penetration
         contact_pos, contact_normal, penetration, weight = func_differentiable_contact(
-            geoms_state, gjk_state.diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+            geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
         )
         if i_c == 0:
             default_penetration = penetration

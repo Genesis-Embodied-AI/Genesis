@@ -106,19 +106,11 @@ def main():
     try:
         target_positions = blob.init_positions[pinned_idx]
         scene.draw_debug_spheres(poss=target_positions, radius=0.02, color=(1, 0, 1, 0.8))
-        blob.set_vertex_constraints(
-            verts_idx=pinned_idx,
-            target_poss=target_positions,
-            is_soft_constraint=True,
-            stiffness=1e4,
-        )
+        blob.set_vertex_constraints(pinned_idx, target_positions, is_soft_constraint=True, stiffness=1e4)
 
         target_positions = get_next_circle_position()
         debug_circle = scene.draw_debug_spheres(poss=target_positions, radius=0.02, color=(0, 1, 0, 0.8))
-        cube.set_vertex_constraints(
-            verts_idx=pinned_idx,
-            target_poss=target_positions,
-        )
+        cube.set_vertex_constraints(pinned_idx, target_positions)
 
         for step in tqdm(range(total_steps), total=total_steps):
             if debug_circle is not None:
@@ -126,10 +118,7 @@ def main():
 
             new_pos = get_next_circle_position()
             debug_circle = scene.draw_debug_spheres(poss=new_pos, radius=0.02, color=(0, 1, 0, 0.8))
-            cube.update_constraint_targets(
-                verts_idx=pinned_idx,
-                target_poss=new_pos,
-            )
+            cube.update_constraint_targets(pinned_idx, new_pos)
 
             scene.step()
 

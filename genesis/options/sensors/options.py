@@ -56,7 +56,7 @@ class RigidSensorOptionsMixin:
     Parameters
     ----------
     entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached.
+        The global entity index of the RigidEntity to which this sensor is attached. -1 or None for static sensors.
     link_idx_local : int, optional
         The local index of the RigidLink of the RigidEntity to which this sensor is attached.
     pos_offset : tuple[float, float, float]
@@ -65,7 +65,7 @@ class RigidSensorOptionsMixin:
         The rotational offset of the sensor from the RigidLink in degrees.
     """
 
-    entity_idx: int
+    entity_idx: int | None = -1
     link_idx_local: int = 0
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
@@ -74,7 +74,7 @@ class RigidSensorOptionsMixin:
         from genesis.engine.entities import RigidEntity
 
         super().validate(scene)
-        if self.entity_idx < 0 or self.entity_idx >= len(scene.entities):
+        if self.entity_idx is not None and self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
         entity = scene.entities[self.entity_idx]
         if not isinstance(entity, RigidEntity):

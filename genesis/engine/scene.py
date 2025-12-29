@@ -8,11 +8,10 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 import torch
 import gstaichi as ti
-from numpy.typing import ArrayLike
+from gstaichi.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import ALLOCATE_TENSOR_WARNING
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
 from genesis.engine.states.solvers import SimState
@@ -40,7 +39,7 @@ from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
+from genesis.utils.misc import tensor_to_array, sanitize_index
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
 
@@ -277,6 +276,18 @@ class Scene(RBC):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
         # Validate rigid_options against sim_options
+        if impl.current_cfg().debug:
+            if sim_options.requires_grad and not gs.use_ndarray:
+                gs.raise_exception(
+                    "Genesis debug mode together with performance mode is not supported when gradient computation is "
+                    "enabled, i.e. `sim_options.requires_grad=True`."
+                )
+        else:
+            if sim_options.requires_grad and gs.use_ndarray:
+                gs.logger.info(
+                    "Use GsTaichi dynamic array mode while enabling gradient computation is not recommended. Please "
+                    "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
+                )
         if rigid_options.box_box_detection is None:
             rigid_options.box_box_detection = not sim_options.requires_grad
         elif rigid_options.box_box_detection and sim_options.requires_grad:
@@ -398,11 +409,11 @@ class Scene(RBC):
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'recon']."
                 )
 
-        elif isinstance(material, (gs.materials.SF.Smoke)):
+        elif isinstance(material, gs.materials.SF.Smoke):
             if surface.vis_mode is None:
                 surface.vis_mode = "particle"
 
-            if surface.vis_mode not in ["particle"]:
+            if surface.vis_mode not in ("particle",):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'recon']."
                 )
@@ -416,20 +427,20 @@ class Scene(RBC):
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'particle', 'recon']."
                 )
 
-        elif isinstance(material, (gs.materials.FEM.Base)):
+        elif isinstance(material, gs.materials.FEM.Base):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
-            if surface.vis_mode not in ["visual"]:
+            if surface.vis_mode not in ("visual",):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual']."
                 )
 
-        elif isinstance(material, (gs.materials.Hybrid)):  # determine the visual of the outer soft part
+        elif isinstance(material, gs.materials.Hybrid):  # determine the visual of the outer soft part
             if surface.vis_mode is None:
                 surface.vis_mode = "particle"
 
-            if surface.vis_mode not in ["particle", "visual"]:
+            if surface.vis_mode not in ("particle", "visual"):
                 gs.raise_exception(
                     f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['particle', 'visual']."
                 )
@@ -448,54 +459,10 @@ class Scene(RBC):
         return entity
 
     @gs.assert_unbuilt
-    def link_entities(
-        self,
-        parent_entity: "Entity",
-        child_entity: "Entity",
-        parent_link_name="",
-        child_link_name="",
-    ):
-        """
-        links two entities to act as single entity.
-
-        Parameters
-        ----------
-        parent_entity : genesis.Entity
-            The entity in the scene that will be a parent of kinematic tree.
-        child_entity : genesis.Entity
-            The entity in the scene that will be a child of kinematic tree.
-        parent_link_name : str
-            The name of the link in the parent entity to be linked.
-        child_link_name : str
-            The name of the link in the child entity to be linked.
-        """
-        if not isinstance(parent_entity, gs.engine.entities.RigidEntity):
-            gs.raise_exception("Currently only rigid entities are supported for merging.")
-        if not isinstance(child_entity, gs.engine.entities.RigidEntity):
-            gs.raise_exception("Currently only rigid entities are supported for merging.")
-
-        if not child_link_name:
-            for link in child_entity._links:
-                if link.parent_idx == -1:
-                    child_link = link
-                    break
-        else:
-            child_link = child_entity.get_link(child_link_name)
-        parent_link = parent_entity.get_link(parent_link_name)
-
-        if child_link._parent_idx != -1:
-            gs.logger.warning(
-                "Child entity already has a parent link. This may cause the entity to break into parts. Make sure "
-                "this operation is intended."
-            )
-        child_link._parent_idx = parent_link.idx
-        parent_link._child_idxs.append(child_link.idx)
-
-    @gs.assert_unbuilt
     def add_mesh_light(
         self,
         morph: Morph | None = None,
-        color: ArrayLike | None = (1.0, 1.0, 1.0, 1.0),
+        color: "np.typing.ArrayLike | None" = (1.0, 1.0, 1.0, 1.0),
         intensity: float = 20.0,
         revert_dir: bool | None = False,
         double_sided: bool | None = False,
@@ -532,9 +499,9 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_light(
         self,
-        pos: ArrayLike,
-        dir: ArrayLike,
-        color: ArrayLike = (1.0, 1.0, 1.0),
+        pos: "np.typing.ArrayLike | None",
+        dir: "np.typing.ArrayLike | None",
+        color: "np.typing.ArrayLike | None" = (1.0, 1.0, 1.0),
         intensity: float = 1.0,
         directional: bool = False,
         castshadow: bool = True,
@@ -873,10 +840,10 @@ class Scene(RBC):
             - for non-batched env, we only parallelize certain loops that have big loop size
             - for batched env, we parallelize all loops
         - When using cpu, we serialize everything.
-            - Parallelization only provides a boost for n_envs >= num_threads and ti_num_threads > 1.
+            - Parallelization only provides a boost for n_envs >= num_threads.
               It is always disabled by default but can be enforced by setting the env var `GS_PARA_LEVEL=2`.
-            - In order to exploit full cpu power, users are encouraged to launch multiple processes manually and set
-              env var `TI_NUM_THREADS=1`, so that each process uses a single cpu thread.
+            - In order to exploit full cpu power, users are encouraged to launch multiple processes manually, so that
+              each process uses a single cpu thread.
         """
         if gs.backend == gs.cpu:
             para_level = gs.PARA_LEVEL.NEVER
@@ -1380,36 +1347,21 @@ class Scene(RBC):
     # ----------------------------------- utilities --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_envs_idx(self, envs_idx, *, unsafe=False):
-        # Handling default argument and special cases
+    def _sanitize_envs_idx(
+        self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None
+    ) -> torch.Tensor:
         if envs_idx is None:
             return self._envs_idx
 
         if self.n_envs == 0:
             gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
 
-        if isinstance(envs_idx, slice):
+        if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
         if isinstance(envs_idx, (int, np.integer)):
             return self._envs_idx[envs_idx : envs_idx + 1]
 
-        # Early return if unsafe
-        if unsafe:
-            return envs_idx
-
-        # Perform a bunch of sanity checks
-        _envs_idx = torch.as_tensor(envs_idx, dtype=gs.tc_int, device=gs.device).contiguous()
-        if _envs_idx is not envs_idx:
-            gs.logger.debug(ALLOCATE_TENSOR_WARNING)
-        _envs_idx = torch.atleast_1d(_envs_idx)
-
-        if _envs_idx.ndim != 1:
-            gs.raise_exception("Expecting a 1D tensor for `envs_idx`.")
-
-        if (_envs_idx < 0).any() or (_envs_idx >= self.n_envs).any():
-            gs.raise_exception("`envs_idx` exceeds valid range.")
-
-        return _envs_idx
+        return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

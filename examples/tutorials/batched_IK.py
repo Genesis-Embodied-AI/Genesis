@@ -1,5 +1,5 @@
+import os
 import numpy as np
-
 import genesis as gs
 
 ########################## init ##########################
@@ -34,10 +34,10 @@ target_quat = np.tile(np.array([0, 1, 0, 0]), [n_envs, 1])  # pointing downwards
 center = np.tile(np.array([0.4, -0.2, 0.25]), [n_envs, 1])
 angular_speed = np.random.uniform(-10, 10, n_envs)
 r = 0.1
-
 ee_link = robot.get_link("hand")
 
-for i in range(0, 1000):
+horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
+for i in range(horizon):
     target_pos = np.zeros([n_envs, 3])
     target_pos[:, 0] = center[:, 0] + np.cos(i / 360 * np.pi * angular_speed) * r
     target_pos[:, 1] = center[:, 1] + np.sin(i / 360 * np.pi * angular_speed) * r

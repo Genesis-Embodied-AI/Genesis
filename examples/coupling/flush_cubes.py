@@ -1,7 +1,6 @@
+import os
 import argparse
-
 import numpy as np
-
 import genesis as gs
 
 
@@ -91,7 +90,7 @@ def main():
     )
     scene.build(n_envs=2)
 
-    horizon = 100
+    horizon = 100 if "PYTEST_VERSION" not in os.environ else 5
     for i in range(horizon):
         emitter1.emit(
             pos=np.array([0.16, -0.4, 0.5]),

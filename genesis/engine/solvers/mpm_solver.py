@@ -182,14 +182,10 @@ class MPMSolver(Solver):
         self._coupler = self.sim._coupler
 
         if self.is_active:
-            if self._enable_CPIC:
-                gs.logger.warning(
-                    "Kernel compilation takes longer when running MPM solver in CPIC mode. Please be patient."
+            if self._enable_CPIC and self._sim.requires_grad:
+                gs.raise_exception(
+                    "CPIC is not supported in differentiable mode yet. Submit a feature request if you need it."
                 )
-                if self._sim.requires_grad:
-                    gs.raise_exception(
-                        "CPIC is not supported in differentiable mode yet. Submit a feature request if you need it."
-                    )
 
             self.init_particle_fields()
             self.init_grid_fields()
@@ -455,8 +451,8 @@ class MPMSolver(Solver):
     @ti.kernel
     def _is_state_valid(self, f: ti.i32) -> ti.i32:
         is_success = True
-        for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-            if ti.math.isnan(self.particles[f, i_p, i_b].pos).any():
+        for i_p, i_b, i_3 in ti.ndrange(self._n_particles, self._B, 3):
+            if ti.math.isnan(self.particles[f, i_p, i_b].pos[i_3]):
                 is_success = False
         return is_success
 
@@ -506,6 +502,7 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
         )
+        # FIXME: Use existing errno mechanism for this.
         if not self._is_state_valid(f):
             gs.raise_exception(
                 "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."

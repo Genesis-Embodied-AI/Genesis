@@ -1,5 +1,4 @@
 import numpy as np
-import numpy.typing as npt
 
 import gstaichi as ti
 
@@ -20,7 +19,7 @@ class AvatarEntity(RigidEntity):
         inertial_i,
         inertial_mass: float,
         parent_idx: int,
-        invweight: npt.NDArray[np.float64],
+        invweight: "np.typing.NDArray[np.float64]",
     ) -> AvatarLink:
         """
         Add a new link (AvatarLink) to the entity.

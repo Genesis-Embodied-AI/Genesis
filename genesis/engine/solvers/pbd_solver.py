@@ -1,7 +1,6 @@
 import math
 
 import numpy as np
-from numpy.typing import NDArray
 import gstaichi as ti
 
 import genesis as gs
@@ -913,10 +912,10 @@ class PBDSolver(Solver):
     @gs.assert_built
     def set_animate_particles_by_link(
         self,
-        particles_idx: NDArray[np.int32],
+        particles_idx,
         link_idx: int,
         links_state: LinksState,
-        envs_idx: NDArray[np.int32] | None = None,
+        envs_idx=None,
     ) -> None:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_attach_pbd_to_rigid_link(particles_idx, envs_idx, link_idx, links_state)

@@ -1,5 +1,5 @@
+import os
 import numpy as np
-
 import genesis as gs
 
 ########################## init ##########################
@@ -53,7 +53,8 @@ r = 0.1
 left_finger = robot.get_link("left_finger")
 right_finger = robot.get_link("right_finger")
 
-for i in range(0, 2000):
+horizon = 2000 if "PYTEST_VERSION" not in os.environ else 5
+for i in range(horizon):
     target_pos_left = center + np.array([np.cos(i / 360 * np.pi), np.sin(i / 360 * np.pi), 0]) * r
     target_pos_right = target_pos_left + np.array([0.0, 0.03, 0])
 

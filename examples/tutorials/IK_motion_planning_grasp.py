@@ -1,5 +1,7 @@
-import genesis as gs
+import os
 import numpy as np
+import genesis as gs
+
 
 ########################## init ##########################
 gs.init(backend=gs.gpu)
@@ -61,7 +63,7 @@ qpos = franka.inverse_kinematics(
 qpos[-2:] = 0.04
 path = franka.plan_path(
     qpos_goal=qpos,
-    num_waypoints=200,  # 2s duration
+    num_waypoints=200 if "PYTEST_VERSION" not in os.environ else 10,  # 2s duration
 )
 # draw the planned path
 path_debug = scene.draw_debug_path(path, franka)
@@ -75,7 +77,7 @@ for waypoint in path:
 scene.clear_debug_object(path_debug)
 
 # allow robot to reach the last waypoint
-for i in range(100):
+for i in range(100 if "PYTEST_VERSION" not in os.environ else 1):
     scene.step()
 
 # reach
@@ -86,14 +88,14 @@ qpos = franka.inverse_kinematics(
 )
 print(qpos)
 franka.control_dofs_position(qpos[:-2], motors_dof)
-for i in range(100):
+for i in range(100 if "PYTEST_VERSION" not in os.environ else 1):
     scene.step()
 
 # grasp
 franka.control_dofs_position(qpos[:-2], motors_dof)
 franka.control_dofs_force(np.array([-0.5, -0.5]), fingers_dof)
 
-for i in range(100):
+for i in range(100 if "PYTEST_VERSION" not in os.environ else 1):
     scene.step()
 
 # lift
@@ -104,5 +106,5 @@ qpos = franka.inverse_kinematics(
 )
 print(qpos)
 franka.control_dofs_position(qpos[:-2], motors_dof)
-for i in range(200):
+for i in range(200 if "PYTEST_VERSION" not in os.environ else 1):
     scene.step()

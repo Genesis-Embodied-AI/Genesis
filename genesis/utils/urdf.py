@@ -2,8 +2,8 @@ import os
 from itertools import chain
 from pathlib import Path
 
-import trimesh
 import numpy as np
+import trimesh
 
 import genesis as gs
 from genesis.ext import urdfpy
@@ -114,35 +114,53 @@ def parse_urdf(morph, surface):
                     if geom.geometry.geometry.scale is not None:
                         scale *= geom.geometry.geometry.scale
 
+                    # Overwrite surface color by original color specified in URDF file only if necessary
+                    if (
+                        not geom_is_col
+                        and getattr(geom, "material") is not None
+                        and geom.material.color is not None
+                        and (morph.prioritize_urdf_material or surface.color is None)
+                    ):
+                        surface = surface.copy()
+                        surface.color = geom.material.color
+
+                    mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geom.geometry.geometry.filename)
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
                         scale=scale,
                         surface=gs.surfaces.Collision() if geom_is_col else surface,
-                        metadata={
-                            "mesh_path": urdfpy.utils.get_filename(
-                                os.path.dirname(path), geom.geometry.geometry.filename
-                            )
-                        },
+                        metadata={"mesh_path": mesh_path},
                     )
 
-                    if not geom_is_col and (morph.prioritize_urdf_material or not tmesh.visual.defined):
-                        if geom.material is not None and geom.material.color is not None:
-                            mesh.set_color(geom.material.color)
+                    if mesh_path.lower().endswith(gs.morphs.GLTF_FORMATS):
+                        if morph.parse_glb_with_zup:
+                            mesh.convert_to_zup()
+                        else:
+                            gs.logger.warning(
+                                "This file contains GLTF mesh, which is using y-up while Genesis uses z-up. Please set "
+                                "'parse_glb_with_zup=True' in morph options if you find the mesh is 90-degree rotated. "
+                            )
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)
             else:
-                # Each geometry primitive is one RigidGeom in genesis.
+                # Each geometry primitive is one RigidGeom in genesis
                 if isinstance(geom.geometry.geometry, urdfpy.Box):
                     tmesh = trimesh.creation.box(extents=geom.geometry.geometry.size)
                     geom_type = gs.GEOM_TYPE.BOX
                     geom_data = np.array(geom.geometry.geometry.size)
+                elif isinstance(geom.geometry.geometry, urdfpy.Capsule):
+                    tmesh = trimesh.creation.capsule(
+                        radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
+                    )
+                    geom_type = gs.GEOM_TYPE.CAPSULE
+                    geom_data = np.array([geom.geometry.geometry.radius, geom.geometry.geometry.length])
                 elif isinstance(geom.geometry.geometry, urdfpy.Cylinder):
                     tmesh = trimesh.creation.cylinder(
                         radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
                     )
                     geom_type = gs.GEOM_TYPE.CYLINDER
-                    geom_data = None
+                    geom_data = np.array([geom.geometry.geometry.radius, geom.geometry.geometry.length])
                 elif isinstance(geom.geometry.geometry, urdfpy.Sphere):
                     if geom_is_col:
                         tmesh = trimesh.creation.icosphere(radius=geom.geometry.geometry.radius, subdivisions=2)
@@ -399,6 +417,33 @@ def translate_inertia(I, m, dist):
 def rotate_inertia(I, R):
     """Rotate inertia tensor I by rotation matrix R."""
     return R @ I @ R.T
+
+
+def compose_inertial_properties(mass1, com1, inertia1, mass2, com2, inertia2):
+    """
+    Compose inertial properties of two bodies.
+
+    Args:
+        mass1: Mass of first body
+        com1: Center of mass of first body (3,) array
+        inertia1: Inertia tensor of first body (3,3) array
+        mass2: Mass of second body
+        com2: Center of mass of second body (3,) array
+        inertia2: Inertia tensor of second body (3,3) array
+
+    Returns:
+        combined_mass: Combined mass
+        combined_com: Combined center of mass (3,) array
+        combined_inertia: Combined inertia tensor (3,3) array
+    """
+    combined_mass = mass1 + mass2
+    if combined_mass < gs.EPS:
+        gs.raise_exception("Combined mass is less than EPS")
+    combined_com = (mass1 * com1 + mass2 * com2) / combined_mass
+    inertia1_new = translate_inertia(inertia1, mass1, combined_com - com1)
+    inertia2_new = translate_inertia(inertia2, mass2, combined_com - com2)
+    combined_inertia = inertia1_new + inertia2_new
+    return combined_mass, combined_com, combined_inertia
 
 
 def merge_inertia(link1, link2):
