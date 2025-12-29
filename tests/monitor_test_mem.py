@@ -34,7 +34,17 @@ def get_cuda_usage() -> dict[int, int]:
 
 
 def get_test_name_by_pid() -> dict[int, str]:
-    ps_ef = subprocess.check_output(["/usr/bin/ps", "-ef"]).decode("utf-8").split("\n")
+    ps_path = shutil.which("ps")
+    if ps_path is None:
+        # Try common fallback locations
+        for path in ["/usr/bin/ps", "/bin/ps"]:
+            if os.path.exists(path):
+                ps_path = path
+                break
+
+    assert ps_path is not None
+    print('ps_path', ps_path)
+    ps_ef = subprocess.check_output([ps_path, "-ef"]).decode("utf-8").split("\n")
     test_lines = grep(ps_ef, "pytest-xdist")
     tests = [line.partition("::")[2] for line in test_lines]
     psids = [int(line.split()[1]) for line in test_lines]

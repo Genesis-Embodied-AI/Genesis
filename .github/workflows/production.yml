@@ -139,6 +139,11 @@ jobs:
               source /root/.venv/bin/activate
               pip install --no-input ".[dev,render]"
 
+              ls -la /usr/bin/ps || echo "/usr/bin/ps does not exist"
+              ls -la /bin/ps || echo "/bin/ps does not exist"
+              which ps || echo "ps not in PATH"
+              dpkg -L procps 2>/dev/null || echo "procps package check failed"
+
               pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" --print -x -m "benchmarks" ./tests
               cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
