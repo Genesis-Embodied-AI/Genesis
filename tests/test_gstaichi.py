@@ -346,7 +346,7 @@ def change_scene(args: list[str]):
     "test_backend, list_n_objs_n_envs",
     [
         ("gpu", [(1, 0), (2, 1)]),
-        ("gpu", [(2, 2), (3, 3)]),
+        ("gpu", [(3, 3), (4, 4)]),
         ("cpu", [(1, 0), (2, 1), (2, 2), (3, 3)]),
     ],
 )
