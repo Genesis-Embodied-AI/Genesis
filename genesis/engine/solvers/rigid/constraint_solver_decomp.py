@@ -730,6 +730,7 @@ def add_equality_constraints(
     static_rigid_sim_config: ti.template(),
 ):
     _B = dofs_state.ctrl_mode.shape[1]
+
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         constraint_state.n_constraints[i_b] = 0

@@ -1827,6 +1827,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     max_n_dofs_per_entity: int = -1
     max_n_dofs_per_link: int = -1
     max_n_geoms_per_entity: int = -1
+    n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
 
