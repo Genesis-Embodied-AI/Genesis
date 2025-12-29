@@ -466,8 +466,8 @@ class Scene(object):
 
         # Traverse from from_node to to_node
         pose = path[0].matrix
-        for node in path[1:-1]:
-            pose = np.dot(n.matrix, pose)
+        for parent_node in path[1:-1]:
+            pose = np.dot(parent_node.matrix, pose)
 
         return pose
 
@@ -483,7 +483,8 @@ class Scene(object):
         """
         # if node not in self.nodes:
         #     raise ValueError('Node must already be in scene')
-        node._matrix = pose
+        # Use matrix setter to properly update translation/rotation/scale
+        node.matrix = pose
         if node.mesh is not None:
             self._bounds = None
 
