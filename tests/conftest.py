@@ -348,12 +348,6 @@ def pytest_addoption(parser):
     )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
-    parser.addoption(
-        "--export-diff-images",
-        action="store_true",
-        default=False,
-        help="Export difference images when comparing snapshots.",
-    )
 
 
 @pytest.fixture(scope="session")
@@ -676,13 +670,9 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
     _std_err_threshold: float = IMG_STD_ERR_THR
     _ratio_err_threshold: float = IMG_NUM_ERR_THR
-    _export_diff_dir: Path | None = None
-    _snapshot_name_map: dict[str, str] = {}  # Maps test_location to snapshot_name
-    _diff_counter: int = 0
 
     def matches(self, *, serialized_data, snapshot_data) -> bool:
         import numpy as np
-        import time
 
         img_arrays = []
         for data in (serialized_data, snapshot_data):
@@ -694,61 +684,24 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
 
         # Always compute difference image for export if enabled
         should_export = self._export_diff_dir is not None
-        has_differences = (
+        if (
             np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
             and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
-        )
-
-        print(np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)))
-        print((np.abs(img_delta) > np.finfo(np.float32).eps).sum())
-
-        # Export difference image if enabled
-        if should_export:
-            img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
-            # Try to get snapshot name from mapping, fallback to counter-based name
-            test_location = getattr(self, "test_location", None)
-            if test_location and test_location in self._snapshot_name_map:
-                snapshot_name = self._snapshot_name_map[test_location]
-                # Sanitize filename (remove invalid characters)
-                safe_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in snapshot_name)
-                diff_filename = f"{safe_name}_diff.png"
-            else:
-                # Generate unique filename using counter and timestamp
-                PixelMatchSnapshotExtension._diff_counter += 1
-                timestamp = int(time.time() * 1000) % 1000000  # Last 6 digits of milliseconds
-                diff_filename = f"diff_{PixelMatchSnapshotExtension._diff_counter:04d}_{timestamp}.png"
-            diff_path = self._export_diff_dir / diff_filename
-            diff_path.parent.mkdir(parents=True, exist_ok=True)
-            img_obj.save(diff_path)
-
-        if has_differences:
+        ):
             raw_bytes = BytesIO()
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
             img_obj.save(raw_bytes, "PNG")
             raw_bytes.seek(0)
-            # Decode to string to ensure full output (bytes representation might be truncated)
-            base64_str = base64.b64encode(raw_bytes.read()).decode("ascii")
-            print(base64_str)
+            print(base64.b64encode(raw_bytes.read()))
             return False
         return True
 
 
 @pytest.fixture
-def png_snapshot(request, snapshot, tmp_path):
+def png_snapshot(request, snapshot):
     snapshot_obj = snapshot.use_extension(PixelMatchSnapshotExtension)
     snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
     snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
-
-    # Store snapshot name mapping for better diff image filenames
-    PixelMatchSnapshotExtension._snapshot_name_map[snapshot_obj.test_location] = snapshot_name
-
-    # Set up diff image export directory if enabled
-    export_diff_images = request.config.getoption("--export-diff-images")
-    if export_diff_images:
-        # Save diff images to a "diff_images" subdirectory in tmp_path
-        PixelMatchSnapshotExtension._export_diff_dir = tmp_path / "diff_images"
-    else:
-        PixelMatchSnapshotExtension._export_diff_dir = None
 
     must_update_snapshop = request.config.getoption("--snapshot-update")
     if must_update_snapshop:
