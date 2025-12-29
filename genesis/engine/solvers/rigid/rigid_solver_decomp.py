@@ -3974,11 +3974,97 @@ def func_factor_mass(
 
 
 @ti.func
-def func_solve_mass_batched(
+def func_solve_mass_entity(
+    i_e: ti.int32,
+    i_b: ti.int32,
     vec: array_class.V_ANNOTATION,
     out: array_class.V_ANNOTATION,
     out_bw: array_class.V_ANNOTATION,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    is_backward: ti.template(),
+):
+    BW = ti.static(is_backward)
+
+    if rigid_global_info.mass_mat_mask[i_e, i_b]:
+        entity_dof_start = entities_info.dof_start[i_e]
+        entity_dof_end = entities_info.dof_end[i_e]
+        n_dofs = entities_info.n_dofs[i_e]
+
+        # Step 1: Solve w st. L^T @ w = y
+        # Step 2: z = D^{-1} w
+        for i_d_ in (
+            range(n_dofs) if ti.static(not BW) else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
+        ):
+            if func_check_index_range(i_d_, 0, n_dofs, BW):
+                i_d = entity_dof_end - i_d_ - 1
+                curr_out = vec[i_d, i_b]
+                if ti.static(BW):
+                    out_bw[0, i_d, i_b] = vec[i_d, i_b]
+
+                for j_d_ in (
+                    range(i_d + 1, entity_dof_end)
+                    if ti.static(not BW)
+                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
+                ):
+                    j_d = j_d_ if ti.static(not BW) else (j_d_ + entities_info.dof_start[i_e])
+                    if func_check_index_range(j_d, i_d + 1, entity_dof_end, BW):
+                        # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
+                        # finalized at this point, we don't need to care about AD mutation rule.
+                        if ti.static(BW):
+                            out_bw[0, i_d, i_b] = (
+                                out_bw[0, i_d, i_b] - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
+                            )
+                        else:
+                            curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
+
+                if ti.static(not BW):
+                    out[i_d, i_b] = curr_out
+
+        # Step 2: z = D^{-1} w
+        for i_d_ in (
+            range(entity_dof_start, entity_dof_end)
+            if ti.static(not BW)
+            else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
+        ):
+            i_d = i_d_ if ti.static(not BW) else (i_d_ + entities_info.dof_start[i_e])
+            if func_check_index_range(i_d, entity_dof_start, entity_dof_end, BW):
+                if ti.static(BW):
+                    out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+                else:
+                    out[i_d, i_b] = out[i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+
+        # Step 3: Solve x st. L @ x = z
+        for i_d_ in (
+            range(entity_dof_start, entity_dof_end)
+            if ti.static(not BW)
+            else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
+        ):
+            i_d = i_d_ if ti.static(not BW) else (i_d_ + entities_info.dof_start[i_e])
+            if func_check_index_range(i_d, entity_dof_start, entity_dof_end, BW):
+                curr_out = out[i_d, i_b]
+                if ti.static(BW):
+                    curr_out = out_bw[1, i_d, i_b]
+
+                for j_d_ in (
+                    range(entity_dof_start, i_d)
+                    if ti.static(not BW)
+                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
+                ):
+                    j_d = j_d_ if ti.static(not BW) else (j_d_ + entities_info.dof_start[i_e])
+                    if func_check_index_range(j_d, entity_dof_start, i_d, BW):
+                        curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
+
+                out[i_d, i_b] = curr_out
+
+
+@ti.func
+def func_solve_mass_batch(
     i_b: ti.int32,
+    vec: array_class.V_ANNOTATION,
+    out: array_class.V_ANNOTATION,
+    out_bw: array_class.V_ANNOTATION,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
@@ -4009,81 +4095,9 @@ def func_solve_mass_batched(
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else i_0
             )
-
-            if rigid_global_info.mass_mat_mask[i_e, i_b]:
-                entity_dof_start = entities_info.dof_start[i_e]
-                entity_dof_end = entities_info.dof_end[i_e]
-                n_dofs = entities_info.n_dofs[i_e]
-
-                # Step 1: Solve w st. L^T @ w = y
-                for i_d_ in (
-                    range(n_dofs)
-                    if ti.static(not BW)
-                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
-                ):
-                    if func_check_index_range(i_d_, 0, n_dofs, BW):
-                        i_d = entity_dof_end - i_d_ - 1
-                        if ti.static(BW):
-                            out_bw[0, i_d, i_b] = vec[i_d, i_b]
-                        else:
-                            out[i_d, i_b] = vec[i_d, i_b]
-
-                        for j_d_ in (
-                            range(i_d + 1, entity_dof_end)
-                            if ti.static(not BW)
-                            else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
-                        ):
-                            j_d = j_d_ if ti.static(not BW) else (j_d_ + entities_info.dof_start[i_e])
-                            if func_check_index_range(j_d, i_d + 1, entity_dof_end, BW):
-                                # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
-                                # finalized at this point, we don't need to care about AD mutation rule.
-                                if ti.static(BW):
-                                    out_bw[0, i_d, i_b] = (
-                                        out_bw[0, i_d, i_b]
-                                        - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-                                    )
-                                else:
-                                    out[i_d, i_b] -= rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
-
-                # Step 2: z = D^{-1} w
-                for i_d_ in (
-                    range(entity_dof_start, entity_dof_end)
-                    if ti.static(not BW)
-                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
-                ):
-                    i_d = i_d_ if ti.static(not BW) else (i_d_ + entities_info.dof_start[i_e])
-                    if func_check_index_range(i_d, entity_dof_start, entity_dof_end, BW):
-                        if ti.static(BW):
-                            out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
-                        else:
-                            out[i_d, i_b] *= rigid_global_info.mass_mat_D_inv[i_d, i_b]
-
-                # Step 3: Solve x st. L @ x = z
-                for i_d_ in (
-                    range(entity_dof_start, entity_dof_end)
-                    if ti.static(not BW)
-                    else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
-                ):
-                    i_d = i_d_ if ti.static(not BW) else (i_d_ + entities_info.dof_start[i_e])
-                    if func_check_index_range(i_d, entity_dof_start, entity_dof_end, BW):
-                        curr_out = out[i_d, i_b]
-                        if ti.static(BW):
-                            curr_out = out_bw[1, i_d, i_b]
-
-                        for j_d_ in (
-                            range(entity_dof_start, i_d)
-                            if ti.static(not BW)
-                            else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
-                        ):
-                            j_d = j_d_ if ti.static(not BW) else (j_d_ + entities_info.dof_start[i_e])
-                            if func_check_index_range(j_d, entity_dof_start, i_d, BW):
-                                if ti.static(BW):
-                                    curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
-                                else:
-                                    out[i_d, i_b] -= rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
-
-                        if ti.static(BW):
-                            out[i_d, i_b] = curr_out
+            func_solve_mass_entity(
+                i_e, i_b, vec, out, out_bw, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
+            )
 
 
 @ti.func
@@ -4097,17 +4111,10 @@ def func_solve_mass(
     is_backward: ti.template(),
 ):
     # This loop must be the outermost loop to be differentiable
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b in range(out.shape[1]):
-        func_solve_mass_batched(
-            vec,
-            out,
-            out_bw,
-            i_b,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=is_backward,
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_e, i_b in ti.ndrange(entities_info.n_links.shape[0], out.shape[1]):
+        func_solve_mass_entity(
+            i_e, i_b, vec, out, out_bw, entities_info, rigid_global_info, static_rigid_sim_config, is_backward
         )
 
 
