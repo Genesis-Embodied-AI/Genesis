@@ -60,6 +60,17 @@ def main() -> None:
 
     max_mem_by_test = defaultdict(int)
 
+    # DEBUG: Check if ps exists
+    import os as os_check
+    print(f"DEBUG: /usr/bin/ps exists: {os_check.path.exists('/usr/bin/ps')}")
+    print(f"DEBUG: PID: {os_check.getpid()}, PPID: {os_check.getppid()}")
+    try:
+        import subprocess as sp
+        sp.check_output(["ls", "-la", "/usr/bin/ps"])
+        print("DEBUG: ls succeeded")
+    except Exception as e:
+        print(f"DEBUG: ls failed: {e}")
+
     f = open(args.out_csv_filepath, "w")
     dict_writer = csv.DictWriter(f, fieldnames=["test", "max_mem_mb"])
     dict_writer.writeheader()
