@@ -1,5 +1,17 @@
 # Genesis Release Note
 
+## 0.3.10
+
+Small release mainly fixing bugs.
+
+### Bug Fixes
+
+* Fix parsing for special material properties in glTF meshes (@duburcqa) (#2110)
+
+### Miscellaneous
+
+* More robust detection of invalid simulation state. (@duburcqa) (#2112)
+
 ## 0.3.9
 
 Small release mainly polishing features that were introduced in previous release.

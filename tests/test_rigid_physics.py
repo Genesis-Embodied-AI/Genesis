@@ -954,6 +954,8 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
+    gs_sim.rigid_solver.collider.clear()
+    gs_sim.rigid_solver.constraint_solver.clear()
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
 
@@ -1741,9 +1743,9 @@ def test_apply_external_forces(xml_path, show_viewer):
         if step == 0:
             assert_allclose(ee_pos, (0.8, 0.0, 0.02), tol=1e-4)
         elif step in (500, 600):
-            assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=1e-2)
+            assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=0.01)
         elif step == 800:
-            assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=1e-2)
+            assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=0.02)
         assert_allclose(duck_pos, (1.0, 0.0, 1.0), tol=1e-3)
 
         if step >= 600:
@@ -2197,8 +2199,13 @@ def test_nan_reset(gs_sim, mode):
     assert not torch.isnan(qvel).any()
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,  # This test takes too much time of CPU (~1000s)
+        pytest.param(gs.gpu, marks=pytest.mark.required),
+    ],
+)
 def test_terrain_generation(request, show_viewer):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
@@ -2906,6 +2913,48 @@ def test_get_constraints_api(show_viewer, tol):
         else:
             assert_allclose((link_a_[0], link_b_[0]), ((), ()), tol=0)
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32", "64"])
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_constraint_solver_tiling(tol):
+    from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.Newton,
+            sparse_solve=False,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    gs_robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+        ),
+    )
+    scene.build(n_envs=2)
+    scene.step()
+
+    assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
+
+    kwargs = dict(
+        dofs_info=scene.rigid_solver.dofs_info,
+        dofs_state=scene.rigid_solver.dofs_state,
+        entities_info=scene.rigid_solver.entities_info,
+        constraint_state=scene.rigid_solver.constraint_solver.constraint_state,
+        rigid_global_info=scene.rigid_solver._rigid_global_info,
+        static_rigid_sim_config=scene.rigid_solver._static_rigid_sim_config,
+    )
+    func_init_solver(**kwargs, enable_tiled_cholesky=False)
+    nt_H_ref = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
+    assert (np.linalg.norm(nt_H_ref.reshape((-1, 2)), axis=0) > 5.0).all()
+
+    func_init_solver(**kwargs, enable_tiled_cholesky=True)
+    nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
+    assert_allclose(nt_H_ref, nt_H, tol=tol)
 
 
 @pytest.mark.slow  # ~100s

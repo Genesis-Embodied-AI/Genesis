@@ -783,6 +783,7 @@ class RigidEntity(Entity):
                 dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
                 dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
+                dofs_target=j_info.get("dofs_target", np.zeros(n_dofs)),
             )
             joints.append(joint)
 
@@ -1567,6 +1568,7 @@ class RigidEntity(Entity):
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
+                is_backward=False,
             )
 
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -1596,6 +1598,7 @@ class RigidEntity(Entity):
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
+                is_backward=False,
             )
 
     # ------------------------------------------------------------------------------------
@@ -3372,6 +3375,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     entities_info,
                     rigid_global_info,
                     static_rigid_sim_config,
+                    is_backward=False,
                 )
                 # compute error
                 solved = True
@@ -3500,6 +3504,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     entities_info,
                     rigid_global_info,
                     static_rigid_sim_config,
+                    is_backward=False,
                 )
                 solved = True
                 for i_ee in range(n_links):
@@ -3599,4 +3604,5 @@ def kernel_rigid_entity_inverse_kinematics(
             entities_info,
             rigid_global_info,
             static_rigid_sim_config,
+            is_backward=False,
         )

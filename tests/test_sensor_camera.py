@@ -3,6 +3,7 @@ import pytest
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
+from .utils import assert_allclose
 
 
 @pytest.mark.required
@@ -64,8 +65,20 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
             fov=70.0,
             entity_idx=sphere.idx,  # Attach to sphere
             link_idx_local=0,
-            pos_offset=(0.0, 0.0, 0.0),
-            euler_offset=(0.0, 0.0, 0.0),
+        )
+    )
+    offset_T = np.eye(4)
+    offset_T[2, 3] = 1.0
+    raster_cam_offset_T = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(320, 240),
+            pos=(0.0, 0.0, 1.0),
+            lookat=(0.0, 0.0, 0.0),
+            up=(0.0, 0.0, 1.0),
+            fov=70.0,
+            entity_idx=sphere.idx,
+            link_idx_local=0,
+            offset_T=offset_T,
         )
     )
 
@@ -75,8 +88,14 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     data_cam0 = raster_cam0.read()
     data_cam1 = raster_cam1.read()
     data_attached = raster_cam_attached.read()
+    data_offset_T = raster_cam_offset_T.read()
 
-    for cam_name, data in [("cam0", data_cam0), ("cam1", data_cam1), ("attached", data_attached)]:
+    for cam_name, data in [
+        ("cam0", data_cam0),
+        ("cam1", data_cam1),
+        ("attached", data_attached),
+        ("offset_T", data_offset_T),
+    ]:
         rgb = data.rgb
         rgb_np = tensor_to_array(rgb)
         mean_value = np.mean(rgb_np)
@@ -97,6 +116,7 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
         return pose[:3, 3].copy()
 
     cam_pos_initial = _get_camera_world_pos(raster_cam_attached)
+    cam_pos_initial_offset_T = _get_camera_world_pos(raster_cam_offset_T)
 
     for i in range(10):  # Test over multiple steps
         scene.step()
@@ -105,3 +125,8 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     cam_pos_final = _get_camera_world_pos(raster_cam_attached)
     cam_move_dist = np.linalg.norm(cam_pos_final - cam_pos_initial)
     assert cam_move_dist > 1e-2
+    data_offset_T_moved = raster_cam_offset_T.read()
+    cam_pos_final_offset_T = _get_camera_world_pos(raster_cam_offset_T)
+    cam_move_dist_offset_T = np.linalg.norm(cam_pos_final_offset_T - cam_pos_initial_offset_T)
+    assert cam_move_dist_offset_T > 1e-2
+    assert_allclose(cam_move_dist_offset_T, cam_move_dist, atol=1e-2)

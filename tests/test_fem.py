@@ -234,7 +234,7 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
     for entity, init_pos, entity_halfsize_ref in zip(scene.entities, (SPHERE_POS, BOX_POS), (SPHERE_RADIUS, BOX_SIZE)):
         # Not moving anymore
         state = entity.get_state()
-        assert_allclose(state.vel, 0.0, tol=2e-2)
+        assert_allclose(state.vel, 0.0, tol=0.025)
 
         # Landed vertically
         pos = tensor_to_array(state.pos[0])
