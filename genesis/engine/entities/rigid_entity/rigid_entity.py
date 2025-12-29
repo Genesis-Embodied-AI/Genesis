@@ -2051,7 +2051,7 @@ class RigidEntity(Entity):
         links_idx_local=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com"] = "link_com",
         unsafe=False,
     ):
         """
