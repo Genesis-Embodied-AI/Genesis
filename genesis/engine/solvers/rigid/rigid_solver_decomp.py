@@ -2016,7 +2016,7 @@ class RigidSolver(Solver):
                 and isinstance(envs_idx, torch.Tensor)
                 and (
                     (velocity is None and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
-                    or (velocity.ndim == 2 and envs_idx.dtype == torch.bool)
+                    or (velocity is not None and velocity.ndim == 2 and envs_idx.dtype == torch.bool)
                 )
             ):
                 dofs_vel = vel[(slice(None), *dofs_mask)]
