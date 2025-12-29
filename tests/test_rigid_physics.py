@@ -2927,9 +2927,14 @@ def test_cholesky_tiling(monkeypatch, tol):
     for enable_tiled_cholesky in (True, False):
 
         def rigid_solver_build(self):
+            nonlocal enable_tiled_cholesky
+
             rigid_solver_build_orig(self)
             self._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
             self._static_rigid_sim_config.enable_tiled_cholesky_hessian = enable_tiled_cholesky
+            if enable_tiled_cholesky:
+                self._static_rigid_sim_config.tiled_n_dofs_per_entity = 32
+                self._static_rigid_sim_config.tiled_n_dofs = 32
 
         monkeypatch.setattr("genesis.engine.solvers.RigidSolver.build", rigid_solver_build)
 

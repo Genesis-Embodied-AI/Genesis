@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 from typing import TYPE_CHECKING, Literal
 
@@ -249,15 +250,6 @@ class RigidSolver(Solver):
         # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
         is_rigid_solver = type(self) is RigidSolver
         if is_rigid_solver:
-            # TODO: These alternative tiled algorithms are designed to reduce the impact of latency. However, naive
-            # implementation scales slightly better asymptotically than shared memory-based implementation because the
-            # scheduler of modern GPUs is able to hides latency by swapping warps if the workload is sufficient. The
-            # crossover threshold is both hardware and kernel-dependent. As a result, the optimal implementation should
-            # be selected based on dynamic timer-based profiling instead of hard-coded heuristic.
-            max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
-            enable_tiled_cholesky_mass_matrix = 6 <= max_n_dofs_per_entity <= 32 and self.n_envs <= 16384
-            enable_tiled_cholesky_hessian = 32 <= self.n_dofs <= 64 and self.n_envs <= 16384
-
             static_rigid_sim_config = dict(
                 backend=gs.backend,
                 para_level=self.sim._para_level,
@@ -270,13 +262,34 @@ class RigidSolver(Solver):
                 enable_multi_contact=self._enable_multi_contact,
                 enable_collision=self._enable_collision,
                 enable_joint_limit=self._enable_joint_limit,
-                enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
-                enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
                 box_box_detection=self._box_box_detection,
                 sparse_solve=self._options.sparse_solve,
                 integrator=self._integrator,
                 solver_type=self._options.constraint_solver,
             )
+
+            # TODO: These alternative tiled algorithms are designed to reduce the impact of latency. However, naive
+            # implementation scales slightly better asymptotically than shared memory-based implementation because the
+            # scheduler of modern GPUs is able to hides latency by swapping warps if the workload is sufficient. The
+            # crossover threshold is both hardware and kernel-dependent. As a result, the optimal implementation should
+            # be selected based on dynamic timer-based profiling instead of hard-coded heuristic.
+            max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
+            if gs.backend != gs.cpu:
+                max_n_warps = int(math.sqrt(48.0 * 1024 / (4 if gs.ti_float == ti.f32 else 8))) // 32
+                max_n_threads = max_n_warps * 32
+
+                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
+                enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
+                tiled_n_dofs = min(max(math.ceil(self.n_dofs / 32), 1), max_n_warps) * 32
+                tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
+
+                static_rigid_sim_config.update(
+                    enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
+                    enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
+                    tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
+                    tiled_n_dofs=tiled_n_dofs,
+                )
+
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:
                 static_rigid_sim_config.update(
@@ -3750,10 +3763,8 @@ def func_factor_mass(
                         # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
                         rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
         else:
-            # Note that shared memory must fit in ~48KB limit.
-            # Note that performance is optimal for BLOCK_DIM = MAX_DOFS_PER_ENTITY = 32.
             BLOCK_DIM = ti.static(32)
-            MAX_DOFS_PER_ENTITY = ti.static(32)
+            MAX_DOFS_PER_ENTITY = ti.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
             WARP_SIZE = ti.static(32)
 
             ti.loop_config(block_dim=BLOCK_DIM)

@@ -2154,15 +2154,10 @@ def func_init_solver(
                 static_rigid_sim_config=static_rigid_sim_config,
             )
     else:
-        # Note that shared memory must fit in ~48KB limit.
-        # Note that performance is optimal for BLOCK_DIM = MAX_DOFS = MAX_DOFS_PER_BLOCK = 64.
+        # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64.
         BLOCK_DIM = ti.static(64)
-        MAX_DOFS = ti.static(64)
         MAX_DOFS_PER_BLOCK = ti.static(64)
         MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
-        ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
-        WARP_SIZE = ti.static(32)
-        NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
 
         n_dofs_2 = n_dofs**2
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
@@ -2253,6 +2248,12 @@ def func_init_solver(
                     i_pair = i_pair + BLOCK_DIM
 
         if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
+            BLOCK_DIM = ti.static(64)
+            MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
+            ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
+            WARP_SIZE = ti.static(32)
+            NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
+
             ti.loop_config(block_dim=BLOCK_DIM)
             for i in range(_B * BLOCK_DIM):
                 tid = i % BLOCK_DIM
