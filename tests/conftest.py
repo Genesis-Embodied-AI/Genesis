@@ -699,6 +699,9 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
             and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
         )
 
+        print(np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)))
+        print((np.abs(img_delta) > np.finfo(np.float32).eps).sum())
+
         # Export difference image if enabled
         if should_export:
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
