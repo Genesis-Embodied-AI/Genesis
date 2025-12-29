@@ -2154,10 +2154,12 @@ def func_init_solver(
                 static_rigid_sim_config=static_rigid_sim_config,
             )
     else:
-        # Note that MAX_CONSTRAINTS_PER_BLOCK * MAX_DOFS_PER_BLOCK * 4 bytes, must fit in ~48KB shared memory limit
+        # Note that shared memory must fit in ~48KB limit.
+        # Note that performance is optimal for BLOCK_DIM = MAX_DOFS = MAX_DOFS_PER_BLOCK = 64.
         BLOCK_DIM = ti.static(64)
-        MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
+        MAX_DOFS = ti.static(64)
         MAX_DOFS_PER_BLOCK = ti.static(64)
+        MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
         ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
         WARP_SIZE = ti.static(32)
         NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
@@ -2259,7 +2261,7 @@ def func_init_solver(
                     continue
 
                 # Padding +1 to avoid memory bank conflicts that would cause access serialization
-                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.ti_float)
+                H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
 
                 i_pair = tid
                 while i_pair < n_lower_tri:
@@ -2312,8 +2314,8 @@ def func_init_solver(
                 if i_b >= _B:
                     continue
 
-                H = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.ti_float)
-                v = ti.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.ti_float)
+                H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
+                v = ti.simt.block.SharedArray((MAX_DOFS,), gs.ti_float)
                 partial = ti.simt.block.SharedArray(
                     (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.ti_float
                 )
