@@ -522,10 +522,9 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int) -> Dict:
         Dictionary with joint dynamics parameters (dofs_frictionloss, dofs_damping, dofs_armature).
         Always contains numpy arrays (either from USD or defaults).
     """
-    # Initialize with default values
+    # Initialize with default values (only override if found in USD)
     dynamics_params = {
         "dofs_frictionloss": np.full(n_dofs, 0.0),
-        "dofs_damping": np.full(n_dofs, 0.0),
         "dofs_armature": np.zeros(n_dofs),
     }
 
@@ -890,21 +889,22 @@ def _parse_joints(
         j_info["dofs_kp"] = np.full((n_dofs,), fill_value=0.0)
         j_info["dofs_kv"] = np.full((n_dofs,), fill_value=0.0)
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
+        j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=0.0)
 
         # Parse joint target from DriveAPI to set initial position
         # Target is relative to lower limit, so we pass dofs_limit to add it
         target = _parse_joint_target(joint_prim, j_info["type"])
         if target is not None:
             # Override init_qpos with target value if found
-            if target.shape[0] == n_qs:
+            if target.shape[0] == n_dofs:
                 j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=10.0)
-                j_info["dofs_damping"] = np.full((n_dofs,), fill_value=10.0)
+                j_info["dofs_damping"] = np.full((n_dofs,), fill_value=1.0)
                 j_info["init_qpos"] = np.full((n_dofs,), fill_value=0.0)
                 j_info["dofs_target"] = target
             else:
                 gs.logger.warning(
                     f"Joint target at {joint_prim.GetPath()} has shape {target.shape}, "
-                    f"but expected {n_qs} elements. Ignoring target value."
+                    f"but expected {n_dofs} elements. Ignoring target value."
                 )
 
         # Parse joint dynamics properties (friction, damping, armature)
