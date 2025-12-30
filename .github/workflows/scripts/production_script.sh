@@ -18,6 +18,7 @@ uv --version
 uv venv --python '3.10'
 source .venv/bin/activate
 uv pip install ".[dev,render]"
+uv pip install torch
 
 pytest --print -x -m "benchmarks" ./tests
 cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
