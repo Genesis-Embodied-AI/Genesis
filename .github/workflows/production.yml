@@ -134,18 +134,15 @@ jobs:
 
       - name: Set common srun args
         run: |
-          {
-            cat <<'EOF'
-          SRUN_COMMON<<'EOT'
-          --jobid="${SLURM_JOB_ID}"
-          --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh"
-          --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,"${{ github.workspace }}":/root/workspace,"${HOME}/.cache/uv":/root/workspace/.uv_cache
-          --no-container-mount-home
-          --container-workdir=/root/workspace
-          --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}
-          EOT
-          EOF
-          } >> "$GITHUB_ENV"
+          SRUN_COMMON=(
+            "--jobid=${SLURM_JOB_ID}"
+            "--container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh"
+            "--container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/workspace/.uv_cache"
+            "--no-container-mount-home"
+            "--container-workdir=/root/workspace"
+            "--export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
+          )
+          echo "SRUN_COMMON=${SRUN_COMMON[*]}" >> $GITHUB_ENV
 
       - name: Build
         run: |
