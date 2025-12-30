@@ -11,6 +11,10 @@ set -ex
 pwd
 ls
 
+curl -LsSf https://astral.sh/uv/install.sh | sh
+which uv
+uv --version
+
 uv venv
 source .env/bin/activate
 uv pip install --no-input ".[dev,render]"
