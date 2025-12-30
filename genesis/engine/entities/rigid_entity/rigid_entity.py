@@ -933,6 +933,12 @@ class RigidEntity(Entity):
         if not isinstance(parent_entity, RigidEntity):
             gs.raise_exception("Parent entity must derive from 'RigidEntity'.")
 
+        if parent_entity is self:
+            gs.raise_exception("Cannot attach entity to itself.")
+
+        if parent_entity.idx > self.idx:
+            gs.raise_exception("Parent entity must be instantiated before child entity.")
+
         # Check if base link was fixed but no longer is
         base_link = self.links[0]
         parent_link = parent_entity.get_link(parent_link_name)
@@ -979,9 +985,7 @@ class RigidEntity(Entity):
             link._is_fixed &= parent_link.is_fixed
 
             # Must invalidate invweight for all child links and joints
-            link._invweight[:] = -1.0
-            for joint in link.joints:
-                joint._dofs_invweight[:] = -1.0
+            link._invweight = None
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- Jacobian & IK ------------------------------------

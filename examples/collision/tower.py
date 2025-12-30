@@ -12,7 +12,7 @@ def main():
     object_type = args.object
     horizon = 50 if "PYTEST_VERSION" in os.environ else 1000
 
-    gs.init(backend=gs.cpu, precision="32")
+    gs.init(backend=gs.cpu, precision="32", performance_mode=True)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
