@@ -1060,7 +1060,7 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_com",
         local: bool = False,
     ):
         """
@@ -1109,7 +1109,7 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_com",
         local: bool = False,
     ):
         """
@@ -2239,7 +2239,7 @@ class RigidSolver(Solver):
         links_idx=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_com",
         to_torch: bool = True,
     ):
         if not gs.use_zerocopy:
