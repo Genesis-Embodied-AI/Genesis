@@ -483,8 +483,7 @@ class Scene(object):
         """
         # if node not in self.nodes:
         #     raise ValueError('Node must already be in scene')
-        # Use matrix setter to properly update translation/rotation/scale
-        node.matrix = pose
+        node._matrix = pose
         if node.mesh is not None:
             self._bounds = None
 

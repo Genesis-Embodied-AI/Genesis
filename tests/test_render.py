@@ -1327,8 +1327,9 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
 
 
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not available")
+@pytest.mark.parametrize("add_box", [False, True])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_add_camera_matches_interactive_viewer(renderer_type, show_viewer):
+def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, show_viewer):
     CAM_RES = (128, 128)
     CAM_POS = (0.0, -2.0, 1.5)
     CAM_LOOKAT = (0.0, 0.0, 0.0)
@@ -1337,7 +1338,14 @@ def test_add_camera_matches_interactive_viewer(renderer_type, show_viewer):
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             ambient_light=(0.1, 0.1, 0.1),
-            lights=[{"type": "directional", "dir": (-1, -1, -1), "color": (1.0, 1.0, 1.0), "intensity": 5.0}],
+            lights=[
+                dict(
+                    type="directional",
+                    dir=(-1, -1, -1),
+                    color=(1.0, 1.0, 1.0),
+                    intensity=5.0,
+                ),
+            ],
         ),
         viewer_options=gs.options.ViewerOptions(
             res=CAM_RES,
@@ -1348,17 +1356,22 @@ def test_add_camera_matches_interactive_viewer(renderer_type, show_viewer):
         renderer=renderer_type,
         show_viewer=True,
     )
-
     scene.add_entity(morph=gs.morphs.Plane())
-
+    if add_box:
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                pos=(0.1, 0.1, 0.1),
+                size=(0.1, 0.1, 0.1),
+                fixed=True,
+            ),
+        )
     camera = scene.add_camera(
         res=CAM_RES,
         pos=CAM_POS,
         lookat=CAM_LOOKAT,
         fov=CAM_FOV,
-        GUI=False,
+        GUI=show_viewer,
     )
-
     scene.build()
 
     # Render from interactive viewer
