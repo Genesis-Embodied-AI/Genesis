@@ -106,41 +106,61 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
-          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
           fetch-depth: 0
-      - name: Run benchmarks
+
+      - name: Allocate SLURM slot (single allocation for all steps)
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
-
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
-            SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
+          salloc \
+            --job-name="${SLURM_JOB_NAME}" \
+            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+            --time="${TIMEOUT_MINUTES}" \
+            bash -c "sleep ${TIMEOUT_MINUTES}m" &
+          echo "SLURM_ALLOC_PID=$!" >> $GITHUB_ENV
+          for i in $(seq 1 30); do
+            SLURM_JOB_ID="$(squeue --noheader -o '%A' --name "${SLURM_JOB_NAME}" | head -n1)"
+            if [ -n "${SLURM_JOB_ID}" ]; then
+              echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "${SLURM_JOB_ID}" ]; then
+            echo "Failed to obtain SLURM_JOB_ID within timeout" >&2
+            exit 1
           fi
 
-          srun \
-            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
-            --container-mounts=\
-          /mnt/data/artifacts:/mnt/data/artifacts,\
-          "${{ github.workspace }}":/root/workspace, \
-          "${HOME}/.cache/uv":/root/workspace/.uv_cache, \
-            --no-container-mount-home --container-workdir=/root/workspace \
-            --export=${SLURM_ENV_VARS} \
-            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
-            --job-name=${SLURM_JOB_NAME} \
-            bash .github/workflows/scripts/production_script.sh
-      - name: Kill srun job systematically
+      - name: Set common srun args
+        run: |
+          cat <<'EOF' >> $GITHUB_ENV
+          SRUN_COMMON=\
+          --jobid="${SLURM_JOB_ID}" \
+          --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+          --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,"${{ github.workspace }}":/root/workspace,"${HOME}/.cache/uv":/root/workspace/.uv_cache \
+          --no-container-mount-home \
+          --container-workdir=/root/workspace \
+          --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}
+          EOF
+
+      - name: Build
+        run: |
+          srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
+
+      - name: Test
+        run: |
+          srun ${SRUN_COMMON} bash -e -s << 'EOF'
+            source .venv/bin/activate
+            pytest --print -x -m "benchmarks" ./tests
+            cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+          EOF
+
+      - name: Cleanup allocation
         if: always()
         run: |
-          if [ -n "${SLURM_JOB_NAME}" ] ; then
-            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+          if [ -n "${SLURM_JOB_ID}" ]; then
+            scancel "${SLURM_JOB_ID}" || true
           fi
-      - name: Display benchmark stats
-        run: |
-          cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-      - name: Upload benchmark stats as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
-          path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+          if [ -n "${SLURM_ALLOC_PID}" ]; then
+            kill "${SLURM_ALLOC_PID}" || true
+          fi

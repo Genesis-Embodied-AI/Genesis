@@ -27,7 +27,7 @@ source .venv/bin/activate
 uv pip install ".[dev,render]"
 uv pip install torch
 
-pytest --print -x -m "benchmarks" ./tests
-cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+# pytest --print -x -m "benchmarks" ./tests
+# cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
 # tmate -S /tmp/tmate.sock wait tmate-exit
