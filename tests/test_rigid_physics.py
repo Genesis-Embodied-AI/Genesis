@@ -3280,6 +3280,46 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.required
+def test_deprecated_properties(caplog):
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    scene.build()
+
+    joint = box.joints[0]
+
+    # Verify introspection doesn't trigger warnings
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        repr(joint)
+        vars(joint)
+    assert len(caplog.records) == 0
+
+    for name_old, name_new in (
+        ("dof_idx", "dofs_idx"),
+        ("dof_idx_local", "dofs_idx_local"),
+        ("q_idx", "qs_idx"),
+        ("q_idx_local", "qs_idx_local"),
+    ):
+        # Make sure that deprecated properties are hidden
+        assert name_old not in dir(joint)
+
+        # Verify deprecated properties emit warnings but work correctly
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            deprecated_value = getattr(joint, name_old)
+        assert len(caplog.records) > 0
+        assert_allclose(deprecated_value, getattr(joint, name_new), tol=gs.EPS)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("enable_mujoco_compatibility", [True, False])
 def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
     DT = 0.01
