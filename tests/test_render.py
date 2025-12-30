@@ -540,13 +540,12 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
     """Test segmentation rendering."""
     scene = gs.Scene(
-        # Using implicit solver to allow for larger timestep without failure on GPU backend
         fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
+            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
+            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
         ),
-        # Disable many physics features to speed-up compilation
         rigid_options=gs.options.RigidOptions(
-            enable_collision=False,
+            enable_collision=False,  # Disable many physics features to speedup compilation
         ),
         coupler_options=gs.options.LegacyCouplerOptions(
             rigid_mpm=False,
