@@ -65,11 +65,11 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_runtest_setup(item):
-    # Include test name in process title
-    test_name = item.nodeid.replace(" ", "")
-    setproctitle.setproctitle(f"pytest: {test_name}")
+# @pytest.hookimpl(tryfirst=True)
+# def pytest_runtest_setup(item):
+#     # Include test name in process title
+#     test_name = item.nodeid.replace(" ", "")
+#     setproctitle.setproctitle(f"pytest: {test_name}")
 
 
 def validate_mem_option() -> None:
@@ -357,7 +357,12 @@ def pytest_collection_modifyitems(config, items):
     items[:] = [item for bucket in sorted(buckets, key=len) for item in bucket]
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
+    # Include test name in process title
+    test_name = item.nodeid.replace(" ", "")
+    setproctitle.setproctitle(f"pytest: {test_name}")
+
     # Match CUDA device with EGL device.
     # Note that this must be done here instead of 'pytest_cmdline_main', otherwise it will segfault when using
     # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
