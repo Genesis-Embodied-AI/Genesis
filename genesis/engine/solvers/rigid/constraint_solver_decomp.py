@@ -730,6 +730,7 @@ def add_equality_constraints(
     static_rigid_sim_config: ti.template(),
 ):
     _B = dofs_state.ctrl_mode.shape[1]
+
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         constraint_state.n_constraints[i_b] = 0
@@ -1956,11 +1957,11 @@ def func_update_gradient(
         )
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-        rigid_solver.func_solve_mass_batched(
+        rigid_solver.func_solve_mass_batch(
+            i_b,
             constraint_state.grad,
             constraint_state.Mgrad,
             array_class.PLACEHOLDER,
-            i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,

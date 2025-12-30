@@ -990,7 +990,16 @@ class ConstraintSolverIsland:
                 i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
                 i_e = self.contact_island.entity_id[i_e_, i_b]
                 self._solver.mass_mat_mask[i_e_, i_b] = True
-            self._solver._func_solve_mass_batched(self.grad, self.Mgrad, array_class.PLACEHOLDER, i_b)
+            self._solver.func_solve_mass_batch(
+                i_b,
+                self.grad,
+                self.Mgrad,
+                array_class.PLACEHOLDER,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
+            )
             for i_e in range(self._solver.n_entities):
                 self._solver.mass_mat_mask[i_e, i_b] = True
         if ti.static(self._solver_type == gs.constraint_solver.Newton):
