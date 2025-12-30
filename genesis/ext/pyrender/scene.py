@@ -466,8 +466,8 @@ class Scene(object):
 
         # Traverse from from_node to to_node
         pose = path[0].matrix
-        for node in path[1:-1]:
-            pose = np.dot(n.matrix, pose)
+        for parent_node in path[1:-1]:
+            pose = np.dot(parent_node.matrix, pose)
 
         return pose
 
