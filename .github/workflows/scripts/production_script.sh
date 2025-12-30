@@ -15,7 +15,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 which uv
 uv --version
 
-uv venv
+uv venv --python '3.10'
 source .venv/bin/activate
 uv pip install --no-input ".[dev,render]"
 
