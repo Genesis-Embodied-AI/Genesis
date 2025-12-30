@@ -928,7 +928,8 @@ def T_to_trans_quat(T, *, out=None):
 
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
-    assert u.shape == v.shape
+    if u.shape != v.shape:
+        raise ValueError("Shape mismatch")
     u_2d = np.atleast_2d(u)
     v_2d = np.atleast_2d(v)
 
@@ -943,7 +944,8 @@ def _np_quat_mul(u, v, out=None):
     if out is None:
         out_ = np.empty(u_2d.shape, dtype=qq.dtype)
     else:
-        assert out.shape == u.shape
+        if out.shape != u.shape:
+            raise ValueError("Shape mismatch")
         out_ = out
 
     out_[..., 0] = qq - ww + (z1 - y1) * (y2 - z2)
@@ -999,7 +1001,8 @@ def _np_transform_by_quat(v, quat, out=None):
     if out is None:
         out_ = np.empty(v.shape, dtype=v.dtype)
     else:
-        assert out.shape == v.shape
+        if out.shape != v.shape:
+            raise ValueError("Shape mismatch")
         out_ = out
 
     v_T, quat_T, out_T = v.T, quat.T, out_.T
@@ -1437,9 +1440,11 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
 @nb.jit(nopython=True, cache=True)
 def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     if isinstance(cos_theta, (float, np.float32, np.float64)):
-        assert axis.ndim == 1
+        if axis.ndim != 1:
+            raise ValueError("axis must be 1D when cos_theta is scalar")
     else:
-        assert axis.ndim - 1 == cos_theta.ndim
+        if axis.ndim - 1 != cos_theta.ndim:
+            raise ValueError("Dimension mismatch")
     if out is None:
         out_ = np.empty(axis.shape[:-1] + (3, 3), dtype=axis.dtype)
     else:
