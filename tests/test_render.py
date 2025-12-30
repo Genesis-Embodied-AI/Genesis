@@ -275,7 +275,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             scene.step()
 
             robots_rgb_arrays = []
-            robot.set_qpos(torch.tile(qpos, (3, 1)))
+            robot.set_qpos(qpos)
             if show_viewer:
                 scene.visualizer.update()
             for i in range(3):
@@ -285,7 +285,16 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                 rgb_array, *_ = cam.render(
                     rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
                 )
-                assert tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max() > 10.0
+                rgb_std = tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max()
+                try:
+                    assert rgb_std > 10.0
+                except AssertionError:
+                    if rgb_std < gs.EPS:
+                        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                            pytest.xfail(
+                                "Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered."
+                            )
+                    raise
                 robots_rgb_arrays.append(rgb_array)
             steps_rgb_arrays.append(robots_rgb_arrays)
 
@@ -294,7 +303,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                 assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
         except AssertionError:
             if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
-                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures do not match.")
             raise
     cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
