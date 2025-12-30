@@ -133,7 +133,7 @@ class Viewer(RBC):
 
         glinfo = self._pyrender_viewer.context.get_info()
         renderer = glinfo.get_renderer()
-        gs.logger.debug(f"Using interactive viewer OpenGL driver: {renderer}")
+        gs.logger.debug(f"Using interactive viewer OpenGL device: {renderer}")
 
     def run(self):
         if self._pyrender_viewer is None:
