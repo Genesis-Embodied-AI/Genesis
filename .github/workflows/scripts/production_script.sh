@@ -16,7 +16,8 @@ which uv
 uv --version
 
 if [[ -d .venv ]]; then
-    rm -Rf .venv
+    mv .venv _venv
+    rm -Rf _venv &
 fi
 
 export UV_CACHE_DIR=${PWD}/.uv_cache
