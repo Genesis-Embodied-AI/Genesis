@@ -562,9 +562,9 @@ def _np_quat_to_R(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3, 3), dtype=quat.dtype)
+        out_ = np.empty(quat.shape[:-1] + (3, 3), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3, 3)
+        assert out.shape == quat.shape[:-1] + (3, 3)
         out_ = out
 
     s = 2.0 / np.sum(np.square(quat), -1)
@@ -642,9 +642,9 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3), dtype=quat.dtype)
+        out_ = np.empty(quat.shape[:-1] + (3,), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3)
+        assert out.shape == quat.shape[:-1] + (3,)
         out_ = out
 
     # Flatten batch dimensions
@@ -753,9 +753,9 @@ def _np_R_to_quat(R, out=None):
     assert R.ndim >= 2
 
     if out is None:
-        out_ = np.empty((*R.shape[:-2], 4), dtype=R.dtype)
+        out_ = np.empty(R.shape[:-2] + (4,), dtype=R.dtype)
     else:
-        assert out.shape == (*R.shape[:-2], 4)
+        assert out.shape == R.shape[:-2] + (4,)
         out_ = out
 
     for i in np.ndindex(R.shape[:-2]):
@@ -1194,9 +1194,9 @@ def scale_to_T(scale):
 def _np_z_up_to_R(z, up=None, out=None):
     B = z.shape[:-1]
     if out is None:
-        out_ = np.empty((*B, 3, 3), dtype=z.dtype)
+        out_ = np.empty(B + (3, 3), dtype=z.dtype)
     else:
-        assert out.shape == (*B, 3, 3)
+        assert out.shape == B + (3, 3)
         out_ = out
 
     z_norm = np.sqrt(np.sum(np.square(z.reshape((-1, 3))), -1)).reshape(B)
@@ -1377,9 +1377,9 @@ def quat_to_rotvec(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarra
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3), dtype=quat.dtype)
+        out_ = np.empty(quat.shape[:-1] + (3,), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3)
+        assert out.shape == quat.shape[:-1] + (3,)
         out_ = out
 
     # Split real (qw,) and imaginary (qx, qy, qz) quaternion parts
@@ -1409,9 +1409,9 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
     assert rotvec.ndim >= 1
     B = rotvec.shape[:-1]
     if out is None:
-        out_ = np.empty((*B, 4), dtype=rotvec.dtype)
+        out_ = np.empty(B + (4,), dtype=rotvec.dtype)
     else:
-        assert out.shape == (*B, 4)
+        assert out.shape == B + (4,)
         out_ = out
 
     # Split unit axis and positive angle
@@ -1433,9 +1433,9 @@ def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.nda
     else:
         assert axis.ndim - 1 == cos_theta.ndim
     if out is None:
-        out_ = np.empty((*axis.shape[:-1], 3, 3), dtype=axis.dtype)
+        out_ = np.empty(axis.shape[:-1] + (3, 3), dtype=axis.dtype)
     else:
-        assert out.shape == (*axis.shape[:-1], 3, 3)
+        assert out.shape == axis.shape[:-1] + (3, 3)
         out_ = out
 
     axis_norm = np.sqrt(np.sum(np.square(axis.reshape((-1, 3))), -1).reshape((*axis.shape[:-1], 1)))
@@ -1495,7 +1495,7 @@ def z_to_R(v_a: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     v_a_norm = np.sqrt(np.sum(np.square(v_a.reshape((-1, 3))), -1).reshape((*B, 1)))
     v_a = v_a / v_a_norm
 
-    axis = np.empty((*B, 3), dtype=v_a.dtype)
+    axis = np.empty(B + (3,), dtype=v_a.dtype)
     cos_theta = np.empty(B, dtype=v_a.dtype)
     for i in np.ndindex(B):
         axis_i = axis[i]
@@ -1519,9 +1519,9 @@ def z_to_quat(v_a: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     This method is (surprisingly) slower than `z_up_to_R`, w/ and w/o chaining `transform_by_(quat|R)`.
     """
     if out is None:
-        out_ = np.empty((*v_a.shape[:-1], 4), dtype=v_a.dtype)
+        out_ = np.empty(v_a.shape[:-1] + (4,), dtype=v_a.dtype)
     else:
-        assert out.shape == (*v_a.shape[:-1], 4)
+        assert out.shape == v_a.shape[:-1] + (4,)
         out_ = out
 
     v_a_norm = np.sqrt(np.sum(np.square(v_a.reshape((-1, 3))), -1).reshape((*v_a.shape[:-1], 1)))
