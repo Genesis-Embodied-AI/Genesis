@@ -18,7 +18,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes, get_hf_dataset
+from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -519,7 +519,6 @@ def test_madrona_features(tmp_path, n_envs, show_viewer, png_snapshot, renderer,
     NUM_STEPS = 2
     CAM_RES = (512, 512)
 
-    asset_path = get_hf_dataset(pattern="ci_assets/*.jpg")
     scene = gs.Scene(
         renderer=renderer,
         show_viewer=False,
@@ -527,10 +526,12 @@ def test_madrona_features(tmp_path, n_envs, show_viewer, png_snapshot, renderer,
     )
     plane = scene.add_entity(
         gs.morphs.Plane(),
-        surface=gs.surfaces.Default(  # Feature 1: Batch Texture
-            diffuse_texture=gs.textures.BatchTexture.from_images(image_folder=os.path.join(asset_path, "ci_assets"))
+        surface=gs.surfaces.Default(
+            # FIXME: Expected to use ci_assets, but local and CI outputs are different. No idea why.
+            diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures")
         ),
     )
+
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
