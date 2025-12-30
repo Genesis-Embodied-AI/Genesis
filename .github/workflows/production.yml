@@ -130,7 +130,6 @@ jobs:
             --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
             --job-name=${SLURM_JOB_NAME} \
             bash .github/workflows/scripts/production_script.sh
-          EOF
       - name: Kill srun job systematically
         if: always()
         run: |
