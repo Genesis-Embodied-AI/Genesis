@@ -2946,6 +2946,7 @@ def kernel_init_dof_fields(
         dofs_info.kp[I_d] = dofs_kp[i_d]
         dofs_info.kv[I_d] = dofs_kv[i_d]
         dofs_info.target[I_d] = dofs_target[i_d]
+        dofs_info.entity_idx[I_d] = entity_idx[i_d]
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d, i_b in ti.ndrange(n_dofs, _B):
@@ -6440,7 +6441,7 @@ def func_torque_and_passive_force(
                                     # dofs_state.pos = qpos - qpos0
                                     # using dofs_state instead of qpos here allows
                                     # qpos to be pulled into qpos0 instead 0
-                                    (dofs_info.target[I_d] - dofs_state.pos[dof_start + j_d, i_b])
+                                    (dofs_info.target[I_d] * 0.0 - dofs_state.pos[dof_start + j_d, i_b])
                                     * dofs_info.stiffness[I_d],
                                     BW,
                                 )

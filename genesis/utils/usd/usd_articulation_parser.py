@@ -728,15 +728,10 @@ def _parse_joint_target(joint_prim: Usd.Prim, joint_type: str) -> np.ndarray | N
                     )
                     return gu.identity_quat()
             else:
-                # For revolute and prismatic joints, target is a scalar relative to lower limit
-                target_val = float(target)
-
                 # For revolute joints, target is typically in degrees in USD, convert to radians
                 if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    target_val = np.deg2rad(target_val)
-
-                absolute_target = target_val
-                return np.array([absolute_target], dtype=gs.np_float)
+                    target = np.deg2rad(target)
+                return np.array([target], dtype=gs.np_float)
 
     return None
 
