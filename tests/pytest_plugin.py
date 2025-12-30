@@ -4,6 +4,7 @@ This plugin ensures that custom pytest options are registered early enough
 to be available to pytest-xdist worker processes, which may restart before
 conftest.py is fully loaded.
 """
+
 import pytest
 
 
@@ -21,4 +22,3 @@ def pytest_addoption(parser):
     )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
-

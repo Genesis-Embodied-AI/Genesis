@@ -4,6 +4,7 @@ import subprocess
 import time
 import os
 import argparse
+import shutil
 
 
 def grep(contents: list[str], target):
@@ -43,7 +44,7 @@ def get_test_name_by_pid() -> dict[int, str]:
                 break
 
     assert ps_path is not None
-    print('ps_path', ps_path)
+    print("ps_path", ps_path)
     ps_ef = subprocess.check_output([ps_path, "-ef"]).decode("utf-8").split("\n")
     test_lines = grep(ps_ef, "pytest-xdist")
     tests = [line.partition("::")[2] for line in test_lines]
@@ -62,10 +63,12 @@ def main() -> None:
 
     # DEBUG: Check if ps exists
     import os as os_check
+
     print(f"DEBUG: /usr/bin/ps exists: {os_check.path.exists('/usr/bin/ps')}")
     print(f"DEBUG: PID: {os_check.getpid()}, PPID: {os_check.getppid()}")
     try:
         import subprocess as sp
+
         sp.check_output(["ls", "-la", "/usr/bin/ps"])
         print("DEBUG: ls succeeded")
     except Exception as e:
