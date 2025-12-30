@@ -170,10 +170,12 @@ class OffscreenRenderer(object):
             if self._platform.supports_framebuffers():
                 flags |= RenderFlags.OFFSCREEN
                 retval = renderer.render(scene, flags, seg_node_map)
+                assert retval is not None
             else:
                 if flags & RenderFlags.ENV_SEPARATE:
                     gs.raise_exception("'env_separate_rigid=True' not supported on this platform.")
-                renderer.render(scene, flags, seg_node_map)
+                result = renderer.render(scene, flags, seg_node_map)
+                assert result is not None
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
                 glReadBuffer(GL_FRONT)
                 if depth:
