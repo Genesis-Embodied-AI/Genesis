@@ -18,6 +18,7 @@ import cpuinfo
 import numpy as np
 import mujoco
 import torch
+from httpcore import TimeoutException as HTTPTimeoutException
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
@@ -237,7 +238,7 @@ def get_hf_dataset(
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError, RuntimeError):
+        except (HTTPTimeoutException, HTTPError, FileNotFoundError, RuntimeError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
