@@ -15,10 +15,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 which uv
 uv --version
 
-if [[ -d /tmp/venv ]]; then
+if [[ -d /tmp/venv ]]; then {
     mv /tmp/venv /tmp/_venv
     rm -Rf /tmp/_venv &
-fi
+} fi
 
 # export UV_CACHE_DIR=${PWD}/.uv_cache
 
