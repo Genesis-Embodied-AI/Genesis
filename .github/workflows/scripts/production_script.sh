@@ -16,7 +16,7 @@ which uv
 uv --version
 
 uv venv
-source .env/bin/activate
+source .venv/bin/activate
 uv pip install --no-input ".[dev,render]"
 
 pytest --print -x -m "benchmarks" ./tests
