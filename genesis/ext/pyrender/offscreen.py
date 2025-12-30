@@ -265,7 +265,8 @@ class OffscreenRenderer(object):
             from OpenGL.GL import glGetString, GL_RENDERER
 
             renderer = glGetString(GL_RENDERER).decode()
-            self._is_software = "llvmpipe" in renderer
+            gs.logger.debug(f"Using offscreen rendering OpenGL driver: {renderer}")
+            self._is_software = any(e in renderer for e in ("llvmpipe", "Apple Software Renderer"))
         except:
             pass
         if self._is_software:

@@ -63,7 +63,6 @@ def skip_if_not_installed(renderer_type):
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api(show_viewer, renderer_type, renderer):
     scene = gs.Scene(
         renderer=renderer,
@@ -99,17 +98,21 @@ def test_render_api(show_viewer, renderer_type, renderer):
     if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
         pytest.xfail(reason="'BATCHRENDER_RAYTRACER' is not working for some reason... it always returns empty data.")
 
-    assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
-    assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
-    assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
+    try:
+        assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
+        assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
+        assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
 
-    # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
-    msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
-    assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
+        # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
+        msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
+        assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
 
 @pytest.mark.required
-@pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
@@ -141,7 +144,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             cutoff=45.0,
             intensity=0.5,
         )
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
@@ -286,8 +289,13 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                 robots_rgb_arrays.append(rgb_array)
             steps_rgb_arrays.append(robots_rgb_arrays)
 
-        for i in range(3):
-            assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+        try:
+            for i in range(3):
+                assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+            raise
     cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
 
@@ -297,7 +305,6 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
 @pytest.mark.parametrize("n_envs", [0, 4])
-@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
     DIFF_TOL = 0.01
@@ -505,9 +512,14 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     cam_debug.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
     # Verify that the output is correct pixel-wise over multiple simulation steps
-    for image_file in sorted(tmp_path.rglob("*.png")):
-        with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot
+    try:
+        for image_file in sorted(tmp_path.rglob("*.png")):
+            with open(image_file, "rb") as f:
+                assert f.read() == png_snapshot
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
 
 @pytest.mark.parametrize(

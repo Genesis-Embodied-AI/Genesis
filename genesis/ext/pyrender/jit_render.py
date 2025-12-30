@@ -783,9 +783,9 @@ class JITRenderer:
             self.shadow_map,
             self.light_matrix,
             self.ambient_light,
-            V.astype(np.float32, copy=False),
-            P.astype(np.float32, copy=False),
-            cam_pos.astype(np.float32, copy=False),
+            np.ascontiguousarray(V, dtype=np.float32),
+            np.ascontiguousarray(P, dtype=np.float32),
+            np.ascontiguousarray(cam_pos, dtype=np.float32),
             flags,
             color_list if flags & RenderFlags.SEG else self.pbr_mat,
             reflection_mat,
@@ -806,8 +806,8 @@ class JITRenderer:
             self.mode,
             self.n_instances,
             self.n_indices,
-            V.astype(np.float32, copy=False),
-            P.astype(np.float32, copy=False),
+            np.ascontiguousarray(V, dtype=np.float32),
+            np.ascontiguousarray(P, dtype=np.float32),
             self.render_flags,
             env_idx,
             self.gl.wrapper_instance,
@@ -824,8 +824,8 @@ class JITRenderer:
             self.mode,
             self.n_instances,
             self.n_indices,
-            light_matrix.astype(np.float32, copy=False),
-            light_pos.astype(np.float32, copy=False),
+            np.ascontiguousarray(light_matrix, dtype=np.float32),
+            np.ascontiguousarray(light_pos, dtype=np.float32),
             self.render_flags,
             env_idx,
             self.gl.wrapper_instance,
@@ -852,7 +852,7 @@ class JITRenderer:
         updates = np.zeros((len(buffer_updates), 3), dtype=np.int64)
         buffers = []
         for idx, (id, data) in enumerate(buffer_updates.items()):
-            buffer = data.astype(np.float32, order="C", copy=False)
+            buffer = np.ascontiguousarray(data, dtype=np.float32)
             buffers.append(buffer)
 
             updates[idx, 0] = id
