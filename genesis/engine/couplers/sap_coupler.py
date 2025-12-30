@@ -606,6 +606,7 @@ class SAPCoupler(RBC):
                 verts_info=self.rigid_solver.verts_info,
                 free_verts_state=self.rigid_solver.free_verts_state,
                 fixed_verts_state=self.rigid_solver.fixed_verts_state,
+                static_rigid_sim_config=self.rigid_solver._static_rigid_sim_config,
             )
 
         if self._rigid_compliant:

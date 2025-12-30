@@ -63,7 +63,6 @@ def skip_if_not_installed(renderer_type):
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
-@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api(show_viewer, renderer_type, renderer):
     scene = gs.Scene(
         renderer=renderer,
@@ -99,17 +98,21 @@ def test_render_api(show_viewer, renderer_type, renderer):
     if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
         pytest.xfail(reason="'BATCHRENDER_RAYTRACER' is not working for some reason... it always returns empty data.")
 
-    assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
-    assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
-    assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
+    try:
+        assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
+        assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
+        assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
 
-    # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
-    msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
-    assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
+        # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
+        msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
+        assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
 
 @pytest.mark.required
-@pytest.mark.xfail(sys.platform == "darwin", reason="Flaky on MacOS with CPU-based OpenGL")
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
@@ -141,7 +144,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             cutoff=45.0,
             intensity=0.5,
         )
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
@@ -272,7 +275,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             scene.step()
 
             robots_rgb_arrays = []
-            robot.set_qpos(torch.tile(qpos, (3, 1)))
+            robot.set_qpos(qpos)
             if show_viewer:
                 scene.visualizer.update()
             for i in range(3):
@@ -282,12 +285,26 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                 rgb_array, *_ = cam.render(
                     rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
                 )
-                assert tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max() > 10.0
+                rgb_std = tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max()
+                try:
+                    assert rgb_std > 10.0
+                except AssertionError:
+                    if rgb_std < gs.EPS:
+                        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                            pytest.xfail(
+                                "Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered."
+                            )
+                    raise
                 robots_rgb_arrays.append(rgb_array)
             steps_rgb_arrays.append(robots_rgb_arrays)
 
-        for i in range(3):
-            assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+        try:
+            for i in range(3):
+                assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures do not match.")
+            raise
     cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
 
@@ -297,7 +314,6 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
 @pytest.mark.parametrize("n_envs", [0, 4])
-@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
     DIFF_TOL = 0.01
@@ -505,15 +521,19 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     cam_debug.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
     # Verify that the output is correct pixel-wise over multiple simulation steps
-    for image_file in sorted(tmp_path.rglob("*.png")):
-        with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
+    try:
+        for image_file in sorted(tmp_path.rglob("*.png")):
+            with open(image_file, "rb") as f:
+                assert f.read() == png_snapshot
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [2, 3])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
-@pytest.mark.xfail(sys.platform == "darwin", raises=AssertionError, reason="Flaky on MacOS with CPU-based OpenGL")
 def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
     NUM_STEPS = 2
     CAM_RES = (512, 512)
@@ -571,9 +591,14 @@ def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
         assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all,))
         exporter.export_frame_all_cameras(i, rgb=rgba_all)
 
-    for image_file in sorted(tmp_path.rglob("*.png")):
-        with open(image_file, "rb") as f:
-            assert png_snapshot == f.read(), f"Image file {image_file} does not match snapshot"
+    try:
+        for image_file in sorted(tmp_path.rglob("*.png")):
+            with open(image_file, "rb") as f:
+                assert f.read() == png_snapshot
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
 
 @pytest.mark.parametrize(
@@ -1378,3 +1403,74 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
     )
 
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not available")
+@pytest.mark.parametrize("add_box", [False, True])
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, show_viewer):
+    CAM_RES = (128, 128)
+    CAM_POS = (0.0, -2.0, 1.5)
+    CAM_LOOKAT = (0.0, 0.0, 0.0)
+    CAM_FOV = 60.0
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            ambient_light=(0.1, 0.1, 0.1),
+            lights=[
+                dict(
+                    type="directional",
+                    dir=(-1, -1, -1),
+                    color=(1.0, 1.0, 1.0),
+                    intensity=5.0,
+                ),
+            ],
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            res=CAM_RES,
+            camera_pos=CAM_POS,
+            camera_lookat=CAM_LOOKAT,
+            camera_fov=CAM_FOV,
+        ),
+        renderer=renderer_type,
+        show_viewer=True,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    if add_box:
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                pos=(0.1, 0.1, 0.1),
+                size=(0.1, 0.1, 0.1),
+                fixed=True,
+            ),
+        )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=CAM_POS,
+        lookat=CAM_LOOKAT,
+        fov=CAM_FOV,
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    # Render from interactive viewer
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    viewer_rgb, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
+
+    # Render from add_camera
+    add_cam_rgb, *_ = camera.render(rgb=True)
+    add_cam_rgb = tensor_to_array(add_cam_rgb)
+
+    # Compare brightness (mean pixel value)
+    viewer_brightness = viewer_rgb.mean()
+    add_cam_brightness = add_cam_rgb.mean()
+
+    brightness_ratio = add_cam_brightness / viewer_brightness
+    assert 0.99 <= brightness_ratio <= 1.01, (
+        f"add_camera brightness ({add_cam_brightness:.2f}) should match "
+        f"interactive viewer brightness ({viewer_brightness:.2f}), "
+        f"but ratio is {brightness_ratio:.2f}"
+    )

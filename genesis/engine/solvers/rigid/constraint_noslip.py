@@ -32,11 +32,11 @@ def kernel_build_efc_AR_b(
             for i_d in range(n_dofs):
                 constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
 
-            rigid_solver.func_solve_mass_batched(
+            rigid_solver.func_solve_mass_batch(
+                i_b,
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
                 array_class.PLACEHOLDER,
-                i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
@@ -190,11 +190,11 @@ def kernel_dual_finish(
                     + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
                 )
 
-        rigid_solver.func_solve_mass_batched(
+        rigid_solver.func_solve_mass_batch(
+            i_b=i_b,
             vec=constraint_state.qfrc_constraint,
             out=constraint_state.qacc,
             out_bw=array_class.PLACEHOLDER,
-            i_b=i_b,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -284,11 +284,11 @@ def compute_A_diag(
             for i_d in range(n_dofs):
                 constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b]
 
-            rigid_solver.func_solve_mass_batched(
+            rigid_solver.func_solve_mass_batch(
+                i_b,
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
                 array_class.PLACEHOLDER,
-                i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,

@@ -18,6 +18,7 @@ import cpuinfo
 import numpy as np
 import mujoco
 import torch
+from httpcore import TimeoutException as HTTPTimeoutException
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
@@ -34,7 +35,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "701f78c1465f0a98f6540bae6c9daacaa551b7bf"
-HUGGINGFACE_SNAPSHOT_REVISION = "025c6671c4774630ff6a9b85b025483eaf543a29"
+HUGGINGFACE_SNAPSHOT_REVISION = "21256545438393ca212e3a0c89575a2c273ed5f7"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -237,7 +238,7 @@ def get_hf_dataset(
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError, RuntimeError):
+        except (HTTPTimeoutException, HTTPError, FileNotFoundError, RuntimeError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")

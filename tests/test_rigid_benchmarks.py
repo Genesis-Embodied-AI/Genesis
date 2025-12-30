@@ -436,7 +436,7 @@ def anymal_c(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
+def _franka(solver, n_envs, gjk, is_collision_free, accessors):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -516,18 +516,18 @@ def _batched_franka(solver, n_envs, gjk, is_collision_free, accessors):
 
 
 @pytest.fixture
-def batched_franka(solver, n_envs, gjk):
-    return _batched_franka(solver, n_envs, gjk, is_collision_free=False, accessors=False)
+def franka(solver, n_envs, gjk):
+    return _franka(solver, n_envs, gjk, is_collision_free=False, accessors=False)
 
 
 @pytest.fixture
-def batched_franka_free(solver, n_envs, gjk):
-    return _batched_franka(solver, n_envs, gjk, is_collision_free=True, accessors=False)
+def franka_free(solver, n_envs, gjk):
+    return _franka(solver, n_envs, gjk, is_collision_free=True, accessors=False)
 
 
 @pytest.fixture
-def batched_franka_accessors(solver, n_envs, gjk):
-    return _batched_franka(solver, n_envs, gjk, is_collision_free=True, accessors=True)
+def franka_accessors(solver, n_envs, gjk):
+    return _franka(solver, n_envs, gjk, is_collision_free=True, accessors=True)
 
 
 def _duck_in_box(solver, n_envs, gjk, hard):
@@ -717,6 +717,11 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes):
 
 
 @pytest.fixture
+def box_pyramid_3(solver, n_envs, gjk):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=3)
+
+
+@pytest.fixture
 def box_pyramid_4(solver, n_envs, gjk):
     return _box_pyramid(solver, n_envs, gjk, n_cubes=4)
 
@@ -726,6 +731,11 @@ def box_pyramid_5(solver, n_envs, gjk):
     return _box_pyramid(solver, n_envs, gjk, n_cubes=5)
 
 
+@pytest.fixture
+def box_pyramid_6(solver, n_envs, gjk):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=6)
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -733,27 +743,26 @@ def box_pyramid_5(solver, n_envs, gjk):
         ("duck_in_box_easy", None, False, 30000, gs.gpu),
         ("duck_in_box_hard", None, True, 30000, gs.gpu),
         ("duck_in_box_hard", None, False, 30000, gs.gpu),
-        ("duck_in_box_hard", None, None, 0, gs.gpu),
         ("duck_in_box_hard", None, None, 0, gs.cpu),
         ("anymal_c", None, None, 30000, gs.gpu),
-        ("anymal_c", None, None, 0, gs.gpu),
         ("anymal_c", None, None, 0, gs.cpu),
         ("go2", None, True, 4096, gs.gpu),
         ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
         ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
-        ("batched_franka_accessors", None, None, 0, gs.cpu),
-        ("batched_franka_accessors", None, None, 30000, gs.gpu),
-        ("batched_franka_free", None, False, 30000, gs.gpu),
-        ("batched_franka_free", None, True, 30000, gs.gpu),
-        ("batched_franka", None, True, 30000, gs.gpu),
-        ("batched_franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
-        ("batched_franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
-        ("batched_franka", None, None, 0, gs.gpu),
-        ("batched_franka", None, None, 0, gs.cpu),
+        ("franka_accessors", None, None, 0, gs.cpu),
+        ("franka_accessors", None, None, 30000, gs.gpu),
+        ("franka_free", None, None, 30000, gs.gpu),
+        ("franka", None, False, 30000, gs.gpu),
+        ("franka", None, True, 30000, gs.gpu),
+        ("franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
+        ("franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
+        ("franka", None, None, 0, gs.cpu),
         ("random", None, None, 30000, gs.gpu),
-        ("box_pyramid_5", None, True, 4096, gs.gpu),
-        ("box_pyramid_5", None, False, 4096, gs.gpu),
+        ("box_pyramid_3", None, None, 4096, gs.gpu),
         ("box_pyramid_4", None, None, 4096, gs.gpu),
+        ("box_pyramid_5", None, None, 4096, gs.gpu),
+        ("box_pyramid_6", None, True, 4096, gs.gpu),
+        ("box_pyramid_6", None, False, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):

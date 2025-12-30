@@ -23,7 +23,7 @@ def format_color_vector(value, length):
     else:
         raise ValueError("Invalid vector data type")
 
-    return value.squeeze().astype(np.float32, order="C", copy=False)
+    return np.ascontiguousarray(value.squeeze(), dtype=np.float32)
 
 
 def format_color_array(value, shape):
@@ -41,7 +41,7 @@ def format_color_array(value, shape):
         value = np.column_stack((value, np.ones((value.shape[0], nc))))
     elif value.shape[1] > shape[1]:
         value = value[:, : shape[1]]
-    return value.astype(np.float32, order="C", copy=False)
+    return np.ascontiguousarray(value, dtype=np.float32)
 
 
 def format_texture_source(texture, target_channels="RGB"):
