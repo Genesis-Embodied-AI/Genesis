@@ -13,7 +13,7 @@ import genesis.utils.mesh as mesh_utils
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 try:
-    import genesis.utils.usda as usda_utils
+    import genesis.utils.usd.usda as usda_utils
 
     HAS_USD_SUPPORT = True
 except ImportError:
