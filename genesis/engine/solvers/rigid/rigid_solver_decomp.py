@@ -275,7 +275,8 @@ class RigidSolver(Solver):
             # be selected based on dynamic timer-based profiling instead of hard-coded heuristic.
             max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
             if gs.backend != gs.cpu:
-                max_n_warps = int(math.sqrt(48.0 * 1024 / (4 if gs.ti_float == ti.f32 else 8))) // 32
+                max_shared_mem = 32.0 if gs.backend == gs.metal else 48.0
+                max_n_warps = int(math.sqrt(max_shared_mem * 1024 / (4 if gs.ti_float == ti.f32 else 8))) // 32
                 max_n_threads = max_n_warps * 32
 
                 enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
