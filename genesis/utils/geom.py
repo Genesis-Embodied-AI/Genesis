@@ -500,9 +500,9 @@ def _np_xyz_to_quat(xyz: np.ndarray, rpy: bool = False, out: np.ndarray | None =
     """
     assert xyz.ndim >= 1
     if out is None:
-        out_ = np.empty((*xyz.shape[:-1], 4), dtype=xyz.dtype)
+        out_ = np.empty(xyz.shape[:-1] + (4,), dtype=xyz.dtype)
     else:
-        assert out.shape == (*xyz.shape[:-1], 4)
+        assert out.shape == xyz.shape[:-1] + (4,)
         out_ = out
 
     rpy2 = 0.5 * xyz
@@ -1341,9 +1341,9 @@ def _np_euler_to_R(rpy: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     """
     assert rpy.ndim >= 1
     if out is None:
-        out_ = np.empty((*rpy.shape[1:], 3, 3), dtype=rpy.dtype)
+        out_ = np.empty(rpy.shape[1:] + (3, 3), dtype=rpy.dtype)
     else:
-        assert out.shape == (*rpy.shape[1:], 3, 3)
+        assert out.shape == rpy.shape[1:] + (3, 3)
         out_ = out
 
     cos_rpy, sin_rpy = np.cos(rpy), np.sin(rpy)
