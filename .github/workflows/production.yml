@@ -107,7 +107,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
+          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
+          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
       - name: Allocate SLURM slot (single allocation for all steps)
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
@@ -164,3 +165,11 @@ jobs:
           if [ -n "${SLURM_ALLOC_PID}" ]; then
             kill "${SLURM_ALLOC_PID}" || true
           fi
+      - name: Display benchmark stats
+        run: |
+          cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+      - name: Upload benchmark stats as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
+          path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
