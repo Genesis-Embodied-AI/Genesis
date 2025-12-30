@@ -2918,43 +2918,52 @@ def test_get_constraints_api(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_constraint_solver_tiling(tol):
-    from genesis.engine.solvers.rigid.constraint_solver_decomp import func_init_solver
+def test_cholesky_tiling(monkeypatch, tol):
+    import genesis.engine.solvers
 
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            constraint_solver=gs.constraint_solver.Newton,
-            sparse_solve=False,
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-    scene.add_entity(gs.morphs.Plane())
-    gs_robot = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/go2/urdf/go2.urdf",
-        ),
-    )
-    scene.build(n_envs=2)
-    scene.step()
+    rigid_solver_build_orig = genesis.engine.solvers.RigidSolver.build
 
-    assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
+    values = []
+    for enable_tiled_cholesky in (True, False):
 
-    kwargs = dict(
-        dofs_info=scene.rigid_solver.dofs_info,
-        dofs_state=scene.rigid_solver.dofs_state,
-        entities_info=scene.rigid_solver.entities_info,
-        constraint_state=scene.rigid_solver.constraint_solver.constraint_state,
-        rigid_global_info=scene.rigid_solver._rigid_global_info,
-        static_rigid_sim_config=scene.rigid_solver._static_rigid_sim_config,
-    )
-    func_init_solver(**kwargs, enable_tiled_cholesky=False)
-    nt_H_ref = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
-    assert (np.linalg.norm(nt_H_ref.reshape((-1, 2)), axis=0) > 5.0).all()
+        def rigid_solver_build(self):
+            nonlocal enable_tiled_cholesky
 
-    func_init_solver(**kwargs, enable_tiled_cholesky=True)
-    nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
-    assert_allclose(nt_H_ref, nt_H, tol=tol)
+            rigid_solver_build_orig(self)
+            self._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
+            self._static_rigid_sim_config.enable_tiled_cholesky_hessian = enable_tiled_cholesky
+            if enable_tiled_cholesky:
+                self._static_rigid_sim_config.tiled_n_dofs_per_entity = 32
+                self._static_rigid_sim_config.tiled_n_dofs = 32
+
+        monkeypatch.setattr("genesis.engine.solvers.RigidSolver.build", rigid_solver_build)
+
+        scene = gs.Scene(
+            rigid_options=gs.options.RigidOptions(
+                constraint_solver=gs.constraint_solver.Newton,
+                sparse_solve=False,
+            ),
+            show_viewer=False,
+            show_FPS=False,
+        )
+        scene.add_entity(gs.morphs.Plane())
+        gs_robot = scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/go2/urdf/go2.urdf",
+            ),
+        )
+        scene.build(n_envs=2)
+        assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix == enable_tiled_cholesky
+        assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
+
+        scene.step()
+        assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
+
+        nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
+        assert (np.linalg.norm(nt_H.reshape((-1, 2)), axis=0) > 5.0).all()
+        values.append(nt_H)
+
+    assert_allclose(*values, tol=tol)
 
 
 @pytest.mark.slow  # ~100s
@@ -3692,7 +3701,12 @@ def test_joint_get_anchor_pos_and_axis(n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("is_fixed", [False, True])
 @pytest.mark.parametrize("merge_fixed_links", [False, True])
-def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol):
+def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypatch):
+    # Force parallelism on CPU to trigger any cross-entity race condition
+    if gs.backend == gs.cpu:
+        monkeypatch.setenv("GS_PARA_LEVEL", "2")
+        monkeypatch.setenv("TI_NUM_THREADS", "3")
+
     EULER_OFFSET = (0, 0, 45)
 
     scene = gs.Scene(
@@ -3726,14 +3740,24 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol):
         ),
         vis_mode="collision",
     )
+    tool = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.005,
+        ),
+    )
     box = scene.add_entity(
         gs.morphs.Box(
             size=(0.02, 0.02, 0.02),
             pos=(0.3, 0.0, 0.01),
         ),
     )
+    with pytest.raises(gs.GenesisException):
+        franka.attach(hand, "right_finger")
     hand.attach(franka, "attachment")
+    tool.attach(hand, "right_finger")
     scene.build()
+    with pytest.raises(gs.GenesisException):
+        box.attach(hand, "right_finger")
 
     franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
     hand.control_dofs_position([0.04, 0.04])
@@ -3748,3 +3772,5 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol):
         assert torch.linalg.norm(link.get_pos() - attach_link.get_pos(), dim=-1) < 0.08
     if not merge_fixed_links:
         assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
+
+    assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)

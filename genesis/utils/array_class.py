@@ -1805,6 +1805,8 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
+    enable_tiled_cholesky_mass_matrix: bool = False
+    enable_tiled_cholesky_hessian: bool = False
     use_hibernation: bool = False
     batch_links_info: bool = False
     batch_dofs_info: bool = False
@@ -1817,6 +1819,8 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int = gs.integrator.approximate_implicitfast
     solver_type: int = gs.constraint_solver.CG
     requires_grad: bool = False
+    tiled_n_dofs_per_entity: int = -1
+    tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1
@@ -1824,6 +1828,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     max_n_dofs_per_entity: int = -1
     max_n_dofs_per_link: int = -1
     max_n_geoms_per_entity: int = -1
+    n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
 

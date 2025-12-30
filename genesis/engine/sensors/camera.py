@@ -498,7 +498,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
-        self._shared_metadata.context.update(force_render=False)
+        self._shared_metadata.context.update(force_render=True)
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._get_camera_wrapper(), rgb=True, depth=False, segmentation=False, normal=False
@@ -667,7 +667,7 @@ class RaytracerCameraSensor(BaseCameraSensor):
             colorize_seg=False,
             normal=False,
             antialiasing=False,
-            force_render=False,
+            force_render=True,
         )
 
         rgb_tensor = torch.from_numpy(rgb_arr.copy()).to(dtype=torch.uint8, device=gs.device)
@@ -771,10 +771,10 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             if sensor._link is not None:
                 sensor.move_to_attach()
 
-        self._shared_metadata.renderer.update_scene(force_render=False)
+        self._shared_metadata.renderer.update_scene(force_render=True)
 
         rgb_arr, *_ = self._shared_metadata.renderer.render(
-            rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=False
+            rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=True
         )
 
         # rgb_arr might be a tuple of arrays (one per camera) or a single array

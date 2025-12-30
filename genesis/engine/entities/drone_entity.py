@@ -78,7 +78,6 @@ class DroneEntity(RigidEntity):
         self._propellers_revs = (self._propellers_revs + propellels_rpm.T) % (60 / self.solver.dt)
 
         self.solver.set_drone_rpm(
-            self._n_propellers,
             self._propellers_link_idx,
             propellels_rpm,
             self._propellers_spin,
@@ -95,7 +94,7 @@ class DroneEntity(RigidEntity):
         """
         if self._animate_propellers:
             self.solver.update_drone_propeller_vgeoms(
-                self._n_propellers, self._propellers_vgeom_idxs, self._propellers_revs, self._propellers_spin
+                self._propellers_vgeom_idxs, self._propellers_revs, self._propellers_spin
             )
 
     @property
