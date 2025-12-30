@@ -150,3 +150,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# uv cache
+.uv_cache/
