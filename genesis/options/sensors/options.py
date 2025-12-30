@@ -76,11 +76,12 @@ class RigidSensorOptionsMixin:
         super().validate(scene)
         if self.entity_idx is not None and self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
-        entity = scene.entities[self.entity_idx]
-        if not isinstance(entity, RigidEntity):
-            gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
-        if self.link_idx_local < 0 or self.link_idx_local >= entity.n_links:
-            gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
+        if self.entity_idx is not None:
+            entity = scene.entities[self.entity_idx]
+            if not isinstance(entity, RigidEntity):
+                gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
+            if self.link_idx_local < 0 or self.link_idx_local >= entity.n_links:
+                gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
 
 
 class NoisySensorOptionsMixin:

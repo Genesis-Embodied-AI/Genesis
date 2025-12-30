@@ -1324,3 +1324,74 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
     )
 
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not available")
+@pytest.mark.parametrize("add_box", [False, True])
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, show_viewer):
+    CAM_RES = (128, 128)
+    CAM_POS = (0.0, -2.0, 1.5)
+    CAM_LOOKAT = (0.0, 0.0, 0.0)
+    CAM_FOV = 60.0
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            ambient_light=(0.1, 0.1, 0.1),
+            lights=[
+                dict(
+                    type="directional",
+                    dir=(-1, -1, -1),
+                    color=(1.0, 1.0, 1.0),
+                    intensity=5.0,
+                ),
+            ],
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            res=CAM_RES,
+            camera_pos=CAM_POS,
+            camera_lookat=CAM_LOOKAT,
+            camera_fov=CAM_FOV,
+        ),
+        renderer=renderer_type,
+        show_viewer=True,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    if add_box:
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                pos=(0.1, 0.1, 0.1),
+                size=(0.1, 0.1, 0.1),
+                fixed=True,
+            ),
+        )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=CAM_POS,
+        lookat=CAM_LOOKAT,
+        fov=CAM_FOV,
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    # Render from interactive viewer
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    viewer_rgb, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
+
+    # Render from add_camera
+    add_cam_rgb, *_ = camera.render(rgb=True)
+    add_cam_rgb = tensor_to_array(add_cam_rgb)
+
+    # Compare brightness (mean pixel value)
+    viewer_brightness = viewer_rgb.mean()
+    add_cam_brightness = add_cam_rgb.mean()
+
+    brightness_ratio = add_cam_brightness / viewer_brightness
+    assert 0.99 <= brightness_ratio <= 1.01, (
+        f"add_camera brightness ({add_cam_brightness:.2f}) should match "
+        f"interactive viewer brightness ({viewer_brightness:.2f}), "
+        f"but ratio is {brightness_ratio:.2f}"
+    )
