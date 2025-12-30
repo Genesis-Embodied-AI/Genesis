@@ -199,8 +199,9 @@ def run_sim(scene, entities, clients):
         # control arm
         target_quat = target_R.as_quat(scalar_first=True)
         target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
-        q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
+        q, _err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
         robot.control_dofs_position(q[:-2], motors_dof)
+
         # control gripper
         if is_close_gripper:
             robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
