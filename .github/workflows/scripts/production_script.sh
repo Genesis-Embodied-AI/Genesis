@@ -15,6 +15,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 which uv
 uv --version
 
+if [[ -d .venv ]]; then
+    rm -Rf .venv
+fi
+
+export UV_CACHE_DIR=${PWD}/.uv_cache
+
 uv venv --python '3.10' --allow-existing
 source .venv/bin/activate
 uv pip install ".[dev,render]"

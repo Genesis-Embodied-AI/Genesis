@@ -122,9 +122,9 @@ jobs:
           srun \
             --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
             --container-mounts=\
-          "${HOME}/.cache":/root/.cache,\
           /mnt/data/artifacts:/mnt/data/artifacts,\
-          "${{ github.workspace }}":/root/workspace \
+          "${{ github.workspace }}":/root/workspace, \
+          "${HOME}/.cache/uv":/root/workspace/.uv_cache, \
             --no-container-mount-home --container-workdir=/root/workspace \
             --export=${SLURM_ENV_VARS} \
             --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
