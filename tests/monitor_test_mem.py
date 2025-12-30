@@ -4,7 +4,7 @@ import subprocess
 import time
 import os
 import argparse
-import shutil
+import psutil
 
 
 def grep(contents: list[str], target):
@@ -35,21 +35,24 @@ def get_cuda_usage() -> dict[int, int]:
 
 
 def get_test_name_by_pid() -> dict[int, str]:
-    ps_path = shutil.which("ps")
-    if ps_path is None:
-        # Try common fallback locations
-        for path in ["/usr/bin/ps", "/bin/ps"]:
-            if os.path.exists(path):
-                ps_path = path
-                break
-
-    assert ps_path is not None
-    print("ps_path", ps_path)
-    ps_ef = subprocess.check_output([ps_path, "-ef"]).decode("utf-8").split("\n")
-    test_lines = grep(ps_ef, "pytest-xdist")
-    tests = [line.partition("::")[2] for line in test_lines]
-    psids = [int(line.split()[1]) for line in test_lines]
-    test_by_psid = {psid: test for test, psid in zip(tests, psids) if test.strip() != ""}
+    test_by_psid = {}
+    for proc in psutil.process_iter(['pid', 'cmdline']):
+        try:
+            cmdline = proc.info['cmdline']
+            if cmdline is None:
+                continue
+            # Join cmdline to get full command string
+            cmd_str = ' '.join(cmdline)
+            if 'pytest-xdist' in cmd_str:
+                # Find the test name after "::"
+                if '::' in cmd_str:
+                    test_name = cmd_str.partition('::')[2]
+                    if test_name.strip() != "":
+                        test_by_psid[proc.info['pid']] = test_name
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            # Process may have terminated or we don't have permission
+            pass
+    print("test_by_psid", test_by_psid)
     return test_by_psid
 
 
