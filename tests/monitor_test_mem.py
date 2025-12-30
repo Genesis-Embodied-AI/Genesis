@@ -43,7 +43,7 @@ def get_test_name_by_pid() -> dict[int, str]:
                 continue
             # Join cmdline to get full command string
             cmd_str = ' '.join(cmdline)
-            if 'pytest-xdist' in cmd_str:
+            if 'pytest: tests' in cmd_str:
                 # Find the test name after "::"
                 if '::' in cmd_str:
                     test_name = cmd_str.partition('::')[2]
