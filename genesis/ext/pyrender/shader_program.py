@@ -211,15 +211,15 @@ class ShaderProgram(object):
             # self._unif_map[name] = value.size, value.shape
             if value.ndim == 1:
                 if np.issubdtype(value.dtype, np.unsignedinteger) or unsigned:
-                    value = value.astype(np.uint32, copy=False)
+                    value = np.ascontiguousarray(value, np.uint32)
                 elif np.issubdtype(value.dtype, np.integer):
-                    value = value.astype(np.int32, copy=False)
+                    value = np.ascontiguousarray(value, dtype=np.int32)
                 else:
-                    value = value.astype(np.float32, copy=False)
+                    value = np.ascontiguousarray(value, dtype=np.float32)
                 func = self._FUNC_MAP[(len(value), value.dtype.kind)]
                 func(loc, 1, value)
             else:
-                value = value.astype(np.float32, copy=False)
+                value = np.ascontiguousarray(value, dtype=np.float32)
                 func = self._FUNC_MAP[tuple(value.shape[:2])]
                 func(loc, 1, GL_TRUE, value)
 

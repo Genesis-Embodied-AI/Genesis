@@ -131,6 +131,10 @@ class Viewer(RBC):
 
         gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
 
+        glinfo = self._pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        gs.logger.debug(f"Using interactive viewer OpenGL driver: {renderer}")
+
     def run(self):
         if self._pyrender_viewer is None:
             gs.raise_exception("Viewer must be built successfully before calling this method.")

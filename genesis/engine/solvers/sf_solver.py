@@ -96,15 +96,15 @@ class SFSolver(Solver):
 
     @ti.kernel
     def pressure_jacobi(self, pf: ti.template(), new_pf: ti.template()):
-        for I in ti.grouped(ti.ndrange(*self.res)):
-            pl = pf[self.compute_location(*I, -1, 0, 0)]
-            pr = pf[self.compute_location(*I, 1, 0, 0)]
-            pb = pf[self.compute_location(*I, 0, -1, 0)]
-            pt = pf[self.compute_location(*I, 0, 1, 0)]
-            pp = pf[self.compute_location(*I, 0, 0, -1)]
-            pq = pf[self.compute_location(*I, 0, 0, 1)]
+        for u, v, w in ti.ndrange(*self.res):
+            pl = pf[self.compute_location(u, v, w, -1, 0, 0)]
+            pr = pf[self.compute_location(u, v, w, 1, 0, 0)]
+            pb = pf[self.compute_location(u, v, w, 0, -1, 0)]
+            pt = pf[self.compute_location(u, v, w, 0, 1, 0)]
+            pp = pf[self.compute_location(u, v, w, 0, 0, -1)]
+            pq = pf[self.compute_location(u, v, w, 0, 0, 1)]
 
-            new_pf[I] = (pl + pr + pb + pt + pp + pq - self.grid[I].div) / 6.0
+            new_pf[u, v, w] = (pl + pr + pb + pt + pp + pq - self.grid[u, v, w].div) / 6.0
 
     @ti.kernel
     def advect_and_impulse(self, f: ti.i32, t: ti.f32):
@@ -131,29 +131,29 @@ class SFSolver(Solver):
 
     @ti.kernel
     def divergence(self):
-        for I in ti.grouped(ti.ndrange(*self.res)):
-            vl = self.grid.v_tmp[self.compute_location(*I, -1, 0, 0)]
-            vr = self.grid.v_tmp[self.compute_location(*I, 1, 0, 0)]
-            vb = self.grid.v_tmp[self.compute_location(*I, 0, -1, 0)]
-            vt = self.grid.v_tmp[self.compute_location(*I, 0, 1, 0)]
-            vp = self.grid.v_tmp[self.compute_location(*I, 0, 0, -1)]
-            vq = self.grid.v_tmp[self.compute_location(*I, 0, 0, 1)]
-            vc = self.grid.v_tmp[self.compute_location(*I, 0, 0, 0)]
+        for u, v, w in ti.ndrange(*self.res):
+            vl = self.grid.v_tmp[self.compute_location(u, v, w, -1, 0, 0)]
+            vr = self.grid.v_tmp[self.compute_location(u, v, w, 1, 0, 0)]
+            vb = self.grid.v_tmp[self.compute_location(u, v, w, 0, -1, 0)]
+            vt = self.grid.v_tmp[self.compute_location(u, v, w, 0, 1, 0)]
+            vp = self.grid.v_tmp[self.compute_location(u, v, w, 0, 0, -1)]
+            vq = self.grid.v_tmp[self.compute_location(u, v, w, 0, 0, 1)]
+            vc = self.grid.v_tmp[self.compute_location(u, v, w, 0, 0, 0)]
 
-            if not self.is_free(*I, -1, 0, 0):
+            if not self.is_free(u, v, w, -1, 0, 0):
                 vl.x = -vc.x
-            if not self.is_free(*I, 1, 0, 0):
+            if not self.is_free(u, v, w, 1, 0, 0):
                 vr.x = -vc.x
-            if not self.is_free(*I, 0, -1, 0):
+            if not self.is_free(u, v, w, 0, -1, 0):
                 vb.y = -vc.y
-            if not self.is_free(*I, 0, 1, 0):
+            if not self.is_free(u, v, w, 0, 1, 0):
                 vt.y = -vc.y
-            if not self.is_free(*I, 0, 0, -1):
+            if not self.is_free(u, v, w, 0, 0, -1):
                 vp.z = -vc.z
-            if not self.is_free(*I, 0, 0, 1):
+            if not self.is_free(u, v, w, 0, 0, 1):
                 vq.z = -vc.z
 
-            self.grid.div[I] = 0.5 * (vr.x - vl.x + vt.y - vb.y + vq.z - vp.z)
+            self.grid.div[u, v, w] = 0.5 * (vr.x - vl.x + vt.y - vb.y + vq.z - vp.z)
 
     @ti.kernel
     def pressure_to_swap(self):
@@ -168,12 +168,13 @@ class SFSolver(Solver):
     @ti.kernel
     def subtract_gradient(self):
         for I in ti.grouped(ti.ndrange(*self.res)):
-            pl = self.grid.p[self.compute_location(*I, -1, 0, 0)]
-            pr = self.grid.p[self.compute_location(*I, 1, 0, 0)]
-            pb = self.grid.p[self.compute_location(*I, 0, -1, 0)]
-            pt = self.grid.p[self.compute_location(*I, 0, 1, 0)]
-            pp = self.grid.p[self.compute_location(*I, 0, 0, -1)]
-            pq = self.grid.p[self.compute_location(*I, 0, 0, 1)]
+            u, v, w = I
+            pl = self.grid.p[self.compute_location(u, v, w, -1, 0, 0)]
+            pr = self.grid.p[self.compute_location(u, v, w, 1, 0, 0)]
+            pb = self.grid.p[self.compute_location(u, v, w, 0, -1, 0)]
+            pt = self.grid.p[self.compute_location(u, v, w, 0, 1, 0)]
+            pp = self.grid.p[self.compute_location(u, v, w, 0, 0, -1)]
+            pq = self.grid.p[self.compute_location(u, v, w, 0, 0, 1)]
 
             self.grid.v[I] = self.grid.v_tmp[I] - 0.5 * ti.Vector([pr - pl, pt - pb, pq - pp], dt=gs.ti_float)
 

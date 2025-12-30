@@ -69,6 +69,22 @@ class RigidJoint(RBC):
         self._dofs_kv = dofs_kv
         self._dofs_force_range = dofs_force_range
 
+    def __getattr__(self, name):
+        # Must be implemented to throw deprecation warnings when accessing old properties, ignoring introspection
+        for name_old, name_new in (
+            ("dof_idx", "dofs_idx"),
+            ("dof_idx_local", "dofs_idx_local"),
+            ("q_idx", "qs_idx"),
+            ("q_idx_local", "qs_idx_local"),
+        ):
+            if name == name_old:
+                gs.logger.warning(
+                    f"This property is deprecated and will be removed in future release. Please use '{name_new}' instead."
+                )
+                getter = getattr(self, f"_{name_old}")
+                return getter()
+        raise AttributeError
+
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -261,17 +277,13 @@ class RigidJoint(RBC):
         """
         return self._n_dofs + self.dof_start
 
-    @property
-    def dof_idx(self):
+    def _dof_idx(self):
         """
         Returns all the Degrees' of Freedom (DoF) indices of the joint in the rigid solver.
 
         This property either returns a list, an integer, or None depending on whether the joint has multiple DoFs, a
         single one, or none, respectively.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'dofs_idx' instead."
-        )
         if self.n_dofs == 1:
             return self.dof_start
         if self.n_dofs == 0:
@@ -285,17 +297,13 @@ class RigidJoint(RBC):
         """
         return list(range(self.dof_start, self.dof_end))
 
-    @property
-    def dof_idx_local(self):
+    def _dof_idx_local(self):
         """
         Returns the local dof index of the joint in the entity.
 
         This property either returns a list, an integer, or None depending on whether the joint has multiple DoFs, a
         single one, or none, respectively.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'dofs_idx_local' instead."
-        )
         if self.n_dofs == 1:
             return self.dof_start - self._entity.dof_start
         if self.n_dofs == 0:
@@ -309,17 +317,13 @@ class RigidJoint(RBC):
         """
         return list(range(self.dof_start - self._entity.dof_start, self.dof_end - self._entity.dof_start))
 
-    @property
-    def q_idx(self):
+    def _q_idx(self):
         """
         Returns all the position indices of the joint in the rigid solver.
 
         This property either returns a list, an integer, or None depending on whether the joint has multiple position
         indices, a single one, or none, respectively.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'qs_idx' instead."
-        )
         if self.n_qs == 1:
             return self.q_start
         elif self.n_qs == 0:
@@ -334,14 +338,10 @@ class RigidJoint(RBC):
         """
         return list(range(self.q_start, self.q_end))
 
-    @property
-    def q_idx_local(self):
+    def _q_idx_local(self):
         """
         Returns all the local `q` indices of the joint in the entity.
         """
-        gs.logger.warning(
-            "This property is deprecated and will be removed in future release. Please use 'qs_idx_local' instead."
-        )
         if self.n_qs == 1:
             return self.q_start - self._entity.q_start
         elif self.n_qs == 0:

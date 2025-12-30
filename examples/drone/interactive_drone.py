@@ -132,7 +132,7 @@ def main():
     )
 
     # Add entities
-    plane = scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Plane())
     drone = scene.add_entity(
         morph=gs.morphs.Drone(
             file="urdf/drones/cf2x.urdf",

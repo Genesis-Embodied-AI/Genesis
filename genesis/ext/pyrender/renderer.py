@@ -697,7 +697,7 @@ class Renderer(object):
 
     def _get_light_cam_matrices(self, scene, light_node, flags):
         light = light_node.light
-        pose = scene.get_pose(light_node).copy()
+        pose = scene.get_pose(light_node)
         camera = light._get_shadow_camera(scene.scale)
         P = camera.get_projection_matrix()
         if isinstance(light, DirectionalLight):
