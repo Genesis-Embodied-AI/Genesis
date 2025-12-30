@@ -15,7 +15,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 which uv
 uv --version
 
-uv venv --python '3.10'
+uv venv --python '3.10' --allow-existing
 source .venv/bin/activate
 uv pip install ".[dev,render]"
 uv pip install torch
