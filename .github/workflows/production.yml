@@ -106,9 +106,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
           # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
+          fetch-depth: 0
       - name: Allocate SLURM slot and start container session
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
