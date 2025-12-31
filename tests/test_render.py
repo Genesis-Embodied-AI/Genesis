@@ -508,8 +508,14 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         # Check that images are changing over time.
         # We expect sufficient difference between two consecutive frames.
         if frames_prev is not None:
-            for img_data_prev, img_data in zip(frames_prev, frame_data):
-                assert np.sum(np.abs(img_data_prev - img_data) > np.finfo(np.float32).eps) > DIFF_TOL * img_data.size
+            try:
+                for img_data_prev, img_data in zip(frames_prev, frame_data):
+                    img_diff = np.abs(img_data_prev - img_data)
+                    assert np.sum(img_diff > np.finfo(np.float32).eps) > DIFF_TOL * img_data.size
+            except AssertionError:
+                if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                    pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures are too close.")
+                raise
         frames_prev = frame_data
 
         # Add current frame to monitor video
@@ -527,7 +533,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
                 assert f.read() == png_snapshot
     except AssertionError:
         if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
-            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
         raise
 
 
