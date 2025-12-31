@@ -109,48 +109,50 @@ jobs:
           fetch-depth: 0
           # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
           # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
-      - name: Allocate SLURM slot (single allocation for all steps)
+      - name: Allocate SLURM slot and start container session
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          CONTAINER_NAME="genesis-${SLURM_JOB_NAME}"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
-          salloc \
-            --job-name="${SLURM_JOB_NAME}" \
-            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
-            --time="${TIMEOUT_MINUTES}" \
-            bash -c "sleep ${TIMEOUT_MINUTES}m" &
+          echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
+
+          salloc --job-name="${SLURM_JOB_NAME}" \
+                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+                 --time="${TIMEOUT_MINUTES}" \
+                 bash -c "sleep ${TIMEOUT_MINUTES}m" &
           echo "SLURM_ALLOC_PID=$!" >> $GITHUB_ENV
+
           for i in $(seq 1 30); do
             SLURM_JOB_ID="$(squeue --noheader -o '%A' --name "${SLURM_JOB_NAME}" | head -n1)"
-            if [ -n "${SLURM_JOB_ID}" ]; then
-              echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
-              break
-            fi
+            test -n "$SLURM_JOB_ID" && break
             sleep 3
           done
-          if [ -z "${SLURM_JOB_ID}" ]; then
-            echo "Failed to obtain SLURM_JOB_ID within timeout" >&2
-            exit 1
-          fi
+          echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
 
-      - name: Set common srun args
-        run: |
+          # Common srun args
           SRUN_COMMON=(
             "--jobid=${SLURM_JOB_ID}"
             "--container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh"
+            "--container-name=${CONTAINER_NAME}"
             "--container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
             "--no-container-mount-home"
             "--container-workdir=/root/workspace"
             "--export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           )
-          echo "SRUN_COMMON=${SRUN_COMMON[*]}" >> $GITHUB_ENV
+          echo "SRUN_COMMON=${SRUN_COMMON[*]}" >> "$GITHUB_ENV"
+
+          # Start the container once and keep it alive
+          srun ${SRUN_COMMON} sleep "${TIMEOUT_MINUTES}m" &
+          echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
 
       - name: Build
         run: |
-          srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
+          srun --overlap ${SRUN_COMMON} \
+               bash .github/workflows/scripts/production_build.sh
 
       - name: Test
         run: |
-          srun ${SRUN_COMMON} bash -e -s << 'EOF'
+          srun --overlap ${SRUN_COMMON} bash -e -s <<'EOF'
             source /tmp/venv/bin/activate
             pytest --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
@@ -159,12 +161,9 @@ jobs:
       - name: Cleanup allocation
         if: always()
         run: |
-          if [ -n "${SLURM_JOB_ID}" ]; then
-            scancel "${SLURM_JOB_ID}" || true
-          fi
-          if [ -n "${SLURM_ALLOC_PID}" ]; then
-            kill "${SLURM_ALLOC_PID}" || true
-          fi
+          kill "${BASE_SRUN_PID}" 2>/dev/null || true
+          scancel "${SLURM_JOB_ID}" 2>/dev/null || true
+          kill "${SLURM_ALLOC_PID}" 2>/dev/null || true
       - name: Display benchmark stats
         run: |
           cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
