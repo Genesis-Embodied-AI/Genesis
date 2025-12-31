@@ -1,3 +1,5 @@
+import ctypes
+import gc
 import os
 import pickle as pkl
 import platform
@@ -16,6 +18,24 @@ import genesis as gs
 from . import geom as gu
 from . import mesh as msu
 from . import misc as miu
+
+
+# Cache libc for malloc_trim on Linux
+_libc = None
+
+
+def _try_malloc_trim():
+    """Try to return freed memory to OS on Linux."""
+    global _libc
+    if gs.platform != "Linux":
+        return
+    try:
+        if _libc is None:
+            _libc = ctypes.CDLL("libc.so.6")
+        _libc.malloc_trim(0)
+    except Exception:
+        pass
+
 
 # Make sure ParticleMesherPy shared libary can be found in search path
 LD_LIBRARY_PATH = os.path.join(miu.get_src_dir(), "ext/ParticleMesher/ParticleMesherPy")
@@ -350,7 +370,8 @@ def particles_to_mesh(positions, radius, backend):
 
     elif "splashsurf" in backend:
         # Suggested value is 1.4-1.6, but 1.0 seems more detailed
-        mesh_with_data, _ = pysplashsurf.reconstruction_pipeline(
+        # Note: pysplashsurf has a known memory leak - we explicitly clean up to mitigate it
+        mesh_with_data, reconstruction = pysplashsurf.reconstruction_pipeline(
             positions,
             particle_radius=radius * args_dict.get("rscale", 1.0),
             smoothing_length=2.0,
@@ -364,9 +385,17 @@ def particles_to_mesh(positions, radius, backend):
             enable_multi_threading=True,
         )
         normals = mesh_with_data.get_point_attribute("normals")
-        vertices, triangles = mesh_with_data.take_mesh().take_vertices_and_triangles()
+        inner_mesh = mesh_with_data.take_mesh()
+        vertices, triangles = inner_mesh.take_vertices_and_triangles()
         mesh = trimesh.Trimesh(vertices=vertices, faces=triangles, face_normals=normals)
         gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
+
+        # Explicit cleanup to mitigate pysplashsurf memory leak
+        del inner_mesh, normals, vertices, triangles
+        del mesh_with_data, reconstruction
+        gc.collect()
+        _try_malloc_trim()
+
         return mesh
 
     else:
