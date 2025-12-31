@@ -158,8 +158,13 @@ jobs:
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
           BASE_SRUN_PID=$!
           
-          # Wait for container to be fully initialized
-          for i in $(seq 1 30); do
+          # Wait for container extraction/initialization to complete
+          # The srun process will only continue once the container is fully extracted
+          echo "Waiting for container extraction to complete..."
+          sleep 10  # Give it a moment to start
+          
+          # Wait for the background srun to actually start running (not just extracting)
+          for i in $(seq 1 60); do
             # Check if the background srun process is still alive
             if ! kill -0 "${BASE_SRUN_PID}" 2>/dev/null; then
               echo "ERROR: Container initialization failed (srun process died)" >&2
@@ -167,20 +172,19 @@ jobs:
               exit 1
             fi
             
-            # Try to run a simple command in the container
-            if srun ${SRUN_COMMON} /bin/true 2>/dev/null; then
-              echo "Container is ready"
+            # Check if container is running by looking for the sleep process in the job
+            if srun --jobid=${SLURM_JOB_ID} --overlap ps aux 2>/dev/null | grep -q "sleep ${TIMEOUT_MINUTES}m"; then
+              echo "Container is running"
               break
             fi
-            echo "Waiting for container to be ready (attempt $i/30)..."
+            
+            if [ $i -eq 60 ]; then
+              echo "ERROR: Container failed to become ready after 60 attempts" >&2
+              exit 1
+            fi
+            echo "Waiting for container to be ready (attempt $i/60)..."
             sleep 2
           done
-          
-          # Final check: if we exhausted retries, fail
-          if ! srun ${SRUN_COMMON} /bin/true 2>/dev/null; then
-            echo "ERROR: Container failed to become ready after 30 attempts" >&2
-            exit 1
-          fi
 
       - name: Build
         run: |
