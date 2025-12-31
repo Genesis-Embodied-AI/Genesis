@@ -25,7 +25,7 @@ os.environ["LD_LIBRARY_PATH"] = ":".join(filter(None, (os.environ.get("LD_LIBRAR
 
 try:
     malloc_trim = ctypes.CDLL(ctypes.util.find_library("c")).malloc_trim
-except AttributeError:
+except (AttributeError, TypeError):
     malloc_trim = None
 
 
