@@ -140,17 +140,17 @@ jobs:
           SLURM_NODE="$(squeue --noheader -o '%N' -j "${SLURM_JOB_ID}")"
           echo "Allocated node: ${SLURM_NODE}"
 
-          # Base container configuration (mounts and workdir, no jobid or exports)
-          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
-          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
+          # Base container configuration (mounts and workdir)
+          SRUN_CONTAINER_OPTS="--container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --no-container-mount-home"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-workdir=/root/workspace"
           
           # For initial container start: minimal exports to avoid BASH_ENV issues during bootstrap
-          # Limit ENROOT processors to avoid race conditions in parallel unsquashfs
-          SRUN_INIT="${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all,ENROOT_MAX_PROCESSORS=1"
+          # Don't use --container-name for initial creation, let pyxis auto-name it
+          SRUN_INIT="${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all"
           
-          # For subsequent commands: includes jobid to attach to existing container
+          # For subsequent commands: attach to the same container by omitting --container-image
+          # All srun commands in the same job will use the same container automatically
           SRUN_COMMON_BARE="--jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,WANDB_API_KEY,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           echo "SRUN_COMMON_BARE=${SRUN_COMMON_BARE}" >> "$GITHUB_ENV"
 
