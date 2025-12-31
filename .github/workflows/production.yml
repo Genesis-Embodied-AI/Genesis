@@ -133,7 +133,6 @@ jobs:
           SRUN_COMMON=(
             "--overlap"
             "--jobid=${SLURM_JOB_ID}"
-            "--container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh"
             "--container-name=${CONTAINER_NAME}"
             "--container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
             "--no-container-mount-home"
@@ -142,8 +141,10 @@ jobs:
           )
           echo "SRUN_COMMON=${SRUN_COMMON[*]}" >> "$GITHUB_ENV"
 
-          # Start the container once and keep it alive
-          srun ${SRUN_COMMON} sleep "${TIMEOUT_MINUTES}m" &
+          # Start the container once (with image) and keep it alive
+          srun --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+               ${SRUN_COMMON} \
+               sleep "${TIMEOUT_MINUTES}m" &
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
 
       - name: Build
