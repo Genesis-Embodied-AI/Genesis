@@ -10,6 +10,9 @@ set -ex
 
 pwd
 ls
+whoami
+echo $HOME
+ls ~
 
 if [[ -d /dev/shm/venv ]]; then {
     mv /dev/shm/venv /dev/shm/_venv
