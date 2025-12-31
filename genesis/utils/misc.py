@@ -473,11 +473,6 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
-                # FIXME: Field data is not properly initialized (not materialized) in memory at this point.
-                # DLPack will return garbage at best, or segfault right away if `ti.sync` is not called beforehand.
-                if issubclass(data_type, ti.Field):
-                    ti.sync()
-
                 # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:
