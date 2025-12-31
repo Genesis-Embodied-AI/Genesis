@@ -22,6 +22,8 @@ from trimesh.visual.color import to_float
 from trimesh.visual.material import SimpleMaterial
 from trimesh.visual.texture import TextureVisuals, unmerge_faces
 
+import genesis as gs
+
 
 def load_obj(
     file_obj,
@@ -436,7 +438,7 @@ def _parse_faces_vectorized(array, columns, sample_line):
         else:
             log.debug(f"face lines are weird: {sample_line}")
     elif columns == 8:
-        raise_exception("Not supported yet. Contact us if you need this.")
+        gs.raise_exception("Not supported yet. Contact us if you need this.")
     elif columns == 12:
         # if we have three values per vertex
         # second value is always texture
