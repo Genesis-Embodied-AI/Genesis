@@ -11,14 +11,14 @@ set -ex
 pwd
 ls
 
-if [[ -d /tmp/venv ]]; then {
-    mv /tmp/venv /tmp/_venv
-    rm -Rf /tmp/_venv &
+if [[ -d /dev/shm/venv ]]; then {
+    mv /dev/shm/venv /dev/shm/_venv
+    rm -Rf /dev/shm/_venv &
 } fi
 
 python3 -m pip install virtualenv
-virtualenv /tmp/venv
-source /tmp/venv/bin/activate
+virtualenv /dev/shm/venv
+source /dev/shm/venv/bin/activate
 pip install ".[dev,render]"
 pip install torch
 
