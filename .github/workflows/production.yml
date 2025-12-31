@@ -131,6 +131,7 @@ jobs:
 
           # Common srun args
           SRUN_COMMON=(
+            "--overlap"
             "--jobid=${SLURM_JOB_ID}"
             "--container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh"
             "--container-name=${CONTAINER_NAME}"
@@ -147,12 +148,12 @@ jobs:
 
       - name: Build
         run: |
-          srun --overlap ${SRUN_COMMON} \
+          srun ${SRUN_COMMON} \
                bash .github/workflows/scripts/production_build.sh
 
       - name: Test
         run: |
-          srun --overlap ${SRUN_COMMON} bash -e -s <<'EOF'
+          srun ${SRUN_COMMON} bash -e -s <<'EOF'
             source /tmp/venv/bin/activate
             pytest --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
