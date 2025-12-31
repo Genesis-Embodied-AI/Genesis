@@ -150,6 +150,9 @@ jobs:
           SRUN_COMMON="--overlap ${SRUN_COMMON_BARE}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
+          # Clean up any stale container state (in case of previous failed attempts)
+          srun --jobid=${SLURM_JOB_ID} enroot remove -f "${CONTAINER_NAME}" 2>/dev/null || true
+
           # Start the container once (with image) and keep it alive
           srun --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
                ${SRUN_INIT} \
@@ -197,6 +200,10 @@ jobs:
       - name: Cleanup allocation
         if: always()
         run: |
+          # Explicitly remove the container before killing the job
+          if [ -n "${SLURM_JOB_ID}" ] && [ -n "${CONTAINER_NAME}" ]; then
+            srun --jobid=${SLURM_JOB_ID} enroot remove -f "${CONTAINER_NAME}" 2>/dev/null || true
+          fi
           kill "${BASE_SRUN_PID}" 2>/dev/null || true
           scancel "${SLURM_JOB_ID}" 2>/dev/null || true
           kill "${SLURM_ALLOC_PID}" 2>/dev/null || true
