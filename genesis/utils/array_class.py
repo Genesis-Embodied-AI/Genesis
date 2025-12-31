@@ -1110,6 +1110,12 @@ class StructSDFInfo(metaclass=BASE_METACLASS):
 
 
 def get_sdf_info(n_geoms, n_cells):
+    if math.prod((n_cells, 3)) > np.iinfo(np.int32).max:
+        gs.raise_exception(
+            f"SDF Gradient shape (n_cells={n_cells}, 3) is too large. Consider manually setting larger "
+            "'sdf_cell_size' in 'gs.materials.Rigid' options."
+        )
+
     return StructSDFInfo(
         geoms_info=get_sdf_geom_info(max(n_geoms, 1)),
         geoms_sdf_start=V(dtype=gs.ti_int, shape=(max(n_geoms, 1),)),
