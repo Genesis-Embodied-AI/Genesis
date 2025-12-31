@@ -1,3 +1,4 @@
+import ctypes
 import os
 import pickle as pkl
 import platform
@@ -347,7 +348,6 @@ def particles_to_mesh(positions, radius, backend):
         faces = mesh.triangles.reshape([-1, 3])
 
         return trimesh.Trimesh(vertices, faces, process=False)
-
     elif "splashsurf" in backend:
         # Suggested value is 1.4-1.6, but 1.0 seems more detailed
         mesh_with_data, _ = pysplashsurf.reconstruction_pipeline(
@@ -365,10 +365,11 @@ def particles_to_mesh(positions, radius, backend):
         )
         normals = mesh_with_data.get_point_attribute("normals")
         vertices, triangles = mesh_with_data.take_mesh().take_vertices_and_triangles()
-        mesh = trimesh.Trimesh(vertices=vertices, faces=triangles, face_normals=normals)
+        mesh = trimesh.Trimesh(vertices=vertices, faces=triangles, face_normals=normals, process=False)
+        # FIXME: Reclaiming free-ed head memory manually is necessary to avoid unbounded growth
+        ctypes.CDLL(ctypes.util.find_library("c")).malloc_trim(0)
         gs.logger.debug(f"[splashsurf]: reconstruct vertices: {mesh.vertices.shape}, {mesh.faces.shape}")
         return mesh
-
     else:
         gs.raise_exception(f"Unsupported backend: {backend}.")
 
