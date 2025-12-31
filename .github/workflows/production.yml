@@ -115,7 +115,8 @@ jobs:
           unset SLURM_JOB_NAME CONTAINER_NAME SLURM_JOB_ID
           
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-          CONTAINER_NAME="genesis-${SLURM_JOB_NAME}"
+          # Use simpler container name (pyxis will prefix it with "pyxis_")
+          CONTAINER_NAME="${SLURM_JOB_NAME}"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
           echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
 
@@ -141,16 +142,15 @@ jobs:
           echo "Allocated node: ${SLURM_NODE}"
 
           # Base container configuration (mounts and workdir)
-          SRUN_CONTAINER_OPTS="--container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
+          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
+          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --no-container-mount-home"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-workdir=/root/workspace"
           
-          # For initial container start: minimal exports to avoid BASH_ENV issues during bootstrap
-          # Don't use --container-name for initial creation, let pyxis auto-name it
-          SRUN_INIT="${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all"
+          # For initial container start: specify image to create/extract the container
+          SRUN_INIT="--container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all"
           
-          # For subsequent commands: attach to the same container by omitting --container-image
-          # All srun commands in the same job will use the same container automatically
+          # For subsequent commands: use container name (no need to specify image again)
           SRUN_COMMON_BARE="--jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,WANDB_API_KEY,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           echo "SRUN_COMMON_BARE=${SRUN_COMMON_BARE}" >> "$GITHUB_ENV"
 
@@ -158,11 +158,7 @@ jobs:
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
           # Start the container once (with image) and keep it alive
-          # Use the existing job allocation but let pyxis create a new container
-          srun --jobid=${SLURM_JOB_ID} \
-               --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
-               ${SRUN_INIT} \
-               sleep "${TIMEOUT_MINUTES}m" &
+          srun --jobid=${SLURM_JOB_ID} ${SRUN_INIT} sleep "${TIMEOUT_MINUTES}m" &
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
           BASE_SRUN_PID=$!
           
