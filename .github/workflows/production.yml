@@ -132,6 +132,10 @@ jobs:
             exit 1
           fi
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
+          
+          # Get the allocated node name
+          SLURM_NODE="$(squeue --noheader -o '%N' -j "${SLURM_JOB_ID}")"
+          echo "Allocated node: ${SLURM_NODE}"
 
           # Base container configuration (shared across all srun calls)
           SRUN_CONTAINER_BASE="--jobid=${SLURM_JOB_ID}"
@@ -141,7 +145,8 @@ jobs:
           SRUN_CONTAINER_BASE="${SRUN_CONTAINER_BASE} --container-workdir=/root/workspace"
           
           # For initial container start: minimal exports to avoid BASH_ENV issues during bootstrap
-          SRUN_INIT="${SRUN_CONTAINER_BASE} --export=NVIDIA_DRIVER_CAPABILITIES=all"
+          # Limit ENROOT processors to avoid race conditions in parallel unsquashfs
+          SRUN_INIT="${SRUN_CONTAINER_BASE} --export=NVIDIA_DRIVER_CAPABILITIES=all,ENROOT_MAX_PROCESSORS=1"
           
           # For subsequent commands: full environment including BASH_ENV
           SRUN_COMMON_BARE="${SRUN_CONTAINER_BASE} --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,WANDB_API_KEY,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
@@ -149,9 +154,6 @@ jobs:
 
           SRUN_COMMON="--overlap ${SRUN_COMMON_BARE}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
-
-          # Clean up any stale container state (in case of previous failed attempts)
-          srun --jobid=${SLURM_JOB_ID} enroot remove -f "${CONTAINER_NAME}" 2>/dev/null || true
 
           # Start the container once (with image) and keep it alive
           srun --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
