@@ -111,6 +111,9 @@ jobs:
           fetch-depth: 0
       - name: Allocate SLURM slot and start container session
         run: |
+          # Force regeneration of names (important for step retries)
+          unset SLURM_JOB_NAME CONTAINER_NAME SLURM_JOB_ID
+          
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="genesis-${SLURM_JOB_NAME}"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
@@ -137,26 +140,27 @@ jobs:
           SLURM_NODE="$(squeue --noheader -o '%N' -j "${SLURM_JOB_ID}")"
           echo "Allocated node: ${SLURM_NODE}"
 
-          # Base container configuration (shared across all srun calls)
-          SRUN_CONTAINER_BASE="--jobid=${SLURM_JOB_ID}"
-          SRUN_CONTAINER_BASE="${SRUN_CONTAINER_BASE} --container-name=${CONTAINER_NAME}"
-          SRUN_CONTAINER_BASE="${SRUN_CONTAINER_BASE} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
-          SRUN_CONTAINER_BASE="${SRUN_CONTAINER_BASE} --no-container-mount-home"
-          SRUN_CONTAINER_BASE="${SRUN_CONTAINER_BASE} --container-workdir=/root/workspace"
+          # Base container configuration (mounts and workdir, no jobid or exports)
+          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
+          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
+          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --no-container-mount-home"
+          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-workdir=/root/workspace"
           
           # For initial container start: minimal exports to avoid BASH_ENV issues during bootstrap
           # Limit ENROOT processors to avoid race conditions in parallel unsquashfs
-          SRUN_INIT="${SRUN_CONTAINER_BASE} --export=NVIDIA_DRIVER_CAPABILITIES=all,ENROOT_MAX_PROCESSORS=1"
+          SRUN_INIT="${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all,ENROOT_MAX_PROCESSORS=1"
           
-          # For subsequent commands: full environment including BASH_ENV
-          SRUN_COMMON_BARE="${SRUN_CONTAINER_BASE} --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,WANDB_API_KEY,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
+          # For subsequent commands: includes jobid to attach to existing container
+          SRUN_COMMON_BARE="--jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,WANDB_API_KEY,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           echo "SRUN_COMMON_BARE=${SRUN_COMMON_BARE}" >> "$GITHUB_ENV"
 
           SRUN_COMMON="--overlap ${SRUN_COMMON_BARE}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
           # Start the container once (with image) and keep it alive
-          srun --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+          # Use the existing job allocation but let pyxis create a new container
+          srun --jobid=${SLURM_JOB_ID} \
+               --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
                ${SRUN_INIT} \
                sleep "${TIMEOUT_MINUTES}m" &
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
