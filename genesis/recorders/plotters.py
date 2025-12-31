@@ -37,7 +37,7 @@ IS_MATPLOTLIB_AVAILABLE = False
 try:
     import matplotlib as mpl
 
-    IS_MATPLOTLIB_AVAILABLE = tuple(map(int, mpl.__version__.split(".")[:3])) >= (3, 7, 0)
+    IS_MATPLOTLIB_AVAILABLE = tuple(map(int, mpl.__version__.replace("+", ".").split(".")[:3])) >= (3, 7, 0)
 except ImportError:
     pass
 
