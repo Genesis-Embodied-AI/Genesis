@@ -111,11 +111,7 @@ jobs:
           fetch-depth: 0
       - name: Allocate SLURM slot and start container session
         run: |
-          # Force regeneration of names (important for step retries)
-          unset SLURM_JOB_NAME CONTAINER_NAME SLURM_JOB_ID
-          
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-          # Use simpler container name (pyxis will prefix it with "pyxis_")
           CONTAINER_NAME="${SLURM_JOB_NAME}"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
           echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
