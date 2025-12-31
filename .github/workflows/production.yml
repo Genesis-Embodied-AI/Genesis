@@ -155,9 +155,18 @@ jobs:
                ${SRUN_INIT} \
                sleep "${TIMEOUT_MINUTES}m" &
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
+          BASE_SRUN_PID=$!
           
           # Wait for container to be fully initialized
           for i in $(seq 1 30); do
+            # Check if the background srun process is still alive
+            if ! kill -0 "${BASE_SRUN_PID}" 2>/dev/null; then
+              echo "ERROR: Container initialization failed (srun process died)" >&2
+              wait "${BASE_SRUN_PID}" || true  # Show exit code
+              exit 1
+            fi
+            
+            # Try to run a simple command in the container
             if srun ${SRUN_COMMON} /bin/true 2>/dev/null; then
               echo "Container is ready"
               break
@@ -165,6 +174,12 @@ jobs:
             echo "Waiting for container to be ready (attempt $i/30)..."
             sleep 2
           done
+          
+          # Final check: if we exhausted retries, fail
+          if ! srun ${SRUN_COMMON} /bin/true 2>/dev/null; then
+            echo "ERROR: Container failed to become ready after 30 attempts" >&2
+            exit 1
+          fi
 
       - name: Build
         run: |
