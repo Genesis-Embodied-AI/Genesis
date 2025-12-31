@@ -16,7 +16,7 @@ if [[ -d /tmp/venv ]]; then {
     rm -Rf /tmp/_venv &
 } fi
 
-pip install virtualenv
+python3 -m pip install virtualenv
 virtualenv /tmp/venv
 source /tmp/venv/bin/activate
 pip install ".[dev,render]"
