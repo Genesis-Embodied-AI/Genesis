@@ -148,10 +148,15 @@ class GenesisGeomRetriever:
                     geom_texture_indices.append(texture_idx)
 
             # TODO: support batch rgba
-            if isinstance(geom_textures[0], gs.textures.ImageTexture):
-                geom_rgba = geom_textures[0].image_color
-            else:
-                geom_rgba = geom_textures[0].color
+            geom_rgbas = [
+                geom_texture.image_color if isinstance(geom_texture, gs.textures.ImageTexture) else geom_texture.color
+                for geom_texture in geom_textures
+            ]
+            for i in range(1, len(geom_rgbas)):
+                if not np.allclose(geom_rgbas[0], geom_rgbas[i], atol=gs.EPS):
+                    gs.logger.warning("Batch Color is not yet supported. Use the first texture's color instead.")
+                    break
+            geom_rgba = geom_rgbas[0]
 
             mat_id = None
             if len(geom_texture_indices) == 0:
@@ -163,7 +168,6 @@ class GenesisGeomRetriever:
                     materials_indices[mat_id] = material_idx
                 mat_rgbas.append(geom_rgba)
                 mat_texture_indices.extend(geom_texture_indices)
-                # mat_texture_nums.append(len(geom_texture_indices))
                 mat_texture_offsets.append(total_mat_textures)
                 num_materials += 1
                 total_mat_textures += len(geom_texture_indices)
@@ -172,8 +176,6 @@ class GenesisGeomRetriever:
             geom_mat_ids.append(material_idx)
 
         args["geom_mat_ids"] = np.array(geom_mat_ids, np.int32)
-        # args["geom_rgba"] = np.stack(geom_rgbas, axis=0)
-
         args["tex_widths"] = np.array(texture_widths, np.int32)
         args["tex_heights"] = np.array(texture_heights, np.int32)
         args["tex_nchans"] = np.array(texture_nchans, np.int32)
@@ -187,23 +189,8 @@ class GenesisGeomRetriever:
 
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_property_torch(self, num_worlds):
-        geom_rgb = torch.empty(
-            (
-                0,
-                self.n_vgeoms,
-            ),
-            dtype=torch.uint32,
-            device=gs.device,
-        )
-        geom_mat_ids = torch.full(
-            (
-                num_worlds,
-                self.n_vgeoms,
-            ),
-            -1,
-            dtype=torch.int32,
-            device=gs.device,
-        )
+        geom_rgb = torch.empty((0, self.n_vgeoms), dtype=torch.uint32, device=gs.device)
+        geom_mat_ids = torch.full((num_worlds, self.n_vgeoms), -1, dtype=torch.int32, device=gs.device)
         geom_sizes = torch.ones((self.n_vgeoms, 3), dtype=torch.float32, device=gs.device)
         geom_sizes = geom_sizes[None].repeat(num_worlds, 1, 1)
         return geom_mat_ids, geom_rgb, geom_sizes
