@@ -15,19 +15,21 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 which uv
 uv --version
 
-if [[ -d /venv ]]; then {
-    mv /venv /venv_
-    rm -Rf /venv_ &
-} fi
+VENV_DIR="/venv"
 
-# export UV_CACHE_DIR=${PWD}/.uv_cache
+if [[ -d "${VENV_DIR}" ]]; then
+    # Remove existing venv (use unique temp name to avoid collisions)
+    temp_dir="/_venv_$(date +%s)_$$"
+    mv "${VENV_DIR}" "$temp_dir" 2>/dev/null || rm -rf "${VENV_DIR}"
+    rm -rf "$temp_dir" &
+fi
 
-uv venv --python '3.10' --allow-existing /venv
-source /venv/bin/activate
+
+uv venv --python '3.10' --allow-existing ${VENV_DIR}
+source "${VENV_DIR}/bin/activate"
+# Pre-install problematic packages that conflict with distutils-installed system packages
+uv pip install --ignore-installed blinker pyparsing setuptools
 uv pip install ".[dev,render]"
 uv pip install torch
-
-# pytest --print -x -m "benchmarks" ./tests
-# cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
 
 # tmate -S /tmp/tmate.sock wait tmate-exit
