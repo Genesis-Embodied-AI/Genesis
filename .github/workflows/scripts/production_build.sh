@@ -11,23 +11,15 @@ set -ex
 pwd
 ls
 
-curl -LsSf https://astral.sh/uv/install.sh | sh
-which uv
-uv --version
-
 if [[ -d /tmp/venv ]]; then {
     mv /tmp/venv /tmp/_venv
     rm -Rf /tmp/_venv &
 } fi
 
-# export UV_CACHE_DIR=${PWD}/.uv_cache
-
-uv venv --python '3.10' --allow-existing /tmp/venv
+pip install virtualenv
+virtualenv /tmp/venv
 source /tmp/venv/bin/activate
-uv pip install ".[dev,render]"
-uv pip install torch
-
-# pytest --print -x -m "benchmarks" ./tests
-# cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+pip install ".[dev,render]"
+pip install torch
 
 # tmate -S /tmp/tmate.sock wait tmate-exit
