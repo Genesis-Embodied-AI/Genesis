@@ -7,7 +7,6 @@ Provides the parse pipeline: materials -> articulations -> rigid bodies.
 
 from typing import List, Dict, Literal
 import genesis as gs
-from genesis.engine.entities.base_entity import Entity as GSEntity
 from genesis.options.morphs import USDMorph
 
 try:
@@ -33,7 +32,7 @@ class UsdParser:
         vis_mode: Literal["visual", "collision"],
         usd_morph: USDMorph,
         visualize_contact: bool = False,
-    ) -> Dict[str, GSEntity]:
+    ):
         """
         Import all entities from a USD stage into the scene.
 
@@ -55,6 +54,8 @@ class UsdParser:
         List
             List of created entities (both articulations and rigid bodies).
         """
+        from genesis.engine.entities.base_entity import Entity as GSEntity
+
         stage_file = stage.GetRootLayer().identifier if stage.GetRootLayer() else ""
 
         # Create parser context
