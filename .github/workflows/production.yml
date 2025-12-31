@@ -127,23 +127,22 @@ jobs:
             test -n "$SLURM_JOB_ID" && break
             sleep 3
           done
+          if [ -z "$SLURM_JOB_ID" ]; then
+            echo "Failed to obtain SLURM_JOB_ID" >&2
+            exit 1
+          fi
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
 
-          SRUN_COMMON_BARE=(
-            "--jobid=${SLURM_JOB_ID}"
-            "--container-name=${CONTAINER_NAME}"
-            "--container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
-            "--no-container-mount-home"
-            "--container-workdir=/root/workspace"
-            "--export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-          )
-          echo "SRUN_COMMON_BARE=${SRUN_COMMON_BARE[*]}" >> "$GITHUB_ENV"
+          SRUN_COMMON_BARE="--jobid=${SLURM_JOB_ID}"
+          SRUN_COMMON_BARE="${SRUN_COMMON_BARE} --container-name=${CONTAINER_NAME}"
+          SRUN_COMMON_BARE="${SRUN_COMMON_BARE} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/pip:/root/.cache/pip"
+          SRUN_COMMON_BARE="${SRUN_COMMON_BARE} --no-container-mount-home"
+          SRUN_COMMON_BARE="${SRUN_COMMON_BARE} --container-workdir=/root/workspace"
+          SRUN_COMMON_BARE="${SRUN_COMMON_BARE} --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,WANDB_API_KEY,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
+          echo "SRUN_COMMON_BARE=${SRUN_COMMON_BARE}" >> "$GITHUB_ENV"
 
-          SRUN_COMMON=(
-            "--overlap"
-            "${SRUN_COMMON_BARE[@]}"
-          )
-          echo "SRUN_COMMON=${SRUN_COMMON[*]}" >> "$GITHUB_ENV"
+          SRUN_COMMON="--overlap ${SRUN_COMMON_BARE}"
+          echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
           # Start the container once (with image) and keep it alive
           srun --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
