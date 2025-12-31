@@ -22,6 +22,8 @@ if [[ -d /dev/shm/venv ]]; then {
 python3 -m pip install virtualenv
 virtualenv /dev/shm/venv
 source /dev/shm/venv/bin/activate
+# Pre-install problematic packages that conflict with distutils-installed system packages
+pip install --ignore-installed blinker pyparsing setuptools
 pip install ".[dev,render]"
 pip install torch
 
