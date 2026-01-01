@@ -30,6 +30,11 @@ from genesis.constants import backend as gs_backend
 LOGGER = logging.getLogger(__name__)
 
 
+# FIXME: ti.Field does not support zero-copy on Metal for 'torch<=2.9.1'.
+# See: https://github.com/pytorch/pytorch/pull/168193
+TORCH_MPS_SUPPORT_DLPACK_FIELD = tuple(map(int, torch.__version__.replace("+", ".").split(".")[:3])) > (2, 9, 1)
+
+
 class DeprecationError(Exception):
     pass
 
@@ -432,11 +437,22 @@ def ti_to_python(
         without raising an exception if not.
         to_torch (bool): Whether to convert to Torch tensor or Numpy array. Defaults to True.
     """
+    # Get batch size if possible
+    try:
+        batch_shape = value.shape
+    except AttributeError:
+        if isinstance(value, ti.Matrix):
+            raise ValueError("Tensor of type 'ti.Vector', 'ti.Matrix' not supported.")
+        raise
+
     # Check if copy mode is supported while setting default mode if not specified.
-    # FIXME: ti.Field does not support zero-copy on Metal for now because of a bug in Torch itself.
-    # See: https://github.com/pytorch/pytorch/pull/168193
+    # FIXME: Torch>2.9.1 still does not support bytes_offset for 0-dim dlpack.
     data_type = type(value)
-    use_zerocopy = gs.use_zerocopy and (gs.backend != gs.metal or not issubclass(data_type, ti.Field))
+    use_zerocopy = gs.use_zerocopy and (
+        (TORCH_MPS_SUPPORT_DLPACK_FIELD and (batch_shape or not issubclass(data_type, ti.ScalarField)))
+        or gs.backend != gs.metal
+        or not issubclass(data_type, ti.Field)
+    )
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
         if copy is False:
             gs.raise_exception(
@@ -448,12 +464,6 @@ def ti_to_python(
         copy = False
 
     # Leverage zero-copy if enabled
-    try:
-        batch_shape = value.shape
-    except AttributeError:
-        if isinstance(value, ti.Matrix):
-            raise ValueError("Tensor of type 'ti.Vector', 'ti.Matrix' not supported.")
-        raise
     if use_zerocopy:
         while True:
             try:
@@ -463,11 +473,6 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
-                # FIXME: Field data is not properly initialized (not materialized) in memory at this point.
-                # DLPack will return garbage at best, or segfault right away if `ti.sync` is not called beforehand.
-                if issubclass(data_type, ti.Field):
-                    ti.sync()
-
                 # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:

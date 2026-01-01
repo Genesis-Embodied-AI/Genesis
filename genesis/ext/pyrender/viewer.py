@@ -1,6 +1,7 @@
 """A pyglet-based interactive 3D scene viewer."""
 
 import copy
+from contextlib import nullcontext
 import os
 import shutil
 import sys
@@ -681,108 +682,100 @@ class Viewer(pyglet.window.Window):
         if self._offscreen_pending_render is None and self._offscreen_pending_close is None:
             return
 
-        if self._run_in_thread:
-            self.render_lock.acquire()
+        with self.render_lock if self._run_in_thread else nullcontext():
+            # Make OpenGL context current
+            self.switch_to()
 
-        # Make OpenGL context current
-        self.switch_to()
+            if self._offscreen_pending_close is not None:
+                # Extract request right away
+                target, = self._offscreen_pending_close
+                self._offscreen_pending_close = None
 
-        if self._offscreen_pending_close is not None:
-            # Extract request right away
-            target, = self._offscreen_pending_close
-            self._offscreen_pending_close = None
+                # Delete renderer.
+                # Note that it must be done here, because calling this method involve OpenGL routines that cannot cross
+                # thread boundaries, otherwise it will cause segmentation fault.
+                target.delete()
 
-            # Delete renderer.
-            # Note that it must be done here, because calling this method involve OpenGL routines that cannot cross
-            # thread boundaries, otherwise it will cause segmentation fault.
-            target.delete()
+            if self._offscreen_pending_render is not None:
+                # Extract request right away
+                camera, target, normal = self._offscreen_pending_render
+                self._offscreen_pending_render = None
 
-        if self._offscreen_pending_render is not None:
-            # Extract request right away
-            camera, target, normal = self._offscreen_pending_render
-            self._offscreen_pending_render = None
+                # Update context, just in case is not already done before
+                self._renderer.jit.update_buffer(self.gs_context.buffer)
+                self.gs_context.buffer.clear()
 
-            # Update context, just in case is not already done before
-            self._renderer.jit.update_buffer(self.gs_context.buffer)
-            self.gs_context.buffer.clear()
+                # Render current frame from camera viewpoint
+                self._offscreen_results = []
+                self.render_flags["offscreen"] = True
+                self.clear()
+                retval = self._render(camera, target, normal)
+                self._offscreen_result = retval if retval else (None, None)
+                self.render_flags["offscreen"] = False
 
-            # Render current frame from camera viewpoint
-            self._offscreen_results = []
-            self.render_flags["offscreen"] = True
-            self.clear()
-            retval = self._render(camera, target, normal)
-            self._offscreen_result = retval if retval else (None, None)
-            self.render_flags["offscreen"] = False
-
-        if self._run_in_thread:
-            self._offscreen_semaphore.release()
-            self.render_lock.release()
+            if self._run_in_thread:
+                self._offscreen_semaphore.release()
 
     def on_draw(self):
         """Redraw the scene into the viewing window."""
         if self._renderer is None:
             return
 
-        if self._run_in_thread or not self.auto_start:
-            self.render_lock.acquire()
+        with self.render_lock if self._run_in_thread or not self.auto_start else nullcontext():
+            # Make OpenGL context current
+            self.switch_to()
 
-        # Make OpenGL context current
-        self.switch_to()
+            # Update the context if not already done before
+            self._renderer.jit.update_buffer(self.gs_context.buffer)
+            self.gs_context.buffer.clear()
 
-        # Update the context if not already done before
-        self._renderer.jit.update_buffer(self.gs_context.buffer)
-        self.gs_context.buffer.clear()
+            # Render the scene
+            self.clear()
+            self._render()
 
-        # Render the scene
-        self.clear()
-        self._render()
+            self.viewer_interaction.on_draw()
 
-        self.viewer_interaction.on_draw()
-
-        if not self._disable_keyboard_shortcuts:
-            if self._display_instr:
-                self._renderer.render_texts(
-                    self._instr_texts[1],
-                    TEXT_PADDING,
-                    self.viewport_size[1] - TEXT_PADDING,
-                    font_pt=26,
-                    color=np.array([1.0, 1.0, 1.0, 0.85]),
-                )
-            else:
-                self._renderer.render_texts(
-                    self._instr_texts[0],
-                    TEXT_PADDING,
-                    self.viewport_size[1] - TEXT_PADDING,
-                    font_pt=26,
-                    color=np.array([1.0, 1.0, 1.0, 0.85]),
-                )
-
-            if self._message_text is not None:
-                self._renderer.render_text(
-                    self._message_text,
-                    self.viewport_size[0] - TEXT_PADDING,
-                    TEXT_PADDING,
-                    font_pt=20,
-                    color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
-                    align=TextAlign.BOTTOM_RIGHT,
-                )
-
-            if self.viewer_flags["caption"] is not None:
-                for caption in self.viewer_flags["caption"]:
-                    xpos, ypos = self._location_to_x_y(caption["location"])
-                    self._renderer.render_text(
-                        caption["text"],
-                        xpos,
-                        ypos,
-                        font_name=caption["font_name"],
-                        font_pt=caption["font_pt"],
-                        color=caption["color"],
-                        scale=caption["scale"],
-                        align=caption["location"],
+            if not self._disable_keyboard_shortcuts:
+                if self._display_instr:
+                    self._renderer.render_texts(
+                        self._instr_texts[1],
+                        TEXT_PADDING,
+                        self.viewport_size[1] - TEXT_PADDING,
+                        font_pt=26,
+                        color=np.array([1.0, 1.0, 1.0, 0.85]),
+                    )
+                else:
+                    self._renderer.render_texts(
+                        self._instr_texts[0],
+                        TEXT_PADDING,
+                        self.viewport_size[1] - TEXT_PADDING,
+                        font_pt=26,
+                        color=np.array([1.0, 1.0, 1.0, 0.85]),
                     )
 
-        if self._run_in_thread or not self.auto_start:
-            self.render_lock.release()
+                if self._message_text is not None:
+                    self._renderer.render_text(
+                        self._message_text,
+                        self.viewport_size[0] - TEXT_PADDING,
+                        TEXT_PADDING,
+                        font_pt=20,
+                        color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
+                        align=TextAlign.BOTTOM_RIGHT,
+                    )
+
+                if self.viewer_flags["caption"] is not None:
+                    for caption in self.viewer_flags["caption"]:
+                        xpos, ypos = self._location_to_x_y(caption["location"])
+                        self._renderer.render_text(
+                            caption["text"],
+                            xpos,
+                            ypos,
+                            font_name=caption["font_name"],
+                            font_pt=caption["font_pt"],
+                            color=caption["color"],
+                            scale=caption["scale"],
+                            align=caption["location"],
+                        )
 
     def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
         """Resize the camera and trackball when the window is resized."""
