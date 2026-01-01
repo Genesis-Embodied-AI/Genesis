@@ -90,7 +90,8 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     except NameError as e:
         raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
-    if config.getoption("--mem-monitoring-filepath"):
+    # Only launch memory monitor from the main process, not from xdist workers
+    if config.getoption("--mem-monitoring-filepath") and not os.environ.get("PYTEST_XDIST_WORKER"):
         validate_mem_option()
         subprocess.Popen(
             [
