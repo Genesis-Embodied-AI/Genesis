@@ -27,8 +27,6 @@ fi
 
 uv venv --python '3.10' --allow-existing ${VENV_DIR}
 source "${VENV_DIR}/bin/activate"
-# Pre-install problematic packages that conflict with distutils-installed system packages
-uv pip install --ignore-installed blinker pyparsing setuptools
 uv pip install ".[dev,render]"
 uv pip install torch
 
