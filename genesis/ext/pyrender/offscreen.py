@@ -170,10 +170,12 @@ class OffscreenRenderer(object):
             if self._platform.supports_framebuffers():
                 flags |= RenderFlags.OFFSCREEN
                 retval = renderer.render(scene, flags, seg_node_map)
+                assert retval is not None
             else:
                 if flags & RenderFlags.ENV_SEPARATE:
                     gs.raise_exception("'env_separate_rigid=True' not supported on this platform.")
-                renderer.render(scene, flags, seg_node_map)
+                result = renderer.render(scene, flags, seg_node_map)
+                assert result is not None
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
                 glReadBuffer(GL_FRONT)
                 if depth:
@@ -265,7 +267,8 @@ class OffscreenRenderer(object):
             from OpenGL.GL import glGetString, GL_RENDERER
 
             renderer = glGetString(GL_RENDERER).decode()
-            self._is_software = "llvmpipe" in renderer
+            gs.logger.debug(f"Using offscreen rendering OpenGL device: {renderer}")
+            self._is_software = any(e in renderer for e in ("llvmpipe", "Apple Software Renderer"))
         except:
             pass
         if self._is_software:

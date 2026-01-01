@@ -141,7 +141,11 @@ class Renderer(object):
         # Update context with meshes and textures
         if is_first_pass:
             self._update_context(scene, flags)
-            self.jit.update(scene)
+            all_ready = self.jit.update(scene)
+            if not all_ready:
+                # Shadow textures not yet initialized - skip this frame to avoid
+                # flickering. The caller should display the previous frame.
+                return ()
 
         if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.FLAT:
             flags &= ~RenderFlags.REFLECTIVE_FLOOR
@@ -697,7 +701,7 @@ class Renderer(object):
 
     def _get_light_cam_matrices(self, scene, light_node, flags):
         light = light_node.light
-        pose = scene.get_pose(light_node).copy()
+        pose = scene.get_pose(light_node)
         camera = light._get_shadow_camera(scene.scale)
         P = camera.get_projection_matrix()
         if isinstance(light, DirectionalLight):

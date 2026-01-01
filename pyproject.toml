@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.10"
+version = "0.3.11"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==4.5.0",
+    "gstaichi==4.6.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
@@ -61,11 +61,8 @@ dependencies = [
     "gs-madrona==0.0.7.post1; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
-    # Surface reconstruction library for particle data from SPH simulations.
-    # 0.13.0.0 changes removes enable_multi_threading argument an enable it by default
-    # and AttributeError: 'builtins.MeshWithData' object has no attribute 'get_point_attribute'.
-    # Did you mean: 'add_point_attribute'?
-    "pysplashsurf<=0.12.0.2",
+    # Surface reconstruction library for particle data from SPH simulations
+    "pysplashsurf==0.14.*",
 ]
 
 [project.optional-dependencies]

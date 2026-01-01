@@ -339,6 +339,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             verts_info=shared_metadata.solver.verts_info,
             free_verts_state=shared_metadata.solver.free_verts_state,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
+            static_rigid_sim_config=shared_metadata.solver._static_rigid_sim_config,
         )
 
         kernel_update_aabbs(

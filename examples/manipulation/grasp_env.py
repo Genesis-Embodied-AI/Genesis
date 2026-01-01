@@ -317,7 +317,7 @@ class GraspEnv:
             )
             * unit_length
         )
-        return keypoint_offsets.unsqueeze(0).repeat(batch_size, 1, 1)
+        return keypoint_offsets[None].repeat((batch_size, 1, 1))
 
     def grasp_and_lift_demo(self) -> None:
         total_steps = 500

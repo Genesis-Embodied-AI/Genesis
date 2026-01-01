@@ -227,15 +227,14 @@ class Surface(Options):
         return any(texture is not None and texture.requires_uv() for texture in textures)
 
     def get_rgba(self, batch=False):
-
-        def fetch_batch(texture):
-            if isinstance(texture, BatchTexture):
-                return texture.textures if batch else texture.textures[:1]
-            else:
-                return [texture]
-
-        color_textures = fetch_batch(self.get_texture() if self.emissive_texture is None else self.emissive_texture)
-        opacity_textures = fetch_batch(self.opacity_texture)
+        all_textures = []
+        for texture in (
+            self.get_texture() if self.emissive_texture is None else self.emissive_texture,
+            self.opacity_texture,
+        ):
+            textures = texture.textures if isinstance(texture, BatchTexture) else [texture]
+            all_textures.append(textures if batch else textures[:1])
+        color_textures, opacity_textures = all_textures
 
         rgba_textures = []
         num_colors = len(color_textures)

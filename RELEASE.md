@@ -1,5 +1,41 @@
 # Genesis Release Note
 
+## 0.3.11
+
+The main focus of this release is to improve scaling of the simulation wrt the complexity of the scene, and better leverage GPUn compute for small to moderate batch sizes (0<=n_envs<=8192). As usual, a bunch of minor bugs have been fixed.
+
+### New Features
+
+* Support specifying offset transform for camera sensor. (@YilingQiao) (#2126)
+* Enable zero-copy for fields on Metal if supported. (@duburcqa) (#2174)
+
+### Bug Fixes
+
+* Avoid discontinuities in smooth animations caused by singularities. (@Rush2k) (#2116)
+* Fix forward update logics. (@duburcqa) (#2122)
+* Fix kernel caching mechanism hindering performance. (@duburcqa) (#2123)
+* Fix support of old torch for 'set_dofs_velocity' when velocity=None. (@YilingQiao) (#2160)
+* Force rendering systematically when updating camera sensor. (@YilingQiao) (#2162)
+* Fix incorrect lighting when offscreen cameras based on rasterizer. (@duburcqa) (#2163)
+* Fix rasterizer race conditions when running in background thread. (@duburcqa) (#2169)
+* Fix broken exception handling when loading obj files with unsupported face type. (@Kashu7100) (#2170)
+* Fix 'pysplashsurf' memory leak causing OOM error. (@duburcqa) (#2173, #2176)
+* Diagnose out-of-bound SDF gradient index. (@duburcqa) (#2177)
+
+### Miscellaneous
+
+* Stop assessing warmstart vs smooth acc at constraint solver init. (@duburcqa) (#2117)
+* Speedup collision detection broad phase on GPU. (@duburcqa) (#2128)
+* More comprehensive benchmarks. (@duburcqa) (#2137)
+* Accelerate constraint solver first pass using shared memory. (@duburcqa) (#2136, #2140)
+* Further optimize cholesky solve using warp reduction and memory padding. (@duburcqa) (#2145, #2146)
+* Improve runtime speed by optimize memory layout of constraint solver. (@duburcqa) (#2147)
+* Fast mass matrix factorisation on GPU using shared memory. (@duburcqa) (#2154)
+* Optimize rigid body dynamics to scale better wrt dofs and entities. (@duburcqa) (#2161)
+* Fix spurious deprecated property warnings during introspection. (@duburcqa) (#2168)
+* Various solver refactoring to support GsTaichi Main. (@hughperkins, @duburcqa) (#2131, #2135, #2143, #2151)
+* Improve single-threaded cpu-based simulation runtime speed by upgrading gstaichi. (@hughperkins) (#2129, #2153)
+
 ## 0.3.10
 
 Small release mainly fixing bugs.
