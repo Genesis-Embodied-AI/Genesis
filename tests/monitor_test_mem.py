@@ -36,23 +36,22 @@ def get_cuda_usage() -> dict[int, int]:
 
 def get_test_name_by_pid() -> dict[int, str]:
     test_by_psid = {}
-    for proc in psutil.process_iter(['pid', 'cmdline']):
+    for proc in psutil.process_iter(["pid", "cmdline"]):
         try:
-            cmdline = proc.info['cmdline']
+            cmdline = proc.info["cmdline"]
             if cmdline is None:
                 continue
             # Join cmdline to get full command string
-            cmd_str = ' '.join(cmdline)
-            if 'pytest: tests' in cmd_str:
+            cmd_str = " ".join(cmdline)
+            if "pytest: tests" in cmd_str:
                 # Find the test name after "::"
-                if '::' in cmd_str:
-                    test_name = cmd_str.partition('::')[2]
+                if "::" in cmd_str:
+                    test_name = cmd_str.partition("::")[2]
                     if test_name.strip() != "":
-                        test_by_psid[proc.info['pid']] = test_name
+                        test_by_psid[proc.info["pid"]] = test_name
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             # Process may have terminated or we don't have permission
             pass
-    print("test_by_psid", test_by_psid)
     return test_by_psid
 
 
@@ -63,19 +62,6 @@ def main() -> None:
     args = parser.parse_args()
 
     max_mem_by_test = defaultdict(int)
-
-    # DEBUG: Check if ps exists
-    import os as os_check
-
-    print(f"DEBUG: /usr/bin/ps exists: {os_check.path.exists('/usr/bin/ps')}")
-    print(f"DEBUG: PID: {os_check.getpid()}, PPID: {os_check.getppid()}")
-    try:
-        import subprocess as sp
-
-        sp.check_output(["ls", "-la", "/usr/bin/ps"])
-        print("DEBUG: ls succeeded")
-    except Exception as e:
-        print(f"DEBUG: ls failed: {e}")
 
     f = open(args.out_csv_filepath, "w")
     dict_writer = csv.DictWriter(f, fieldnames=["test", "max_mem_mb"])
@@ -116,7 +102,7 @@ def main() -> None:
         )
         old_mem_by_test = _mem_by_test
         disp = not disp
-        time.sleep(1.0)
+        time.sleep(2.0)
     print("Test monitor exiting")
 
 
