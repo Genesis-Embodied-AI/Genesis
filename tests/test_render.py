@@ -18,7 +18,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes, get_hf_dataset
 
 IMG_STD_ERR_THR = 1.0
 
@@ -534,6 +534,78 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     except AssertionError:
         if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
             pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
+        raise
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [2, 3])
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+def test_batch_texture(tmp_path, n_envs, show_viewer, png_snapshot, renderer):
+    NUM_STEPS = 2
+    CAM_RES = (128, 128)
+
+    asset_path = get_hf_dataset(pattern="ci_assets/*.jpg")
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=False,
+        show_FPS=show_viewer,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+        surface=gs.surfaces.Default(
+            # FIXME: Expected to use ci_assets, but local and CI outputs are different. No idea why.
+            # diffuse_texture=gs.textures.BatchTexture.from_images(image_folder=os.path.join(asset_path, "ci_assets"))
+            diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures")
+        ),
+    )
+
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    cam_0 = scene.add_camera(
+        res=CAM_RES,
+        pos=(1.5, -0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        GUI=show_viewer,
+    )
+    scene.add_light(
+        pos=(0.0, 0.0, 1.5),
+        dir=(1.0, 1.0, -2.0),
+        color=(1.0, 1.0, 0.0),
+        directional=True,
+        castshadow=True,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.add_light(
+        pos=(4.0, -4.0, 4.0),
+        dir=(-1.0, 1.0, -1.0),
+        directional=False,
+        castshadow=True,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.build(n_envs=n_envs)
+
+    exporter = FrameImageExporter(tmp_path)
+    for i in range(NUM_STEPS):
+        # Move forward step forward in time
+        scene.step()
+        rgba_all, _, _, _ = scene.render_all_cameras(
+            rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False
+        )
+        batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
+        assert all(e.shape == (*batch_shape, 3) for e in (*rgba_all,))
+        exporter.export_frame_all_cameras(i, rgb=rgba_all)
+
+    try:
+        for image_file in sorted(tmp_path.rglob("*.png")):
+            with open(image_file, "rb") as f:
+                assert f.read() == png_snapshot
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
         raise
 
 
