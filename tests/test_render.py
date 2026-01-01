@@ -547,7 +547,7 @@ def test_madrona(show_viewer, png_snapshot, renderer, camera_model):
     )
     scene.add_entity(
         gs.morphs.Plane(),
-        surface=gs.surfaces.Default(
+        surface=gs.surfaces.Default(  # Madrona use case 1: Batch Texture
             diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures"),
         ),
     )
@@ -560,7 +560,7 @@ def test_madrona(show_viewer, png_snapshot, renderer, camera_model):
         pos=(1.5, -0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
-        model=camera_model,  # Feature 2: Fisheye camera
+        model=camera_model,  # Madrona use case 2: Fisheye camera
         GUI=show_viewer,
     )
     scene.add_light(
