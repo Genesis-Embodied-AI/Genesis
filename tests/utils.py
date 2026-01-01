@@ -35,7 +35,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "701f78c1465f0a98f6540bae6c9daacaa551b7bf"
-HUGGINGFACE_SNAPSHOT_REVISION = "5c8ff86b6a844633bbea82b9d2849205dcb037c0"
+HUGGINGFACE_SNAPSHOT_REVISION = "0384a6dfc3994521fa0a56f9a15e7845a69bfbd0"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -1034,8 +1034,8 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         #     gs_sim.scene.visualizer.update()
 
 
-def rgb_array_to_png_bytes(rgb_arr: np.ndarray) -> bytes:
-    img = Image.fromarray(rgb_arr)
+def rgb_array_to_png_bytes(rgb_arr: np.ndarray | torch.Tensor) -> bytes:
+    img = Image.fromarray(tensor_to_array(rgb_arr))
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
