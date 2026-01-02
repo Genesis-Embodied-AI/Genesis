@@ -121,7 +121,7 @@ def main():
             if i == 25:
                 # compute loss
                 goal = gs.tensor([0.5, 0.8, 0.05])
-                mpm_particles = scene.get_state().solvers_state[3]
+                mpm_particles = scene.get_state().solvers_state[scene.solvers.index(scene.mpm_solver)]
                 loss += torch.pow(mpm_particles.pos[mpm_particles.active == 1] - goal, 2).sum()
 
             # you can also use an entity's state
