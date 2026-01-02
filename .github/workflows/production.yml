@@ -134,9 +134,7 @@ jobs:
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
 
           SLURM_NODE="$(squeue --noheader -o '%N' -j "${SLURM_JOB_ID}")"
-          echo "Allocated node: ${SLURM_NODE}"
 
-          # Base container configuration (mounts and workdir)
           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --no-container-mount-home"
@@ -147,36 +145,20 @@ jobs:
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
           
-          # For initial container start: specify image to create/extract the container
-          SRUN_INIT="--container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
-          
-          # For subsequent commands: use container name
-          SRUN_COMMON_BARE="--jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
-          echo "SRUN_COMMON_BARE=${SRUN_COMMON_BARE}" >> "$GITHUB_ENV"
-
-          SRUN_COMMON="--overlap ${SRUN_COMMON_BARE}"
+          SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
-          # Start the container and keep it alive
-          srun --jobid=${SLURM_JOB_ID} ${SRUN_INIT} sleep "${TIMEOUT_MINUTES}m" &
+          srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} sleep "${TIMEOUT_MINUTES}m" &
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
           BASE_SRUN_PID=$!
 
-          # Wait for container extraction/initialization to complete
-          # The srun process will only continue once the container is fully extracted
-          echo "Waiting for container extraction to complete..."
-          sleep 10  # Give it a moment to start
-
-          # Wait for the background srun to actually start running (not just extracting)
           for i in $(seq 1 60); do
-            # Check if the background srun process is still alive
             if ! kill -0 "${BASE_SRUN_PID}" 2>/dev/null; then
               echo "ERROR: Container initialization failed (srun process died)" >&2
               wait "${BASE_SRUN_PID}" || true  # Show exit code
               exit 1
             fi
 
-            # Check if container is running by looking for the sleep process in the job
             if srun --jobid=${SLURM_JOB_ID} --overlap ps aux 2>/dev/null | grep -q "sleep ${TIMEOUT_MINUTES}m"; then
               echo "Container is running"
               break
