@@ -38,7 +38,6 @@ class LegacyCoupler(RBC):
 
         self.tool_solver = self.sim.tool_solver
         self.rigid_solver = self.sim.rigid_solver
-        self.avatar_solver = self.sim.avatar_solver
         self.mpm_solver = self.sim.mpm_solver
         self.sph_solver = self.sim.sph_solver
         self.pbd_solver = self.sim.pbd_solver

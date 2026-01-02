@@ -9,7 +9,7 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.entities import AvatarEntity, DroneEntity, RigidEntity
+from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
@@ -148,11 +148,7 @@ class RigidSolver(Solver):
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
-        if isinstance(material, gs.materials.Avatar):
-            EntityClass = AvatarEntity
-            if visualize_contact:
-                gs.raise_exception("AvatarEntity does not support 'visualize_contact=True'.")
-        elif isinstance(morph, gs.morphs.Drone):
+        if isinstance(morph, gs.morphs.Drone):
             EntityClass = DroneEntity
         else:
             EntityClass = RigidEntity
@@ -247,27 +243,25 @@ class RigidSolver(Solver):
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
         self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
-        # FIXME: AvatarSolver should not inherit from RigidSolver, not to mention that it is completely broken...
-        is_rigid_solver = type(self) is RigidSolver
-        if is_rigid_solver:
-            static_rigid_sim_config = dict(
-                backend=gs.backend,
-                para_level=self.sim._para_level,
-                requires_grad=self.sim.options.requires_grad,
-                use_hibernation=self._use_hibernation,
-                batch_links_info=self._options.batch_links_info,
-                batch_dofs_info=self._options.batch_dofs_info,
-                batch_joints_info=self._options.batch_joints_info,
-                enable_mujoco_compatibility=self._enable_mujoco_compatibility,
-                enable_multi_contact=self._enable_multi_contact,
-                enable_collision=self._enable_collision,
-                enable_joint_limit=self._enable_joint_limit,
-                box_box_detection=self._box_box_detection,
-                sparse_solve=self._options.sparse_solve,
-                integrator=self._integrator,
-                solver_type=self._options.constraint_solver,
-            )
+        static_rigid_sim_config = dict(
+            backend=gs.backend,
+            para_level=self.sim._para_level,
+            requires_grad=self.sim.options.requires_grad,
+            use_hibernation=self._use_hibernation,
+            batch_links_info=self._options.batch_links_info,
+            batch_dofs_info=self._options.batch_dofs_info,
+            batch_joints_info=self._options.batch_joints_info,
+            enable_mujoco_compatibility=self._enable_mujoco_compatibility,
+            enable_multi_contact=self._enable_multi_contact,
+            enable_collision=self._enable_collision,
+            enable_joint_limit=self._enable_joint_limit,
+            box_box_detection=self._box_box_detection,
+            sparse_solve=self._options.sparse_solve,
+            integrator=self._integrator,
+            solver_type=self._options.constraint_solver,
+        )
 
+        if self.is_active:
             # TODO: These alternative tiled algorithms are designed to reduce the impact of latency. However, naive
             # implementation scales slightly better asymptotically than shared memory-based implementation because the
             # scheduler of modern GPUs is able to hides latency by swapping warps if the workload is sufficient. The
@@ -305,16 +299,8 @@ class RigidSolver(Solver):
                     n_links=self._n_links,
                     n_geoms=self._n_geoms,
                 )
-            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
-        else:
-            self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
-                backend=gs.backend,
-                para_level=self.sim._para_level,
-                requires_grad=self.sim.options.requires_grad,
-                enable_collision=self._enable_collision,
-                integrator=gs.integrator.approximate_implicitfast,
-                solver_type=gs.constraint_solver.CG,
-            )
+
+        self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
 
         if self._static_rigid_sim_config.requires_grad:
             if self._static_rigid_sim_config.use_hibernation:
@@ -333,49 +319,48 @@ class RigidSolver(Solver):
             if getattr(self._options, "noslip_iterations", 0) > 0:
                 gs.raise_exception("Noslip is not supported yet when requires_grad is True.")
 
-        # when the migration is finished, we will remove the about two lines
+        # We initialize data even if the solver is not active because the coupler needs arguments like
+        # rigid_solver.links_state, etc. regardless of the solver is active or not.
+        self.data_manager = array_class.DataManager(self)
+        self._errno = self.data_manager.errno
+
+        self._rigid_global_info = self.data_manager.rigid_global_info
+        self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
+        if self._use_hibernation:
+            self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
+            self.awake_dofs = self._rigid_global_info.awake_dofs
+            self.n_awake_links = self._rigid_global_info.n_awake_links
+            self.awake_links = self._rigid_global_info.awake_links
+            self.n_awake_entities = self._rigid_global_info.n_awake_entities
+            self.awake_entities = self._rigid_global_info.awake_entities
+        if self._requires_grad:
+            self.dofs_state_adjoint_cache = self.data_manager.dofs_state_adjoint_cache
+            self.links_state_adjoint_cache = self.data_manager.links_state_adjoint_cache
+            self.joints_state_adjoint_cache = self.data_manager.joints_state_adjoint_cache
+            self.geoms_state_adjoint_cache = self.data_manager.geoms_state_adjoint_cache
+
+        self._init_mass_mat()
+        self._init_dof_fields()
+
+        self._init_vert_fields()
+        self._init_vvert_fields()
+        self._init_geom_fields()
+        self._init_vgeom_fields()
+        self._init_link_fields()
+        self._init_entity_fields()
+        self._init_equality_fields()
+
+        self._init_envs_offset()
+        self._init_sdf()
+        self._init_collider()
+        self._init_constraint_solver()
+
+        self._init_invweight_and_meaninertia(force_update=False)
+        self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
+
+        # FIXME: when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_coupling_force = func_apply_coupling_force
-
-        # For rigid solver, we initialize them even if the solver is not active because the coupler needs arguments like
-        # rigid_solver.links_state, etc. regardless of the solver is active or not.
-        if is_rigid_solver or self.is_active:
-            self.data_manager = array_class.DataManager(self)
-            self._errno = self.data_manager.errno
-
-            self._rigid_global_info = self.data_manager.rigid_global_info
-            self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
-            if self._use_hibernation:
-                self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
-                self.awake_dofs = self._rigid_global_info.awake_dofs
-                self.n_awake_links = self._rigid_global_info.n_awake_links
-                self.awake_links = self._rigid_global_info.awake_links
-                self.n_awake_entities = self._rigid_global_info.n_awake_entities
-                self.awake_entities = self._rigid_global_info.awake_entities
-            if self._requires_grad:
-                self.dofs_state_adjoint_cache = self.data_manager.dofs_state_adjoint_cache
-                self.links_state_adjoint_cache = self.data_manager.links_state_adjoint_cache
-                self.joints_state_adjoint_cache = self.data_manager.joints_state_adjoint_cache
-                self.geoms_state_adjoint_cache = self.data_manager.geoms_state_adjoint_cache
-
-            self._init_mass_mat()
-            self._init_dof_fields()
-
-            self._init_vert_fields()
-            self._init_vvert_fields()
-            self._init_geom_fields()
-            self._init_vgeom_fields()
-            self._init_link_fields()
-            self._init_entity_fields()
-            self._init_equality_fields()
-
-            self._init_envs_offset()
-            self._init_sdf()
-            self._init_collider()
-            self._init_constraint_solver()
-
-            self._init_invweight_and_meaninertia(force_update=False)
-            self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
 
     def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.

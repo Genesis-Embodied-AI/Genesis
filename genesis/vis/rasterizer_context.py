@@ -162,7 +162,6 @@ class RasterizerContext:
 
         self.on_tool()
         self.on_rigid()
-        self.on_avatar()
         self.on_mpm()
         self.on_sph()
         self.on_pbd()
@@ -461,54 +460,6 @@ class RasterizerContext:
                             color=(0.9, 0.0, 0.8, 1.0),
                             persistent=False,
                         )
-
-    def on_avatar(self):
-        if self.sim.avatar_solver.is_active:
-            # TODO: support dynamic switching in GUI later
-            for avatar_entity in self.sim.avatar_solver.entities:
-                if avatar_entity.surface.vis_mode == "visual":
-                    geoms = avatar_entity.vgeoms
-                    geoms_T = self.sim.avatar_solver._vgeoms_render_T
-                else:
-                    geoms = avatar_entity.geoms
-                    geoms_T = self.sim.avatar_solver._geoms_render_T
-
-                for geom in geoms:
-                    if "sdf" in avatar_entity.surface.vis_mode:
-                        mesh = geom.get_sdf_trimesh()
-                    else:
-                        mesh = geom.get_trimesh()
-                    geom_T = geoms_T[geom.idx]
-                    self.add_rigid_node(
-                        geom,
-                        pyrender.Mesh.from_trimesh(
-                            mesh=mesh,
-                            poses=geom_T,
-                            smooth=geom.surface.smooth if "collision" not in avatar_entity.surface.vis_mode else False,
-                            double_sided=(
-                                geom.surface.double_sided
-                                if "collision" not in avatar_entity.surface.vis_mode
-                                else False
-                            ),
-                        ),
-                    )
-
-    def update_avatar(self, buffer_updates):
-        if self.sim.avatar_solver.is_active:
-            for avatar_entity in self.sim.avatar_solver.entities:
-                if avatar_entity.surface.vis_mode == "visual":
-                    geoms = avatar_entity.vgeoms
-                    geoms_T = self.sim.avatar_solver._vgeoms_render_T
-                else:
-                    geoms = avatar_entity.geoms
-                    geoms_T = self.sim.avatar_solver._geoms_render_T
-
-                for geom in geoms:
-                    geom_T = geoms_T[geom.idx]
-                    node = self._scene.get_buffer_id(self.rigid_nodes[geom.uid], "model")
-                    node.mesh._bounds = None
-                    node.mesh.primitives[0].poses = geom_T
-                    buffer_updates[node] = geom_T.transpose((0, 2, 1))
 
     def on_mpm(self):
         if self.sim.mpm_solver.is_active:
@@ -1026,7 +977,6 @@ class RasterizerContext:
         self.update_tool(self.buffer)
         self.update_rigid(self.buffer)
         self.update_contact(self.buffer)
-        self.update_avatar(self.buffer)
         self.update_mpm(self.buffer)
         self.update_sph(self.buffer)
         self.update_pbd(self.buffer)
