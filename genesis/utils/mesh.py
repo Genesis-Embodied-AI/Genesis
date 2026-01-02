@@ -1,11 +1,9 @@
 import hashlib
-import json
 import marshal
 import math
 import os
 import pickle as pkl
 import platform
-from itertools import chain
 from functools import lru_cache
 from pathlib import Path
 
@@ -566,7 +564,10 @@ def create_frame(
 
 def create_camera_frustum(camera, color):
     # camera
-    camera_mesh = trimesh.load(os.path.join(get_src_dir(), "assets", "meshes", "camera/camera.obj"))
+    camera_mesh = trimesh.load(os.path.join(get_src_dir(), "assets", "meshes", "camera/camera.glb"), force="mesh")
+    camera_mesh.visual = camera_mesh.visual.to_color()
+    camera_mesh.apply_translation([0.0, 0.0, 1.0])
+    camera_mesh.apply_scale(0.05)
 
     # frustum
     near_half_height = camera.near * np.tan(np.deg2rad(camera.fov / 2))
@@ -606,9 +607,7 @@ def create_camera_frustum(camera, color):
 
     # Create the frustum mesh
     frustum_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    frustum_mesh.visual = trimesh.visual.ColorVisuals(
-        vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(frustum_mesh.vertices), 1))
-    )
+    frustum_mesh.visual.vertex_colors = np.asarray(color, dtype=np.float32)
     return trimesh.util.concatenate([camera_mesh, frustum_mesh])
 
 
