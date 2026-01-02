@@ -135,7 +135,8 @@ jobs:
           fi
           SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
-          srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} echo "Container ready"
+          srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} \
+              echo "Container ready"
 
       - name: Build
         run: |
