@@ -188,18 +188,9 @@ jobs:
       - name: Cleanup allocation
         if: always()
         run: |
-          # Kill the background sleep process first
-          kill "${BASE_SRUN_PID}" 2>/dev/null || true
-          sleep 2  # Give it a moment to die
-          
-          # Then remove the container
-          if [ -n "${SLURM_JOB_ID}" ] && [ -n "${CONTAINER_NAME}" ]; then
-            srun --jobid=${SLURM_JOB_ID} --overlap enroot remove -f "${CONTAINER_NAME}" 2>/dev/null || true
+          if [ -n "${SLURM_JOB_NAME}" ] ; then
+            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
           fi
-          
-          # Finally cancel the job and kill salloc
-          scancel "${SLURM_JOB_ID}" 2>/dev/null || true
-          kill "${SLURM_ALLOC_PID}" 2>/dev/null || true
       - name: Display benchmark stats
         run: |
           cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
