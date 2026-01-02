@@ -116,7 +116,8 @@ jobs:
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
           echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
 
-          JOBID_FIFO=$(mktemp -u)
+          JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
+          [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
                  --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
@@ -139,16 +140,12 @@ jobs:
           SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
-          srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} sleep "${TIMEOUT_MINUTES}m" &
+          # Force container expansion by running a quick command synchronously
+          srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} echo "Container ready"
+          
+          # Now start the long-running sleep to keep container alive
+          srun --jobid=${SLURM_JOB_ID} --overlap ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} sleep "${TIMEOUT_MINUTES}m" &
           echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
-          BASE_SRUN_PID=$!
-
-          for i in $(seq 1 60); do
-            if ! kill -0 "${BASE_SRUN_PID}" 2>/dev/null; then exit 1; fi
-            if srun --jobid=${SLURM_JOB_ID} --overlap ps aux 2>/dev/null | grep -q "sleep ${TIMEOUT_MINUTES}m"; then break; fi
-            if [ $i -eq 60 ]; then exit 1; fi
-            sleep 2
-          done
 
       - name: Build
         run: |
