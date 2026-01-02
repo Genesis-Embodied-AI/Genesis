@@ -6,7 +6,6 @@ import genesis as gs
 
 from .options import Options
 
-
 IS_PYAV_AVAILABLE = False
 try:
     import av
@@ -297,3 +296,43 @@ class MPLImagePlot(BasePlotterOptions):
     """
 
     pass
+
+
+class MPLDepthScatterPlot(BasePlotterOptions):
+    """
+    Live visualization of depth sensor data as a 3D scatter plot using matplotlib.
+
+    The data should be a tuple of (positions, distances) where:
+    - positions: array-like with shape (N, 3) for (x, y, z) coordinates
+    - distances: array-like with shape (N,) for depth/distance values
+
+    Parameters
+    ----------
+    title: str
+        The title of the plot.
+    window_size: tuple[int, int]
+        The size of the window in pixels.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
+    cmap: str
+        The colormap to use for depth visualization. Defaults to 'viridis'.
+    point_size: float
+        The size of each point in the scatter plot. Defaults to 50.
+    x_label: str
+        Label for the x-axis. Defaults to 'X'.
+    y_label: str
+        Label for the y-axis. Defaults to 'Y'.
+    z_label: str
+        Label for the z-axis. Defaults to 'Z'.
+    colorbar_label: str
+        Label for the colorbar. Defaults to 'Distance'.
+    """
+
+    cmap: str = "viridis"
+    point_size: float = 50.0
+    x_label: str = "X"
+    y_label: str = "Y"
+    z_label: str = "Z"
+    colorbar_label: str = "Distance"
