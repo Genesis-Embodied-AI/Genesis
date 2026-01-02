@@ -65,13 +65,6 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-# @pytest.hookimpl(tryfirst=True)
-# def pytest_runtest_setup(item):
-#     # Include test name in process title
-#     test_name = item.nodeid.replace(" ", "")
-#     setproctitle.setproctitle(f"pytest: {test_name}")
-
-
 def validate_mem_option() -> None:
     try:
         assert sys.platform.startswith("linux")
