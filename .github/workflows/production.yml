@@ -113,8 +113,7 @@ jobs:
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="${SLURM_JOB_NAME}"
-          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
-          echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
+
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
@@ -124,7 +123,6 @@ jobs:
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
           rm -f "$JOBID_FIFO"
-          echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
                --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
                --no-container-mount-home \
@@ -134,9 +132,11 @@ jobs:
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
           SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
-          echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
           srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} \
               echo "Container ready"
+
+          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+          echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
