@@ -130,10 +130,10 @@ jobs:
           if [ -z "$SLURM_JOB_ID" ]; then exit 1; fi
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
 
-          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
-          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv"
-          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --no-container-mount-home"
-          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-workdir=/root/workspace"
+          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
+               --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
+               --no-container-mount-home \
+               --container-workdir=/root/workspace"
           
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
