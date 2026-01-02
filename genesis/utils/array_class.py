@@ -19,7 +19,6 @@ V_VEC = ti.Vector.ndarray if gs.use_ndarray else ti.Vector.field
 V_MAT = ti.Matrix.ndarray if gs.use_ndarray else ti.Matrix.field
 
 DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else ti.data_oriented
-print("DATA_ORIENTED", DATA_ORIENTED)
 PLACEHOLDER = V(dtype=gs.ti_float, shape=())
 
 
