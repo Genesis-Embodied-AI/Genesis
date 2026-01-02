@@ -115,7 +115,6 @@ jobs:
           CONTAINER_NAME="${SLURM_JOB_NAME}"
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
           echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
-
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
@@ -126,26 +125,17 @@ jobs:
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
           rm -f "$JOBID_FIFO"
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
-
           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
                --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
-          
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
-          
           SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
-
-          # Force container expansion by running a quick command synchronously
           srun --jobid=${SLURM_JOB_ID} --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} echo "Container ready"
-          
-          # Now start the long-running sleep to keep container alive
-          srun --jobid=${SLURM_JOB_ID} --overlap ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS} sleep "${TIMEOUT_MINUTES}m" &
-          echo "BASE_SRUN_PID=$!" >> $GITHUB_ENV
 
       - name: Build
         run: |
