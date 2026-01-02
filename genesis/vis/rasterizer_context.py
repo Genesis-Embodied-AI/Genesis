@@ -1033,6 +1033,10 @@ class RasterizerContext:
         self.update_fem(self.buffer)
         self.update_sensors(self.buffer)
 
+        # Update camera fructum
+        for camera in self.visualizer.cameras:
+            self.update_camera_frustum(camera)
+
     def add_light(self, light):
         # light direction is light pose's -z frame
         if light["type"] == "directional":

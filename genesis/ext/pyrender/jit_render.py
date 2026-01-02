@@ -227,7 +227,7 @@ class JITRenderer:
                 self.pose[i] = scene.get_pose(node)
 
         # TODO: update lights
-        self.set_light(scene, scene.light_nodes, scene.ambient_light)
+        return self.set_light(scene, scene.light_nodes, scene.ambient_light)
 
     def set_light(self, scene, light_nodes, ambient_light):
         self.light_list = light_nodes
@@ -244,6 +244,8 @@ class JITRenderer:
 
         self.ambient_light = np.array(ambient_light, np.float32)
 
+        all_textures_ready = True
+
         for i, node in enumerate(light_nodes):
             light = node.light
             pose = scene.get_pose(node)
@@ -257,7 +259,10 @@ class JITRenderer:
                 self.light[i, 7] = 0
 
                 if light.shadow_texture:
-                    self.shadow_map[i] = light.shadow_texture._texid
+                    if light.shadow_texture._in_context():
+                        self.shadow_map[i] = light.shadow_texture._texid
+                    else:
+                        all_textures_ready = False
 
                 pose = pose.copy()
                 camera = light._get_shadow_camera(scene.scale)
@@ -274,7 +279,10 @@ class JITRenderer:
                 self.light[i, 7] = 1
 
                 if light.shadow_texture:
-                    self.shadow_map[i] = light.shadow_texture._texid
+                    if light.shadow_texture._in_context():
+                        self.shadow_map[i] = light.shadow_texture._texid
+                    else:
+                        all_textures_ready = False
 
                 camera = light._get_shadow_camera(scene.scale)
                 projection = camera.get_projection_matrix()
@@ -282,6 +290,8 @@ class JITRenderer:
                 self.light_matrix[i] = projection @ view
             else:
                 raise TypeError("Light type not supported yet.")
+
+        return all_textures_ready
 
     def set_primitive(self, scene, node_list, primitive_list):
         self.node_list = node_list

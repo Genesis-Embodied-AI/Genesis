@@ -141,7 +141,11 @@ class Renderer(object):
         # Update context with meshes and textures
         if is_first_pass:
             self._update_context(scene, flags)
-            self.jit.update(scene)
+            all_ready = self.jit.update(scene)
+            if not all_ready:
+                # Shadow textures not yet initialized - skip this frame to avoid
+                # flickering. The caller should display the previous frame.
+                return ()
 
         if flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY or flags & RenderFlags.FLAT:
             flags &= ~RenderFlags.REFLECTIVE_FLOOR

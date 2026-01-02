@@ -175,7 +175,7 @@ class FEMEntity(Entity):
             If the tensor shape is not supported.
         """
         self._assert_active()
-        gs.logger.warning("Manally setting element positions. This is not recommended and could break gradient flow.")
+        gs.logger.warning("Manually setting element positions. This is not recommended and could break gradient flow.")
 
         pos = to_gs_tensor(pos)
 
