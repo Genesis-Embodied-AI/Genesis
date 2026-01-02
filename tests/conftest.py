@@ -68,7 +68,7 @@ def pytest_make_parametrize_id(config, val, argname):
 def validate_mem_option() -> None:
     try:
         assert sys.platform.startswith("linux")
-        nvidia_out = subprocess.check_output(["nvidia-smi"]).decode("utf-8")
+        subprocess.check_output(["nvidia-smi"]).decode("utf-8")
     except Exception as e:
         print("--mem not supported on this platform", e)
         raise e
