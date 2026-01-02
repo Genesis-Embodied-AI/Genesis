@@ -148,22 +148,9 @@ jobs:
           BASE_SRUN_PID=$!
 
           for i in $(seq 1 60); do
-            if ! kill -0 "${BASE_SRUN_PID}" 2>/dev/null; then
-              echo "ERROR: Container initialization failed (srun process died)" >&2
-              wait "${BASE_SRUN_PID}" || true  # Show exit code
-              exit 1
-            fi
-
-            if srun --jobid=${SLURM_JOB_ID} --overlap ps aux 2>/dev/null | grep -q "sleep ${TIMEOUT_MINUTES}m"; then
-              echo "Container is running"
-              break
-            fi
-
-            if [ $i -eq 60 ]; then
-              echo "ERROR: Container failed to become ready after 60 attempts" >&2
-              exit 1
-            fi
-            echo "Waiting for container to be ready (attempt $i/60)..."
+            if ! kill -0 "${BASE_SRUN_PID}" 2>/dev/null; then exit 1; fi
+            if srun --jobid=${SLURM_JOB_ID} --overlap ps aux 2>/dev/null | grep -q "sleep ${TIMEOUT_MINUTES}m"; then break; fi
+            if [ $i -eq 60 ]; then exit 1; fi
             sleep 2
           done
 
