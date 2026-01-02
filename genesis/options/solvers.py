@@ -407,39 +407,6 @@ class RigidOptions(Options):
         super().__init__(**data)
 
 
-class AvatarOptions(Options):
-    """
-    Options configuring the AvatarSolver. AvatarEntity is similar to RigidEntity, but without internal physics.
-
-    Parameters
-    ----------
-    dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
-    enable_collision : float, optional
-        Whether to enable collision detection. Defaults to False.
-    enable_self_collision : float, optional
-        Whether to enable self collision within each entity. Defaults to False.
-    enable_adjacent_collision : bool, optional
-        Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
-    max_collision_pairs : int, optional
-        Maximum number of collision pairs. Defaults to 100.
-    IK_max_targets : int, optional
-        Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage. Defaults to 6.
-    max_dynamic_constraints : int, optional
-        Maximum number of dynamic constraints (like suction cup). Defaults to 8.
-    """
-
-    dt: Optional[float] = None
-    enable_collision: bool = False
-    enable_self_collision: bool = False
-    enable_adjacent_collision: bool = False
-    max_collision_pairs: int = 300
-    IK_max_targets: int = 6  # Increasing this doesn't affect IK solving speed, but will increase memory usage
-
-    # for dynamic properties
-    max_dynamic_constraints: int = 8
-
-
 class MPMOptions(Options):
     """
     Options configuring the MPMSolver.

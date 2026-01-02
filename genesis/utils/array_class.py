@@ -1810,20 +1810,20 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
+    use_hibernation: bool
+    batch_links_info: bool
+    batch_dofs_info: bool
+    batch_joints_info: bool
+    enable_mujoco_compatibility: bool
+    enable_multi_contact: bool
+    enable_joint_limit: bool
+    box_box_detection: bool
+    sparse_solve: bool
+    integrator: int
+    solver_type: int
+    requires_grad: bool
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
-    use_hibernation: bool = False
-    batch_links_info: bool = False
-    batch_dofs_info: bool = False
-    batch_joints_info: bool = False
-    enable_mujoco_compatibility: bool = False
-    enable_multi_contact: bool = False
-    enable_joint_limit: bool = False
-    box_box_detection: bool = False
-    sparse_solve: bool = False
-    integrator: int = gs.integrator.approximate_implicitfast
-    solver_type: int = gs.constraint_solver.CG
-    requires_grad: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

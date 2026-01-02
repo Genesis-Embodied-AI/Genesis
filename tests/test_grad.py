@@ -88,7 +88,7 @@ def test_differentiable_push(show_viewer):
         scene.step()
 
         if i == HORIZON // 2:
-            mpm_particles = scene.get_state().solvers_state[3]
+            mpm_particles = scene.get_state().solvers_state[scene.solvers.index(scene.mpm_solver)]
             loss += torch.pow(mpm_particles.pos[mpm_particles.active == 1] - goal, 2).sum()
 
         if i == HORIZON - 2:

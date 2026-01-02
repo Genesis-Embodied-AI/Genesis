@@ -1,7 +1,6 @@
 from .misc import CoacdOptions, FoamOptions
 from .profiling import ProfilingOptions
 from .solvers import (
-    AvatarOptions,
     BaseCouplerOptions,
     FEMOptions,
     IPCCouplerOptions,
@@ -18,7 +17,6 @@ from .solvers import (
 from .vis import ViewerOptions, VisOptions
 
 __all__ = [
-    "AvatarOptions",
     "BaseCouplerOptions",
     "CoacdOptions",
     "FEMOptions",

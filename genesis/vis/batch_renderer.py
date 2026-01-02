@@ -42,7 +42,6 @@ class GenesisGeomRetriever:
 
         self.default_geom_group = 2
         self.default_enabled_geom_groups = np.array([self.default_geom_group], dtype=np.int32)
-        self.num_textures_per_material = 10  # Madrona allows up to 10 textures per material, should not change.
 
     def build(self):
         self.n_vgeoms = self.rigid_solver.n_vgeoms
@@ -76,6 +75,9 @@ class GenesisGeomRetriever:
         mesh_vertex_offsets = self.rigid_solver.vgeoms_info.vvert_start.to_numpy()
         mesh_face_starts = self.rigid_solver.vgeoms_info.vface_start.to_numpy()
         mesh_face_ends = self.rigid_solver.vgeoms_info.vface_end.to_numpy()
+        total_uv_size = 0
+        mesh_uvs = []
+        mesh_uv_offsets = []
         for i in range(self.n_vgeoms):
             mesh_faces[mesh_face_starts[i] : mesh_face_ends[i]] -= mesh_vertex_offsets[i]
 
@@ -84,11 +86,19 @@ class GenesisGeomRetriever:
             seg_key = self.get_seg_key(vgeom)
             seg_id = self.seg_color_map.seg_key_to_idxc(seg_key)
             geom_data_ids.append(seg_id)
+            if vgeom.uvs is not None:
+                mesh_uvs.append(vgeom.uvs.astype(np.float32))
+                mesh_uv_offsets.append(total_uv_size)
+                total_uv_size += vgeom.uvs.shape[0]
+            else:
+                mesh_uv_offsets.append(-1)
 
         args["mesh_vertices"] = mesh_vertices
-        args["mesh_faces"] = mesh_faces
         args["mesh_vertex_offsets"] = mesh_vertex_offsets
+        args["mesh_faces"] = mesh_faces
         args["mesh_face_offsets"] = mesh_face_starts
+        args["mesh_texcoords"] = np.concatenate(mesh_uvs, axis=0) if mesh_uvs else np.empty((0, 2), np.float32)
+        args["mesh_texcoord_offsets"] = np.array(mesh_uv_offsets, np.int32)
         args["geom_types"] = np.full((self.n_vgeoms,), 7, dtype=np.int32)  # 7 stands for mesh
         args["geom_groups"] = np.full((self.n_vgeoms,), self.default_geom_group, dtype=np.int32)
         args["geom_data_ids"] = np.arange(self.n_vgeoms, dtype=np.int32)
@@ -96,92 +106,91 @@ class GenesisGeomRetriever:
         args["enabled_geom_groups"] = self.default_enabled_geom_groups
 
         # Retrieve material data
-        num_materials = 0
-        total_uv_size = 0
-        total_texture_size = 0
         geom_mat_ids = []
-        geom_uv_sizes = []
-        geom_uv_offsets = []
-        geom_rgbas = []
-
-        mat_uv_data = []
-        mat_texture_widths = []
-        mat_texture_heights = []
-        mat_texture_nchans = []
-        mat_texture_offsets = []
-        mat_texture_data = []
-        mat_texture_ids = []
+        num_materials = 0
+        materials_indices = {}
         mat_rgbas = []
+        mat_texture_indices = []
+        mat_texture_offsets = []
+        total_mat_textures = 0
+
+        num_textures = 0
+        texture_indices = {}
+        texture_widths = []
+        texture_heights = []
+        texture_nchans = []
+        texture_offsets = []
+        texture_data = []
+        total_texture_size = 0
 
         for vgeom in vgeoms:
-            visual = vgeom.get_trimesh().visual
-            if isinstance(visual, TextureVisuals):
-                uv_size = visual.uv.shape[0]
-                geom_mat_ids.append(num_materials)
-                geom_uv_sizes.append(uv_size)
-                geom_uv_offsets.append(total_uv_size)
-                geom_rgbas.append(np.zeros((4,), dtype=np.float32))
+            geom_surface = vgeom.surface
+            geom_textures = geom_surface.get_rgba(batch=True).textures
 
-                texture_width = visual.material.image.width
-                texture_height = visual.material.image.height
-                texture_nchans = 4 if visual.material.image.mode == "RGBA" else 3
-                texture_size = texture_width * texture_height * texture_nchans
-                texture_ids = np.full((self.num_textures_per_material,), -1, np.int32)
-                texture_ids[0] = num_materials
+            geom_texture_indices = []
+            for geom_texture in geom_textures:
+                if isinstance(geom_texture, gs.textures.ImageTexture) and geom_texture.image_array is not None:
+                    texture_id = geom_texture.image_path
+                    if texture_id not in texture_indices:
+                        texture_idx = num_textures
+                        if texture_id is not None:
+                            texture_indices[texture_id] = texture_idx
+                        texture_widths.append(geom_texture.image_array.shape[1])
+                        texture_heights.append(geom_texture.image_array.shape[0])
+                        assert geom_texture.channel() == 4
+                        texture_nchans.append(geom_texture.channel())
+                        texture_offsets.append(total_texture_size)
+                        texture_data.append(geom_texture.image_array.flat)
+                        num_textures += 1
+                        total_texture_size += geom_texture.image_array.size
+                    else:
+                        texture_idx = texture_indices[texture_id]
+                    geom_texture_indices.append(texture_idx)
 
-                mat_uv_data.append(visual.uv.astype(np.float32))
-                mat_texture_widths.append(texture_width)
-                mat_texture_heights.append(texture_height)
-                mat_texture_nchans.append(texture_nchans)
-                mat_texture_offsets.append(total_texture_size)
-                mat_texture_data.append(
-                    np.asarray(visual.material.image.transpose(Image.Transpose.FLIP_TOP_BOTTOM), dtype=np.uint8).flat
-                )
-                mat_texture_ids.append(texture_ids)
-                mat_rgbas.append(visual.material.diffuse.astype(np.float32) / 255.0)
+            # TODO: support batch rgba
+            geom_rgbas = [
+                geom_texture.image_color if isinstance(geom_texture, gs.textures.ImageTexture) else geom_texture.color
+                for geom_texture in geom_textures
+            ]
+            for i in range(1, len(geom_rgbas)):
+                if not np.allclose(geom_rgbas[0], geom_rgbas[i], atol=gs.EPS):
+                    gs.logger.warning("Batch Color is not yet supported. Use the first texture's color instead.")
+                    break
+            geom_rgba = geom_rgbas[0]
 
+            mat_id = None
+            if len(geom_texture_indices) == 0:
+                geom_rgba_int = (np.array(geom_rgba) * 255.0).astype(np.uint32)
+                mat_id = geom_rgba_int[0] << 24 | geom_rgba_int[1] << 16 | geom_rgba_int[2] << 8 | geom_rgba_int[3]
+            if mat_id not in materials_indices:
+                material_idx = num_materials
+                if mat_id is not None:
+                    materials_indices[mat_id] = material_idx
+                mat_rgbas.append(geom_rgba)
+                mat_texture_indices.extend(geom_texture_indices)
+                mat_texture_offsets.append(total_mat_textures)
                 num_materials += 1
-                total_uv_size += uv_size
-                total_texture_size += texture_size
+                total_mat_textures += len(geom_texture_indices)
             else:
-                geom_mat_ids.append(-1)
-                geom_uv_sizes.append(0)
-                geom_uv_offsets.append(-1)
-                if isinstance(visual, ColorVisuals):
-                    geom_rgbas.append(visual.main_color.astype(np.float32) / 255.0)
-                else:
-                    geom_rgbas.append(np.zeros((4,), dtype=np.float32))
+                material_idx = materials_indices[mat_id]
+            geom_mat_ids.append(material_idx)
 
         args["geom_mat_ids"] = np.array(geom_mat_ids, np.int32)
-        args["mesh_texcoord_num"] = np.array(geom_uv_sizes, np.int32)
-        args["mesh_texcoord_offsets"] = np.array(geom_uv_offsets, np.int32)
-        args["geom_rgba"] = np.stack(geom_rgbas, axis=0)
-
-        args["mesh_texcoords"] = np.concatenate(mat_uv_data, axis=0) if mat_uv_data else np.empty((0, 2), np.float32)
-        args["tex_widths"] = np.array(mat_texture_widths, np.int32)
-        args["tex_heights"] = np.array(mat_texture_heights, np.int32)
-        args["tex_nchans"] = np.array(mat_texture_nchans, np.int32)
-        args["tex_offsets"] = np.array(mat_texture_offsets, np.int64)
-        args["tex_data"] = np.concatenate(mat_texture_data, axis=0) if mat_texture_data else np.array([], np.uint8)
-        args["mat_tex_ids"] = (
-            np.stack(mat_texture_ids, axis=0)
-            if mat_texture_ids
-            else np.empty((0, self.num_textures_per_material), np.int32)
-        )
-        args["mat_rgba"] = np.stack(mat_rgbas, axis=0) if mat_rgbas else np.empty((0, 4), np.float32)
+        args["tex_widths"] = np.array(texture_widths, np.int32)
+        args["tex_heights"] = np.array(texture_heights, np.int32)
+        args["tex_nchans"] = np.array(texture_nchans, np.int32)
+        args["tex_data"] = np.concatenate(texture_data, axis=0) if texture_data else np.array([], np.uint8)
+        args["tex_offsets"] = np.array(texture_offsets, np.int64)
+        args["mat_rgba"] = np.array(mat_rgbas, np.float32)
+        args["mat_tex_ids"] = np.array(mat_texture_indices, np.int32)
+        args["mat_tex_offsets"] = np.array(mat_texture_offsets, np.int32)
 
         return args
 
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_property_torch(self, num_worlds):
-        geom_rgb_torch = ti_to_torch(self.rigid_solver.vgeoms_info.color)
-        geom_rgb_int = (geom_rgb_torch * 255).to(torch.int32)
-        geom_rgb_uint = (geom_rgb_int[:, 0] << 16) | (geom_rgb_int[:, 1] << 8) | geom_rgb_int[:, 2]
-        geom_rgb = geom_rgb_uint[None].repeat(num_worlds, 1)
-
-        geom_mat_ids = torch.full((self.n_vgeoms,), -1, dtype=torch.int32, device=gs.device)
-        geom_mat_ids = geom_mat_ids[None].repeat(num_worlds, 1)
-
+        geom_rgb = torch.empty((0, self.n_vgeoms), dtype=torch.uint32, device=gs.device)
+        geom_mat_ids = torch.full((num_worlds, self.n_vgeoms), -1, dtype=torch.int32, device=gs.device)
         geom_sizes = torch.ones((self.n_vgeoms, 3), dtype=torch.float32, device=gs.device)
         geom_sizes = geom_sizes[None].repeat(num_worlds, 1, 1)
         return geom_mat_ids, geom_rgb, geom_sizes
@@ -289,7 +298,6 @@ class BatchRenderer(RBC):
             geom_retriever=self._geom_retriever,
             gpu_id=gs.device.index if gs.device.index is not None else 0,
             num_worlds=max(self._visualizer.scene.n_envs, 1),
-            num_cameras=len(self._cameras),
             num_lights=len(self._lights),
             cam_fovs_tensor=_make_tensor([camera.fov for camera in self._cameras]),
             cam_znears_tensor=_make_tensor([camera.near for camera in self._cameras]),
