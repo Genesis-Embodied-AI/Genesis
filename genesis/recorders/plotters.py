@@ -16,9 +16,18 @@ import genesis as gs
 from genesis.options.recorders import (
     BasePlotterOptions,
     LinePlotterMixinOptions,
-    PyQtLinePlot as PyQtLinePlotterOptions,
-    MPLLinePlot as MPLLinePlotterOptions,
+)
+from genesis.options.recorders import (
+    MPLDepthScatterPlot as MPLDepthScatterPlotterOptions,
+)
+from genesis.options.recorders import (
     MPLImagePlot as MPLImagePlotterOptions,
+)
+from genesis.options.recorders import (
+    MPLLinePlot as MPLLinePlotterOptions,
+)
+from genesis.options.recorders import (
+    PyQtLinePlot as PyQtLinePlotterOptions,
 )
 from genesis.utils import has_display, tensor_to_array
 
@@ -634,3 +643,138 @@ class MPLImagePlotter(BaseMPLPlotter):
         self.ax = None
         self.image_plot = None
         self.background = None
+
+
+@register_recording(MPLDepthScatterPlotterOptions)
+class MPLDepthScatterPlotter(BaseMPLPlotter):
+    """
+    Live depth sensor visualization using matplotlib 3D scatter plot.
+
+    The data should be a tuple of (positions, distances) where:
+    - positions: array-like with shape (N, 3) for (x, y, z) coordinates
+    - distances: array-like with shape (N,) for depth/distance values
+    """
+
+    def build(self):
+        super().build()
+
+        import matplotlib.pyplot as plt
+
+        self.scatter = None
+        self.colorbar = None
+        self.positions = None
+        self.distances = None
+
+        # Create 3D figure
+        self.fig = plt.figure(figsize=self.figsize)
+        self.ax = self.fig.add_subplot(111, projection="3d")
+        self.fig.suptitle(self._options.title)
+        self.ax.set_xlabel(self._options.x_label)
+        self.ax.set_ylabel(self._options.y_label)
+        self.ax.set_zlabel(self._options.z_label)
+        self.ax.grid(True, alpha=0.3)
+
+        # Initialize with empty scatter (will be set on first data)
+        self.scatter = self.ax.scatter(
+            [], [], [], c=[], s=self._options.point_size, cmap=self._options.cmap, edgecolors="none"
+        )
+        self.colorbar = self.fig.colorbar(
+            self.scatter, ax=self.ax, label=self._options.colorbar_label, shrink=0.5, aspect=5
+        )
+
+        self._show_fig()
+
+    def process(self, data, cur_time):
+        """Process new position and distance data."""
+        # Expect data to be a tuple of (positions, distances)
+        if not isinstance(data, (tuple, list)) or len(data) != 2:
+            gs.logger.warning(f"[{type(self).__name__}] Data must be a tuple (positions, distances). Got: {type(data)}")
+            return
+
+        positions, distances = data
+
+        # Convert to numpy arrays
+        if isinstance(positions, torch.Tensor):
+            positions = tensor_to_array(positions)
+        else:
+            positions = np.asarray(positions)
+
+        if isinstance(distances, torch.Tensor):
+            distances = tensor_to_array(distances)
+        else:
+            distances = np.asarray(distances)
+
+        # Flatten if needed
+        if positions.ndim > 2:
+            positions = positions.reshape(-1, positions.shape[-1])
+        distances = distances.flatten()
+
+        # Validate shapes
+        if positions.ndim != 2 or positions.shape[1] < 3:
+            gs.logger.warning(
+                f"[{type(self).__name__}] Positions must have shape (N, 3) or (N, D) where D >= 3. "
+                f"Got shape {positions.shape}"
+            )
+            return
+
+        if len(positions) != len(distances):
+            gs.logger.warning(
+                f"[{type(self).__name__}] Number of positions ({len(positions)}) doesn't match "
+                f"number of distances ({len(distances)})"
+            )
+            return
+
+        self.positions = positions[:, :3]  # use (x, y, z)
+        self.distances = distances
+
+        super().process(data, cur_time)
+
+    def _update_plot(self):
+        """Update the 3D scatter plot with new positions and distances."""
+        if self.positions is None or self.distances is None:
+            return
+
+        # Update scatter plot data
+        self.scatter._offsets3d = (self.positions[:, 0], self.positions[:, 1], self.positions[:, 2])
+        self.scatter.set_array(self.distances)
+
+        # Update color limits
+        vmin, vmax = np.min(self.distances), np.max(self.distances)
+        current_vmin, current_vmax = self.scatter.get_clim()
+        if abs(vmin - current_vmin) > 1e-6 or abs(vmax - current_vmax) > 1e-6:
+            self.scatter.set_clim(vmin, vmax)
+
+        # Update axis limits if this is the first update or limits have changed significantly
+        if not hasattr(self, "_limits_set") or not self._limits_set:
+            x_min, x_max = self.positions[:, 0].min(), self.positions[:, 0].max()
+            y_min, y_max = self.positions[:, 1].min(), self.positions[:, 1].max()
+            z_min, z_max = self.positions[:, 2].min(), self.positions[:, 2].max()
+
+            # Calculate uniform range for all axes
+            max_range = max(x_max - x_min, y_max - y_min, z_max - z_min)
+            padding = max_range * 0.1 or 0.1
+
+            # Center each axis range
+            x_center = (x_max + x_min) / 2
+            y_center = (y_max + y_min) / 2
+            z_center = (z_max + z_min) / 2
+
+            half_range = (max_range + 2 * padding) / 2
+
+            self.ax.set_xlim(x_center - half_range, x_center + half_range)
+            self.ax.set_ylim(y_center - half_range, y_center + half_range)
+            self.ax.set_zlim(z_center - half_range, z_center + half_range)
+            self._limits_set = True
+
+        self._lock.acquire()
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        self._lock.release()
+
+    def cleanup(self):
+        super().cleanup()
+
+        self.scatter = None
+        self.colorbar = None
+        self.positions = None
+        self.distances = None
