@@ -127,13 +127,8 @@ jobs:
             test -n "$SLURM_JOB_ID" && break
             sleep 3
           done
-          if [ -z "$SLURM_JOB_ID" ]; then
-            echo "Failed to obtain SLURM_JOB_ID" >&2
-            exit 1
-          fi
+          if [ -z "$SLURM_JOB_ID" ]; then exit 1; fi
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
-
-          SLURM_NODE="$(squeue --noheader -o '%N' -j "${SLURM_JOB_ID}")"
 
           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv"
