@@ -17,6 +17,7 @@ import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
+from .pytest_plugin import is_mem_monitoring_supported
 
 has_display = True
 try:
@@ -65,15 +66,6 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-def validate_mem_option() -> None:
-    try:
-        assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"]).decode("utf-8")
-    except Exception as e:
-        print("--mem not supported on this platform", e)
-        raise e
-
-
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     # Make sure that no unsupported markers have been specified in CLI
@@ -84,15 +76,18 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
     # Only launch memory monitor from the main process, not from xdist workers
-    if config.getoption("--mem-monitoring-filepath") and not os.environ.get("PYTEST_XDIST_WORKER"):
-        validate_mem_option()
+    mem_filepath = config.getoption("--mem-monitoring-filepath")
+    if mem_filepath and not os.environ.get("PYTEST_XDIST_WORKER"):
+        supported, reason = is_mem_monitoring_supported()
+        if not supported:
+            raise pytest.UsageError(f"--mem-monitoring-filepath is not supported on this platform: {reason}")
         subprocess.Popen(
             [
                 sys.executable,
                 "tests/monitor_test_mem.py",
                 "--die-with-parent",
                 "--out-csv-filepath",
-                config.getoption("--mem-monitoring-filepath"),
+                mem_filepath,
             ]
         )
 
