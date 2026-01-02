@@ -3986,7 +3986,6 @@ def func_solve_mass_entity(
         n_dofs = entities_info.n_dofs[i_e]
 
         # Step 1: Solve w st. L^T @ w = y
-        # Step 2: z = D^{-1} w
         for i_d_ in (
             range(n_dofs) if ti.static(not BW) else ti.static(range(static_rigid_sim_config.max_n_dofs_per_entity))
         ):
