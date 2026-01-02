@@ -138,7 +138,7 @@ jobs:
 
           # Base container configuration (mounts and workdir)
           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME}"
-          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv"
+          SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --no-container-mount-home"
           SRUN_CONTAINER_OPTS="${SRUN_CONTAINER_OPTS} --container-workdir=/root/workspace"
           
