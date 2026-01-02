@@ -116,18 +116,14 @@ jobs:
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
           echo "CONTAINER_NAME=${CONTAINER_NAME}" >> $GITHUB_ENV
 
+          JOBID_FIFO=$(mktemp -u)
+          mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
                  --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
-                 bash -c "sleep ${TIMEOUT_MINUTES}m" &
-          echo "SLURM_ALLOC_PID=$!" >> $GITHUB_ENV
-
-          for i in $(seq 1 30); do
-            SLURM_JOB_ID="$(squeue --noheader -o '%A' --name "${SLURM_JOB_NAME}" | head -n1)"
-            test -n "$SLURM_JOB_ID" && break
-            sleep 3
-          done
-          if [ -z "$SLURM_JOB_ID" ]; then exit 1; fi
+                 bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
+          SLURM_JOB_ID=$(cat "$JOBID_FIFO")
+          rm -f "$JOBID_FIFO"
           echo "SLURM_JOB_ID=${SLURM_JOB_ID}" >> $GITHUB_ENV
 
           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
