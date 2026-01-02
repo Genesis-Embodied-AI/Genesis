@@ -3,6 +3,7 @@ from typing import Optional
 import genesis as gs
 
 from .options import Options
+from .viewer_interactions import ViewerDefaultControls, ViewerInteraction
 
 
 class ViewerOptions(Options):
@@ -33,20 +34,19 @@ class ViewerOptions(Options):
         The up vector of the camera's extrinsic pose.
     camera_fov : float
         The field of view (in degrees) of the camera.
-    disable_keyboard_shortcuts : bool
-        Whether to disable all keyboard shortcuts in the viewer. Defaults to False.
+    viewer_plugin : ViewerPluginOptions
+        Viewer plugin that adds interactive functionality to the viewer.
     """
 
-    res: Optional[tuple] = None
-    run_in_thread: Optional[bool] = None
+    res: tuple | None = None
+    run_in_thread: bool | None = None
     refresh_rate: int = 60
-    max_FPS: Optional[int] = 60
+    max_FPS: int | None = 60
     camera_pos: tuple = (3.5, 0.5, 2.5)
     camera_lookat: tuple = (0.0, 0.0, 0.5)
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
-    enable_interaction: bool = False
-    disable_keyboard_shortcuts: bool = False
+    viewer_plugin: ViewerInteraction = ViewerDefaultControls()
 
 
 class VisOptions(Options):
