@@ -1441,10 +1441,10 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
 def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     if isinstance(cos_theta, (float, np.float32, np.float64)):
         if axis.ndim != 1:
-            raise ValueError("axis must be 1D when cos_theta is scalar")
+            raise ValueError("Shape mismatch between cos_theta and axis")
     else:
         if axis.ndim - 1 != cos_theta.ndim:
-            raise ValueError("Dimension mismatch")
+            raise ValueError("Shape mismatch between cos_theta and axis")
     if out is None:
         out_ = np.empty(axis.shape[:-1] + (3, 3), dtype=axis.dtype)
     else:
