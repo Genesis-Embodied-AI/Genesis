@@ -68,6 +68,9 @@ class Rasterizer(RBC):
         del self._camera_targets[camera.uid]
 
     def render_camera(self, camera, rgb=True, depth=False, segmentation=False, normal=False):
+        # Update camera
+        self.update_camera(camera)
+
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = None, None, None, None
         if self._offscreen:
             # Set the context
