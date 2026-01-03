@@ -15,6 +15,7 @@ def main():
     parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
     parser.add_argument("-o", "--output_dir", type=str, default="data/test")
     parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
+    parser.add_argument("-f", "--use_fisheye", action="store_true", default=False)
     parser.add_argument("-d", "--debug", action="store_true", default=False)
     parser.add_argument("-l", "--seg_level", type=str, default="link")
     args = parser.parse_args()
@@ -71,7 +72,7 @@ def main():
         pos=(0.0, 0.0, 5.0),
         lookat=(0.0, 0.0, 0.0),
         fov=70,
-        model="fisheye",
+        model="fisheye" if args.use_fisheye else "pinhole",
         GUI=args.vis,
     )
 
