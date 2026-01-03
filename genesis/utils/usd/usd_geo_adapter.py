@@ -26,7 +26,7 @@ class UsdGeometryAdapter:
         self._ref_prim: Usd.Prim = ref_prim
         self._ctx: UsdParserContext = ctx
         self._mesh_type: Literal["mesh", "vmesh"] = mesh_type
-    
+
     def is_primitive(self) -> bool:
         return self._is_primitive
 
@@ -209,7 +209,7 @@ class UsdGeometryAdapter:
             "pos": Q_rel[:3, 3],
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
-    
+
     def _create_gs_collision_mesh_geo_info(self) -> Dict:
         """Create geometry info for USD collision Mesh without rendering information."""
         mesh_prim = UsdGeom.Mesh(self._prim)

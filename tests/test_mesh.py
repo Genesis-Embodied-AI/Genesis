@@ -257,7 +257,10 @@ def test_glb_parse_material(glb_file):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'usd-core' module not found.")
+@pytest.mark.skipif(
+    not HAS_USD_SUPPORT or platform.machine() == "aarch64",
+    reason="'usd-core' module not found or USD not supported on ARM.",
+)
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
     asset_path = get_hf_dataset(pattern=f"{usd_filename}.glb")
@@ -307,7 +310,10 @@ def test_usd_parse(usd_filename):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'usd-core' module not found.")
+@pytest.mark.skipif(
+    not HAS_USD_SUPPORT or platform.machine() == "aarch64",
+    reason="'usd-core' module not found or USD not supported on ARM.",
+)
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
 def test_usd_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
@@ -328,8 +334,8 @@ def test_usd_parse_nodegraph(usd_file):
 
 @pytest.mark.required
 @pytest.mark.skipif(
-    sys.version_info[:2] != (3, 10) or sys.platform not in ("linux", "win32"),
-    reason="omniverse-kit used by USD Baking cannot be correctly installed on this platform now.",
+    sys.version_info[:2] != (3, 10) or sys.platform not in ("linux", "win32") or platform.machine() == "aarch64",
+    reason="omniverse-kit used by USD Baking cannot be correctly installed on this platform now, or USD not supported on ARM.",
 )
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
