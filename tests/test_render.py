@@ -534,10 +534,15 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         raise
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
-@pytest.mark.parametrize("camera_model", ["pinhole", "fisheye"])
-def test_madrona(show_viewer, png_snapshot, renderer, camera_model):
+def _test_madrona_scene(
+    show_viewer,
+    renderer,
+    png_snapshot,
+    use_batch_texture=False,
+    use_fisheye_camera=False,
+    use_directional_light=False,
+    n_envs=2,
+):
     CAM_RES = (128, 128)
 
     scene = gs.Scene(
@@ -545,33 +550,37 @@ def test_madrona(show_viewer, png_snapshot, renderer, camera_model):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
-        gs.morphs.Plane(),
-        surface=gs.surfaces.Default(  # Madrona use case 1: Batch Texture
-            diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures"),
-        ),
-    )
 
-    scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    # entities
+    surface = (
+        gs.surfaces.Default(diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures"))
+        if use_batch_texture
+        else None
     )
+    scene.add_entity(gs.morphs.Plane(), surface=surface)
+    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+
+    # cameras
     cam = scene.add_camera(
         res=CAM_RES,
         pos=(1.5, -0.5, 1.5),
         lookat=(0.0, 0.0, 0.5),
         fov=45,
-        model=camera_model,  # Madrona use case 2: Fisheye camera
+        model="fisheye" if use_fisheye_camera else "pinhole",
         GUI=show_viewer,
     )
-    scene.add_light(
-        pos=(0.0, 0.0, 1.5),
-        dir=(1.0, 1.0, -2.0),
-        color=(1.0, 1.0, 0.0),
-        directional=True,
-        castshadow=True,
-        cutoff=45.0,
-        intensity=0.5,
-    )
+
+    # lights
+    if use_directional_light:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            color=(1.0, 1.0, 0.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
     scene.add_light(
         pos=(4.0, -4.0, 4.0),
         dir=(-1.0, 1.0, -1.0),
@@ -580,7 +589,7 @@ def test_madrona(show_viewer, png_snapshot, renderer, camera_model):
         cutoff=45.0,
         intensity=0.5,
     )
-    scene.build(n_envs=3)
+    scene.build(n_envs=n_envs)
 
     rgb_arrs, _, _, _ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
     assert rgb_arrs is not None
@@ -589,6 +598,24 @@ def test_madrona(show_viewer, png_snapshot, renderer, camera_model):
         rgb_arr = rgb_arrs[i]
         assert rgb_arr.shape == (*CAM_RES, 3)
         assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+def test_madrona_lights(show_viewer, renderer, png_snapshot):
+    _test_madrona_scene(show_viewer, renderer, png_snapshot, use_directional_light=True)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+def test_madrona_batch_texture(show_viewer, renderer, png_snapshot):
+    _test_madrona_scene(show_viewer, renderer, png_snapshot, use_batch_texture=True, n_envs=3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+def test_madrona_fisheye_camera(show_viewer, renderer, png_snapshot):
+    _test_madrona_scene(show_viewer, renderer, png_snapshot, use_fisheye_camera=True)
 
 
 @pytest.mark.parametrize(
@@ -1274,7 +1301,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 
     for image_file in sorted(tmp_path.rglob("*.png")):
         with open(image_file, "rb") as f:
-            assert f.read() == png_snapshot, f"Image file {image_file} does not match snapshot"
+            assert f.read() == png_snapshot
 
 
 @pytest.mark.required

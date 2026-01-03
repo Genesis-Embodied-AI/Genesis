@@ -133,7 +133,7 @@ class Camera(RBC):
         self._follow_smoothing = None
         self._follow_fix_orientation = None
 
-        if self._model not in ["pinhole", "thinlens", "fisheye"]:
+        if self._model not in ("pinhole", "thinlens", "fisheye"):
             gs.raise_exception(f"Invalid camera model: {self._model}")
 
         if self._focus_dist is None:
