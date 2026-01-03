@@ -16,7 +16,6 @@ from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
-    AvatarOptions,
     BaseCouplerOptions,
     LegacyCouplerOptions,
     FEMOptions,
@@ -64,8 +63,6 @@ class Scene(RBC):
         The options configuring the tool_solver (``scene.sim.ToolSolver``).
     rigid_options : gs.options.RigidOptions
         The options configuring the rigid_solver (``scene.sim.RigidSolver``).
-    avatar_options : gs.options.AvatarOptions
-        The options configuring the avatar_solver (``scene.sim.AvatarSolver``).
     mpm_options : gs.options.MPMOptions
         The options configuring the mpm_solver (``scene.sim.MPMSolver``).
     sph_options : gs.options.SPHOptions
@@ -94,7 +91,6 @@ class Scene(RBC):
         coupler_options: BaseCouplerOptions | None = None,
         tool_options: ToolOptions | None = None,
         rigid_options: RigidOptions | None = None,
-        avatar_options: AvatarOptions | None = None,
         mpm_options: MPMOptions | None = None,
         sph_options: SPHOptions | None = None,
         fem_options: FEMOptions | None = None,
@@ -115,7 +111,6 @@ class Scene(RBC):
         coupler_options = coupler_options or LegacyCouplerOptions()
         tool_options = tool_options or ToolOptions()
         rigid_options = rigid_options or RigidOptions()
-        avatar_options = avatar_options or AvatarOptions()
         mpm_options = mpm_options or MPMOptions()
         sph_options = sph_options or SPHOptions()
         fem_options = fem_options or FEMOptions()
@@ -136,7 +131,6 @@ class Scene(RBC):
             coupler_options,
             tool_options,
             rigid_options,
-            avatar_options,
             mpm_options,
             sph_options,
             fem_options,
@@ -152,7 +146,6 @@ class Scene(RBC):
         self.coupler_options = coupler_options
         self.tool_options = tool_options
         self.rigid_options = rigid_options
-        self.avatar_options = avatar_options
         self.mpm_options = mpm_options
         self.sph_options = sph_options
         self.fem_options = fem_options
@@ -167,7 +160,6 @@ class Scene(RBC):
         # merge options
         self.tool_options.copy_attributes_from(self.sim_options)
         self.rigid_options.copy_attributes_from(self.sim_options)
-        self.avatar_options.copy_attributes_from(self.sim_options)
         self.mpm_options.copy_attributes_from(self.sim_options)
         self.sph_options.copy_attributes_from(self.sim_options)
         self.fem_options.copy_attributes_from(self.sim_options)
@@ -181,7 +173,6 @@ class Scene(RBC):
             coupler_options=self.coupler_options,
             tool_options=self.tool_options,
             rigid_options=self.rigid_options,
-            avatar_options=self.avatar_options,
             mpm_options=self.mpm_options,
             sph_options=self.sph_options,
             fem_options=self.fem_options,
@@ -222,7 +213,6 @@ class Scene(RBC):
         coupler_options: BaseCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
-        avatar_options: AvatarOptions,
         mpm_options: MPMOptions,
         sph_options: SPHOptions,
         fem_options: FEMOptions,
@@ -244,9 +234,6 @@ class Scene(RBC):
 
         if not isinstance(rigid_options, RigidOptions):
             gs.raise_exception("`rigid_options` should be an instance of `RigidOptions`.")
-
-        if not isinstance(avatar_options, AvatarOptions):
-            gs.raise_exception("`avatar_options` should be an instance of `AvatarOptions`.")
 
         if not isinstance(mpm_options, MPMOptions):
             gs.raise_exception("`mpm_options` should be an instance of `MPMOptions`.")
@@ -369,7 +356,7 @@ class Scene(RBC):
             surface.smooth = False
 
         if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Terrain)):
-            if not isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Hybrid)):
+            if not isinstance(material, (gs.materials.Rigid, gs.materials.Hybrid)):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph}.")
 
         if surface.double_sided is None:
@@ -381,7 +368,7 @@ class Scene(RBC):
         if vis_mode is not None:
             surface.vis_mode = vis_mode
         # validate and populate default surface.vis_mode considering morph type
-        if isinstance(material, (gs.materials.Rigid, gs.materials.Avatar, gs.materials.Tool)):
+        if isinstance(material, (gs.materials.Rigid, gs.materials.Tool)):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
@@ -452,7 +439,7 @@ class Scene(RBC):
         if isinstance(morph, gs.morphs.FileMorph):
             # Rigid entities will convexify geom by default
             if morph.convexify is None:
-                morph.convexify = isinstance(material, (gs.materials.Rigid, gs.materials.Avatar))
+                morph.convexify = isinstance(material, gs.materials.Rigid)
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
 
@@ -1460,11 +1447,6 @@ class Scene(RBC):
     def rigid_solver(self):
         """The scene's `rigid_solver`, managing all the `RigidEntity` in the scene."""
         return self._sim.rigid_solver
-
-    @property
-    def avatar_solver(self):
-        """The scene's `avatar_solver`, managing all the `AvatarEntity` in the scene."""
-        return self._sim.avatar_solver
 
     @property
     def mpm_solver(self):

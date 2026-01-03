@@ -1274,14 +1274,14 @@ def func_nt_chol_factor(
     for i_d in range(n_dofs):
         tmp = constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d):
-            tmp -= constraint_state.nt_H[i_b, i_d, j_d] ** 2
+            tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
         constraint_state.nt_H[i_b, i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
 
         tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d + 1, n_dofs):
             dot = gs.ti_float(0.0)
             for k_d in range(i_d):
-                dot += constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+                dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
@@ -1291,24 +1291,19 @@ def func_nt_chol_solve(
     constraint_state: array_class.ConstraintState,
 ):
     n_dofs = constraint_state.Mgrad.shape[0]
-    for i_d in range(n_dofs):
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
 
     for i_d in range(n_dofs):
+        curr_out = constraint_state.grad[i_d, i_b]
         for j_d in range(i_d):
-            constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] - (
-                constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
-            )
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
     for i_d_ in range(n_dofs):
         i_d = n_dofs - 1 - i_d_
+        curr_out = constraint_state.Mgrad[i_d, i_b]
         for j_d in range(i_d + 1, n_dofs):
-            constraint_state.Mgrad[i_d, i_b] = (
-                constraint_state.Mgrad[i_d, i_b]
-                - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
-            )
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
