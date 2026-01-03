@@ -703,7 +703,7 @@ def test_link_velocity(gs_sim, tol):
     xpos_0, xpos_1 = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
     assert_allclose(xpos_0, 0.0, tol=tol)
     assert_allclose(xpos_1, xanchor, tol=tol)
-    xvel_0, xvel_1 = gs_sim.rigid_solver.get_links_vel()
+    xvel_0, xvel_1 = gs_sim.rigid_solver.get_links_vel(ref="link_origin")
     assert_allclose(xvel_0, 0.0, tol=tol)
     xvel_1_ = omega_0 * np.array([-xpos_1[1], xpos_1[0], 0.0])
     assert_allclose(xvel_1, xvel_1_, tol=tol)
