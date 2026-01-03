@@ -500,9 +500,10 @@ def _np_xyz_to_quat(xyz: np.ndarray, rpy: bool = False, out: np.ndarray | None =
     """
     assert xyz.ndim >= 1
     if out is None:
-        out_ = np.empty((*xyz.shape[:-1], 4), dtype=xyz.dtype)
+        out_ = np.empty(xyz.shape[:-1] + (4,), dtype=xyz.dtype)
     else:
-        assert out.shape == (*xyz.shape[:-1], 4)
+        if out.shape != xyz.shape[:-1] + (4,):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     rpy2 = 0.5 * xyz
@@ -562,9 +563,10 @@ def _np_quat_to_R(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3, 3), dtype=quat.dtype)
+        out_ = np.empty(quat.shape[:-1] + (3, 3), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3, 3)
+        if out.shape != quat.shape[:-1] + (3, 3):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     s = 2.0 / np.sum(np.square(quat), -1)
@@ -642,9 +644,10 @@ def _np_quat_to_xyz(quat, rpy=False, out=None):
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3), dtype=quat.dtype)
+        out_ = np.empty(quat.shape[:-1] + (3,), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3)
+        if out.shape != quat.shape[:-1] + (3,):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     # Flatten batch dimensions
@@ -753,9 +756,10 @@ def _np_R_to_quat(R, out=None):
     assert R.ndim >= 2
 
     if out is None:
-        out_ = np.empty((*R.shape[:-2], 4), dtype=R.dtype)
+        out_ = np.empty(R.shape[:-2] + (4,), dtype=R.dtype)
     else:
-        assert out.shape == (*R.shape[:-2], 4)
+        if out.shape != R.shape[:-2] + (4,):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     for i in np.ndindex(R.shape[:-2]):
@@ -924,7 +928,8 @@ def T_to_trans_quat(T, *, out=None):
 
 @nb.jit(nopython=True, cache=True)
 def _np_quat_mul(u, v, out=None):
-    assert u.shape == v.shape
+    if u.shape != v.shape:
+        raise ValueError("Shape mismatch")
     u_2d = np.atleast_2d(u)
     v_2d = np.atleast_2d(v)
 
@@ -939,7 +944,8 @@ def _np_quat_mul(u, v, out=None):
     if out is None:
         out_ = np.empty(u_2d.shape, dtype=qq.dtype)
     else:
-        assert out.shape == u.shape
+        if out.shape != u.shape:
+            raise ValueError("Shape mismatch")
         out_ = out
 
     out_[..., 0] = qq - ww + (z1 - y1) * (y2 - z2)
@@ -995,7 +1001,8 @@ def _np_transform_by_quat(v, quat, out=None):
     if out is None:
         out_ = np.empty(v.shape, dtype=v.dtype)
     else:
-        assert out.shape == v.shape
+        if out.shape != v.shape:
+            raise ValueError("Shape mismatch")
         out_ = out
 
     v_T, quat_T, out_T = v.T, quat.T, out_.T
@@ -1194,9 +1201,10 @@ def scale_to_T(scale):
 def _np_z_up_to_R(z, up=None, out=None):
     B = z.shape[:-1]
     if out is None:
-        out_ = np.empty((*B, 3, 3), dtype=z.dtype)
+        out_ = np.empty(B + (3, 3), dtype=z.dtype)
     else:
-        assert out.shape == (*B, 3, 3)
+        if out.shape != B + (3, 3):
+            raise ValueError("Output shape mismatch")
         out_ = out
 
     z_norm = np.sqrt(np.sum(np.square(z.reshape((-1, 3))), -1)).reshape(B)
@@ -1341,9 +1349,10 @@ def _np_euler_to_R(rpy: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     """
     assert rpy.ndim >= 1
     if out is None:
-        out_ = np.empty((*rpy.shape[1:], 3, 3), dtype=rpy.dtype)
+        out_ = np.empty(rpy.shape[1:] + (3, 3), dtype=rpy.dtype)
     else:
-        assert out.shape == (*rpy.shape[1:], 3, 3)
+        if out.shape != rpy.shape[1:] + (3, 3):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     cos_rpy, sin_rpy = np.cos(rpy), np.sin(rpy)
@@ -1377,9 +1386,10 @@ def quat_to_rotvec(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarra
     """
     assert quat.ndim >= 1
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3), dtype=quat.dtype)
+        out_ = np.empty(quat.shape[:-1] + (3,), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3)
+        if out.shape != quat.shape[:-1] + (3,):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     # Split real (qw,) and imaginary (qx, qy, qz) quaternion parts
@@ -1409,9 +1419,10 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
     assert rotvec.ndim >= 1
     B = rotvec.shape[:-1]
     if out is None:
-        out_ = np.empty((*B, 4), dtype=rotvec.dtype)
+        out_ = np.empty(B + (4,), dtype=rotvec.dtype)
     else:
-        assert out.shape == (*B, 4)
+        if out.shape != B + (4,):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     # Split unit axis and positive angle
@@ -1429,13 +1440,16 @@ def rotvec_to_quat(rotvec: np.ndarray, out: np.ndarray | None = None) -> np.ndar
 @nb.jit(nopython=True, cache=True)
 def _np_axis_cos_angle_to_R(axis: np.ndarray, cos_theta: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     if isinstance(cos_theta, (float, np.float32, np.float64)):
-        assert axis.ndim == 1
+        if axis.ndim != 1:
+            raise ValueError("Shape mismatch between cos_theta and axis")
     else:
-        assert axis.ndim - 1 == cos_theta.ndim
+        if axis.ndim - 1 != cos_theta.ndim:
+            raise ValueError("Shape mismatch between cos_theta and axis")
     if out is None:
-        out_ = np.empty((*axis.shape[:-1], 3, 3), dtype=axis.dtype)
+        out_ = np.empty(axis.shape[:-1] + (3, 3), dtype=axis.dtype)
     else:
-        assert out.shape == (*axis.shape[:-1], 3, 3)
+        if out.shape != axis.shape[:-1] + (3, 3):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     axis_norm = np.sqrt(np.sum(np.square(axis.reshape((-1, 3))), -1).reshape((*axis.shape[:-1], 1)))
@@ -1495,7 +1509,7 @@ def z_to_R(v_a: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     v_a_norm = np.sqrt(np.sum(np.square(v_a.reshape((-1, 3))), -1).reshape((*B, 1)))
     v_a = v_a / v_a_norm
 
-    axis = np.empty((*B, 3), dtype=v_a.dtype)
+    axis = np.empty(B + (3,), dtype=v_a.dtype)
     cos_theta = np.empty(B, dtype=v_a.dtype)
     for i in np.ndindex(B):
         axis_i = axis[i]
@@ -1519,9 +1533,10 @@ def z_to_quat(v_a: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     This method is (surprisingly) slower than `z_up_to_R`, w/ and w/o chaining `transform_by_(quat|R)`.
     """
     if out is None:
-        out_ = np.empty((*v_a.shape[:-1], 4), dtype=v_a.dtype)
+        out_ = np.empty(v_a.shape[:-1] + (4,), dtype=v_a.dtype)
     else:
-        assert out.shape == (*v_a.shape[:-1], 4)
+        if out.shape != v_a.shape[:-1] + (4,):
+            raise ValueError("Shape mismatch")
         out_ = out
 
     v_a_norm = np.sqrt(np.sum(np.square(v_a.reshape((-1, 3))), -1).reshape((*v_a.shape[:-1], 1)))

@@ -10,12 +10,14 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import setproctitle
 import psutil
 import pyglet
 import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
+from .pytest_plugin import is_mem_monitoring_supported
 
 has_display = True
 try:
@@ -64,7 +66,7 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-@pytest.hookimpl
+@pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     # Make sure that no unsupported markers have been specified in CLI
     declared_markers = set(name for spec in config.getini("markers") if (name := spec.split(":")[0]) != "forked")
@@ -72,6 +74,22 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         eval(config.option.markexpr, {"__builtins__": {}}, {key: None for key in declared_markers})
     except NameError as e:
         raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
+
+    # Only launch memory monitor from the main process, not from xdist workers
+    mem_filepath = config.getoption("--mem-monitoring-filepath")
+    if mem_filepath and not os.environ.get("PYTEST_XDIST_WORKER"):
+        supported, reason = is_mem_monitoring_supported()
+        if not supported:
+            raise pytest.UsageError(f"--mem-monitoring-filepath is not supported on this platform: {reason}")
+        subprocess.Popen(
+            [
+                sys.executable,
+                "tests/monitor_test_mem.py",
+                "--die-with-parent",
+                "--out-csv-filepath",
+                mem_filepath,
+            ]
+        )
 
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
@@ -328,7 +346,12 @@ def pytest_collection_modifyitems(config, items):
     items[:] = [item for bucket in sorted(buckets, key=len) for item in bucket]
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
+    # Include test name in process title
+    test_name = item.nodeid.replace(" ", "")
+    setproctitle.setproctitle(f"pytest: {test_name}")
+
     # Match CUDA device with EGL device.
     # Note that this must be done here instead of 'pytest_cmdline_main', otherwise it will segfault when using
     # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
@@ -339,15 +362,6 @@ def pytest_runtest_setup(item):
             os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
         except Exception:
             pass
-
-
-def pytest_addoption(parser):
-    parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
-    parser.addoption(
-        "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
-    )
-    parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
-    parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
 
 
 @pytest.fixture(scope="session")
