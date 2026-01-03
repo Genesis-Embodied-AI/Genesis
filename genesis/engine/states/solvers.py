@@ -84,33 +84,6 @@ class RigidSolverState:
         return self._s_global
 
 
-class AvatarSolverState:
-    """
-    Dynamic state queried from a AvatarSolver.
-    """
-
-    def __init__(self, scene):
-        self.scene = scene
-
-        _B = scene.sim.rigid_solver._B
-        args = {
-            "dtype": gs.tc_float,
-            "requires_grad": scene.requires_grad,
-            "scene": self.scene,
-        }
-        self.qpos = gs.zeros((_B, scene.sim.avatar_solver.n_qs), **args)
-        self.dofs_vel = gs.zeros((_B, scene.sim.avatar_solver.n_dofs), **args)
-        self.links_pos = gs.zeros((_B, scene.sim.avatar_solver.n_links, 3), **args)
-        self.links_quat = gs.zeros((_B, scene.sim.avatar_solver.n_links, 4), **args)
-
-    def serializable(self):
-        self.scene = None
-        self.qpos = self.qpos.detach()
-        self.dofs_vel = self.dofs_vel.detach()
-        self.links_pos = self.links_pos.detach()
-        self.links_quat = self.links_quat.detach()
-
-
 class ToolSolverState:
     """
     Dynamic state queried from a RigidSolver.

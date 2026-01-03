@@ -228,16 +228,6 @@ class Visualizer(RBC):
 
             self._scene.rigid_solver.update_vgeoms_render_T()
 
-        if self._scene.avatar_solver.is_active:
-            self._scene.avatar_solver.update_geoms_render_T()
-            self._scene.avatar_solver._kernel_update_vgeoms(
-                vgeoms_info=self._scene.avatar_solver.vgeoms_info,
-                vgeoms_state=self._scene.avatar_solver.vgeoms_state,
-                links_state=self._scene.avatar_solver.links_state,
-                static_rigid_sim_config=self._scene.avatar_solver._static_rigid_sim_config,
-            )
-            self._scene.avatar_solver.update_vgeoms_render_T()
-
         if self._scene.mpm_solver.is_active:
             self._scene.mpm_solver.update_render_fields()
 
