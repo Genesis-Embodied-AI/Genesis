@@ -259,6 +259,17 @@ class Viewer(RBC):
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
+    def register_keybinds(self, keybinds: tuple[pyrender.interaction.keybindings.Keybind]) -> None:
+        """
+        Register a callback function to be called when a key is pressed.
+
+        Parameters
+        ----------
+        keybinds : tuple[gs.ext.pyrender.interaction.keybindings.Keybind]
+            The Keybind objects to register. See Keybind documentation for usage.
+        """
+        self._pyrender_viewer.register_keybinds(keybinds)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------

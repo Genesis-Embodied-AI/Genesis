@@ -18,167 +18,10 @@ Plus all default viewer controls (press 'i' to see them)
 import random
 
 import numpy as np
-import pyglet
 from scipy.spatial.transform import Rotation as R
-from typing_extensions import override
 
 import genesis as gs
-from genesis.ext.pyrender.interaction import register_viewer_plugin
-from genesis.ext.pyrender.interaction.plugins.viewer_controls import ViewerDefaultControls
-from genesis.options.viewer_interactions import ViewerDefaultControls as ViewerDefaultControlsOptions
-
-
-class FrankaTeleopOptions(ViewerDefaultControlsOptions):
-    """Options for Franka teleoperation plugin."""
-
-    pass
-
-
-@register_viewer_plugin(FrankaTeleopOptions)
-class FrankaTeleopPlugin(ViewerDefaultControls):
-    """
-    Viewer plugin for teleoperating Franka robot with keyboard.
-    Extends ViewerDefaultControls to add robot-specific controls.
-    """
-
-    def __init__(self, viewer, options=None, camera=None, scene=None, viewport_size=None):
-        super().__init__(viewer, options, camera, scene, viewport_size)
-
-        # Robot control state
-        self.robot = None
-        self.target_entity = None
-        self.cube_entity = None
-        self.target_pos = None
-        self.target_R = None
-        self.robot_init_pos = np.array([0.5, 0, 0.55])
-        self.robot_init_R = R.from_euler("y", np.pi)
-
-        # Control parameters
-        self.dpos = 0.002
-        self.drot = 0.01
-        self.is_close_gripper = False
-
-        # keybindings
-        self.keybindings.extend(
-            dict(
-                move_forward=pyglet.window.key.UP,
-                move_backward=pyglet.window.key.DOWN,
-                move_left=pyglet.window.key.LEFT,
-                move_right=pyglet.window.key.RIGHT,
-                move_up=pyglet.window.key.N,
-                move_down=pyglet.window.key.M,
-                rotate_ccw=pyglet.window.key.J,
-                rotate_cw=pyglet.window.key.K,
-                reset_scene=pyglet.window.key.U,
-                close_gripper=pyglet.window.key.SPACE,
-            )
-        )
-        self._instr_texts = (
-            ["> [i]: show keyboard instructions"],
-            ["< [i]: hide keyboard instructions"]
-            + self.keybindings.as_instruction_texts(padding=3, exclude=("toggle_keyboard_instructions")),
-        )
-
-    def set_entities(self, robot, target_entity, cube_entity):
-        """Set references to scene entities."""
-        self.robot = robot
-        self.target_entity = target_entity
-        self.cube_entity = cube_entity
-
-        # Initialize target pose
-        self.target_pos = self.robot_init_pos.copy()
-        self.target_R = self.robot_init_R
-
-        # Get DOF indices
-        n_dofs = robot.n_dofs
-        self.motors_dof = np.arange(n_dofs - 2)
-        self.fingers_dof = np.arange(n_dofs - 2, n_dofs)
-        self.ee_link = robot.get_link("hand")
-
-        # Reset to initial pose
-        self._reset_robot()
-
-    def _reset_robot(self):
-        """Reset robot and cube to initial positions."""
-        if self.robot is None:
-            return
-
-        self.target_pos = self.robot_init_pos.copy()
-        self.target_R = self.robot_init_R
-        target_quat = self.target_R.as_quat(scalar_first=True)
-        self.target_entity.set_qpos(np.concatenate([self.target_pos, target_quat]))
-        q = self.robot.inverse_kinematics(link=self.ee_link, pos=self.target_pos, quat=target_quat)
-        self.robot.set_qpos(q[:-2], self.motors_dof)
-
-        # Randomize cube position
-        self.cube_entity.set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
-        self.cube_entity.set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
-
-    @override
-    def on_key_press(self, symbol: int, modifiers: int):
-        # First handle default viewer controls
-        result = super().on_key_press(symbol, modifiers)
-
-        if self.robot is None:
-            return result
-
-        # Handle teleoperation controls
-        if symbol == pyglet.window.key.UP:
-            self.target_pos[0] -= self.dpos
-        elif symbol == pyglet.window.key.DOWN:
-            self.target_pos[0] += self.dpos
-        elif symbol == pyglet.window.key.RIGHT:
-            self.target_pos[1] += self.dpos
-        elif symbol == pyglet.window.key.LEFT:
-            self.target_pos[1] -= self.dpos
-        elif symbol == pyglet.window.key.N:
-            self.target_pos[2] += self.dpos
-        elif symbol == pyglet.window.key.M:
-            self.target_pos[2] -= self.dpos
-        elif symbol == pyglet.window.key.J:
-            self.target_R = R.from_euler("z", self.drot) * self.target_R
-        elif symbol == pyglet.window.key.K:
-            self.target_R = R.from_euler("z", -self.drot) * self.target_R
-        elif symbol == pyglet.window.key.U:
-            self._reset_robot()
-        elif symbol == pyglet.window.key.SPACE:
-            self.is_close_gripper = True
-
-        return result
-
-    @override
-    def on_key_release(self, symbol: int, modifiers: int):
-        result = super().on_key_release(symbol, modifiers)
-
-        if symbol == pyglet.window.key.SPACE:
-            self.is_close_gripper = False
-
-        return result
-
-    @override
-    def update_on_sim_step(self):
-        """Update robot control every simulation step."""
-        super().update_on_sim_step()
-
-        if self.robot is None:
-            return
-
-        # Update target entity visualization
-        target_quat = self.target_R.as_quat(scalar_first=True)
-        self.target_entity.set_qpos(np.concatenate([self.target_pos, target_quat]))
-
-        # Control arm with inverse kinematics
-        q, err = self.robot.inverse_kinematics(
-            link=self.ee_link, pos=self.target_pos, quat=target_quat, return_error=True
-        )
-        self.robot.control_dofs_position(q[:-2], self.motors_dof)
-
-        # Control gripper
-        if self.is_close_gripper:
-            self.robot.control_dofs_force(np.array([-1.0, -1.0]), self.fingers_dof)
-        else:
-            self.robot.control_dofs_force(np.array([1.0, 1.0]), self.fingers_dof)
-
+from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
 
 if __name__ == "__main__":
     ########################## init ##########################
@@ -202,7 +45,6 @@ if __name__ == "__main__":
             camera_lookat=(0.2, 0.0, 0.1),
             camera_fov=50,
             max_FPS=60,
-            viewer_plugin=FrankaTeleopOptions(),
         ),
         show_viewer=True,
         show_FPS=False,
@@ -242,23 +84,114 @@ if __name__ == "__main__":
     ########################## build ##########################
     scene.build()
 
-    # Set up the teleoperation plugin with entity references
-    teleop_plugin = scene.viewer.viewer_interaction
-    teleop_plugin.set_entities(robot, target, cube)
+    # Initialize robot control state
+    robot_init_pos = np.array([0.5, 0, 0.55])
+    robot_init_R = R.from_euler("y", np.pi)
 
-    print("\nKeyboard Controls:")
-    print("↑\t- Move Forward (North)")
-    print("↓\t- Move Backward (South)")
-    print("←\t- Move Left (West)")
-    print("→\t- Move Right (East)")
-    print("n\t- Move Up")
-    print("m\t- Move Down")
-    print("j\t- Rotate Counterclockwise")
-    print("k\t- Rotate Clockwise")
-    print("u\t- Reset Scene")
-    print("space\t- Press to close gripper, release to open gripper")
-    print("\nPress 'i' in the viewer to see all keyboard controls")
+    # Get DOF indices
+    n_dofs = robot.n_dofs
+    motors_dof = np.arange(n_dofs - 2)
+    fingers_dof = np.arange(n_dofs - 2, n_dofs)
+    ee_link = robot.get_link("hand")
+
+    # Initialize target pose
+    target_pos = robot_init_pos.copy()
+    target_R = [robot_init_R]  # Use list to make it mutable in closures
+
+    # Control parameters
+    dpos = 0.002
+    drot = 0.01
+
+    # Helper function to reset robot
+    def reset_robot():
+        """Reset robot and cube to initial positions."""
+        target_pos[:] = robot_init_pos.copy()
+        target_R[0] = robot_init_R
+        target_quat = target_R[0].as_quat(scalar_first=True)
+        target.set_qpos(np.concatenate([target_pos, target_quat]))
+        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
+        robot.set_qpos(q[:-2], motors_dof)
+
+        # Randomize cube position
+        cube.set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
+        cube.set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
+
+    # Initialize robot pose
+    reset_robot()
+
+    # Robot teleoperation callback functions
+    def move_forward():
+        target_pos[0] -= dpos
+
+    def move_backward():
+        target_pos[0] += dpos
+
+    def move_left():
+        target_pos[1] -= dpos
+
+    def move_right():
+        target_pos[1] += dpos
+
+    def move_up():
+        target_pos[2] += dpos
+
+    def move_down():
+        target_pos[2] -= dpos
+
+    def rotate_ccw():
+        target_R[0] = R.from_euler("z", drot) * target_R[0]
+
+    def rotate_cw():
+        target_R[0] = R.from_euler("z", -drot) * target_R[0]
+
+    def close_gripper():
+        robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
+
+    def open_gripper():
+        robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
+
+    # Register robot teleoperation keybindings
+    from pyglet.window import key
+
+    scene.viewer.register_keybinds(
+        (
+            Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback_func=move_forward),
+            Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback_func=move_backward),
+            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback_func=move_left),
+            Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback_func=move_right),
+            Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="move_up", callback_func=move_up),
+            Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="move_down", callback_func=move_down),
+            Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="rotate_ccw", callback_func=rotate_ccw),
+            Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="rotate_cw", callback_func=rotate_cw),
+            Keybind(key_code=key.U, key_action=KeyAction.HOLD, name="reset_scene", callback_func=reset_robot),
+            Keybind(
+                key_code=key.SPACE,
+                name="close_gripper",
+                callback_func=close_gripper,
+                key_action=KeyAction.PRESS,
+            ),
+            Keybind(
+                key_code=key.SPACE,
+                name="open_gripper",
+                callback_func=open_gripper,
+                key_action=KeyAction.RELEASE,
+            ),
+        )
+    )
 
     ########################## run simulation ##########################
-    while True:
-        scene.step()
+    try:
+        while True:
+            # Update target entity visualization
+            target_quat = target_R[0].as_quat(scalar_first=True)
+            target.set_qpos(np.concatenate([target_pos, target_quat]))
+
+            # Control arm with inverse kinematics
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
+            robot.control_dofs_position(q[:-2], motors_dof)
+
+            scene.step()
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
