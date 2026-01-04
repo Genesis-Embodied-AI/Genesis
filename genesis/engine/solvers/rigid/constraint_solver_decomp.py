@@ -504,7 +504,7 @@ def add_collision_constraints(
 
                             if ti.static(static_rigid_sim_config.sparse_solve):
                                 constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                                con_n_relevant_dofs += 1
+                                con_n_relevant_dofs = con_n_relevant_dofs + 1
 
                         link = links_info.parent_idx[link_maybe_batch]
 
@@ -617,7 +617,7 @@ def func_equality_connect(
 
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                        con_n_relevant_dofs += 1
+                        con_n_relevant_dofs = con_n_relevant_dofs + 1
 
                 link = links_info.parent_idx[link_maybe_batch]
 
@@ -938,12 +938,12 @@ def func_equality_weld(
                     ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                     diff = sign * vel
                     jac = diff[i]
-                    jac_qvel += jac * dofs_state.vel[i_d, i_b]
-                    constraint_state.jac[n_con, i_d, i_b] += jac
+                    jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
+                    constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                     if ti.static(static_rigid_sim_config.sparse_solve):
                         constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                        con_n_relevant_dofs += 1
+                        con_n_relevant_dofs = con_n_relevant_dofs + 1
                 link = links_info.parent_idx[link_maybe_batch]
 
         if ti.static(static_rigid_sim_config.sparse_solve):
@@ -1274,14 +1274,14 @@ def func_nt_chol_factor(
     for i_d in range(n_dofs):
         tmp = constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d):
-            tmp -= constraint_state.nt_H[i_b, i_d, j_d] ** 2
+            tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
         constraint_state.nt_H[i_b, i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
 
         tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d + 1, n_dofs):
             dot = gs.ti_float(0.0)
             for k_d in range(i_d):
-                dot += constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+                dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
@@ -1291,24 +1291,19 @@ def func_nt_chol_solve(
     constraint_state: array_class.ConstraintState,
 ):
     n_dofs = constraint_state.Mgrad.shape[0]
-    for i_d in range(n_dofs):
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
 
     for i_d in range(n_dofs):
+        curr_out = constraint_state.grad[i_d, i_b]
         for j_d in range(i_d):
-            constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] - (
-                constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
-            )
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
     for i_d_ in range(n_dofs):
         i_d = n_dofs - 1 - i_d_
+        curr_out = constraint_state.Mgrad[i_d, i_b]
         for j_d in range(i_d + 1, n_dofs):
-            constraint_state.Mgrad[i_d, i_b] = (
-                constraint_state.Mgrad[i_d, i_b]
-                - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
-            )
-        constraint_state.Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b] / constraint_state.nt_H[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -1341,7 +1336,7 @@ def func_update_contact_force(
             for i_dir in range(4):
                 d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
                 n = d * contact_data_friction - contact_data_normal
-                force += n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
+                force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
             collider_state.contact_data.force[i_c, i_b] = force
 
@@ -1425,7 +1420,7 @@ def func_ls_init(
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             mv = gs.ti_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                mv += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
 
     for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1433,21 +1428,21 @@ def func_ls_init(
         if ti.static(static_rigid_sim_config.sparse_solve):
             for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                jv += constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         else:
             for i_d in range(n_dofs):
-                jv += constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         constraint_state.jv[i_c, i_b] = jv
 
     # quad and quad_gauss
     quad_gauss_1 = gs.ti_float(0.0)
     quad_gauss_2 = gs.ti_float(0.0)
     for i_d in range(n_dofs):
-        quad_gauss_1 += (
+        quad_gauss_1 = quad_gauss_1 + (
             constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
             - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
         )
-        quad_gauss_2 += 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
+        quad_gauss_2 = quad_gauss_2 + 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
     for _i0 in range(1):
         constraint_state.quad_gauss[_i0 + 0, i_b] = constraint_state.gauss[i_b]
         constraint_state.quad_gauss[_i0 + 1, i_b] = quad_gauss_1
@@ -1504,9 +1499,9 @@ def func_ls_point_fn(
         elif nef <= i_c:  # Contact constraints
             active = x < 0
 
-        tmp_quad_total_0 += qf_0 * active
-        tmp_quad_total_1 += qf_1 * active
-        tmp_quad_total_2 += qf_2 * active
+        tmp_quad_total_0 = tmp_quad_total_0 + qf_0 * active
+        tmp_quad_total_1 = tmp_quad_total_1 + qf_1 * active
+        tmp_quad_total_2 = tmp_quad_total_2 + qf_2 * active
 
     cost = alpha * alpha * tmp_quad_total_2 + alpha * tmp_quad_total_1 + tmp_quad_total_0
 
@@ -1546,7 +1541,7 @@ def func_linesearch(
     ## use adaptive linesearch tolerance
     snorm = gs.ti_float(0.0)
     for jd in range(n_dofs):
-        snorm += constraint_state.search[jd, i_b] ** 2
+        snorm = snorm + constraint_state.search[jd, i_b] ** 2
     snorm = ti.sqrt(snorm)
     scale = rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)
     gtol = rigid_global_info.tolerance[None] * rigid_global_info.ls_tolerance[None] * snorm * scale
@@ -1831,7 +1826,7 @@ def func_solve_body(
         improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
         gradient = gs.ti_float(0.0)
         for i_d in range(n_dofs):
-            gradient += constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+            gradient = gradient + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
         gradient = ti.sqrt(gradient)
         if gradient < tol_scaled or improvement < tol_scaled:
             constraint_state.improved[i_b] = False
@@ -1842,26 +1837,24 @@ def func_solve_body(
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
             else:
-                constraint_state.cg_beta[i_b] = gs.ti_float(0.0)
-                constraint_state.cg_pg_dot_pMg[i_b] = gs.ti_float(0.0)
+                cg_beta = gs.ti_float(0.0)
+                cg_pg_dot_pMg = gs.ti_float(0.0)
 
                 for i_d in range(n_dofs):
-                    constraint_state.cg_beta[i_b] += constraint_state.grad[i_d, i_b] * (
+                    cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
                         constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
                     )
-                    constraint_state.cg_pg_dot_pMg[i_b] += (
+                    cg_pg_dot_pMg = cg_pg_dot_pMg + (
                         constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
                     )
+                cg_beta = ti.max(cg_beta / ti.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
 
-                constraint_state.cg_beta[i_b] = ti.max(
-                    0.0,
-                    constraint_state.cg_beta[i_b]
-                    / ti.max(rigid_global_info.EPS[None], constraint_state.cg_pg_dot_pMg[i_b]),
-                )
+                constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
+                constraint_state.cg_beta[i_b] = cg_beta
+
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = (
-                        -constraint_state.Mgrad[i_d, i_b]
-                        + constraint_state.cg_beta[i_b] * constraint_state.search[i_d, i_b]
+                        -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
                     )
 
 
@@ -1898,8 +1891,8 @@ def func_update_constraint(
             constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
             floss_force = linear_neg * f + linear_pos * -f
             floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
-            floss_cost_local += linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
-            cost_i += floss_cost_local
+            floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
+            cost_i = cost_i + floss_cost_local
         elif nef <= i_c:  # Contact constraints
             constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
 
@@ -1921,18 +1914,20 @@ def func_update_constraint(
         for i_d in range(n_dofs):
             qfrc_constraint = gs.ti_float(0.0)
             for i_c in range(constraint_state.n_constraints[i_b]):
-                qfrc_constraint += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                qfrc_constraint = (
+                    qfrc_constraint + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                )
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
 
     # (Mx - Mx') * (x - x')
     for i_d in range(n_dofs):
         v = 0.5 * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b]) * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
-        gauss_i += v
-        cost_i += v
+        gauss_i = gauss_i + v
+        cost_i = cost_i + v
 
     # D * (Jx - aref) ** 2
     for i_c in range(constraint_state.n_constraints[i_b]):
-        cost_i += 0.5 * (
+        cost_i = cost_i + 0.5 * (
             constraint_state.Jaref[i_c, i_b] ** 2 * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         )
 
@@ -1986,10 +1981,10 @@ def initialize_Jaref(
             if ti.static(static_rigid_sim_config.sparse_solve):
                 for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    Jaref += constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
-                    Jaref += constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
             constraint_state.Jaref[i_c, i_b] = Jaref
 
 
@@ -2011,7 +2006,7 @@ def initialize_Ma(
         i_e = dofs_info.entity_idx[I_d1]
         Ma_ = gs.ti_float(0.0)
         for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            Ma_ += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+            Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
         Ma[i_d1, i_b] = Ma_
 
 

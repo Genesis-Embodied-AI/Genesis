@@ -15,6 +15,7 @@ def main():
     parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
     parser.add_argument("-o", "--output_dir", type=str, default="data/test")
     parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
+    parser.add_argument("-f", "--use_fisheye", action="store_true", default=False)
     parser.add_argument("-d", "--debug", action="store_true", default=False)
     parser.add_argument("-l", "--seg_level", type=str, default="link")
     args = parser.parse_args()
@@ -35,6 +36,7 @@ def main():
     ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
+        surface=gs.surfaces.Default(diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures")),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -67,9 +69,10 @@ def main():
     )
     cam_2 = scene.add_camera(
         res=(512, 512),
-        pos=(0.0, 0.1, 5.0),
+        pos=(0.0, 0.0, 5.0),
         lookat=(0.0, 0.0, 0.0),
-        fov=45,
+        fov=70,
+        model="fisheye" if args.use_fisheye else "pinhole",
         GUI=args.vis,
     )
 

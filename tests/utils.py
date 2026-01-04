@@ -18,6 +18,7 @@ import cpuinfo
 import numpy as np
 import mujoco
 import torch
+from httpcore import TimeoutException as HTTPTimeoutException
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
@@ -33,8 +34,8 @@ from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "16e4eae0024312b84518f4b555dd630d6b34095a"
-HUGGINGFACE_SNAPSHOT_REVISION = "bfd02a635579cbd5aefa7027df54a433f8ad1915"
+HUGGINGFACE_ASSETS_REVISION = "701f78c1465f0a98f6540bae6c9daacaa551b7bf"
+HUGGINGFACE_SNAPSHOT_REVISION = "ea6ae70386c2b2fbae1387f93ba0e4de1ed7abf7"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -237,7 +238,7 @@ def get_hf_dataset(
 
             if not has_files:
                 raise HTTPError("No file downloaded.")
-        except (HTTPError, FileNotFoundError, RuntimeError):
+        except (HTTPTimeoutException, HTTPError, FileNotFoundError, RuntimeError):
             if i == num_retry - 1:
                 raise
             print(f"Failed to download assets from HuggingFace dataset. Trying again in {retry_delay}s...")
@@ -1033,8 +1034,8 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
         #     gs_sim.scene.visualizer.update()
 
 
-def rgb_array_to_png_bytes(rgb_arr: np.ndarray) -> bytes:
-    img = Image.fromarray(rgb_arr)
+def rgb_array_to_png_bytes(rgb_arr: np.ndarray | torch.Tensor) -> bytes:
+    img = Image.fromarray(tensor_to_array(rgb_arr))
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
