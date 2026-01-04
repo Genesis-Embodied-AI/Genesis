@@ -16,6 +16,8 @@ from OpenGL.GL import *
 
 import genesis as gs
 
+from .interaction.keybindings import KeyAction, Keybind, Keybindings
+
 # Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
 root = None
@@ -79,17 +81,7 @@ class Viewer(pyglet.window.Window):
     viewer_flags : dict
         A set of flags for controlling the viewer's behavior.
         Described in the note below.
-    registered_keys : dict
-        A map from ASCII key characters to tuples containing:
-
-        - A function to be called whenever the key is pressed,
-          whose first argument will be the viewer itself.
-        - (Optionally) A list of additional positional arguments
-          to be passed to the function.
-        - (Optionally) A dict of keyword arguments to be passed
-          to the function.
-
-    kwargs : dict
+    **kwargs : dict
         Any keyword arguments left over will be interpreted as belonging to
         either the :attr:`.Viewer.render_flags` or :attr:`.Viewer.viewer_flags`
         dictionaries. Those flag sets will be updated appropriately.
@@ -198,13 +190,12 @@ class Viewer(pyglet.window.Window):
         viewport_size=None,
         render_flags=None,
         viewer_flags=None,
-        registered_keys=None,
         run_in_thread=False,
         auto_start=True,
         shadow=False,
         plane_reflection=False,
         env_separate_rigid=False,
-        plugin_options=gs.options.viewer_interactions.ViewerDefaultControls(),
+        plugin_options=None,
         **kwargs,
     ):
         #######################################################################
@@ -280,10 +271,8 @@ class Viewer(pyglet.window.Window):
             elif key in self.viewer_flags:
                 self._viewer_flags[key] = kwargs[key]
 
-        self._registered_keys = {}
-        if registered_keys is not None:
-            self._registered_keys = {ord(k.lower()): registered_keys[k] for k in registered_keys}
-
+        self._keybindings: Keybindings = Keybindings()
+        self._held_keys: dict[tuple[int, int], bool] = {}  # Track held keys: (symbol, modifiers) -> True
         #######################################################################
         # Save internal settings
         #######################################################################
@@ -357,7 +346,10 @@ class Viewer(pyglet.window.Window):
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
         
-        # Setup viewer plugin
+        # Setup viewer interaction
+        if plugin_options is None:
+            plugin_options = gs.options.viewer_interactions.ViewerDefaultControls()
+
         plugin_cls = VIEWER_PLUGIN_MAP.get(type(plugin_options))
         if plugin_cls is None:
             gs.raise_exception(
@@ -499,26 +491,18 @@ class Viewer(pyglet.window.Window):
     @viewer_flags.setter
     def viewer_flags(self, value):
         self._viewer_flags = value
-
-    @property
-    def registered_keys(self):
-        """dict : Map from ASCII key character to a handler function.
-
-        This is a map from ASCII key characters to tuples containing:
-
-        - A function to be called whenever the key is pressed,
-          whose first argument will be the viewer itself.
-        - (Optionally) A list of additional positional arguments
-          to be passed to the function.
-        - (Optionally) A dict of keyword arguments to be passed
-          to the function.
-
+    
+    def register_keybinds(self, keybinds: tuple[Keybind]) -> None:
         """
-        return self._registered_keys
+        Add a key handler to call a function when the given ASCII key is pressed.
 
-    @registered_keys.setter
-    def registered_keys(self, value):
-        self._registered_keys = value
+        Parameters
+        ----------
+        keybinds : tuple[Keybind]
+            A tuple of Keybind objects to register.
+        """
+        for keybind in keybinds:
+            self._keybindings.register(keybind)
 
     def close(self):
         """Close the viewer.
@@ -714,9 +698,7 @@ class Viewer(pyglet.window.Window):
             self.clear()
             self._render()
 
-            self.viewer_interaction.on_draw()
-
-        self.interaction_plugin.on_draw()
+            self.interaction_plugin.on_draw()
 
         if self.viewer_flags["caption"] is not None:
             for caption in self.viewer_flags["caption"]:
@@ -803,32 +785,28 @@ class Viewer(pyglet.window.Window):
             ymag = max(c.ymag * sf, 1e-8 * c.ymag / c.xmag)
             c.xmag = xmag
             c.ymag = ymag
+    
+    def _call_keybind_callback(self, symbol: int, modifiers: int, action: KeyAction) -> None:
+        """Call registered keybind callbacks for the given key event."""
+        keybind: Keybind = self._keybindings.get(symbol, modifiers, action)
+        if keybind is not None and keybind.callback_func is not None:
+            keybind.callback_func(*keybind.args, **keybind.kwargs)
 
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
-        # First, check for registered key callbacks
-        if symbol in self.registered_keys:
-            tup = self.registered_keys[symbol]
-            callback = None
-            args = []
-            kwargs = {}
-            if not isinstance(tup, (list, tuple, np.ndarray)):
-                callback = tup
-            else:
-                callback = tup[0]
-                if len(tup) == 2:
-                    args = tup[1]
-                if len(tup) == 3:
-                    kwargs = tup[2]
-            callback(self, *args, **kwargs)
-            # Continue to plugins after registered callback
-        
-        # Delegate to viewer plugin
+        self._held_keys[(symbol, modifiers)] = True
+        self._call_keybind_callback(symbol, modifiers, KeyAction.PRESS)
         return self.interaction_plugin.on_key_press(symbol, modifiers)
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key release."""
+        self._held_keys.pop((symbol, modifiers), None)
+        self._call_keybind_callback(symbol, modifiers, KeyAction.RELEASE)
         return self.interaction_plugin.on_key_release(symbol, modifiers)
+
+    def on_deactivate(self) -> EVENT_HANDLE_STATE:
+        """Clear held keys when window loses focus."""
+        self._held_keys.clear()
 
     @staticmethod
     def _time_event(dt, self):
@@ -1161,7 +1139,7 @@ class Viewer(pyglet.window.Window):
         # The viewer can be considered as fully initialized at this point
         if not self._initialized_event.is_set():
             self._initialized_event.set()
-
+ 
         if auto_refresh:
             while self._is_active:
                 try:
@@ -1213,6 +1191,9 @@ class Viewer(pyglet.window.Window):
             self.flip()
 
     def update_on_sim_step(self):
+        # Call HOLD callbacks for all currently held keys
+        for (symbol, modifiers) in list(self._held_keys.keys()):
+            self._call_keybind_callback(symbol, modifiers, KeyAction.HOLD)
         self.interaction_plugin.update_on_sim_step()
 
     def _compute_initial_camera_pose(self):
