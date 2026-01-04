@@ -149,7 +149,7 @@ jobs:
           OS_FAMILY=$(python -c "import platform; print(platform.system())")
           MACHINE_ARCH=$(python -c "import platform; print(platform.machine())")
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
-          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY }}" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
         if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
@@ -165,11 +165,12 @@ jobs:
           pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m required --forked ./tests
 
       - name: Save Updated Taichi Kernel Cache
-        # lets match this version to the black format check
         if: >-
           ${{ always() &&
-              (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
+              (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
               matrix.PYTHON_VERSION == '3.12' &&
+              matrix.GS_BACKEND == 'cpu' &&
+              matrix.GS_ENABLE_NDARRAY == '1' &&
               steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
         uses: actions/cache/save@v4
         with:
