@@ -137,10 +137,18 @@ jobs:
         shell: bash
         run: |
           PYTHON_DEPS="dev"
+          # Install USD for all platforms except ARM (usd-core doesn't support ARM)
+          # This is required for test_mesh.py which tests USD parsing functionality
           if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
             PYTHON_DEPS="${PYTHON_DEPS},usd"
           fi
           pip install -e ".[${PYTHON_DEPS}]"
+          
+      - name: Verify USD installation (for test_mesh.py)
+        if: matrix.OS != 'ubuntu-24.04-arm'
+        shell: bash
+        run: |
+          python -c "from pxr import Usd; print('USD installed successfully')" || (echo "USD installation failed - required for test_mesh.py" && exit 1)
 
       - name: Get artifact prefix name
         id: artifact_prefix

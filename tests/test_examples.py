@@ -2,7 +2,7 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-
+import platform
 import pytest
 
 
@@ -20,6 +20,7 @@ ALLOW_PATTERNS = {
     "sap_coupling/**/*.py",
     "sensors/**/*.py",
     "tutorials/**/*.py",
+    "usd/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
@@ -32,6 +33,9 @@ if sys.platform != "linux":
     IGNORE_SCRIPT_NAMES |= {
         "cut_dragon.py",
     }
+# Skip USD examples on ARM since USD is not supported on ARM platforms
+if platform.machine() == "aarch64":
+    IGNORE_SCRIPT_NAMES |= {"import_stage.py"}
 
 TIMEOUT = 500.0
 

@@ -283,7 +283,7 @@ def pytest_xdist_auto_num_workers(config):
     # does not completely release memory between each test.
     if sys.platform == "darwin":
         ram_memory_per_worker = vram_memory_per_worker = 3.0
-    elif config.option.forked:
+    elif getattr(config.option, "forked", False):
         ram_memory_per_worker = 5.5
         vram_memory_per_worker = 1.8
     else:
