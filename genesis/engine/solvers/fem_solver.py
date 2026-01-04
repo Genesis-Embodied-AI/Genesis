@@ -1109,7 +1109,7 @@ class FEMSolver(Solver):
         if not self.is_active:
             return None
 
-        return ti_to_torch(self.elements_v_energy.force)
+        return ti_to_torch(self.elements_v_energy.force, copy=True)
 
     @ti.kernel
     def _kernel_add_elements(
