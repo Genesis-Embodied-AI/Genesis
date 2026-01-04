@@ -944,10 +944,8 @@ class RigidSolver(Solver):
                 )
 
     def check_errno(self):
-        if gs.use_zerocopy:
-            errno = ti_to_torch(self._errno).item()
-        else:
-            errno = kernel_get_errno(self._errno)
+        # Zero-copy cannot be used for 0-dim tensors because of torch limitation, so we are better of calling a kernel
+        errno = kernel_read_scalar_int32(self._errno)
 
         if errno & 0b00000000000000000000000000000001:
             max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
@@ -8307,8 +8305,8 @@ def kernel_set_geoms_friction(
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def kernel_get_errno(errno: array_class.V_ANNOTATION) -> ti.i32:
-    return errno[None]
+def kernel_read_scalar_int32(tensor: array_class.V_ANNOTATION) -> ti.i32:
+    return tensor[None]
 
 
 @ti.func
