@@ -11,48 +11,19 @@ k	- Rotate Clockwise
 u	- Reset Scene
 space	- Press to close gripper, release to open gripper
 esc	- Quit
+
+Plus all default viewer controls (press 'i' to see them)
 """
 
-import os
 import random
-import threading
 
-import genesis as gs
 import numpy as np
-from pynput import keyboard
 from scipy.spatial.transform import Rotation as R
 
+import genesis as gs
+from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
 
-class KeyboardDevice:
-    def __init__(self):
-        self.pressed_keys = set()
-        self.lock = threading.Lock()
-        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-
-    def start(self):
-        self.listener.start()
-
-    def stop(self):
-        try:
-            self.listener.stop()
-        except NotImplementedError:
-            # Dummy backend does not implement stop
-            pass
-        self.listener.join()
-
-    def on_press(self, key: keyboard.Key):
-        with self.lock:
-            self.pressed_keys.add(key)
-
-    def on_release(self, key: keyboard.Key):
-        with self.lock:
-            self.pressed_keys.discard(key)
-
-    def get_cmd(self):
-        return self.pressed_keys
-
-
-def build_scene():
+if __name__ == "__main__":
     ########################## init ##########################
     gs.init(precision="32", logging_level="info", backend=gs.cpu)
     np.set_printoptions(precision=7, suppress=True)
@@ -80,19 +51,19 @@ def build_scene():
     )
 
     ########################## entities ##########################
-    entities = dict()
-    entities["plane"] = scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
 
-    entities["robot"] = scene.add_entity(
+    robot = scene.add_entity(
         material=gs.materials.Rigid(gravity_compensation=1),
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
             euler=(0, 0, 0),
         ),
     )
-    entities["cube"] = scene.add_entity(
+
+    cube = scene.add_entity(
         material=gs.materials.Rigid(rho=300),
         morph=gs.morphs.Box(
             pos=(0.5, 0.0, 0.07),
@@ -101,7 +72,7 @@ def build_scene():
         surface=gs.surfaces.Default(color=(0.5, 1, 0.5)),
     )
 
-    entities["target"] = scene.add_entity(
+    target = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/axis.obj",
             scale=0.15,
@@ -113,115 +84,114 @@ def build_scene():
     ########################## build ##########################
     scene.build()
 
-    return scene, entities
-
-
-def run_sim(scene, entities, clients):
-    robot = entities["robot"]
-    target_entity = entities["target"]
-
+    # Initialize robot control state
     robot_init_pos = np.array([0.5, 0, 0.55])
     robot_init_R = R.from_euler("y", np.pi)
-    target_pos = robot_init_pos.copy()
-    target_R = robot_init_R
 
+    # Get DOF indices
     n_dofs = robot.n_dofs
     motors_dof = np.arange(n_dofs - 2)
     fingers_dof = np.arange(n_dofs - 2, n_dofs)
     ee_link = robot.get_link("hand")
 
-    def reset_scene():
-        nonlocal target_pos, target_R
-        target_pos = robot_init_pos.copy()
-        target_R = robot_init_R
-        target_quat = target_R.as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
+    # Initialize target pose
+    target_pos = robot_init_pos.copy()
+    target_R = [robot_init_R]  # Use list to make it mutable in closures
+
+    # Control parameters
+    dpos = 0.002
+    drot = 0.01
+
+    # Helper function to reset robot
+    def reset_robot():
+        """Reset robot and cube to initial positions."""
+        target_pos[:] = robot_init_pos.copy()
+        target_R[0] = robot_init_R
+        target_quat = target_R[0].as_quat(scalar_first=True)
+        target.set_qpos(np.concatenate([target_pos, target_quat]))
         q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
         robot.set_qpos(q[:-2], motors_dof)
 
-        entities["cube"].set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
-        entities["cube"].set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
+        # Randomize cube position
+        cube.set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
+        cube.set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
 
-    print("\nKeyboard Controls:")
-    print("↑\t- Move Forward (North)")
-    print("↓\t- Move Backward (South)")
-    print("←\t- Move Left (West)")
-    print("→\t- Move Right (East)")
-    print("n\t- Move Up")
-    print("m\t- Move Down")
-    print("j\t- Rotate Counterclockwise")
-    print("k\t- Rotate Clockwise")
-    print("u\t- Reset Scene")
-    print("space\t- Press to close gripper, release to open gripper")
-    print("esc\t- Quit")
+    # Initialize robot pose
+    reset_robot()
 
-    # reset scen before starting teleoperation
-    reset_scene()
+    # Robot teleoperation callback functions
+    def move_forward():
+        target_pos[0] -= dpos
 
-    # start teleoperation
-    stop = False
-    while not stop:
-        pressed_keys = clients["keyboard"].pressed_keys.copy()
+    def move_backward():
+        target_pos[0] += dpos
 
-        # reset scene:
-        reset_flag = False
-        reset_flag |= keyboard.KeyCode.from_char("u") in pressed_keys
-        if reset_flag:
-            reset_scene()
+    def move_left():
+        target_pos[1] -= dpos
 
-        # stop teleoperation
-        stop = keyboard.Key.esc in pressed_keys
+    def move_right():
+        target_pos[1] += dpos
 
-        # get ee target pose
-        is_close_gripper = False
-        dpos = 0.002
-        drot = 0.01
-        for key in pressed_keys:
-            if key == keyboard.Key.up:
-                target_pos[0] -= dpos
-            elif key == keyboard.Key.down:
-                target_pos[0] += dpos
-            elif key == keyboard.Key.right:
-                target_pos[1] += dpos
-            elif key == keyboard.Key.left:
-                target_pos[1] -= dpos
-            elif key == keyboard.KeyCode.from_char("n"):
-                target_pos[2] += dpos
-            elif key == keyboard.KeyCode.from_char("m"):
-                target_pos[2] -= dpos
-            elif key == keyboard.KeyCode.from_char("j"):
-                target_R = R.from_euler("z", drot) * target_R
-            elif key == keyboard.KeyCode.from_char("k"):
-                target_R = R.from_euler("z", -drot) * target_R
-            elif key == keyboard.Key.space:
-                is_close_gripper = True
+    def move_up():
+        target_pos[2] += dpos
 
-        # control arm
-        target_quat = target_R.as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
-        q, _err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
-        robot.control_dofs_position(q[:-2], motors_dof)
+    def move_down():
+        target_pos[2] -= dpos
 
-        # control gripper
-        if is_close_gripper:
-            robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
-        else:
-            robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
+    def rotate_ccw():
+        target_R[0] = R.from_euler("z", drot) * target_R[0]
 
-        scene.step()
+    def rotate_cw():
+        target_R[0] = R.from_euler("z", -drot) * target_R[0]
 
-        if "PYTEST_VERSION" in os.environ:
-            break
+    def close_gripper():
+        robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
 
+    def open_gripper():
+        robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
 
-def main():
-    clients = dict()
-    clients["keyboard"] = KeyboardDevice()
-    clients["keyboard"].start()
+    # Register robot teleoperation keybindings
+    from pyglet.window import key
 
-    scene, entities = build_scene()
-    run_sim(scene, entities, clients)
+    scene.viewer.register_keybinds(
+        (
+            Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback_func=move_forward),
+            Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback_func=move_backward),
+            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback_func=move_left),
+            Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback_func=move_right),
+            Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="move_up", callback_func=move_up),
+            Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="move_down", callback_func=move_down),
+            Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="rotate_ccw", callback_func=rotate_ccw),
+            Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="rotate_cw", callback_func=rotate_cw),
+            Keybind(key_code=key.U, key_action=KeyAction.HOLD, name="reset_scene", callback_func=reset_robot),
+            Keybind(
+                key_code=key.SPACE,
+                name="close_gripper",
+                callback_func=close_gripper,
+                key_action=KeyAction.PRESS,
+            ),
+            Keybind(
+                key_code=key.SPACE,
+                name="open_gripper",
+                callback_func=open_gripper,
+                key_action=KeyAction.RELEASE,
+            ),
+        )
+    )
 
+    ########################## run simulation ##########################
+    try:
+        while True:
+            # Update target entity visualization
+            target_quat = target_R[0].as_quat(scalar_first=True)
+            target.set_qpos(np.concatenate([target_pos, target_quat]))
 
-if __name__ == "__main__":
-    main()
+            # Control arm with inverse kinematics
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
+            robot.control_dofs_position(q[:-2], motors_dof)
+
+            scene.step()
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")

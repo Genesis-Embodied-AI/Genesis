@@ -1,6 +1,6 @@
+import importlib
 import os
 import threading
-import importlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -9,11 +9,10 @@ import OpenGL.platform
 
 import genesis as gs
 import genesis.utils.geom as gu
-
 from genesis.ext import pyrender
 from genesis.repr_base import RBC
-from genesis.utils.tools import Rate
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
+from genesis.utils.tools import Rate
 
 if TYPE_CHECKING:
     from genesis.options.vis import ViewerOptions
@@ -40,15 +39,11 @@ class Viewer(RBC):
         self._camera_init_lookat = np.asarray(options.camera_lookat, dtype=gs.np_float)
         self._camera_up = np.asarray(options.camera_up, dtype=gs.np_float)
         self._camera_fov = options.camera_fov
-        self._enable_interaction = options.enable_interaction
-        self._disable_keyboard_shortcuts = options.disable_keyboard_shortcuts
+        self._viewer_plugin = options.viewer_plugin
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
             gs.raise_exception("ViewerOptions.camera_(pos|lookat|up) must be sequences of length 3.")
-
-        if options.enable_interaction and gs.backend != gs.cpu:
-            gs.logger.warning("Interaction code is slow on GPU. Switch to CPU backend or disable interaction.")
 
         self._pyrender_viewer = None
         self.context = context
@@ -100,8 +95,7 @@ class Viewer(RBC):
                         shadow=self.context.shadow,
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
-                        enable_interaction=self._enable_interaction,
-                        disable_keyboard_shortcuts=self._disable_keyboard_shortcuts,
+                        plugin_options=self._viewer_plugin,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,
@@ -264,6 +258,17 @@ class Viewer(RBC):
             self.set_camera_pose(pose=camera_transform)
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
+
+    def register_keybinds(self, keybinds: tuple[pyrender.interaction.keybindings.Keybind]) -> None:
+        """
+        Register a callback function to be called when a key is pressed.
+
+        Parameters
+        ----------
+        keybinds : tuple[gs.ext.pyrender.interaction.keybindings.Keybind]
+            The Keybind objects to register. See Keybind documentation for usage.
+        """
+        self._pyrender_viewer.register_keybinds(keybinds)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
