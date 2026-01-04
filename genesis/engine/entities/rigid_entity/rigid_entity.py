@@ -2036,15 +2036,37 @@ class RigidEntity(Entity):
         from genesis.engine.couplers import LegacyCoupler
 
         if self.n_geoms == 0:
-            gs.raise_exception("Entity has no geoms.")
+            gs.raise_exception("Entity has no collision geometries.")
 
         # Already computed internally by the solver. Let's access it directly for efficiency.
         if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
             return self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx)[..., 0, :]
 
         # Compute the AABB on-the-fly based on the positions of all the vertices
-        verts = self.get_verts()
-        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+        verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
+        return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the visual
+        geometries associated with this entity.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
+            The AABB of the entity, where `[:, 0] = min_corner (x_min, y_min, z_min)` and
+            `[:, 1] = max_corner (x_max, y_max, z_max)`.
+        """
+        if self.n_vgeoms == 0:
+            gs.raise_exception("Entity has no visual geometries.")
+        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
+        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     def get_aabb(self):
         raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")

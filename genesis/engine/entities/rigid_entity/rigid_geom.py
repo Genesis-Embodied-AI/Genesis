@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from .rigid_link import RigidLink
 
 
+NUM_VERTS_VISUAL_GEOM_AABB = 200
+
+
 @ti.data_oriented
 class RigidGeom(RBC):
     """
@@ -399,7 +402,7 @@ class RigidGeom(RBC):
         Get the axis-aligned bounding box (AABB) of the geom in world frame.
         """
         verts = self.get_verts()
-        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+        return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
 
     def set_sol_params(self, sol_params):
         """
@@ -839,6 +842,11 @@ class RigidVisGeom(RBC):
         self._solver = link.entity.solver
         self._vmesh = vmesh
 
+        # Lazy-initialize low-res geometry because it is usually unused and may be slow to compute
+        self._init_pos_tc = torch.from_numpy(init_pos).to(device=gs.device, dtype=gs.tc_float)
+        self._init_quat_tc = torch.from_numpy(init_quat).to(device=gs.device, dtype=gs.tc_float)
+        self._aabb_verts: torch.Tensor | None = None
+
         self._uid = gs.UID()
         self._idx = idx
 
@@ -890,6 +898,27 @@ class RigidVisGeom(RBC):
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the geom in world frame.
+
+        This method computes the bounding box of the geometry after aggressive decimation of its convex hull. This is
+        usually sufficiently accurate (<1mm), while significantly improving runtime speed and reducing memory footprint.
+        """
+        if self._aabb_verts is None:
+            # Aggressiveness has been tuned to give sub-millimeter accuracy on Franka robot in random configurations
+            aabb_mesh = self.vmesh.copy()
+            aabb_mesh.convexify()
+            aabb_mesh.decimate(decimate_face_num=NUM_VERTS_VISUAL_GEOM_AABB, decimate_aggressiveness=3, convexify=False)
+            self._aabb_verts = torch.from_numpy(aabb_mesh.verts).to(dtype=gs.tc_float, device=gs.device)
+
+        pos, quat = gu.transform_pos_quat_by_trans_quat(
+            self._init_pos_tc, self._init_quat_tc, self.link.get_pos(envs_idx), self.link.get_quat(envs_idx)
+        )
+        vverts_pos = pos[..., None, :] + gu.transform_by_quat(self._aabb_verts, quat[..., None, :])
+        return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

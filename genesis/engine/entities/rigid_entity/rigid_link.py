@@ -318,8 +318,21 @@ class RigidLink(RBC):
         Get the axis-aligned bounding box (AABB) of the link's collision body in the world frame by aggregating all
         the collision geometries associated with this link (`link.geoms`).
         """
+        if self.n_geoms == 0:
+            gs.raise_exception("Link has no collision geometries.")
         verts = self.get_verts()
-        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+        return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the link's visual body in the world frame by aggregating all
+        the visual geometries associated with this link (`link.vgeoms`).
+        """
+        if self.n_geoms == 0:
+            gs.raise_exception("Link has no visual geometries.")
+        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
+        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
     def set_mass(self, mass):

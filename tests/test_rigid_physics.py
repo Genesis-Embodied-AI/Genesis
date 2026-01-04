@@ -3593,7 +3593,7 @@ def test_noslip_iterations(scale, box_box_detection, show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 1])
+@pytest.mark.parametrize("n_envs", [0, 3])
 def test_axis_aligned_bounding_boxes(n_envs):
     scene = gs.Scene()
     scene.add_entity(
@@ -3602,7 +3602,7 @@ def test_axis_aligned_bounding_boxes(n_envs):
             pos=(0, 0, 0),
         ),
     )
-    box = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
             pos=(0.5, 0, 0.05),
@@ -3628,7 +3628,12 @@ def test_axis_aligned_bounding_boxes(n_envs):
     )
     scene.build(n_envs=n_envs)
 
-    aabb_shape = (*((n_envs,) if n_envs > 0 else ()), 2, 3)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+    aabb_shape = (*batch_shape, 2, 3)
+
+    qpos = np.random.rand(*(*batch_shape, robot.n_dofs))
+    robot.set_dofs_position(qpos)
+
     robot_aabb = robot.get_AABB()
     robot_geoms_aabb = torch.stack([geom.get_AABB().expand(aabb_shape) for geom in robot.geoms], dim=0)
     assert_allclose(torch.min(robot_geoms_aabb[..., 0, :], dim=0).values, robot_aabb[..., 0, :], tol=gs.EPS)
@@ -3651,6 +3656,21 @@ def test_axis_aligned_bounding_boxes(n_envs):
     sphere_aabb_min, sphere_aabb_max = aabbs[3].split(1, dim=-2)
     assert_allclose(sphere_aabb_min, (-0.55, -0.05, 0.0), atol=gs.EPS)
     assert_allclose(sphere_aabb_max, (-0.45, 0.05, 0.1), atol=gs.EPS)
+
+    vaabbs = [vgeom.get_vAABB().expand(aabb_shape) for entity in scene.entities for vgeom in entity.vgeoms]
+    if n_envs > 0:
+        for entity in scene.entities:
+            for vgeom in entity.vgeoms:
+                assert_allclose(vgeom.get_vAABB(), [vgeom.get_vAABB(i)[0] for i in range(n_envs)], tol=gs.EPS)
+    box_aabb_min, box_aabb_max = vaabbs[1].split(1, dim=-2)
+    assert_allclose(box_aabb_min, (0.45, -0.05, 0.0), atol=gs.EPS)
+    assert_allclose(box_aabb_max, (0.55, 0.05, 0.1), atol=gs.EPS)
+    sphere_aabb_min, sphere_aabb_max = vaabbs[3].split(1, dim=-2)
+    assert_allclose(sphere_aabb_min, (-0.55, -0.05, 0.0), atol=1e-3)
+    assert_allclose(sphere_aabb_max, (-0.45, 0.05, 0.1), atol=1e-3)
+
+    robot_vaabb = robot.get_vAABB()
+    assert_allclose(robot_vaabb, robot_aabb, atol=1e-3)
 
 
 @pytest.mark.required
