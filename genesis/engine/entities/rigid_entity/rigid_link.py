@@ -9,9 +9,9 @@ from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 
-from genesis.utils.misc import DeprecationError, tensor_to_array
+from genesis.utils.misc import tensor_to_array, ti_to_torch, DeprecationError
 
-from .rigid_geom import RigidGeom, RigidVisGeom, _kernel_get_free_verts, _kernel_get_fixed_verts
+from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
@@ -297,14 +297,14 @@ class RigidLink(RBC):
         """
         Get the vertices of the link's collision body (concatenation of all `link.geoms`) in the world frame.
         """
-        self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
+        geoms_idx = slice(self.geom_start, self.geom_end)
+        self._solver.update_verts_for_geoms(geoms_idx)
 
+        verts_idx = slice(self._verts_state_start, self._verts_state_start + self.n_verts)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = torch.empty((self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-            _kernel_get_fixed_verts(tensor, self._verts_state_start, self.n_verts, self._solver.fixed_verts_state)
+            tensor = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
         else:
-            tensor = torch.empty((self._solver._B, self.n_verts, 3), dtype=gs.tc_float, device=gs.device)
-            _kernel_get_free_verts(tensor, self._verts_state_start, self.n_verts, self._solver.free_verts_state)
+            tensor = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor

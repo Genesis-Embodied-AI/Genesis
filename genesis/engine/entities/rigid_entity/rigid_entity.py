@@ -20,7 +20,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -2252,30 +2252,13 @@ class RigidEntity(Entity):
         tensor = torch.empty((self._solver._B, n_fixed_verts + n_free_vertices, 3), dtype=gs.tc_float, device=gs.device)
 
         if n_fixed_verts > 0:
-            if gs.use_zerocopy:
-                fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos)
-                tensor[:, self._fixed_verts_idx_local] = fixed_verts_state[
-                    self._fixed_verts_state_start : self._fixed_verts_state_start + n_fixed_verts
-                ]
-            else:
-                _kernel_get_fixed_verts(
-                    tensor, self._fixed_verts_idx_local, self._fixed_verts_state_start, self._solver.fixed_verts_state
-                )
+            verts_idx = slice(self._fixed_verts_state_start, self._fixed_verts_state_start + n_fixed_verts)
+            fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx)
+            tensor[:, self._fixed_verts_idx_local] = fixed_verts_state
         if n_free_vertices > 0:
-            if gs.use_zerocopy:
-                free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, transpose=True)
-                tensor[:, self._free_verts_idx_local] = free_verts_state[
-                    :, self._free_verts_state_start : self._free_verts_state_start + n_free_vertices
-                ]
-            else:
-                # FIXME: Get around some bug in gstaichi when using gstaichi with metal backend
-                must_copy = gs.backend == gs.metal and n_fixed_verts > 0
-                tensor_free = torch.zeros_like(tensor) if must_copy else tensor
-                _kernel_get_free_verts(
-                    tensor_free, self._free_verts_idx_local, self._free_verts_state_start, self._solver.free_verts_state
-                )
-                if must_copy:
-                    tensor += tensor_free
+            verts_idx = slice(self._free_verts_state_start, self._free_verts_state_start + n_free_vertices)
+            free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True)
+            tensor[:, self._free_verts_idx_local] = free_verts_state
 
         if self._solver.n_envs == 0:
             tensor = tensor[0]
