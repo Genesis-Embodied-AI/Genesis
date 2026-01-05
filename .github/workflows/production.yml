@@ -148,18 +148,12 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          if [[ -d logs ]]; then {
-            rm -rf logs
-          } fi
-          mkdir logs
           srun ${SRUN_COMMON} bash -e -s <<'EOF'
             source /venv/bin/activate
             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
                    --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
           EOF
-          ls -lh logs/
-          cat logs/*
 
       - name: Kill srun job systematically
         if: always()
@@ -169,8 +163,6 @@ jobs:
           fi
       - name: Display benchmark stats
         run: |
-          ls -lh mem_results_*.txt
-          cat mem_results_*.txt
           cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
       - name: Upload benchmark stats as artifact
         uses: actions/upload-artifact@v4

@@ -77,10 +77,6 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
-    import random
-    id = random.randint(0, 1000)
-    with open(f"logs/pytest_cmdline_main_{id}.txt", "w") as f:
-        f.write("pytest_cmdline_main\n")
     # Make sure that no unsupported markers have been specified in CLI
     declared_markers = set(name for spec in config.getini("markers") if (name := spec.split(":")[0]) != "forked")
     try:
