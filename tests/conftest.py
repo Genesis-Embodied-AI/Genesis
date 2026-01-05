@@ -78,11 +78,21 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     except NameError as e:
         raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
-    mem_monitoring = config.getoption("--mem-monitoring-filepath")
-    with open(mem_monitoring, "a") as f:
-        f.write("foo\n")
-    with open(f"logs/pytest_cmdline_main_{id}.txt", "a") as f:
-        f.write(f"mem monitoring filepath {mem_monitoring}\n")
+    # Only launch memory monitor from the main process, not from xdist workers
+    mem_filepath = config.getoption("--mem-monitoring-filepath")
+    if mem_filepath and not os.environ.get("PYTEST_XDIST_WORKER"):
+        supported, reason = is_mem_monitoring_supported()
+        if not supported:
+            raise pytest.UsageError(f"--mem-monitoring-filepath is not supported on this platform: {reason}")
+        subprocess.Popen(
+            [
+                sys.executable,
+                "tests/monitor_test_mem.py",
+                "--die-with-parent",
+                "--out-csv-filepath",
+                mem_filepath,
+            ]
+        )
 
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
