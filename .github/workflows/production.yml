@@ -157,6 +157,8 @@ jobs:
             pytest --mem-monitoring-filepath mem_results_${SLURM_JOB_NAME}.txt --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
           EOF
+          ls -lh logs/
+          cat logs/*
 
       - name: Kill srun job systematically
         if: always()
