@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import subprocess
+from argparse import SUPPRESS
 import sys
 from enum import Enum
 from io import BytesIO
@@ -358,7 +359,12 @@ def pytest_collection_modifyitems(config, items):
     items[:] = [item for bucket in sorted(buckets, key=len) for item in bucket]
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
+    # Include test name in process title
+    test_name = item.nodeid.replace(" ", "")
+    setproctitle.setproctitle(f"pytest: {test_name}")
+
     # Match CUDA device with EGL device.
     # Note that this must be done here instead of 'pytest_cmdline_main', otherwise it will segfault when using
     # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
@@ -382,7 +388,13 @@ def pytest_addoption(parser):
     )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
-    parser.addoption("--mem-monitoring-filepath", type=str, help="Run memory monitoring, and output results to this filepath.")
+    supported, _reason = is_mem_monitoring_supported()
+    help_text = (
+        "Run memory monitoring, and store results to mem_monitoring_filepath. CUDA on linux ONLY."
+        if supported
+        else SUPPRESS
+    )
+    parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
 
 
 @pytest.fixture(scope="session")
