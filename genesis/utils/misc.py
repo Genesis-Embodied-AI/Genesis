@@ -449,9 +449,8 @@ def ti_to_python(
     # FIXME: Torch>2.9.1 still does not support bytes_offset for 0-dim dlpack.
     data_type = type(value)
     use_zerocopy = gs.use_zerocopy and (
-        (TORCH_MPS_SUPPORT_DLPACK_FIELD and (batch_shape or not issubclass(data_type, ti.ScalarField)))
-        or gs.backend != gs.metal
-        or not issubclass(data_type, ti.Field)
+        (TORCH_MPS_SUPPORT_DLPACK_FIELD or gs.backend != gs.metal or not issubclass(data_type, ti.Field))
+        and (batch_shape or not issubclass(data_type, ti.ScalarField))
     )
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
         if copy is False:
