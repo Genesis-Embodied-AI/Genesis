@@ -123,33 +123,31 @@ class RigidLink(RBC):
             vgeom._build()
 
         if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
-            # Determine which geom list to use: geoms first, then vgeoms, then fallback
-            if len(self._geoms) > 0:
-                geom_list = self._geoms
-                is_visual = False
-            elif len(self._vgeoms) > 0:
-                gs.logger.info(
-                    f"Link mass is not specified and collision geoms can not be found for "
-                    f"link '{self.name}'. Using visual geoms to compute inertial properties."
-                )
-                geom_list = self._vgeoms
-                is_visual = True
-            else:
-                gs.logger.info(
-                    f"Link mass is not specified and no geoms found for "
-                    f"link '{self.name}'. Inertial and mass are set to zero."
-                )
-                self._inertial_mass = gs.EPS
-                self._inertial_pos = np.zeros(3, dtype=gs.np_float)
-                self._inertial_i = np.eye(3, dtype=gs.np_float) * gs.EPS
-                geom_list = []
+            # FIXME: Setting zero mass even for fixed links breaks physics for some reason...
+            # For non-fixed links, it must be non-zero in case for coupling with deformable body solvers.
+            total_mass = gs.EPS
+            total_com = np.zeros(3, dtype=gs.np_float)
+            total_inertia = np.zeros((3, 3), dtype=gs.np_float)
 
-            # Process each geom individually and compose their properties
-            if len(geom_list) > 0:
-                total_mass = gs.EPS  # to avoid nan in inv_mass in interactive mode
-                total_com = np.zeros(3, dtype=gs.np_float)
-                total_inertia = np.eye(3, dtype=gs.np_float) * gs.EPS
+            if not self._is_fixed and not self._geoms and not self._vgeoms:
+                gs.logger.info(
+                    f"Link mass is not specified and no geoms found for link '{self.name}'. Mass is set to 'gs.EPS'."
+                )
 
+            elif not self._is_fixed:
+                # Determine which geom list to use: geoms first, then vgeoms, then fallback
+                if self._geoms:
+                    is_visual = False
+                    geom_list = self._geoms
+                else:
+                    gs.logger.info(
+                        f"Link mass is not specified and collision geoms can not be found for link '{self.name}'. "
+                        f"Using visual geoms to compute inertial properties."
+                    )
+                    is_visual = True
+                    geom_list = self._vgeoms
+
+                # Process each geom individually and compose their properties
                 for geom in geom_list:
                     # Create mesh based on geom type
                     if is_visual:
@@ -163,9 +161,8 @@ class RigidLink(RBC):
                     if not inertia_mesh.is_watertight:
                         inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
-                    # TODO: without this check, some geom will have negative volume
-                    # even after the above convex hull operation.
-                    # tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]
+                    # FIXME: without this check, some geom will have negative volume even after the above convex
+                    # hull operation, e.g. 'tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]'
                     if inertia_mesh.volume < -gs.EPS:
                         inertia_mesh.invert()
 
@@ -183,9 +180,9 @@ class RigidLink(RBC):
                         total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
                     )
 
-                self._inertial_mass = total_mass
-                self._inertial_pos = total_com
-                self._inertial_i = total_inertia
+            self._inertial_mass = total_mass
+            self._inertial_pos = total_com
+            self._inertial_i = total_inertia
 
         # Postpone computation of inverse weight if not specified
         if self._invweight is None:
