@@ -10,6 +10,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import setproctitle
 import psutil
 import pyglet
 import pytest
