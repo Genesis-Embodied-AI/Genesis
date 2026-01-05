@@ -78,6 +78,12 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     except NameError as e:
         raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
+    mem_monitoring = config.getoption("--mem-monitoring-filepath")
+    with open(mem_monitoring, "a") as f:
+        f.write("foo\n")
+    with open(f"logs/pytest_cmdline_main_{id}.txt", "a") as f:
+        f.write(f"mem monitoring filepath {mem_monitoring}\n")
+
     # Make sure that benchmarks are running on GPU and the number of workers if valid
     expr = Expression.compile(config.option.markexpr)
     is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
@@ -91,12 +97,6 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # Force disabling forked for non-linux systems
     if not sys.platform.startswith("linux"):
         config.option.forked = False
-
-    mem_monitoring = config.getoption("--mem-monitoring-filepath")
-    with open(mem_monitoring, "a") as f:
-        f.write("foo\n")
-    with open(f"logs/pytest_cmdline_main_{id}.txt", "a") as f:
-        f.write(f"mem monitoring filepath {mem_monitoring}\n")
 
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
