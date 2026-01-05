@@ -66,6 +66,10 @@ def pytest_make_parametrize_id(config, val, argname):
 
 @pytest.hookimpl
 def pytest_cmdline_main(config: pytest.Config) -> None:
+    import random
+    id = random.randint(0, 1000)
+    with open(f"logs/pytest_cmdline_main_{id}.txt", "w") as f:
+        f.write("pytest_cmdline_main\n")
     # Make sure that no unsupported markers have been specified in CLI
     declared_markers = set(name for spec in config.getini("markers") if (name := spec.split(":")[0]) != "forked")
     try:
@@ -86,6 +90,12 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # Force disabling forked for non-linux systems
     if not sys.platform.startswith("linux"):
         config.option.forked = False
+
+    mem_monitoring = config.getoption("--mem-monitoring-filepath")
+    with open(mem_monitoring, "a") as f:
+        f.write("foo\n")
+    with open(f"logs/pytest_cmdline_main_{id}.txt", "a") as f:
+        f.write(f"mem monitoring filepath {mem_monitoring}\n")
 
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis")
@@ -342,12 +352,17 @@ def pytest_runtest_setup(item):
 
 
 def pytest_addoption(parser):
+    import random
+    id = random.randint(0, 1000)
+    with open(f"logs/pytest_addoption_{id}.txt", "w") as f:
+        f.write("pytest_addoption\n")
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
     )
     parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
+    parser.addoption("--mem-monitoring-filepath", type=str, help="Run memory monitoring, and output results to this filepath.")
 
 
 @pytest.fixture(scope="session")
