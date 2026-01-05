@@ -448,8 +448,9 @@ def ti_to_python(
     # Check if copy mode is supported while setting default mode if not specified.
     # FIXME: Torch>2.9.1 still does not support bytes_offset for 0-dim dlpack.
     data_type = type(value)
+    is_field = issubclass(data_type, ti.Field)
     use_zerocopy = gs.use_zerocopy and (
-        (TORCH_MPS_SUPPORT_DLPACK_FIELD or gs.backend != gs.metal or not issubclass(data_type, ti.Field))
+        (TORCH_MPS_SUPPORT_DLPACK_FIELD or gs.backend != gs.metal or not is_field)
         and (batch_shape or not issubclass(data_type, ti.ScalarField))
     )
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
@@ -472,6 +473,10 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
+                # FIXME: DLPack still returns garbage data on Apple Metal for field if not calling sync first
+                if is_field and gs.backend == gs.metal:
+                    ti.sync()
+
                 # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:
