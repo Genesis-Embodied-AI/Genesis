@@ -220,7 +220,6 @@ class Viewer(pyglet.window.Window):
         self._offscreen_semaphore = Semaphore(0)
         self._offscreen_result = None
 
-        self._video_saver = None
         self._video_recorder = None
 
         self._default_render_flags = {
@@ -272,15 +271,10 @@ class Viewer(pyglet.window.Window):
                 self._viewer_flags[key] = kwargs[key]
 
         self._keybindings: Keybindings = Keybindings()
-        self._held_keys: dict[tuple[int, int], bool] = {}  # Track held keys: (symbol, modifiers) -> True
+        self._held_keys: dict[tuple[int, int], bool] = {}
         #######################################################################
         # Save internal settings
         #######################################################################
-
-        # Set up caption stuff
-        self._message_text = None
-        self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
-        self._message_opac = 1.0 + self._ticks_till_fade
 
         # Set up raymond lights and direct lights
         self._raymond_lights = self._create_raymond_lights()
@@ -348,7 +342,7 @@ class Viewer(pyglet.window.Window):
         
         # Setup viewer interaction
         if plugin_options is None:
-            plugin_options = gs.options.viewer_interactions.ViewerDefaultControls()
+            plugin_options = gs.options.viewer_plugins.ViewerDefaultControls()
 
         plugin_cls = VIEWER_PLUGIN_MAP.get(type(plugin_options))
         if plugin_cls is None:
@@ -494,7 +488,7 @@ class Viewer(pyglet.window.Window):
     
     def register_keybinds(self, keybinds: tuple[Keybind]) -> None:
         """
-        Add a key handler to call a function when the given ASCII key is pressed.
+        Add a key handler to call a function when the given key is pressed.
 
         Parameters
         ----------
@@ -503,6 +497,7 @@ class Viewer(pyglet.window.Window):
         """
         for keybind in keybinds:
             self._keybindings.register(keybind)
+    
 
     def close(self):
         """Close the viewer.
@@ -735,6 +730,13 @@ class Viewer(pyglet.window.Window):
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record an initial mouse press."""
+        # Stop animating while using the mouse
+        self.viewer_flags["mouse_pressed"] = True
+
+        result = self.interaction_plugin.on_mouse_press(x, y, button, modifiers)
+        if result is EVENT_HANDLED:
+            return result
+
         self._trackball.set_state(Trackball.STATE_ROTATE)
         if button == pyglet.window.mouse.LEFT:
             ctrl = modifiers & pyglet.window.key.MOD_CTRL
@@ -751,24 +753,27 @@ class Viewer(pyglet.window.Window):
 
         self._trackball.down(np.array([x, y]))
 
-        # Stop animating while using the mouse
-        self.viewer_flags["mouse_pressed"] = True
-        return self.interaction_plugin.on_mouse_press(x, y, button, modifiers)
+        return EVENT_HANDLED
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with one or more buttons held down."""
         result = self.interaction_plugin.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
-        if result is not EVENT_HANDLED:
-            result = self._trackball.drag(np.array([x, y]))
-        return result
+        if result is EVENT_HANDLED:
+            return result
+
+        result = self._trackball.drag(np.array([x, y]))
+        return EVENT_HANDLED
 
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a mouse release."""
         self.viewer_flags["mouse_pressed"] = False
         return self.interaction_plugin.on_mouse_release(x, y, button, modifiers)
 
-    def on_mouse_scroll(self, x, y, dx, dy):
+    def on_mouse_scroll(self, x, y, dx, dy) -> EVENT_HANDLE_STATE:
         """Record a mouse scroll."""
+        if self.interaction_plugin.on_mouse_scroll(x, y, dx, dy) == EVENT_HANDLED:
+            return EVENT_HANDLED
+
         if self.viewer_flags["use_perspective_cam"]:
             self._trackball.scroll(dy)
         else:
@@ -785,6 +790,8 @@ class Viewer(pyglet.window.Window):
             ymag = max(c.ymag * sf, 1e-8 * c.ymag / c.xmag)
             c.xmag = xmag
             c.ymag = ymag
+        
+        return EVENT_HANDLED
     
     def _call_keybind_callback(self, symbol: int, modifiers: int, action: KeyAction) -> None:
         """Call registered keybind callbacks for the given key event."""
@@ -795,12 +802,14 @@ class Viewer(pyglet.window.Window):
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
         self._held_keys[(symbol, modifiers)] = True
+
         self._call_keybind_callback(symbol, modifiers, KeyAction.PRESS)
         return self.interaction_plugin.on_key_press(symbol, modifiers)
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key release."""
         self._held_keys.pop((symbol, modifiers), None)
+
         self._call_keybind_callback(symbol, modifiers, KeyAction.RELEASE)
         return self.interaction_plugin.on_key_release(symbol, modifiers)
 
@@ -819,26 +828,6 @@ class Viewer(pyglet.window.Window):
             self._record()
         if self.viewer_flags["rotate"] and not self.viewer_flags["mouse_pressed"]:
             self._rotate()
-
-        # Manage message opacity
-        if self._message_text is not None:
-            if self._message_opac > 1.0:
-                self._message_opac -= 1.0
-            else:
-                self._message_opac *= 0.90
-            if self._message_opac < 0.05:
-                self._message_opac = 1.0 + self._ticks_till_fade
-                self._message_text = None
-
-        # video saving warning
-        if self._video_saver is not None:
-            if self._video_saver.is_alive():
-                self._message_text = "Saving video... Please don't exit."
-                self._message_opac = 1.0
-            else:
-                self._message_text = f"Video saved to {self._video_file_name}"
-                self._message_opac = self.viewer_flags["refresh_rate"] * 2
-                self._video_saver = None
 
         self.on_draw()
 

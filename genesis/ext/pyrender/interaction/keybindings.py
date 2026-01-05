@@ -1,6 +1,17 @@
 from enum import IntEnum
 from typing import Callable, NamedTuple
 
+KEY_STRING_TO_CHAR = {
+    "backslash": "\\",
+    "slash": "/",
+    "comma": ",",
+    "period": ".",
+    "bracketleft": "[",
+    "bracketright": "]",
+    "semicolon": ";",
+    "minus": "-",
+    "equal": "=",
+}
 
 class KeyAction(IntEnum):
     PRESS = 0
@@ -18,7 +29,7 @@ def get_key_hash(key_code: int, modifiers: int | None, action: KeyAction) -> int
         The modifier keys pressed.
     action : KeyAction
         The type of key action (press, hold, release).
-    
+
     Returns
     -------
     int
@@ -28,7 +39,10 @@ def get_key_hash(key_code: int, modifiers: int | None, action: KeyAction) -> int
 
 def get_keycode_string(key_code: int) -> str:
     from pyglet.window.key import symbol_string
-    return symbol_string(key_code).lower()
+    symbol = symbol_string(key_code).lower()
+    if symbol in KEY_STRING_TO_CHAR:
+        return KEY_STRING_TO_CHAR[symbol]
+    return symbol
 
 class Keybind(NamedTuple):
     key_code: int
@@ -55,6 +69,23 @@ class Keybindings:
                 f"Key '{get_keycode_string(keybind.key_code)}' is already assigned to '{existing_kb.name}'."
             )
         self._keybinds_map[keybind.key_hash()] = keybind
+    
+    def rebind(self, name: str, new_key_code: int | None, new_modifiers: int | None = None, new_key_action: KeyAction | None = None) -> None:
+        for kb in self._keybinds_map.values():
+            if kb.name == name:
+                new_kb = Keybind(
+                    name=kb.name,
+                    key_code=new_key_code or kb.key_code,
+                    key_action=new_key_action or kb.key_action,
+                    modifiers=new_modifiers or kb.modifiers,
+                    callback_func=kb.callback_func,
+                    args=kb.args,
+                    kwargs=kb.kwargs,
+                )
+                del self._keybinds_map[kb.key_hash()]
+                self._keybinds_map[new_kb.key_hash()] = new_kb
+                return
+        raise ValueError(f"No keybind found with name '{name}'.")
     
     def get(self, key: int, modifiers: int, key_action: KeyAction) -> Keybind | None:
         key_hash = get_key_hash(key, modifiers, key_action)

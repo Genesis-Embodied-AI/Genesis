@@ -1,9 +1,11 @@
+from .default_controls import DefaultControls
+from .help_text import HelpTextPlugin
 from .mesh_selector import MeshPointSelectorPlugin
-from .mouse_interaction import MouseSpringViewerPlugin
-from .viewer_controls import ViewerDefaultControls
+from .mouse_spring import MouseSpringPlugin
 
 __all__ = [
-    "ViewerDefaultControls",
+    "DefaultControls",
+    "HelpTextPlugin",
     "MeshPointSelectorPlugin",
-    "MouseSpringViewerPlugin",
+    "MouseSpringPlugin",
 ]
