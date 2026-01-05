@@ -57,6 +57,15 @@ IMG_STD_ERR_THR = 1.0
 IMG_NUM_ERR_THR = 0.001
 
 
+def is_mem_monitoring_supported():
+    try:
+        assert sys.platform.startswith("linux")
+        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=2)
+        return True, None
+    except Exception as exc:  # platform or nvidia-smi unavailable
+        return False, exc
+
+
 def pytest_make_parametrize_id(config, val, argname):
     if isinstance(val, Enum):
         return val.name
