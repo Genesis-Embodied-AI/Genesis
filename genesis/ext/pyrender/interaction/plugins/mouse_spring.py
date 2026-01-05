@@ -5,11 +5,10 @@ import torch
 from typing_extensions import override  # Made it into standard lib from Python 3.12
 
 import genesis as gs
-from genesis.options.viewer_interactions import MouseSpringViewerPlugin as MouseSpringViewerPluginOptions
+from genesis.options.viewer_plugins import MouseSpringPlugin as MouseSpringPluginOptions
 
-from ..base_interaction import EVENT_HANDLE_STATE, EVENT_HANDLED, register_viewer_plugin
 from ..utils import AABB, OBB, Color, Plane, Pose, Quat, Ray, RayHit, Vec3, ViewerRaycaster
-from .viewer_controls import ViewerDefaultControls
+from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin, register_viewer_plugin
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidEntity, RigidGeom, RigidLink
@@ -102,8 +101,8 @@ class MouseSpring:
         return self.held_link is not None
 
 
-@register_viewer_plugin(MouseSpringViewerPluginOptions)
-class MouseSpringViewerPlugin(ViewerDefaultControls):
+@register_viewer_plugin(MouseSpringPluginOptions)
+class MouseSpringPlugin(ViewerPlugin):
     """
     Basic interactive viewer plugin that enables using mouse to apply spring force on rigid entities.
     """
@@ -111,7 +110,7 @@ class MouseSpringViewerPlugin(ViewerDefaultControls):
     def __init__(
         self,
         viewer,
-        options: MouseSpringViewerPluginOptions,
+        options: MouseSpringPluginOptions,
         camera: "Node",
         scene: "Scene",
         viewport_size: tuple[int, int],

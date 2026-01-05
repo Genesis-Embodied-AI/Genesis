@@ -1,11 +1,9 @@
 import os
-import time
-import threading
 
-from pynput import keyboard
 import numpy as np
 
 import genesis as gs
+from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
 
 
 class DroneController:
@@ -13,100 +11,57 @@ class DroneController:
         self.thrust = 14475.8  # Base hover RPM - constant hover
         self.rotation_delta = 200.0  # Differential RPM for rotation
         self.thrust_delta = 10.0  # Amount to change thrust by when accelerating/decelerating
-        self.running = True
         self.rpms = [self.thrust] * 4
-        self.pressed_keys = set()
-
-    def on_press(self, key):
-        try:
-            if key == keyboard.Key.esc:
-                self.running = False
-                return False
-            self.pressed_keys.add(key)
-            print(f"Key pressed: {key}")
-        except AttributeError:
-            pass
-
-    def on_release(self, key):
-        try:
-            self.pressed_keys.discard(key)
-        except KeyError:
-            pass
 
     def update_thrust(self):
-        # Store previous RPMs for debugging
-        prev_rpms = self.rpms.copy()
-
         # Reset RPMs to hover thrust
         self.rpms = [self.thrust] * 4
-
-        # Acceleration (Spacebar) - All rotors spin faster
-        if keyboard.Key.space in self.pressed_keys:
-            self.thrust += self.thrust_delta
-            self.rpms = [self.thrust] * 4
-            print("Accelerating")
-
-        # Deceleration (Left Shift) - All rotors spin slower
-        if keyboard.Key.shift in self.pressed_keys:
-            self.thrust -= self.thrust_delta
-            self.rpms = [self.thrust] * 4
-            print("Decelerating")
-
-        # Forward (North) - Front rotors spin faster
-        if keyboard.Key.up in self.pressed_keys:
-            self.rpms[0] += self.rotation_delta  # Front left
-            self.rpms[1] += self.rotation_delta  # Front right
-            self.rpms[2] -= self.rotation_delta  # Back left
-            self.rpms[3] -= self.rotation_delta  # Back right
-            print("Moving Forward")
-
-        # Backward (South) - Back rotors spin faster
-        if keyboard.Key.down in self.pressed_keys:
-            self.rpms[0] -= self.rotation_delta  # Front left
-            self.rpms[1] -= self.rotation_delta  # Front right
-            self.rpms[2] += self.rotation_delta  # Back left
-            self.rpms[3] += self.rotation_delta  # Back right
-            print("Moving Backward")
-
-        # Left (West) - Left rotors spin faster
-        if keyboard.Key.left in self.pressed_keys:
-            self.rpms[0] -= self.rotation_delta  # Front left
-            self.rpms[2] -= self.rotation_delta  # Back left
-            self.rpms[1] += self.rotation_delta  # Front right
-            self.rpms[3] += self.rotation_delta  # Back right
-            print("Moving Left")
-
-        # Right (East) - Right rotors spin faster
-        if keyboard.Key.right in self.pressed_keys:
-            self.rpms[0] += self.rotation_delta  # Front left
-            self.rpms[2] += self.rotation_delta  # Back left
-            self.rpms[1] -= self.rotation_delta  # Front right
-            self.rpms[3] -= self.rotation_delta  # Back right
-            print("Moving Right")
-
-        self.rpms = np.clip(self.rpms, 0, 25000)
-
-        # Debug print if any RPMs changed
-        if not np.array_equal(prev_rpms, self.rpms):
-            print(f"RPMs changed from {prev_rpms} to {self.rpms}")
-
         return self.rpms
 
+    def move_forward(self):
+        """Front rotors spin faster"""
+        self.rpms[0] += self.rotation_delta  # Front left
+        self.rpms[1] += self.rotation_delta  # Front right
+        self.rpms[2] -= self.rotation_delta  # Back left
+        self.rpms[3] -= self.rotation_delta  # Back right
+        self.rpms = np.clip(self.rpms, 0, 25000)
 
-def run_sim(scene, drone, controller):
-    while controller.running:
-        # Update drone with current RPMs
-        rpms = controller.update_thrust()
-        drone.set_propellels_rpm(rpms)
+    def move_backward(self):
+        """Back rotors spin faster"""
+        self.rpms[0] -= self.rotation_delta  # Front left
+        self.rpms[1] -= self.rotation_delta  # Front right
+        self.rpms[2] += self.rotation_delta  # Back left
+        self.rpms[3] += self.rotation_delta  # Back right
+        self.rpms = np.clip(self.rpms, 0, 25000)
 
-        # Update physics
-        scene.step(refresh_visualizer=False)
+    def move_left(self):
+        """Left rotors spin faster"""
+        self.rpms[0] -= self.rotation_delta  # Front left
+        self.rpms[2] -= self.rotation_delta  # Back left
+        self.rpms[1] += self.rotation_delta  # Front right
+        self.rpms[3] += self.rotation_delta  # Back right
+        self.rpms = np.clip(self.rpms, 0, 25000)
 
-        # Limit simulation rate
-        time.sleep(1.0 / scene.viewer.max_FPS)
+    def move_right(self):
+        """Right rotors spin faster"""
+        print("move right")
+        self.rpms[0] += self.rotation_delta  # Front left
+        self.rpms[2] += self.rotation_delta  # Back left
+        self.rpms[1] -= self.rotation_delta  # Front right
+        self.rpms[3] -= self.rotation_delta  # Back right
+        self.rpms = np.clip(self.rpms, 0, 25000)
 
-        if "PYTEST_VERSION" in os.environ:
-            break
+    def accelerate(self):
+        """All rotors spin faster"""
+        self.thrust += self.thrust_delta
+        self.rpms = [self.thrust] * 4
+        self.rpms = np.clip(self.rpms, 0, 25000)
+
+    def decelerate(self):
+        """All rotors spin slower"""
+        self.thrust -= self.thrust_delta
+        self.rpms = [self.thrust] * 4
+        self.rpms = np.clip(self.rpms, 0, 25000)
 
 
 def main():
@@ -145,13 +100,35 @@ def main():
     # Initialize controller
     controller = DroneController()
 
-    # Start keyboard listener.
-    # Note that instantiating the listener after building the scene causes segfault on MacOS.
-    listener = keyboard.Listener(on_press=controller.on_press, on_release=controller.on_release)
-    listener.start()
-
     # Build scene
     scene.build()
+
+    # Register keybindings
+    from pyglet.window import key
+
+    scene.viewer.register_keybinds(
+        (
+            Keybind(
+                key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback_func=controller.move_forward
+            ),
+            Keybind(
+                key_code=key.DOWN,
+                key_action=KeyAction.HOLD,
+                name="move_backward",
+                callback_func=controller.move_backward,
+            ),
+            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback_func=controller.move_left),
+            Keybind(
+                key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback_func=controller.move_right
+            ),
+            Keybind(
+                key_code=key.SPACE, key_action=KeyAction.HOLD, name="accelerate", callback_func=controller.accelerate
+            ),
+            Keybind(
+                key_code=key.LSHIFT, key_action=KeyAction.HOLD, name="decelerate", callback_func=controller.decelerate
+            ),
+        )
+    )
 
     # Print control instructions
     print("\nDrone Controls:")
@@ -161,19 +138,25 @@ def main():
     print("→ - Move Right (East)")
     print("space - Increase RPM")
     print("shift - Decrease RPM")
-    print("ESC - Quit\n")
+    print("\nPlus all default viewer controls (press 'i' to see them)\n")
     print("Initial hover RPM:", controller.thrust)
 
-    # Run simulation in another thread
-    threading.Thread(target=run_sim, args=(scene, drone, controller)).start()
-    if "PYTEST_VERSION" not in os.environ:
-        scene.viewer.run()
-
+    # Run simulation
     try:
-        listener.stop()
-    except NotImplementedError:
-        # Dummy backend does not implement stop
-        pass
+        while True:
+            # Update drone with current RPMs
+            rpms = controller.update_thrust()
+            drone.set_propellels_rpm(rpms)
+
+            # Update physics
+            scene.step()
+
+            if "PYTEST_VERSION" in os.environ:
+                break
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
 
 
 if __name__ == "__main__":

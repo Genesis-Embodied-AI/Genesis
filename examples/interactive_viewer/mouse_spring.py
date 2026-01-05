@@ -11,7 +11,7 @@ if __name__ == "__main__":
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
-            viewer_plugin=gs.options.viewer_interactions.MouseSpringViewerPlugin(),
+            viewer_plugin=gs.options.viewer_plugins.MouseSpringPlugin(),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
