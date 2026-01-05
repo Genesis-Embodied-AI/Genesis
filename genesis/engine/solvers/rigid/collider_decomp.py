@@ -475,20 +475,21 @@ class Collider:
             for key, data in self._contacts_info.items():
                 if n_envs == 0:
                     data = data[0, :n_contacts_max] if not keep_batch_dim else data[:, :n_contacts_max]
-                    if not to_torch:
-                        data = tensor_to_array(data)
+                elif as_tensor:
+                    data = data[:, :n_contacts_max]
+
+                if to_torch:
+                    if gs.backend == gs.cpu:
+                        data = data.clone()
                 else:
-                    if as_tensor:
-                        data = data[:, :n_contacts_max]
-                        if not to_torch:
-                            data = tensor_to_array(data)
+                    data = tensor_to_array(data)
+
+                if n_envs > 0 and not as_tensor:
+                    if keep_batch_dim:
+                        data = tuple([data[i : i + 1, :j] for i, j in enumerate(n_contacts.tolist())])
                     else:
-                        if not to_torch:
-                            data = tensor_to_array(data)
-                        if keep_batch_dim:
-                            data = tuple([data[i : i + 1, :j] for i, j in enumerate(n_contacts.tolist())])
-                        else:
-                            data = tuple([data[i, :j] for i, j in enumerate(n_contacts.tolist())])
+                        data = tuple([data[i, :j] for i, j in enumerate(n_contacts.tolist())])
+
                 contacts_info[key] = data
 
             return contacts_info.copy()
