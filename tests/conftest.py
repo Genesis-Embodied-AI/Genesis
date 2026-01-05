@@ -64,7 +64,7 @@ def pytest_make_parametrize_id(config, val, argname):
     return f"{val}"
 
 
-@pytest.hookimpl
+@pytest.hookimpl(tryfirst=True)
 def pytest_cmdline_main(config: pytest.Config) -> None:
     import random
     id = random.randint(0, 1000)
