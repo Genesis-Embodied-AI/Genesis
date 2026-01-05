@@ -20,7 +20,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -1462,13 +1462,13 @@ class RigidEntity(Entity):
             self._solver._static_rigid_sim_config,
         )
 
-        qpos = ti_to_torch(self._IK_qpos_best, transpose=True)
+        qpos = ti_to_torch(self._IK_qpos_best, transpose=True, copy=True)
         qpos = qpos[0] if self._solver.n_envs == 0 else qpos[envs_idx]
 
         if return_error:
-            error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True).reshape((-1, self._IK_n_tgts, 6))[
-                :, :n_links
-            ]
+            error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True, copy=True).reshape(
+                (-1, self._IK_n_tgts, 6)
+            )[:, :n_links]
             error_pose = error_pose[0] if self._solver.n_envs == 0 else error_pose[envs_idx]
             return qpos, error_pose
         return qpos
@@ -2080,15 +2080,37 @@ class RigidEntity(Entity):
         from genesis.engine.couplers import LegacyCoupler
 
         if self.n_geoms == 0:
-            gs.raise_exception("Entity has no geoms.")
+            gs.raise_exception("Entity has no collision geometries.")
 
         # Already computed internally by the solver. Let's access it directly for efficiency.
         if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
             return self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx)[..., 0, :]
 
         # Compute the AABB on-the-fly based on the positions of all the vertices
-        verts = self.get_verts()
-        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+        verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
+        return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the visual
+        geometries associated with this entity.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
+            The AABB of the entity, where `[:, 0] = min_corner (x_min, y_min, z_min)` and
+            `[:, 1] = max_corner (x_max, y_max, z_max)`.
+        """
+        if self.n_vgeoms == 0:
+            gs.raise_exception("Entity has no visual geometries.")
+        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
+        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     def get_aabb(self):
         raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
@@ -2274,30 +2296,13 @@ class RigidEntity(Entity):
         tensor = torch.empty((self._solver._B, n_fixed_verts + n_free_vertices, 3), dtype=gs.tc_float, device=gs.device)
 
         if n_fixed_verts > 0:
-            if gs.use_zerocopy:
-                fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos)
-                tensor[:, self._fixed_verts_idx_local] = fixed_verts_state[
-                    self._fixed_verts_state_start : self._fixed_verts_state_start + n_fixed_verts
-                ]
-            else:
-                _kernel_get_fixed_verts(
-                    tensor, self._fixed_verts_idx_local, self._fixed_verts_state_start, self._solver.fixed_verts_state
-                )
+            verts_idx = slice(self._fixed_verts_state_start, self._fixed_verts_state_start + n_fixed_verts)
+            fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx)
+            tensor[:, self._fixed_verts_idx_local] = fixed_verts_state
         if n_free_vertices > 0:
-            if gs.use_zerocopy:
-                free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, transpose=True)
-                tensor[:, self._free_verts_idx_local] = free_verts_state[
-                    :, self._free_verts_state_start : self._free_verts_state_start + n_free_vertices
-                ]
-            else:
-                # FIXME: Get around some bug in gstaichi when using gstaichi with metal backend
-                must_copy = gs.backend == gs.metal and n_fixed_verts > 0
-                tensor_free = torch.zeros_like(tensor) if must_copy else tensor
-                _kernel_get_free_verts(
-                    tensor_free, self._free_verts_idx_local, self._free_verts_state_start, self._solver.free_verts_state
-                )
-                if must_copy:
-                    tensor += tensor_free
+            verts_idx = slice(self._free_verts_state_start, self._free_verts_state_start + n_free_vertices)
+            free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True)
+            tensor[:, self._free_verts_idx_local] = free_verts_state
 
         if self._solver.n_envs == 0:
             tensor = tensor[0]
@@ -2892,9 +2897,8 @@ class RigidEntity(Entity):
         entity_links_force : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The net force applied on each links due to direct external contacts.
         """
-        tensor = ti_to_torch(
-            self._solver.links_state.contact_force, envs_idx, slice(self.link_start, self.link_end), transpose=True
-        )
+        links_idx = slice(self.link_start, self.link_end)
+        tensor = ti_to_torch(self._solver.links_state.contact_force, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None):
@@ -2917,11 +2921,9 @@ class RigidEntity(Entity):
         )
         links_friction_ratio = torch.as_tensor(friction_ratio, dtype=gs.tc_float, device=gs.device)
         geoms_friction_ratio = torch.repeat_interleave(links_friction_ratio, links_n_geoms, dim=-1)
-        geoms_idx = torch.tensor(
-            [i_g for i_l in links_idx_local for i_g in range(self._links[i_l].geom_start, self._links[i_l].geom_end)],
-            dtype=gs.tc_int,
-            device=gs.device,
-        )
+        geoms_idx = [
+            i_g for i_l in links_idx_local for i_g in range(self._links[i_l].geom_start, self._links[i_l].geom_end)
+        ]
 
         self._solver.set_geoms_friction_ratio(geoms_friction_ratio, geoms_idx, envs_idx)
 
