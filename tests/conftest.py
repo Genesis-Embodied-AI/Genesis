@@ -374,10 +374,6 @@ def pytest_runtest_setup(item):
 
 
 def pytest_addoption(parser):
-    import random
-    id = random.randint(0, 1000)
-    with open(f"logs/pytest_addoption_{id}.txt", "w") as f:
-        f.write("pytest_addoption\n")
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
