@@ -1,38 +1,36 @@
 from .options import Options
 
 
-class ViewerInteraction(Options):
+class ViewerPlugin(Options):
     """
     Base class for viewer interaction options.
 
     All viewer interaction option classes should inherit from this base class.
     """
 
-    pass
+
+class HelpTextPlugin(ViewerPlugin):
+    """
+    Displays keyboard instructions in the viewer.
+    """
+
+    display_instructions: bool = True
+    font_size: int = 26
 
 
-class ViewerDefaultControls(ViewerInteraction):
+class DefaultControlsPlugin(HelpTextPlugin):
     """
     Default viewer interaction controls with keyboard shortcuts for recording, changing render modes, etc.
-
-    Parameters
-    ----------
-    keybindings : dict[str, int]
-        Override the default mapping of action names to keyboard key codes (pyglet.window.key.*).
     """
 
-    keybindings: dict[str, int] = None
 
-
-class MouseSpringViewerPlugin(ViewerDefaultControls):
+class MouseSpringPlugin(HelpTextPlugin):
     """
     Options for the interactive viewer plugin that allows mouse-based object manipulation.
     """
 
-    pass
 
-
-class MeshPointSelectorPlugin(ViewerDefaultControls):
+class MeshPointSelectorPlugin(HelpTextPlugin):
     """
     Options for the mesh point selector plugin that allows selecting points on a mesh.
 
@@ -40,9 +38,9 @@ class MeshPointSelectorPlugin(ViewerDefaultControls):
     ----------
     sphere_radius : float
         The radius of the sphere used to visualize selected points.
-    sphere_color : tuple
+    sphere_color : tuple[float, float, float, float]
         The color of the sphere used to visualize selected points.
-    hover_color : tuple
+    hover_color : tuple[float, float, float, float]
         The color of the sphere used to visualize the point and normal when hovering over a mesh.
     grid_snap : tuple[float, float, float]
         Grid snap spacing for each axis (x, y, z). Any negative value disables snapping for that axis.

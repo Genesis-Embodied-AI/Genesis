@@ -10,6 +10,7 @@ import OpenGL.platform
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.ext import pyrender
+from genesis.ext.pyrender.interaction import KeyAction, Keybind
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.utils.tools import Rate
@@ -259,7 +260,7 @@ class Viewer(RBC):
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
-    def register_keybinds(self, keybinds: tuple[pyrender.interaction.keybindings.Keybind]) -> None:
+    def register_keybinds(self, keybinds: tuple[Keybind]) -> None:
         """
         Register a callback function to be called when a key is pressed.
 
@@ -269,6 +270,35 @@ class Viewer(RBC):
             The Keybind objects to register. See Keybind documentation for usage.
         """
         self._pyrender_viewer.register_keybinds(keybinds)
+
+    def remap_keybind(
+        self,
+        keybind_name: str,
+        new_key_code: int,
+        new_modifiers: int | None = None,
+        new_key_action: KeyAction = KeyAction.PRESS,
+    ) -> None:
+        """
+        Remap an existing keybind to a new key combination.
+        Use `None` for any parameter you do not wish to change.
+
+        Parameters
+        ----------
+        keybind_name : str
+            The name of the keybind to remap.
+        new_key_code : int
+            The new key code from pyglet.
+        new_modifiers : int | None, optional
+            The new modifier keys pressed.
+        new_key_action : KeyAction, optional
+            The new type of key action (press, hold, release).
+        """
+        self._pyrender_viewer._keybindings.rebind(
+            keybind_name,
+            new_key_code,
+            new_modifiers,
+            new_key_action,
+        )
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

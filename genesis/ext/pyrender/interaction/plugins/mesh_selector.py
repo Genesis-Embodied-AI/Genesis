@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING, NamedTuple
 from typing_extensions import override
 
 import genesis as gs
-from genesis.options.viewer_interactions import MeshPointSelectorPlugin as MeshPointSelectorPluginOptions
+from genesis.options.viewer_plugins import MeshPointSelectorPlugin as MeshPointSelectorPluginOptions
 
-from ..base_interaction import EVENT_HANDLE_STATE, EVENT_HANDLED, register_viewer_plugin
 from ..utils import Pose, Ray, Vec3, ViewerRaycaster
-from .viewer_controls import ViewerDefaultControls
+from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, register_viewer_plugin
+from .help_text import HelpTextPlugin
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidLink
@@ -34,9 +34,8 @@ class SelectedPoint(NamedTuple):
     local_normal: Vec3
 
 
-
 @register_viewer_plugin(MeshPointSelectorPluginOptions)
-class MeshPointSelectorPlugin(ViewerDefaultControls):
+class MeshPointSelectorPlugin(HelpTextPlugin):
     """
     Interactive viewer plugin that enables using mouse clicks to select points on rigid meshes.
     Selected points are stored in local coordinates relative to their link's frame.

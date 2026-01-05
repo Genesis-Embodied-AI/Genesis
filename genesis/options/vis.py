@@ -3,7 +3,7 @@ from typing import Optional
 import genesis as gs
 
 from .options import Options
-from .viewer_interactions import ViewerDefaultControls, ViewerInteraction
+from .viewer_plugins import DefaultControlsPlugin, ViewerPlugin
 
 
 class ViewerOptions(Options):
@@ -34,7 +34,7 @@ class ViewerOptions(Options):
         The up vector of the camera's extrinsic pose.
     camera_fov : float
         The field of view (in degrees) of the camera.
-    viewer_plugin : ViewerPluginOptions
+    viewer_plugin : ViewerPlugin
         Viewer plugin that adds interactive functionality to the viewer.
     """
 
@@ -46,7 +46,7 @@ class ViewerOptions(Options):
     camera_lookat: tuple = (0.0, 0.0, 0.5)
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
-    viewer_plugin: ViewerInteraction = ViewerDefaultControls()
+    viewer_plugin: ViewerPlugin = DefaultControlsPlugin()
 
 
 class VisOptions(Options):

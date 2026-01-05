@@ -7,14 +7,14 @@ from .utils import Ray, Vec3
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
-    from genesis.options.viewer_interactions import ViewerInteraction as ViewerPluginOptions
+    from genesis.options.viewer_plugins import ViewerPlugin as ViewerPluginOptions
 
 
 EVENT_HANDLE_STATE = Literal[True] | None
 EVENT_HANDLED: Literal[True] = True
 
 # Global map from options class to viewer plugin class
-VIEWER_PLUGIN_MAP: dict[Type["ViewerPluginOptions"], Type["BaseViewerInteraction"]] = {}
+VIEWER_PLUGIN_MAP: dict[Type["ViewerPluginOptions"], Type["ViewerPlugin"]] = {}
 
 
 def register_viewer_plugin(options_cls: Type["ViewerPluginOptions"]):
@@ -37,14 +37,14 @@ def register_viewer_plugin(options_cls: Type["ViewerPluginOptions"]):
     class ViewerInteraction(ViewerInteractionBase):
         ...
     """
-    def _impl(plugin_cls: Type["BaseViewerInteraction"]):
+    def _impl(plugin_cls: Type["ViewerPlugin"]):
         VIEWER_PLUGIN_MAP[options_cls] = plugin_cls
         return plugin_cls
     return _impl
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 
-class BaseViewerInteraction():
+class ViewerPlugin():
     """
     Base class for handling pyglet.window.Window events.
     """
