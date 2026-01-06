@@ -433,8 +433,6 @@ class Plane(Primitive):
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
-    fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to false. **This is only used for RigidEntity.**
@@ -450,14 +448,13 @@ class Plane(Primitive):
         The size of each texture tile. Defaults to (1, 1).
     """
 
-    fixed: bool = True
     batch_fixed_verts: bool = False
     normal: tuple = (0, 0, 1)
     plane_size: tuple = (1e3, 1e3)
     tile_size: tuple = (1, 1)
 
     def __init__(self, **data):
-        super().__init__(**data)
+        super().__init__(fixed=True, **data)
 
         if not isinstance(self.normal, tuple) or len(self.normal) != 3:
             gs.raise_exception("`normal` should be a 3-tuple.")
