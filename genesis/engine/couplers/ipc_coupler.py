@@ -29,6 +29,520 @@ class IPCCoupler(RBC):
     including rigid bodies (as ABD objects) and FEM bodies in a unified contact framework.
     """
 
+    @ti.kernel
+    def _compute_external_force_kernel(
+        self,
+        n_links: ti.i32,
+        contact_forces: ti.types.ndarray(),  # (n_links, 3)
+        contact_torques: ti.types.ndarray(),  # (n_links, 3)
+        abd_transforms: ti.types.ndarray(),  # (n_links, 4, 4) - ABD transform matrices
+        out_forces: ti.types.ndarray(),  # (n_links, 12) - output force vectors
+    ):
+        """
+        Compute 12D external force from contact forces and torques.
+        force = [force (3), M_affine (9)]
+        where M_affine = skew(torque) * A, A is the rotation part of ABD transform
+        """
+        for i in range(n_links):
+            # Copy force directly to first 3 components
+            for j in ti.static(range(3)):
+                out_forces[i, j] = -0.5 * contact_forces[i, j]
+
+            # Extract torque
+            tau = -0.5 * ti.Vector([contact_torques[i, 0], contact_torques[i, 1], contact_torques[i, 2]])
+
+            # Extract rotation matrix A (3x3) from ABD transform (first 3x3 block)
+            A = ti.Matrix.zero(ti.f32, 3, 3)
+            for row in range(3):
+                for col in range(3):
+                    A[row, col] = abd_transforms[i, row, col]
+
+            # Compute skew-symmetric matrix S of tau
+            S = ti.Matrix.zero(ti.f32, 3, 3)
+            S[0, 0] = 0.0
+            S[0, 1] = -tau[2]
+            S[0, 2] = tau[1]
+            S[1, 0] = tau[2]
+            S[1, 1] = 0.0
+            S[1, 2] = -tau[0]
+            S[2, 0] = -tau[1]
+            S[2, 1] = tau[0]
+            S[2, 2] = 0.0
+
+            # Compute M_affine = S * A (row-major order)
+            M_affine = S @ A
+
+            # Write M_affine to last 9 components (row-major)
+            idx = 3
+            for row in range(3):
+                for col in range(3):
+                    out_forces[i, idx] = M_affine[row, col]
+                    idx += 1
+
+    @ti.kernel
+    def _compute_coupling_forces_kernel(
+        self,
+        n_links: ti.i32,
+        ipc_transforms: ti.types.ndarray(),  # (n_links, 4, 4)
+        aim_transforms: ti.types.ndarray(),  # (n_links, 4, 4)
+        link_masses: ti.types.ndarray(),  # (n_links,)
+        inertia_tensors: ti.types.ndarray(),  # (n_links, 3, 3)
+        translation_strength: ti.f32,
+        rotation_strength: ti.f32,
+        dt2: ti.f32,
+        out_forces: ti.types.ndarray(),  # (n_links, 3)
+        out_torques: ti.types.ndarray(),  # (n_links, 3)
+    ):
+        """
+        Compute coupling forces and torques for all links in parallel.
+        """
+        for i in range(n_links):
+            # Extract positions
+            pos_current = ti.Vector([ipc_transforms[i, 0, 3], ipc_transforms[i, 1, 3], ipc_transforms[i, 2, 3]])
+            pos_aim = ti.Vector([aim_transforms[i, 0, 3], aim_transforms[i, 1, 3], aim_transforms[i, 2, 3]])
+            delta_pos = pos_current - pos_aim
+
+            # Extract rotation matrices
+            R_current = ti.Matrix.zero(ti.f32, 3, 3)
+            R_aim = ti.Matrix.zero(ti.f32, 3, 3)
+            for row in range(3):
+                for col in range(3):
+                    R_current[row, col] = ipc_transforms[i, row, col]
+                    R_aim[row, col] = aim_transforms[i, row, col]
+
+            # Compute linear force
+            mass = link_masses[i]
+            linear_force = translation_strength * mass * delta_pos / dt2
+
+            # Compute relative rotation: R_rel = R_current @ R_aim^T
+            R_rel = R_current @ R_aim.transpose()
+
+            # Extract rotation vector from R_rel using Rodrigues formula
+            # trace(R) = 1 + 2*cos(theta)
+            trace = R_rel[0, 0] + R_rel[1, 1] + R_rel[2, 2]
+            theta = ti.acos(ti.min(ti.max((trace - 1.0) / 2.0, -1.0), 1.0))
+
+            # Rotation axis (when theta != 0)
+            rotvec = ti.Vector.zero(ti.f32, 3)
+            if theta > 1e-6:
+                axis_x = R_rel[2, 1] - R_rel[1, 2]
+                axis_y = R_rel[0, 2] - R_rel[2, 0]
+                axis_z = R_rel[1, 0] - R_rel[0, 1]
+                norm = ti.sqrt(axis_x * axis_x + axis_y * axis_y + axis_z * axis_z)
+                if norm > 1e-8:
+                    rotvec = theta * ti.Vector([axis_x, axis_y, axis_z]) / norm
+
+            # Load inertia tensor
+            I_local = ti.Matrix.zero(ti.f32, 3, 3)
+            for row in range(3):
+                for col in range(3):
+                    I_local[row, col] = inertia_tensors[i, row, col]
+
+            # Transform to world frame: I_world = R_current @ I_local @ R_current^T
+            I_world = R_current @ I_local @ R_current.transpose()
+
+            # Compute angular torque
+            angular_torque = rotation_strength / dt2 * (I_world @ rotvec)
+
+            # Store results
+            for j in ti.static(range(3)):
+                out_forces[i, j] = linear_force[j]
+                out_torques[i, j] = angular_torque[j]
+
+    @ti.kernel
+    def _accumulate_contact_forces_kernel(
+        self,
+        n_contacts: ti.i32,
+        contact_vert_indices: ti.types.ndarray(),  # (n_contacts,)
+        contact_gradients: ti.types.ndarray(),  # (n_contacts, 3)
+        vert_to_link: ti.types.ndarray(),  # (max_vert_idx,) mapping vert -> link_idx (-1 if invalid)
+        vert_positions: ti.types.ndarray(),  # (max_vert_idx, 3)
+        link_centers: ti.types.ndarray(),  # (n_links, 3)
+        out_forces: ti.types.ndarray(),  # (n_links, 3)
+        out_torques: ti.types.ndarray(),  # (n_links, 3)
+    ):
+        """
+        Accumulate contact forces and torques for all vertices in parallel.
+        """
+        for i in range(n_contacts):
+            vert_idx = contact_vert_indices[i]
+            link_idx = vert_to_link[vert_idx]
+
+            if link_idx >= 0:  # Valid link
+                # Force is negative gradient
+                force = ti.Vector([-contact_gradients[i, 0], -contact_gradients[i, 1], -contact_gradients[i, 2]])
+
+                # Atomic add force
+                for j in ti.static(range(3)):
+                    ti.atomic_add(out_forces[link_idx, j], force[j])
+
+                # Compute torque: τ = r × F
+                contact_pos = ti.Vector(
+                    [vert_positions[vert_idx, 0], vert_positions[vert_idx, 1], vert_positions[vert_idx, 2]]
+                )
+                center_pos = ti.Vector(
+                    [link_centers[link_idx, 0], link_centers[link_idx, 1], link_centers[link_idx, 2]]
+                )
+                r = contact_pos - center_pos
+                torque = r.cross(force)
+
+                # Atomic add torque
+                for j in ti.static(range(3)):
+                    ti.atomic_add(out_torques[link_idx, j], torque[j])
+
+    @ti.kernel
+    def _compute_link_contact_forces_kernel(
+        self,
+        n_force_entries: ti.i32,
+        force_gradients: ti.types.ndarray(),  # (n_force_entries, 3) force gradient for each vertex
+        vert_to_link_idx: ti.types.ndarray(),  # (n_force_entries,) link_idx for each force entry
+        vert_to_env_idx: ti.types.ndarray(),  # (n_force_entries,) env_idx for each force entry
+        vert_positions: ti.types.ndarray(),  # (n_force_entries, 3) vertex positions in world space
+        link_centers: ti.types.ndarray(),  # (n_force_entries, 3) link center for each entry
+        out_forces: ti.types.ndarray(),  # (max_links, max_envs, 3) output forces
+        out_torques: ti.types.ndarray(),  # (max_links, max_envs, 3) output torques
+    ):
+        """
+        Compute contact forces and torques for rigid links from vertex gradients.
+        Uses atomic operations to accumulate forces from multiple vertices per link.
+        """
+        for i in range(n_force_entries):
+            link_idx = vert_to_link_idx[i]
+            env_idx = vert_to_env_idx[i]
+
+            # Force is negative gradient
+            force = ti.Vector([-force_gradients[i, 0], -force_gradients[i, 1], -force_gradients[i, 2]])
+
+            # Atomic add force
+            for j in ti.static(range(3)):
+                ti.atomic_add(out_forces[link_idx, env_idx, j], force[j])
+
+            # Compute torque: τ = r × F
+            contact_pos = ti.Vector([vert_positions[i, 0], vert_positions[i, 1], vert_positions[i, 2]])
+            center_pos = ti.Vector([link_centers[i, 0], link_centers[i, 1], link_centers[i, 2]])
+            r = contact_pos - center_pos
+            torque = r.cross(force)
+
+            # Atomic add torque
+            for j in ti.static(range(3)):
+                ti.atomic_add(out_torques[link_idx, env_idx, j], torque[j])
+
+    @ti.kernel
+    def _batch_read_qpos_kernel(
+        self,
+        qpos_field: ti.types.ndarray(),  # Source qpos field (n_dofs, n_envs)
+        q_start: ti.i32,
+        n_qs: ti.i32,
+        env_idx: ti.i32,
+        out_qpos: ti.types.ndarray(),  # Output array (n_qs,)
+    ):
+        """
+        Batch read qpos for a specific entity and environment.
+        """
+        for i in range(n_qs):
+            out_qpos[i] = qpos_field[q_start + i, env_idx]
+
+    @ti.kernel
+    def _compare_qpos_kernel(
+        self,
+        n_entries: ti.i32,
+        qpos_current: ti.types.ndarray(),  # (n_entries,)
+        qpos_stored: ti.types.ndarray(),  # (n_entries,)
+        tolerance: ti.f32,
+        out_modified: ti.types.ndarray(),  # (1,) - output 1 if modified, 0 otherwise
+    ):
+        """
+        Compare two qpos arrays and detect if modified beyond tolerance.
+        """
+        modified = 0
+        for i in range(n_entries):
+            diff = ti.abs(qpos_current[i] - qpos_stored[i])
+            if diff > tolerance:
+                modified = 1
+        out_modified[0] = modified
+
+    @ti.kernel
+    def _batch_pos_quat_to_transform_kernel(
+        self,
+        n_links: ti.i32,
+        positions: ti.types.ndarray(),  # (n_links, 3)
+        quaternions: ti.types.ndarray(),  # (n_links, 4) - wxyz format
+        out_transforms: ti.types.ndarray(),  # (n_links, 4, 4)
+    ):
+        """
+        Convert batch of positions and quaternions to 4x4 transform matrices.
+        Quaternion format: [w, x, y, z]
+        """
+        for i in range(n_links):
+            # Extract quaternion components
+            w = quaternions[i, 0]
+            x = quaternions[i, 1]
+            y = quaternions[i, 2]
+            z = quaternions[i, 3]
+
+            # Compute rotation matrix from quaternion
+            # R = I + 2*s*K + 2*K^2, where s = w, K = skew(x,y,z)
+            xx = x * x
+            yy = y * y
+            zz = z * z
+            xy = x * y
+            xz = x * z
+            yz = y * z
+            wx = w * x
+            wy = w * y
+            wz = w * z
+
+            # Rotation matrix (3x3)
+            R00 = 1.0 - 2.0 * (yy + zz)
+            R01 = 2.0 * (xy - wz)
+            R02 = 2.0 * (xz + wy)
+
+            R10 = 2.0 * (xy + wz)
+            R11 = 1.0 - 2.0 * (xx + zz)
+            R12 = 2.0 * (yz - wx)
+
+            R20 = 2.0 * (xz - wy)
+            R21 = 2.0 * (yz + wx)
+            R22 = 1.0 - 2.0 * (xx + yy)
+
+            # Build 4x4 transform matrix
+            # [R  t]
+            # [0  1]
+            out_transforms[i, 0, 0] = R00
+            out_transforms[i, 0, 1] = R01
+            out_transforms[i, 0, 2] = R02
+            out_transforms[i, 0, 3] = positions[i, 0]
+
+            out_transforms[i, 1, 0] = R10
+            out_transforms[i, 1, 1] = R11
+            out_transforms[i, 1, 2] = R12
+            out_transforms[i, 1, 3] = positions[i, 1]
+
+            out_transforms[i, 2, 0] = R20
+            out_transforms[i, 2, 1] = R21
+            out_transforms[i, 2, 2] = R22
+            out_transforms[i, 2, 3] = positions[i, 2]
+
+            out_transforms[i, 3, 0] = 0.0
+            out_transforms[i, 3, 1] = 0.0
+            out_transforms[i, 3, 2] = 0.0
+            out_transforms[i, 3, 3] = 1.0
+
+    @ti.kernel
+    def _init_mappings_and_flags_kernel(self, transform_data: ti.template(), max_links: ti.i32):
+        """Initialize all mapping and flag arrays to default values."""
+        for link_idx in range(max_links):
+            transform_data.link_to_entity_map[link_idx] = -1
+            transform_data.entity_base_link_map[link_idx] = -1
+            transform_data.entity_n_links_map[link_idx] = 0
+            transform_data.ipc_only_flags[link_idx] = 0
+            transform_data.ipc_filter_flags[link_idx] = 0
+
+    @ti.kernel
+    def _init_user_modified_flags_kernel(self, transform_data: ti.template(), max_entities: ti.i32, max_envs: ti.i32):
+        """Initialize user-modified entity flags to 0."""
+        for entity_idx, env_idx in ti.ndrange(max_entities, max_envs):
+            transform_data.user_modified_flags[entity_idx, env_idx] = 0
+
+    @ti.kernel
+    def _init_filter_input_kernel(self, transform_data: ti.template(), n_items: ti.i32, max_envs: ti.i32):
+        """Initialize filter input validity flags to 0."""
+        for i, env in ti.ndrange(n_items, max_envs):
+            transform_data.input_valid[i, env] = 0
+
+    @ti.kernel
+    def _filter_and_collect_batch_outputs_kernel(
+        self,
+        transform_data: ti.template(),
+        n_items: ti.i32,
+        max_envs: ti.i32,
+        ipc_only: ti.i32,  # 1 for True, 0 for False
+    ):
+        """
+        Complete pipeline kernel:
+        1. Filter links based on ipc_only flag
+        2. Extract pos/quat from transform matrices
+        3. Separate simple vs complex cases
+        4. Compact output per environment into batch arrays
+        """
+        # Reset batch output counts
+        for env in range(max_envs):
+            transform_data.output_count_per_env[env] = 0
+
+        # Reset complex case flags
+        for entity_idx, env in ti.ndrange(200, max_envs):  # max_links as max entities
+            transform_data.complex_case_flags[entity_idx, env] = 0
+
+        # Process all (link, env) pairs in parallel
+        for i, env in ti.ndrange(n_items, max_envs):
+            if transform_data.input_valid[i, env] == 0:
+                continue
+
+            link_idx = transform_data.input_link_indices[i]
+            env_idx = transform_data.input_env_indices[i, env]
+            entity_idx = transform_data.link_to_entity_map[link_idx]
+
+            if entity_idx < 0:
+                continue
+
+            # Check user modification flag
+            if transform_data.user_modified_flags[entity_idx, env_idx] == 1:
+                continue
+
+            # Check filtering criteria
+            passes_filter = 0
+            if ipc_only == 1:
+                # Must be both IPC-only AND in IPC filters
+                if transform_data.ipc_only_flags[link_idx] == 1 and transform_data.ipc_filter_flags[link_idx] == 1:
+                    passes_filter = 1
+            else:
+                # Must be in IPC filters
+                if transform_data.ipc_filter_flags[link_idx] == 1:
+                    passes_filter = 1
+
+            if passes_filter == 0:
+                continue
+
+            # Check if this is a simple case: single base link
+            base_link_idx = transform_data.entity_base_link_map[entity_idx]
+            n_links = transform_data.entity_n_links_map[entity_idx]
+
+            is_simple_case = n_links == 1 and link_idx == base_link_idx
+
+            if is_simple_case:
+                # Extract rotation matrix (3x3)
+                R = ti.Matrix(
+                    [
+                        [
+                            transform_data.input_transforms[i, env][0, 0],
+                            transform_data.input_transforms[i, env][0, 1],
+                            transform_data.input_transforms[i, env][0, 2],
+                        ],
+                        [
+                            transform_data.input_transforms[i, env][1, 0],
+                            transform_data.input_transforms[i, env][1, 1],
+                            transform_data.input_transforms[i, env][1, 2],
+                        ],
+                        [
+                            transform_data.input_transforms[i, env][2, 0],
+                            transform_data.input_transforms[i, env][2, 1],
+                            transform_data.input_transforms[i, env][2, 2],
+                        ],
+                    ]
+                )
+
+                # Extract position
+                pos = ti.Vector(
+                    [
+                        transform_data.input_transforms[i, env][0, 3],
+                        transform_data.input_transforms[i, env][1, 3],
+                        transform_data.input_transforms[i, env][2, 3],
+                    ]
+                )
+
+                # Convert rotation matrix to quaternion using Shepperd's method
+                trace = R[0, 0] + R[1, 1] + R[2, 2]
+
+                qw = 0.0
+                qx = 0.0
+                qy = 0.0
+                qz = 0.0
+
+                if trace > 0.0:
+                    s = ti.sqrt(trace + 1.0)
+                    qw = s * 0.5
+                    s = 0.5 / s
+                    qx = (R[2, 1] - R[1, 2]) * s
+                    qy = (R[0, 2] - R[2, 0]) * s
+                    qz = (R[1, 0] - R[0, 1]) * s
+                else:
+                    if R[0, 0] >= R[1, 1] and R[0, 0] >= R[2, 2]:
+                        s = ti.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+                        qx = s * 0.5
+                        s = 0.5 / s
+                        qw = (R[2, 1] - R[1, 2]) * s
+                        qy = (R[0, 1] + R[1, 0]) * s
+                        qz = (R[0, 2] + R[2, 0]) * s
+                    elif R[1, 1] > R[2, 2]:
+                        s = ti.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+                        qy = s * 0.5
+                        s = 0.5 / s
+                        qw = (R[0, 2] - R[2, 0]) * s
+                        qx = (R[0, 1] + R[1, 0]) * s
+                        qz = (R[1, 2] + R[2, 1]) * s
+                    else:
+                        s = ti.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+                        qz = s * 0.5
+                        s = 0.5 / s
+                        qw = (R[1, 0] - R[0, 1]) * s
+                        qx = (R[0, 2] + R[2, 0]) * s
+                        qy = (R[1, 2] + R[2, 1]) * s
+
+                # Atomically add to batch output for this environment
+                idx = ti.atomic_add(transform_data.output_count_per_env[env_idx], 1)
+                transform_data.output_link_idx[env_idx, idx] = link_idx
+                transform_data.output_pos[env_idx, idx] = pos
+                transform_data.output_quat[env_idx, idx] = ti.Vector([qw, qx, qy, qz])
+                transform_data.output_entity_idx[env_idx, idx] = entity_idx
+            else:
+                # Complex case: mark for later IK processing
+                transform_data.complex_case_flags[entity_idx, env_idx] = 1
+
+    @ti.data_oriented
+    class IPCTransformData:
+        """Data-oriented class for IPC transform processing."""
+
+        def __init__(self, max_links, max_envs, max_abd_links, max_qpos_size):
+            # Entity mapping: link_idx -> entity_idx, base_link_idx
+            self.link_to_entity_map = ti.field(dtype=ti.i32, shape=max_links)
+            self.entity_base_link_map = ti.field(dtype=ti.i32, shape=max_links)
+            self.entity_n_links_map = ti.field(dtype=ti.i32, shape=max_links)
+            self.entity_link_starts = ti.field(dtype=ti.i32, shape=max_links)
+
+            # Filter flags: for each link, whether it passes ipc_only filter
+            self.ipc_only_flags = ti.field(dtype=ti.i32, shape=max_links)
+            self.ipc_filter_flags = ti.field(dtype=ti.i32, shape=max_links)
+
+            # User modified entity flags
+            self.user_modified_flags = ti.field(dtype=ti.i32, shape=(max_links, max_envs))
+
+            # Input data for filtering
+            self.input_link_indices = ti.field(dtype=ti.i32, shape=max_abd_links)
+            self.input_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=(max_abd_links, max_envs))
+            self.input_env_indices = ti.field(dtype=ti.i32, shape=(max_abd_links, max_envs))
+            self.input_valid = ti.field(dtype=ti.i32, shape=(max_abd_links, max_envs))
+
+            # Batch output arrays per environment (compacted)
+            self.output_count_per_env = ti.field(dtype=ti.i32, shape=max_envs)
+            self.output_link_idx = ti.field(dtype=ti.i32, shape=(max_envs, max_links))
+            self.output_pos = ti.Vector.field(3, dtype=gs.ti_float, shape=(max_envs, max_links))
+            self.output_quat = ti.Vector.field(4, dtype=gs.ti_float, shape=(max_envs, max_links))
+            self.output_entity_idx = ti.field(dtype=ti.i32, shape=(max_envs, max_links))
+
+            # Complex case tracking
+            self.complex_case_flags = ti.field(dtype=ti.i32, shape=(max_links, max_envs))
+
+            # Reusable buffers for qpos comparison
+            self.qpos_buffer = ti.field(dtype=gs.ti_float, shape=max_qpos_size)
+            self.qpos_buffer_large = ti.field(dtype=gs.ti_float, shape=2000)  # For large entities
+            self.modified_flag = ti.field(dtype=ti.i32, shape=())
+
+    @ti.data_oriented
+    class IPCCouplingData:
+        """Data-oriented class for IPC coupling force computation."""
+
+        def __init__(self, max_links):
+            # Pre-allocated buffers for coupling force computation
+            self.link_indices = ti.field(dtype=ti.i32, shape=max_links)
+            self.env_indices = ti.field(dtype=ti.i32, shape=max_links)
+            self.ipc_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=max_links)
+            self.aim_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=max_links)
+            self.link_masses = ti.field(dtype=gs.ti_float, shape=max_links)
+            self.inertia_tensors = ti.Matrix.field(3, 3, dtype=gs.ti_float, shape=max_links)
+            self.out_forces = ti.Vector.field(3, dtype=gs.ti_float, shape=max_links)
+            self.out_torques = ti.Vector.field(3, dtype=gs.ti_float, shape=max_links)
+            self.n_items = ti.field(dtype=ti.i32, shape=())
+
     def __init__(self, simulator: "Simulator", options: "IPCCouplerOptions") -> None:
         """
         Initialize IPC Coupler.
@@ -51,6 +565,13 @@ class IPCCoupler(RBC):
         self.sim = simulator
         self.options = options
 
+        # Validate coupling strategy
+        valid_strategies = ["two_way_soft_constraint", "contact_proxy"]
+        if self.options.coupling_strategy not in valid_strategies:
+            raise ValueError(
+                f"Invalid coupling_strategy '{self.options.coupling_strategy}'. " f"Must be one of {valid_strategies}"
+            )
+
         # Store solver references
         self.rigid_solver = self.sim.rigid_solver
         self.fem_solver = self.sim.fem_solver
@@ -69,6 +590,76 @@ class IPCCoupler(RBC):
         # IPC link filter: maps entity_idx -> set of link_idx to include in IPC
         # If entity_idx not in dict or value is None, all links of that entity participate
         self._ipc_link_filters = {}
+
+        # IPC-only links: maps entity_idx -> set of link_idx that should ONLY exist in IPC
+        # These links will not have soft constraints, use full density, and directly set Genesis transforms
+        self._ipc_only_links = {}
+
+        # Storage for Genesis rigid body states before IPC advance
+        # Maps link_idx -> {env_idx: transform_matrix}
+        self._genesis_stored_states = {}
+
+        # Storage for IPC contact forces on rigid links (both coupling mode)
+        # Maps link_idx -> {env_idx: {'force': np.array, 'torque': np.array}}
+        self._ipc_contact_forces = {}
+
+        # Storage for entity qpos before IPC advance (to detect user-modified qpos)
+        # Maps (entity_idx, env_idx) -> qpos_tensor
+        self._entity_qpos_before_ipc = {}
+
+        # Storage for external force data for rigid links
+        # Maps (link_idx, env_idx) -> force_vector (12D numpy array)
+        self._external_force_data = {}
+
+        # Pre-computed mapping from vertex index to rigid link (built once during IPC setup)
+        # Maps global_vertex_idx -> (link_idx, env_idx, local_vertex_idx)
+        self._vertex_to_link_mapping = {}
+        # Global vertex offset for tracking vertex indices across all geometries
+        self._global_vertex_offset = 0
+
+        # Pre-allocated Taichi fields for contact force processing
+        # Estimate max contacts based on potential rigid links
+        max_contacts = 1000  # Conservative estimate, can be tuned based on scene complexity
+        max_links = 200  # Max number of links
+        max_envs = 100  # Max number of environments
+        max_abd_links = 1000  # Max number of links in abd_data
+
+        self.contact_forces_ti = ti.Vector.field(3, dtype=gs.ti_float, shape=max_contacts)
+        self.contact_torques_ti = ti.Vector.field(3, dtype=gs.ti_float, shape=max_contacts)
+        self.abd_transforms_ti = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=max_contacts)
+        self.out_forces_ti = ti.Vector.field(12, dtype=gs.ti_float, shape=max_contacts)
+        self.link_indices_ti = ti.field(dtype=ti.i32, shape=max_contacts)
+        self.env_indices_ti = ti.field(dtype=ti.i32, shape=max_contacts)
+
+        # Pre-allocated fields for link contact force computation
+        # Output arrays dimensioned by max_links x max_envs
+        self.link_contact_forces_out = ti.Vector.field(3, dtype=gs.ti_float, shape=(max_links, max_envs))
+        self.link_contact_torques_out = ti.Vector.field(3, dtype=gs.ti_float, shape=(max_links, max_envs))
+
+        # Fields for storing vertex-level contact data (for kernel processing)
+        self.max_vertex_contacts = 5000  # Max vertex contacts
+        self.vertex_force_gradients = ti.Vector.field(3, dtype=gs.ti_float, shape=self.max_vertex_contacts)
+        self.vertex_link_indices = ti.field(dtype=ti.i32, shape=self.max_vertex_contacts)
+        self.vertex_env_indices = ti.field(dtype=ti.i32, shape=self.max_vertex_contacts)
+        self.vertex_positions_world = ti.Vector.field(3, dtype=gs.ti_float, shape=self.max_vertex_contacts)
+        self.vertex_link_centers = ti.Vector.field(3, dtype=gs.ti_float, shape=self.max_vertex_contacts)
+
+        # Fields for batch qpos operations
+        self.max_qpos_size = 500  # Max qpos size per entity
+        self.qpos_buffer = ti.field(dtype=gs.ti_float, shape=self.max_qpos_size)
+        self.qpos_comparison_result = ti.field(dtype=ti.i32, shape=1)
+
+        # Fields for batch transform operations
+        self.batch_positions = ti.Vector.field(3, dtype=gs.ti_float, shape=max_links)
+        self.batch_quaternions = ti.Vector.field(4, dtype=gs.ti_float, shape=max_links)
+        self.batch_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=max_links)
+
+        # Initialize data-oriented transform data structure
+        self.max_abd_links = max_abd_links
+        self.transform_data = self.IPCTransformData(max_links, max_envs, max_abd_links, self.max_qpos_size)
+
+        # Initialize data-oriented coupling data structure
+        self.coupling_data = self.IPCCouplingData(max_links)
 
     def build(self) -> None:
         """Build IPC system"""
@@ -231,6 +822,8 @@ class IPCCoupler(RBC):
                             self._ipc_scene_subscenes[i], self._ipc_scene_subscenes[j], False
                         )
 
+        self.abd_data_by_link = {}
+
     def _add_objects_to_ipc(self):
         """Add objects from solvers to IPC system"""
         # Add FEM entities to IPC
@@ -316,9 +909,13 @@ class IPCCoupler(RBC):
                 fem_solver.list_env_obj[i_b][i_e].geometries().create(mesh)
                 fem_solver._mesh_handles[f"gs_ipc_{i_b}_{i_e}"] = mesh
 
+                # Update global vertex offset (FEM vertices occupy index space but aren't in mapping)
+                self._global_vertex_offset += mesh.vertices().size()
+
     def _add_rigid_geoms_to_ipc(self):
         """Add rigid geoms to the existing IPC scene as ABD objects, merging geoms by link_idx"""
         from uipc.geometry import tetmesh, label_surface, label_triangle_orient, flip_inward_triangles, merge, ground
+        from uipc.constitution import AffineBodyExternalForce
         from genesis.utils import mesh as mu
         import numpy as np
         import trimesh
@@ -327,6 +924,11 @@ class IPCCoupler(RBC):
         scene = self._ipc_scene
         abd = self._ipc_abd
         scene_subscenes = self._ipc_scene_subscenes
+
+        # Create and register AffineBodyExternalForce constitution
+        if not hasattr(self, "_ipc_ext_force"):
+            self._ipc_ext_force = AffineBodyExternalForce()
+            scene.constitution_tabular().insert(self._ipc_ext_force)
 
         # Initialize lists following FEM solver pattern
         rigid_solver.list_env_obj = []
@@ -402,13 +1004,14 @@ class IPCCoupler(RBC):
                         geom_rot_mat = gu.quat_to_R(geom_rel_quat)
                         transformed_verts = geom_verts @ geom_rot_mat.T + geom_rel_pos
 
-                        # Convert trimesh to tetmesh
+                        # Create uipc trimesh for rigid body (ABD doesn't need tetmesh)
                         try:
-                            tri_mesh = trimesh.Trimesh(vertices=transformed_verts, faces=geom_faces)
-                            verts, elems = mu.tetrahedralize_mesh(tri_mesh, tet_cfg=dict())
-                            rigid_mesh = tetmesh(verts.astype(np.float64), elems.astype(np.int32))
+                            from uipc.geometry import trimesh as uipc_trimesh
 
-                            # Store mesh and geom info
+                            # Create uipc trimesh directly (dim=2, surface mesh for ABD)
+                            rigid_mesh = uipc_trimesh(transformed_verts.astype(np.float64), geom_faces.astype(np.int32))
+
+                            # Store uipc mesh (SimplicialComplex) for merging
                             link_geoms[link_idx]["meshes"].append((i_g, rigid_mesh))
 
                         except Exception as e:
@@ -434,7 +1037,7 @@ class IPCCoupler(RBC):
                             # Single mesh in link
                             geom_idx, merged_mesh = link_data["meshes"][0]
                         else:
-                            # Multiple meshes in link - merge them
+                            # Multiple meshes in link - merge them using uipc.geometry.merge
                             meshes_to_merge = [mesh for geom_idx, mesh in link_data["meshes"]]
                             merged_mesh = merge(meshes_to_merge)
                             geom_idx = link_data["meshes"][0][0]  # Use first geom's index for metadata
@@ -459,8 +1062,6 @@ class IPCCoupler(RBC):
 
                         # Process surface for contact
                         label_surface(merged_mesh)
-                        label_triangle_orient(merged_mesh)
-                        merged_mesh = flip_inward_triangles(merged_mesh)
 
                         # Create rigid object
                         rigid_obj = scene.objects().create(f"rigid_link_{i_b}_{link_idx}")
@@ -473,30 +1074,54 @@ class IPCCoupler(RBC):
                         self._ipc_abd_contact.apply_to(merged_mesh)
                         from uipc.unit import MPa
 
-                        # Use half density for IPC ABD to avoid double-counting mass
-                        # (the other half is in Genesis rigid solver, scaled in _scale_genesis_rigid_link_masses)
+                        # Check if this link is IPC-only
+                        is_ipc_only = (
+                            link_data["entity_idx"] in self._ipc_only_links
+                            and link_idx in self._ipc_only_links[link_data["entity_idx"]]
+                        )
+
                         entity_rho = rigid_solver._entities[link_data["entity_idx"]].material.rho
-                        abd.apply_to(
-                            merged_mesh,
-                            kappa=10.0 * MPa,
-                            mass_density=entity_rho / 2.0,
-                        )
 
-                        # Apply soft transform constraints
-                        from uipc.constitution import SoftTransformConstraint
+                        if is_ipc_only:
+                            # IPC-only links use full density (no mass splitting with Genesis)
+                            abd.apply_to(
+                                merged_mesh,
+                                kappa=10.0 * MPa,
+                                mass_density=entity_rho,
+                            )
+                        else:
+                            # For two_way_soft_constraint: use half density to avoid double-counting mass
+                            # For contact_proxy: use full density (no mass sharing with Genesis)
+                            if self.options.coupling_strategy == "contact_proxy":
+                                ipc_mass_density = entity_rho
+                            else:
+                                ipc_mass_density = entity_rho / 2.0
 
-                        if not hasattr(self, "_ipc_stc"):
-                            self._ipc_stc = SoftTransformConstraint()
-                            scene.constitution_tabular().insert(self._ipc_stc)
+                            abd.apply_to(
+                                merged_mesh,
+                                kappa=10.0 * MPa,
+                                mass_density=ipc_mass_density,
+                            )
 
-                        strength_tuple = self.options.ipc_constraint_strength
-                        constraint_strength = np.array(
-                            [
-                                strength_tuple[0],  # translation strength
-                                strength_tuple[1],  # rotation strength
-                            ]
-                        )
-                        self._ipc_stc.apply_to(merged_mesh, constraint_strength)
+                            # Apply soft transform constraints only for coupled links (not IPC-only)
+                            from uipc.constitution import SoftTransformConstraint
+
+                            if not hasattr(self, "_ipc_stc"):
+                                self._ipc_stc = SoftTransformConstraint()
+                                scene.constitution_tabular().insert(self._ipc_stc)
+
+                            strength_tuple = self.options.ipc_constraint_strength
+                            constraint_strength = np.array(
+                                [
+                                    strength_tuple[0],  # translation strength
+                                    strength_tuple[1],  # rotation strength
+                                ]
+                            )
+                            self._ipc_stc.apply_to(merged_mesh, constraint_strength)
+
+                        # Apply external force (initially zero, can be modified by animator)
+                        initial_force = np.zeros(12, dtype=np.float64)  # Vector12: [fx, fy, fz, dS/dt (9 components)]
+                        self._ipc_ext_force.apply_to(merged_mesh, initial_force)
 
                         # Add metadata
                         meta_attrs = merged_mesh.meta()
@@ -504,15 +1129,33 @@ class IPCCoupler(RBC):
                         meta_attrs.create("env_idx", str(i_b))
                         meta_attrs.create("link_idx", str(link_idx))  # Use link_idx instead of geom_idx
 
+                        # Build vertex-to-link mapping for contact force computation
+                        # Check if this is a 'both' coupling link (needs contact force feedback)
+                        is_both_coupling = link_data[
+                            "entity_idx"
+                        ] not in self._ipc_only_links or link_idx not in self._ipc_only_links.get(
+                            link_data["entity_idx"], set()
+                        )
+
+                        if is_both_coupling:
+                            n_verts = merged_mesh.vertices().size()
+                            for local_idx in range(n_verts):
+                                global_idx = self._global_vertex_offset + local_idx
+                                self._vertex_to_link_mapping[global_idx] = (link_idx, i_b, local_idx)
+
+                        # Update global vertex offset
+                        self._global_vertex_offset += merged_mesh.vertices().size()
+
                         rigid_obj.geometries().create(merged_mesh)
 
                         # Set up animator for this link
                         if not hasattr(self, "_ipc_animator"):
                             self._ipc_animator = scene.animator()
 
-                        def create_animate_function(env_idx, link_idx, rigid_solver_ref):
+                        def create_animate_function(env_idx, link_idx, coupler_ref):
                             def animate_rigid_link(info):
                                 from uipc import view, builtin
+                                import numpy as np
 
                                 geo_slots = info.geo_slots()
                                 if len(geo_slots) == 0:
@@ -522,8 +1165,8 @@ class IPCCoupler(RBC):
                                 try:
                                     # Read stored Genesis transform (q_genesis^n)
                                     # This was stored in _store_genesis_rigid_states() before advance()
-                                    if hasattr(rigid_solver_ref, "_genesis_stored_states"):
-                                        stored_states = rigid_solver_ref._genesis_stored_states
+                                    if hasattr(coupler_ref, "_genesis_stored_states"):
+                                        stored_states = coupler_ref._genesis_stored_states
                                         if link_idx in stored_states and env_idx in stored_states[link_idx]:
                                             transform_matrix = stored_states[link_idx][env_idx]
 
@@ -535,12 +1178,29 @@ class IPCCoupler(RBC):
                                                 view(is_constrained)[0] = 1
                                                 view(aim_transform_attr)[:] = transform_matrix
 
+                                    # Update external force if user has set it
+                                    if hasattr(coupler_ref, "_external_force_data"):
+                                        force_data = coupler_ref._external_force_data
+                                        force_attr = geo.instances().find("external_force")
+                                        is_constrained_attr = geo.instances().find("is_constrained")
+                                        key = (link_idx, env_idx)
+                                        if key in force_data:
+                                            if force_attr is not None:
+                                                force_vector = force_data[key]
+                                                view(force_attr)[:] = force_vector.reshape(-1, 1)
+
+                                            if is_constrained_attr is not None:
+                                                view(is_constrained_attr)[:] = 1
+                                        else:
+                                            if force_attr is not None:
+                                                view(force_attr)[:] = np.zeros((12, 1), dtype=np.float64)
+
                                 except Exception as e:
                                     gs.logger.warning(f"Error setting IPC animation target: {e}")
 
                             return animate_rigid_link
 
-                        animate_func = create_animate_function(i_b, link_idx, rigid_solver)
+                        animate_func = create_animate_function(i_b, link_idx, self)
                         self._ipc_animator.insert(rigid_obj, animate_func)
 
                         rigid_solver._mesh_handles[f"rigid_link_{i_b}_{link_idx}"] = merged_mesh
@@ -559,19 +1219,26 @@ class IPCCoupler(RBC):
                         rigid_solver._mesh_handles[f"rigid_plane_{i_b}_{geom_idx}"] = plane_geom
                         link_obj_counter += 1
 
+                        # Planes don't have vertices, no offset update needed
+
                 except Exception as e:
                     gs.logger.warning(f"Failed to create IPC object for link {link_idx}: {e}")
                     continue
 
         # Scale down Genesis rigid solver masses for links added to IPC
-        # Since both Genesis and IPC simulate these rigid bodies, divide mass by 2
-        self._scale_genesis_rigid_link_masses(link_geoms)
+        # Only needed for two_way_soft_constraint (mass sharing between Genesis and IPC)
+        # For contact_proxy, no mass scaling needed (forces are transferred via contact)
+        if self.options.coupling_strategy != "contact_proxy":
+            self._scale_genesis_rigid_link_masses(link_geoms)
 
     def _scale_genesis_rigid_link_masses(self, link_geoms_dict):
         """
         Scale down Genesis rigid solver mass properties for links that were added to IPC.
         Both Genesis and IPC will simulate these rigid bodies, so we divide by 2 to avoid
         double-counting mass.
+
+        Note: This should only be called for two_way_soft_constraint strategy,
+        not for contact_proxy strategy.
 
         This scales:
         - inertial_mass: scalar mass
@@ -582,6 +1249,14 @@ class IPCCoupler(RBC):
         link_geoms_dict : dict
             Dictionary mapping link_idx to their geometry data (from _add_rigid_geoms_to_ipc)
         """
+        # Safety check: should not be called in contact_proxy mode
+        if self.options.coupling_strategy == "contact_proxy":
+            gs.logger.warning(
+                "_scale_genesis_rigid_link_masses called in contact_proxy mode. "
+                "Mass scaling should only be used in two_way_soft_constraint mode. Skipping."
+            )
+            return
+
         rigid_solver = self.rigid_solver
 
         # Get all link indices that were added to IPC
@@ -623,45 +1298,103 @@ class IPCCoupler(RBC):
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
 
-    def set_ipc_link_filter(self, entity, link_names=None, link_indices=None):
+    def set_link_ipc_coupling_type(self, entity, coupling_type: str, link_names=None, link_indices=None):
         """
-        Set which links of an entity should participate in IPC simulation.
+        Set IPC coupling type for links of an entity.
 
         Parameters
         ----------
         entity : RigidEntity
-            The rigid entity to set the filter for
+            The rigid entity to configure
+        coupling_type : str
+            Type of coupling: 'both', 'ipc_only', or 'genesis_only'
+            - 'both': Two-way coupling between IPC and Genesis (default behavior)
+            - 'ipc_only': Links only simulated in IPC, transforms copied to Genesis (one-way)
+            - 'genesis_only': Links only simulated in Genesis, excluded from IPC
         link_names : list of str, optional
-            Names of links to include in IPC. If None and link_indices is None, all links participate.
+            Names of links to configure. If None and link_indices is None, applies to all links.
         link_indices : list of int, optional
-            Local indices of links to include in IPC. If None and link_names is None, all links participate.
+            Local indices of links to configure. If None and link_names is None, applies to all links.
+
+        Notes
+        -----
+        - 'both': Links use half density in IPC, have SoftTransformConstraint, bidirectional forces
+        - 'ipc_only': Links use full density in IPC, no SoftTransformConstraint, transforms copied to Genesis
+        - 'genesis_only': Links excluded from IPC simulation entirely
         """
+        entity_idx = entity._idx
+
+        # Determine which links to configure
         if link_names is None and link_indices is None:
-            # Remove filter for this entity (all links participate)
-            if entity._idx in self._ipc_link_filters:
-                del self._ipc_link_filters[entity._idx]
-            return
-
-        link_filter = set()
-
-        if link_names is not None:
-            # Convert link names to solver-level indices
-            for name in link_names:
-                link = entity.get_link(name=name)
-                if link is not None:
-                    # Use solver-level index
-                    link_filter.add(link.idx)
-                else:
-                    gs.logger.warning(f"Link name '{name}' not found in entity")
-
-        if link_indices is not None:
-            # Convert local link indices to solver-level indices
-            for local_idx in link_indices:
+            # Apply to all links
+            target_links = set()
+            for local_idx in range(entity.n_links):
                 solver_link_idx = local_idx + entity._link_start
-                link_filter.add(solver_link_idx)
+                target_links.add(solver_link_idx)
+        else:
+            # Apply to specified links
+            target_links = set()
 
-        # Store filter for this entity
-        self._ipc_link_filters[entity._idx] = link_filter
+            if link_names is not None:
+                for name in link_names:
+                    try:
+                        link = entity.get_link(name=name)
+                        target_links.add(link.idx)
+
+                    except Exception as e:
+                        gs.logger.warning(f"Link name '{name}' not found in entity")
+
+            if link_indices is not None:
+                for local_idx in link_indices:
+                    solver_link_idx = local_idx + entity._link_start
+                    target_links.add(solver_link_idx)
+
+        # Apply coupling type
+        if coupling_type == "both":
+            # Two-way coupling: include in IPC, not in IPC-only
+            self._ipc_link_filters[entity_idx] = target_links
+
+            # Remove from IPC-only if present
+            if entity_idx in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] -= target_links
+                if not self._ipc_only_links[entity_idx]:
+                    del self._ipc_only_links[entity_idx]
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'both' coupling")
+
+        elif coupling_type == "ipc_only":
+            # One-way coupling: IPC -> Genesis
+            if entity_idx not in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] = set()
+            self._ipc_only_links[entity_idx].update(target_links)
+
+            # Also add to IPC link filter
+            if entity_idx not in self._ipc_link_filters:
+                self._ipc_link_filters[entity_idx] = set()
+            self._ipc_link_filters[entity_idx].update(target_links)
+
+            gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to 'ipc_only' coupling")
+
+        elif coupling_type == "genesis_only":
+            # Genesis-only: remove from both filters
+            if entity_idx in self._ipc_link_filters:
+                self._ipc_link_filters[entity_idx] -= target_links
+                if not self._ipc_link_filters[entity_idx]:
+                    del self._ipc_link_filters[entity_idx]
+
+            if entity_idx in self._ipc_only_links:
+                self._ipc_only_links[entity_idx] -= target_links
+                if not self._ipc_only_links[entity_idx]:
+                    del self._ipc_only_links[entity_idx]
+
+            gs.logger.info(
+                f"Entity {entity_idx}: {len(target_links)} link(s) set to 'genesis_only' (excluded from IPC)"
+            )
+
+        else:
+            raise ValueError(
+                f"Invalid coupling_type '{coupling_type}'. " f"Must be 'both', 'ipc_only', or 'genesis_only'."
+            )
 
     def preprocess(self, f):
         """Preprocessing step before coupling"""
@@ -670,22 +1403,57 @@ class IPCCoupler(RBC):
     def _store_genesis_rigid_states(self):
         """
         Store current Genesis rigid body states before IPC advance.
+
+        OPTIMIZED VERSION: Uses Taichi kernels for batch reading qpos.
+
         These stored states will be used by:
         1. Animator: to set aim_transform for IPC soft constraints
         2. Force computation: to ensure action-reaction force consistency
+        3. User modification detection: to detect if user called set_qpos
         """
         if not self.rigid_solver.is_active:
             return
 
         rigid_solver = self.rigid_solver
 
-        # Initialize storage if not exists
-        if not hasattr(rigid_solver, "_genesis_stored_states"):
-            rigid_solver._genesis_stored_states = {}
+        # Clear previous stored states
+        self._genesis_stored_states.clear()
+        self._entity_qpos_before_ipc.clear()
+
+        # Get qpos field as numpy array for kernel access
+        qpos_np = rigid_solver._rigid_global_info.qpos.to_numpy()
+
+        # Store qpos for all entities (for user modification detection)
+        for entity_idx, entity in enumerate(rigid_solver._entities):
+            if entity.n_qs > 0:  # Skip entities without dofs
+                q_start = entity._q_start
+                n_qs = entity.n_qs
+
+                # Check capacity
+                if n_qs > self.max_qpos_size:
+                    gs.logger.warning(
+                        f"Entity {entity_idx} qpos size {n_qs} exceeds max {self.max_qpos_size}. "
+                        f"Using fallback method."
+                    )
+                    # Fallback to original method
+                    for env_idx in range(self.sim._B):
+                        qpos = np.zeros(n_qs, dtype=np.float32)
+                        for i in range(n_qs):
+                            qpos[i] = rigid_solver._rigid_global_info.qpos[q_start + i, env_idx]
+                        self._entity_qpos_before_ipc[(entity_idx, env_idx)] = qpos
+                else:
+                    # Use kernel for batch reading
+                    for env_idx in range(self.sim._B):
+                        qpos_out = np.zeros(n_qs, dtype=np.float32)
+                        self._batch_read_qpos_kernel(qpos_np, q_start, n_qs, env_idx, qpos_out)
+                        self._entity_qpos_before_ipc[(entity_idx, env_idx)] = qpos_out.copy()
 
         # Store transforms for all rigid links
+        # OPTIMIZED VERSION: Batch process transforms using kernel
         # Iterate through mesh handles to get all links
         if hasattr(rigid_solver, "_mesh_handles"):
+            # Collect all link indices and env indices first
+            link_env_pairs = []
             for handle_key in rigid_solver._mesh_handles.keys():
                 if handle_key.startswith("rigid_link_"):
                     # Parse: "rigid_link_{env_idx}_{link_idx}"
@@ -693,19 +1461,30 @@ class IPCCoupler(RBC):
                     if len(parts) >= 4:
                         env_idx = int(parts[2])
                         link_idx = int(parts[3])
+                        link_env_pairs.append((link_idx, env_idx))
 
-                        # Get and store current Genesis transform
-                        genesis_transform = self._get_genesis_link_transform(link_idx, env_idx)
+            # Batch process transforms
+            if link_env_pairs:
+                # Get positions and quaternions in batch
+                for link_idx, env_idx in link_env_pairs:
+                    # Get and store current Genesis transform
+                    genesis_transform = self._get_genesis_link_transform(link_idx, env_idx)
 
-                        if link_idx not in rigid_solver._genesis_stored_states:
-                            rigid_solver._genesis_stored_states[link_idx] = {}
-                        rigid_solver._genesis_stored_states[link_idx][env_idx] = genesis_transform
+                    if link_idx not in self._genesis_stored_states:
+                        self._genesis_stored_states[link_idx] = {}
+                    self._genesis_stored_states[link_idx][env_idx] = genesis_transform
 
     def couple(self, f):
         """Execute IPC coupling step"""
         if not self.is_active:
             return
 
+        # Dispatch to strategy-specific coupling logic
+        if self.options.coupling_strategy == "two_way_soft_constraint":
+            self._couple_two_way_soft_constraint(f)
+
+    def _couple_two_way_soft_constraint(self, f):
+        """Two-way coupling using SoftTransformConstraint"""
         # Step 1: Store current Genesis rigid body states (q_genesis^n)
         # This will be used by both animator (to set aim_transform) and
         # force computation (to ensure action-reaction force consistency)
@@ -721,6 +1500,15 @@ class IPCCoupler(RBC):
         # to compute forces: F = M * (q_ipc^{n+1} - q_genesis^n)
         self._retrieve_fem_states(f)  # This handles both volumetric FEM and cloth
         self._retrieve_rigid_states(f)
+        # Handle IPC-only links: directly set Genesis transform to IPC result (one-way coupling)
+        self._set_genesis_transforms_from_ipc(ipc_only=True)
+
+        if self.options.two_way_coupling:
+            self._apply_abd_coupling_forces()
+
+        if self.options.use_contact_proxy:
+            self._record_ipc_contact_forces()
+            self._apply_ipc_contact_forces()
 
     def _retrieve_fem_states(self, f):
         # IPC world advance/retrieve is handled at Scene level
@@ -828,7 +1616,7 @@ class IPCCoupler(RBC):
         for geo_slot in visitor.geometries():
             if isinstance(geo_slot, SimplicialComplexSlot):
                 geo = geo_slot.geometry()
-                if geo.dim() == 3:
+                if geo.dim() in [2, 3]:
                     try:
                         # Check if this is an ABD geometry using metadata
                         meta_attrs = geo.meta()
@@ -871,11 +1659,10 @@ class IPCCoupler(RBC):
                                     # This is q_genesis^n (stored before advance)
                                     aim_transform = None
                                     if (
-                                        hasattr(rigid_solver, "_genesis_stored_states")
-                                        and link_idx in rigid_solver._genesis_stored_states
-                                        and env_idx in rigid_solver._genesis_stored_states[link_idx]
+                                        link_idx in self._genesis_stored_states
+                                        and env_idx in self._genesis_stored_states[link_idx]
                                     ):
-                                        aim_transform = rigid_solver._genesis_stored_states[link_idx][env_idx]
+                                        aim_transform = self._genesis_stored_states[link_idx][env_idx]
 
                                     abd_data_by_link[link_idx][env_idx] = {
                                         "transform": transform_matrix,  # q_ipc^{n+1}
@@ -887,12 +1674,246 @@ class IPCCoupler(RBC):
                         continue
 
         # Store transforms for later access
-        rigid_solver._abd_affines = abd_data_by_link
+        self.abd_data_by_link = abd_data_by_link
 
-        # Apply coupling forces from IPC ABD to Genesis rigid bodies (two-way coupling)
-        # Based on soft_transform_constraint.cu gradient computation
-        if self.options.two_way_coupling:
-            self._apply_abd_coupling_forces(abd_data_by_link)
+    def _set_genesis_transforms_from_ipc(self, ipc_only=True):
+        """
+        Set Genesis transforms from IPC results using Taichi kernels for maximum parallelism.
+
+        Parameters
+        ----------
+        ipc_only : bool
+            If True, only process links that are both IPC-only AND in IPC filters.
+            If False, process all links in IPC filters (regardless of IPC-only status).
+        """
+        import numpy as np
+        from scipy.spatial.transform import Rotation as R
+        import torch
+
+        rigid_solver = self.rigid_solver
+        is_parallelized = self.sim._scene.n_envs > 0
+        n_envs = self.sim._scene.n_envs if is_parallelized else 1
+
+        if not hasattr(self, "abd_data_by_link"):
+            return
+
+        # Step 1: Initialize and populate entity mappings - write directly to Taichi fields
+        td = self.transform_data
+        self._init_mappings_and_flags_kernel(td, 200)
+
+        # Populate entity mappings directly
+        n_entities = len(rigid_solver._entities)
+        for ent_idx, entity in enumerate(rigid_solver._entities):
+            td.entity_base_link_map[ent_idx] = entity.base_link_idx
+            td.entity_n_links_map[ent_idx] = entity.n_links
+            td.entity_link_starts[ent_idx] = entity._link_start
+            for offset in range(entity.n_links):
+                link_idx = entity._link_start + offset
+                td.link_to_entity_map[link_idx] = ent_idx
+
+        # Set filter flags directly
+        for entity_idx, link_set in self._ipc_only_links.items():
+            for link_idx in link_set:
+                td.ipc_only_flags[link_idx] = 1
+
+        for entity_idx, link_set in self._ipc_link_filters.items():
+            for link_idx in link_set:
+                td.ipc_filter_flags[link_idx] = 1
+
+        # Step 2: Mark user-modified entities - write directly to Taichi field
+        self._init_user_modified_flags_kernel(td, 200, 100)
+
+        qpos_np = rigid_solver._rigid_global_info.qpos.to_numpy()
+        for (entity_idx, env_idx), stored_qpos in self._entity_qpos_before_ipc.items():
+            entity = rigid_solver._entities[entity_idx]
+            q_start = entity._q_start
+            n_qs = entity.n_qs
+
+            if n_qs > self.max_qpos_size:
+                # Use large buffer for very large qpos (rare case)
+                if n_qs <= 2000:
+                    # Read directly into Taichi buffer
+                    for i in range(n_qs):
+                        td.qpos_buffer_large[i] = rigid_solver._rigid_global_info.qpos[q_start + i, env_idx]
+                    # Compare using numpy view
+                    current_qpos_view = td.qpos_buffer_large.to_numpy()[:n_qs]
+                    if not np.allclose(current_qpos_view, stored_qpos, rtol=1e-6, atol=1e-6):
+                        td.user_modified_flags[entity_idx, env_idx] = 1
+                else:
+                    # Extremely rare: entity with >2000 qpos, use fallback
+                    for i in range(n_qs):
+                        if abs(rigid_solver._rigid_global_info.qpos[q_start + i, env_idx] - stored_qpos[i]) > 1e-6:
+                            td.user_modified_flags[entity_idx, env_idx] = 1
+                            break
+            else:
+                # Use pre-allocated buffer and kernel for comparison
+                self._batch_read_qpos_kernel(qpos_np, q_start, n_qs, env_idx, td.qpos_buffer.to_numpy())
+
+                # Create temporary numpy array for modified flag (kernel needs shape (1,))
+                import numpy as np
+
+                modified_flag_np = np.zeros(1, dtype=np.int32)
+                self._compare_qpos_kernel(n_qs, td.qpos_buffer.to_numpy(), stored_qpos, 1e-6, modified_flag_np)
+
+                if modified_flag_np[0] == 1:
+                    td.user_modified_flags[entity_idx, env_idx] = 1
+
+        # Step 3: Populate transform input data - write directly to Taichi fields
+        abd_link_list = list(self.abd_data_by_link.keys())
+        n_abd_links = min(len(abd_link_list), self.max_abd_links)
+
+        # Initialize filter input using kernel
+        self._init_filter_input_kernel(td, n_abd_links, n_envs)
+
+        # Populate transform data directly to Taichi fields
+        for i, link_idx in enumerate(abd_link_list[:n_abd_links]):
+            td.input_link_indices[i] = link_idx
+            env_data = self.abd_data_by_link[link_idx]
+
+            for env_idx, data in env_data.items():
+                if env_idx >= n_envs:
+                    continue
+                transform = data.get("transform")
+                if transform is not None:
+                    td.input_valid[i, env_idx] = 1
+                    td.input_env_indices[i, env_idx] = env_idx
+                    # Copy transform directly
+                    for row in range(4):
+                        for col in range(4):
+                            td.input_transforms[i, env_idx][row, col] = transform[row, col]
+
+        # Step 4: Run complete pipeline kernel
+        self._filter_and_collect_batch_outputs_kernel(td, n_abd_links, n_envs, 1 if ipc_only else 0)
+
+        # Step 5: Process simple cases - directly use kernel output without conversion
+        if is_parallelized:
+            for env_idx in range(n_envs):
+                count = td.output_count_per_env[env_idx]
+                if count == 0:
+                    continue
+
+                # Directly slice Taichi fields as torch tensors
+                pos_ti = td.output_pos.to_torch()[env_idx, :count]
+                quat_ti = td.output_quat.to_torch()[env_idx, :count]
+                link_idx_ti = td.output_link_idx.to_torch()[env_idx, :count]
+
+                rigid_solver.set_base_links_pos(
+                    pos_ti,
+                    link_idx_ti,
+                    envs_idx=env_idx,
+                    relative=False,
+                    unsafe=True,
+                    skip_forward=False,
+                )
+                rigid_solver.set_base_links_quat(
+                    quat_ti,
+                    link_idx_ti,
+                    envs_idx=env_idx,
+                    relative=False,
+                    unsafe=True,
+                    skip_forward=False,
+                )
+
+                # Zero velocities for affected entities
+                entity_indices = td.output_entity_idx.to_torch()[env_idx, :count]
+                unique_entities = torch.unique(entity_indices)
+                for entity_idx in unique_entities:
+                    entity = rigid_solver._entities[entity_idx.item()]
+                    entity.zero_all_dofs_velocity(envs_idx=env_idx, unsafe=True)
+        else:
+            # Non-parallelized
+            count = td.output_count_per_env[0]
+            if count > 0:
+                pos_ti = td.output_pos.to_torch()[0, :count]
+                quat_ti = td.output_quat.to_torch()[0, :count]
+                link_idx_ti = td.output_link_idx.to_torch()[0, :count]
+
+                rigid_solver.set_base_links_pos(
+                    pos_ti,
+                    link_idx_ti,
+                    envs_idx=None,
+                    relative=False,
+                    unsafe=True,
+                    skip_forward=False,
+                )
+                rigid_solver.set_base_links_quat(
+                    quat_ti,
+                    link_idx_ti,
+                    envs_idx=None,
+                    relative=False,
+                    unsafe=True,
+                    skip_forward=False,
+                )
+
+                # Zero velocities for affected entities
+                entity_indices = td.output_entity_idx.to_torch()[0, :count]
+                unique_entities = torch.unique(entity_indices)
+                for entity_idx in unique_entities:
+                    entity = rigid_solver._entities[entity_idx.item()]
+                    entity.zero_all_dofs_velocity(envs_idx=None, unsafe=True)
+
+        # Step 6: Process complex cases (IK required)
+        for entity_idx in range(len(rigid_solver._entities)):
+            for env_idx in range(n_envs):
+                if td.complex_case_flags[entity_idx, env_idx] == 0:
+                    continue
+
+                # This entity-env needs IK processing
+                entity = rigid_solver._entities[entity_idx]
+
+                try:
+                    # Collect all links for this entity-env from abd_data
+                    links = []
+                    poss = []
+                    quats = []
+
+                    for link_idx in range(entity._link_start, entity._link_start + entity.n_links):
+                        if link_idx not in self.abd_data_by_link:
+                            continue
+                        env_data = self.abd_data_by_link[link_idx]
+                        if env_idx not in env_data:
+                            continue
+
+                        data = env_data[env_idx]
+                        ipc_transform = data.get("transform")
+                        if ipc_transform is None:
+                            continue
+
+                        # Get link object using local index
+                        local_link_idx = link_idx - entity._link_start
+                        if local_link_idx < 0 or local_link_idx >= entity.n_links:
+                            continue
+                        link = entity.links[local_link_idx]
+
+                        # Extract position and quaternion
+                        pos = ipc_transform[:3, 3]
+                        rot_mat = ipc_transform[:3, :3]
+                        quat_xyzw = R.from_matrix(rot_mat).as_quat()
+                        quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+
+                        links.append(link)
+                        poss.append(pos)
+                        quats.append(quat_wxyz)
+
+                    if not links:
+                        continue
+
+                    # Call inverse kinematics
+                    qpos = entity.inverse_kinematics_multilink(
+                        links=links,
+                        poss=poss,
+                        quats=quats,
+                        envs_idx=env_idx if is_parallelized else None,
+                        return_error=False,
+                    )
+
+                    if qpos is not None:
+                        # Set qpos for this entity
+                        entity.set_qpos(qpos, envs_idx=env_idx if is_parallelized else None, zero_velocity=True)
+
+                except Exception as e:
+                    gs.logger.warning(f"Failed to set Genesis transforms for entity {entity_idx}, env {env_idx}: {e}")
+                    continue
 
     def _get_genesis_link_transform(self, link_idx, env_idx):
         """
@@ -916,8 +1937,15 @@ class IPCCoupler(RBC):
         rigid_solver = self.rigid_solver
 
         # Get current link state from Genesis
-        link_pos = rigid_solver.get_links_pos(links_idx=link_idx, envs_idx=env_idx)
-        link_quat = rigid_solver.get_links_quat(links_idx=link_idx, envs_idx=env_idx)
+        is_parallelized = self.sim._scene.n_envs > 0
+
+        # Get current link state from Genesis
+        if is_parallelized:
+            link_pos = rigid_solver.get_links_pos(links_idx=link_idx, envs_idx=env_idx)
+            link_quat = rigid_solver.get_links_quat(links_idx=link_idx, envs_idx=env_idx)
+        else:
+            link_pos = rigid_solver.get_links_pos(links_idx=link_idx)
+            link_quat = rigid_solver.get_links_quat(links_idx=link_idx)
 
         link_pos = link_pos.detach().cpu().numpy()
         link_quat = link_quat.detach().cpu().numpy()
@@ -939,9 +1967,9 @@ class IPCCoupler(RBC):
 
         return t.matrix().copy()
 
-    def _apply_abd_coupling_forces(self, abd_data_by_link):
+    def _apply_abd_coupling_forces(self):
         """
-        Apply coupling forces from IPC ABD constraint to Genesis rigid bodies.
+        Apply coupling forces from IPC ABD constraint to Genesis rigid bodies using taichi kernel.
 
         This ensures action-reaction force consistency:
         - IPC constraint force: G_ipc = M * (q_ipc^{n+1} - q_genesis^n)
@@ -951,24 +1979,33 @@ class IPCCoupler(RBC):
         - q_ipc^{n+1}: IPC ABD position after solve (from geo.transforms())
         - q_genesis^n: Genesis position before IPC advance (stored in _genesis_stored_states)
         - M: Mass matrix scaled by constraint strengths
-
-        Based on soft_transform_constraint.cu implementation:
-        - q is 12D: [translation(3), rotation_matrix_col_major(9)]
-        - G is 12D: [linear_force(3), rotational_force(9)]
-        - We extract linear force and convert rotational force to 3D torque
         """
         import numpy as np
-        import genesis.utils.geom as gu
+        import torch
 
         rigid_solver = self.rigid_solver
         strength_tuple = self.options.ipc_constraint_strength
-        translation_strength = strength_tuple[0]
-        rotation_strength = strength_tuple[1]
+        translation_strength = float(strength_tuple[0])
+        rotation_strength = float(strength_tuple[1])
 
         dt = self.sim._dt
         dt2 = dt * dt
 
-        for link_idx, env_data in abd_data_by_link.items():
+        # Collect all link data directly into pre-allocated Taichi buffers
+        cd = self.coupling_data
+        n_items = 0
+
+        for link_idx, env_data in self.abd_data_by_link.items():
+            # Skip IPC-only links (they don't need coupling forces)
+            is_ipc_only = False
+            for entity_idx, link_set in self._ipc_only_links.items():
+                if link_idx in link_set:
+                    is_ipc_only = True
+                    break
+
+            if is_ipc_only:
+                continue  # Skip IPC-only links
+
             for env_idx, data in env_data.items():
                 ipc_transform = data.get("transform")  # Current transform after IPC solve
                 aim_transform = data.get("aim_transform")  # Target from Genesis
@@ -977,71 +2014,86 @@ class IPCCoupler(RBC):
                     continue
 
                 try:
-                    # Extract current and target transforms (4x4 matrices)
-                    T_current = ipc_transform  # Current ABD transform from IPC
-                    T_aim = aim_transform  # Target transform from Genesis animator
+                    # Write directly to Taichi fields
+                    cd.link_indices[n_items] = link_idx
+                    cd.env_indices[n_items] = env_idx
 
-                    # Extract translation and rotation components
-                    # Current state (from IPC)
-                    pos_current = T_current[:3, 3]
-                    R_current = T_current[:3, :3]
+                    # Copy transform matrices
+                    for row in range(4):
+                        for col in range(4):
+                            cd.ipc_transforms[n_items][row, col] = ipc_transform[row, col]
+                            cd.aim_transforms[n_items][row, col] = aim_transform[row, col]
 
-                    # Target state (from Genesis)
-                    pos_aim = T_aim[:3, 3]
-                    R_aim = T_aim[:3, :3]
+                    cd.link_masses[n_items] = float(rigid_solver.links_info.inertial_mass[link_idx])
 
-                    # Compute translation error: delta_pos = pos_current - pos_aim
-                    delta_pos = pos_current - pos_aim
+                    # Copy inertia tensor
+                    inertia = rigid_solver.links_info.inertial_i[link_idx]
+                    for row in range(3):
+                        for col in range(3):
+                            cd.inertia_tensors[n_items][row, col] = inertia[row, col]
 
-                    # Get link mass for scaling (similar to body_masses in CUDA code)
-                    link_mass = rigid_solver.links_info.inertial_mass[link_idx]
-
-                    # Compute generalized force (gradient) following soft_transform_constraint.cu:
-                    # G = M * (q - q_aim)
-                    # where M is the mass matrix, scaled by strength ratios
-
-                    # Linear force component: F = translation_strength * mass * delta_pos
-                    linear_force = translation_strength * link_mass * delta_pos / dt2
-
-                    R_rel = R_current @ R_aim.T
-
-                    from scipy.spatial.transform import Rotation as R
-
-                    rotvec = R.from_matrix(R_rel).as_rotvec()
-
-                    inertia_tensor_local = rigid_solver.links_info.inertial_i[link_idx].to_numpy()
-
-                    # I_world = R_current * I_local * R_current^T
-                    inertia_tensor_world = R_current @ inertia_tensor_local @ R_current.T
-
-                    angular_torque = rotation_strength * inertia_tensor_world @ rotvec / dt2
-
-                    # Format forces for Genesis API
-                    # _sanitize_2D_io_variables expects:
-                    # - Non-parallelized (n_envs=0): shape (n_links, 3)
-                    # - Parallelized (n_envs>0): shape (n_envs, n_links, 3)
-                    # It will use torch.as_tensor to convert numpy arrays to tensors
-
-                    if self.sim._scene.n_envs > 0:
-                        # Parallelized scene: shape (1, 1, 3) for (n_envs, n_links, 3)
-                        force_input = linear_force.reshape(1, 1, 3)
-                        torque_input = angular_torque.reshape(1, 1, 3)
-                        apply_kwargs = {"links_idx": link_idx, "envs_idx": env_idx}
-                    else:
-                        # Non-parallelized scene: shape (1, 3) for (n_links, 3)
-                        force_input = linear_force.reshape(1, 3)
-                        torque_input = angular_torque.reshape(1, 3)
-                        apply_kwargs = {
-                            "links_idx": link_idx,
-                        }
-
-                    # Apply forces to Genesis rigid body
-                    rigid_solver.apply_links_external_force(force=force_input, **apply_kwargs)
-
-                    rigid_solver.apply_links_external_torque(torque=torque_input, **apply_kwargs)
-
+                    n_items += 1
                 except Exception as e:
-                    gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
+                    gs.logger.warning(f"Failed to collect data for link {link_idx}, env {env_idx}: {e}")
+                    continue
+
+        if n_items == 0:
+            return  # No links to process
+
+        cd.n_items[None] = n_items
+
+        # Call taichi kernel with pre-allocated fields
+        self._compute_coupling_forces_kernel(
+            n_items,
+            cd.ipc_transforms.to_numpy(),
+            cd.aim_transforms.to_numpy(),
+            cd.link_masses.to_numpy(),
+            cd.inertia_tensors.to_numpy(),
+            translation_strength,
+            rotation_strength,
+            dt2,
+            cd.out_forces.to_numpy(),
+            cd.out_torques.to_numpy(),
+        )
+
+        # Apply forces to Genesis rigid bodies - OPTIMIZED batch processing
+        is_parallelized = self.sim._scene.n_envs > 0
+
+        if is_parallelized:
+            # Group by environment - read directly from Taichi fields
+            env_batches = {}  # {env_idx: {'link_indices': [], 'forces': [], 'torques': []}}
+            for i in range(n_items):
+                env_idx = cd.env_indices[i]
+                if env_idx not in env_batches:
+                    env_batches[env_idx] = {"link_indices": [], "forces": [], "torques": []}
+                env_batches[env_idx]["link_indices"].append(cd.link_indices[i])
+                env_batches[env_idx]["forces"].append([cd.out_forces[i][j] for j in range(3)])
+                env_batches[env_idx]["torques"].append([cd.out_torques[i][j] for j in range(3)])
+
+            # Apply forces per environment
+            for env_idx, batch in env_batches.items():
+                for j, link_idx in enumerate(batch["link_indices"]):
+                    try:
+                        force_input = np.array(batch["forces"][j]).reshape(1, 1, 3)
+                        torque_input = np.array(batch["torques"][j]).reshape(1, 1, 3)
+                        rigid_solver.apply_links_external_force(force=force_input, links_idx=link_idx, envs_idx=env_idx)
+                        rigid_solver.apply_links_external_torque(
+                            torque=torque_input, links_idx=link_idx, envs_idx=env_idx
+                        )
+                    except Exception as e:
+                        gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
+                        continue
+        else:
+            # Non-parallelized: apply all forces
+            for i in range(n_items):
+                link_idx = cd.link_indices[i]
+                try:
+                    force_input = np.array([cd.out_forces[i][j] for j in range(3)]).reshape(1, 3)
+                    torque_input = np.array([cd.out_torques[i][j] for j in range(3)]).reshape(1, 3)
+                    rigid_solver.apply_links_external_force(force=force_input, links_idx=link_idx)
+                    rigid_solver.apply_links_external_torque(torque=torque_input, links_idx=link_idx)
+                except Exception as e:
+                    gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}: {e}")
                     continue
 
     def couple_grad(self, f):
@@ -1092,3 +2144,426 @@ class IPCCoupler(RBC):
         """Update IPC GUI"""
         self.ps.frame_tick()  # Non-blocking frame update
         self._ipc_scene_gui.update()
+
+    def _compute_link_contact_forces_and_torques(self, total_force_dict, vertex_to_link, link_vertex_positions):
+        """
+        Compute total contact forces and torques for each rigid link from vertex gradients.
+
+        OPTIMIZED VERSION: Uses Taichi kernel for parallel computation.
+
+        This function follows the pattern from test_affine_body_contact_force.py, computing
+        the total force and torque acting on each rigid body by accumulating contributions
+        from all contact vertices.
+
+        Parameters
+        ----------
+        total_force_dict : dict
+            Dictionary mapping vertex indices to contact force gradients {vertex_idx: force_gradient_vector}
+        vertex_to_link : dict
+            Mapping from global vertex index to (link_idx, env_idx, local_idx)
+        link_vertex_positions : dict
+            Mapping from (link_idx, env_idx) to list of vertex positions in world space
+
+        Returns
+        -------
+        dict
+            Dictionary mapping (link_idx, env_idx) to {'force': np.array, 'torque': np.array, 'center': np.array}
+
+        Notes
+        -----
+        - Force is computed as the negative sum of contact gradients: F = -∑grad
+        - Torque is computed as τ = ∑(r × F) where r is the vector from link center to contact point
+        - Link center is computed as the average of all vertex positions
+        """
+        import numpy as np
+
+        if not total_force_dict:
+            return {}
+
+        # Step 1: Prepare link centers (compute once per (link_idx, env_idx))
+        link_centers_dict = {}  # {(link_idx, env_idx): center}
+        for (link_idx, env_idx), verts in link_vertex_positions.items():
+            link_centers_dict[(link_idx, env_idx)] = np.mean(verts, axis=0)
+
+        # Step 2: Prepare data for kernel - collect all vertex force entries
+        vertex_data = []
+        for vert_idx, force_grad in total_force_dict.items():
+            if vert_idx not in vertex_to_link:
+                continue  # Vertex doesn't belong to a both-coupling link
+
+            link_idx, env_idx, local_idx = vertex_to_link[vert_idx]
+
+            # Get vertex position and link center
+            if (link_idx, env_idx) in link_vertex_positions:
+                contact_pos = link_vertex_positions[(link_idx, env_idx)][local_idx]
+                center_pos = link_centers_dict.get((link_idx, env_idx))
+                if center_pos is not None:
+                    vertex_data.append(
+                        {
+                            "force_grad": force_grad,
+                            "link_idx": link_idx,
+                            "env_idx": env_idx,
+                            "contact_pos": contact_pos,
+                            "center_pos": center_pos,
+                        }
+                    )
+
+        if not vertex_data:
+            return {}
+
+        # Check capacity
+        n_entries = len(vertex_data)
+        if n_entries > self.max_vertex_contacts:
+            gs.logger.warning(
+                f"Vertex contact capacity exceeded: {n_entries} > {self.max_vertex_contacts}. "
+                f"Truncating to {self.max_vertex_contacts}."
+            )
+            n_entries = self.max_vertex_contacts
+            vertex_data = vertex_data[:n_entries]
+
+        # Step 3: Populate Taichi fields
+        for i, data in enumerate(vertex_data):
+            self.vertex_force_gradients[i] = data["force_grad"]
+            self.vertex_link_indices[i] = data["link_idx"]
+            self.vertex_env_indices[i] = data["env_idx"]
+            self.vertex_positions_world[i] = data["contact_pos"]
+            self.vertex_link_centers[i] = data["center_pos"]
+
+        # Step 4: Clear output arrays
+        self.link_contact_forces_out.fill(0.0)
+        self.link_contact_torques_out.fill(0.0)
+
+        # Step 5: Call kernel
+        force_grads_np = self.vertex_force_gradients.to_numpy()[:n_entries]
+        link_idx_np = self.vertex_link_indices.to_numpy()[:n_entries]
+        env_idx_np = self.vertex_env_indices.to_numpy()[:n_entries]
+        vert_pos_np = self.vertex_positions_world.to_numpy()[:n_entries]
+        link_centers_np = self.vertex_link_centers.to_numpy()[:n_entries]
+
+        out_forces_np = self.link_contact_forces_out.to_numpy()
+        out_torques_np = self.link_contact_torques_out.to_numpy()
+
+        self._compute_link_contact_forces_kernel(
+            n_entries,
+            force_grads_np,
+            link_idx_np,
+            env_idx_np,
+            vert_pos_np,
+            link_centers_np,
+            out_forces_np,
+            out_torques_np,
+        )
+
+        # Copy results back to Taichi field
+        self.link_contact_forces_out.from_numpy(out_forces_np)
+        self.link_contact_torques_out.from_numpy(out_torques_np)
+
+        # Step 6: Extract results into dictionary
+        link_forces = {}  # {(link_idx, env_idx): {'force': np.array, 'torque': np.array, 'center': np.array}}
+
+        for (link_idx, env_idx), center in link_centers_dict.items():
+            force = out_forces_np[link_idx, env_idx]
+            torque = out_torques_np[link_idx, env_idx]
+
+            # Only include if there's non-zero force/torque
+            if np.any(force != 0.0) or np.any(torque != 0.0):
+                link_forces[(link_idx, env_idx)] = {
+                    "force": force.copy(),
+                    "torque": torque.copy(),
+                    "center": center,
+                }
+
+        return link_forces
+
+    def _record_ipc_contact_forces(self):
+        """
+        Record contact forces from IPC for 'both' coupling links.
+
+        This method extracts contact forces and torques from IPC's contact system
+        and stores them for later application to Genesis rigid bodies.
+        Only processes links that are in _ipc_link_filters but NOT in _ipc_only_links.
+        """
+        import numpy as np
+        from uipc import view
+        from uipc.geometry import Geometry
+
+        # Clear previous contact forces
+        self._ipc_contact_forces.clear()
+        self._external_force_data.clear()
+
+        # Get contact feature from IPC world
+        features = self._ipc_world.features()
+        contact_feature = features.find("core/contact_system")
+
+        if contact_feature is None:
+            return  # No contact system available
+
+        # Get available contact primitive types
+        prim_types = contact_feature.contact_primitive_types()
+
+        # Accumulate contact gradients (forces) for all vertices
+        # NOTE: IPC gradients are actually force * dt^2, so we need to divide by dt^2
+        dt = self.options.dt
+        dt2 = dt * dt
+        total_force_dict = {}  # {vertex_index: force_vector}
+
+        for prim_type in prim_types:
+            # Get contact gradient for this primitive type
+            vert_grad = Geometry()
+            contact_feature.contact_gradient(prim_type, vert_grad)
+
+            # Extract gradient data from instances
+            instances = vert_grad.instances()
+            i_attr = instances.find("i")  # Vertex indices
+            grad_attr = instances.find("grad")  # Gradient vectors
+
+            if i_attr is not None and grad_attr is not None:
+                indices = view(i_attr)
+                gradients = view(grad_attr)
+
+                # Accumulate gradients for each vertex
+                # Gradients from IPC are force * dt^2, so divide by dt^2 to get actual force
+                for idx, grad in zip(indices, gradients):
+                    grad_vec = np.array(grad).flatten()
+                    if idx not in total_force_dict:
+                        total_force_dict[idx] = np.zeros(3)
+                    total_force_dict[idx] += grad_vec[:3] / dt2  # Convert gradient to force
+
+        if not total_force_dict:
+            return  # No contact forces to process
+
+        # Use pre-built vertex-to-link mapping (built once during IPC setup)
+        vertex_to_link = self._vertex_to_link_mapping
+
+        # Get current vertex positions for contact force computation
+        from uipc.backend import SceneVisitor
+        from uipc.geometry import SimplicialComplexSlot
+
+        visitor = SceneVisitor(self._ipc_scene)
+        link_vertex_positions = {}  # {(link_idx, env_idx): [vertex_positions]}
+
+        global_vertex_offset = 0
+
+        for geo_slot in visitor.geometries():
+            if isinstance(geo_slot, SimplicialComplexSlot):
+                geo = geo_slot.geometry()
+                if geo.dim() in [2, 3]:
+                    n_verts = geo.vertices().size()
+
+                    try:
+                        # Check if this is a rigid geometry using metadata
+                        meta_attrs = geo.meta()
+                        solver_type_attr = meta_attrs.find("solver_type")
+
+                        if solver_type_attr and solver_type_attr.name() == "solver_type":
+                            try:
+                                solver_type_view = solver_type_attr.view()
+                                if len(solver_type_view) > 0:
+                                    solver_type = str(solver_type_view[0])
+                                else:
+                                    continue
+                            except:
+                                continue
+
+                            if solver_type == "rigid":
+                                env_idx_attr = meta_attrs.find("env_idx")
+                                link_idx_attr = meta_attrs.find("link_idx")
+
+                                if env_idx_attr and link_idx_attr:
+                                    env_idx_str = str(env_idx_attr.view()[0])
+                                    link_idx_str = str(link_idx_attr.view()[0])
+                                    env_idx = int(env_idx_str)
+                                    link_idx = int(link_idx_str)
+
+                                    # Check if any vertex of this geometry is in the mapping
+                                    first_vertex_idx = global_vertex_offset
+                                    if first_vertex_idx in vertex_to_link:
+                                        # Get current ABD transform to transform vertices to world space
+                                        transforms = geo.transforms()
+                                        if transforms.size() > 0:
+                                            transform_matrix = view(transforms)[0]  # 4x4 affine matrix
+
+                                            # Get local vertex positions
+                                            positions = view(geo.positions())
+
+                                            # Transform and store vertex positions
+                                            if (link_idx, env_idx) not in link_vertex_positions:
+                                                link_vertex_positions[(link_idx, env_idx)] = []
+
+                                            for local_idx in range(n_verts):
+                                                # Transform local position to world space using ABD transform
+                                                local_pos = np.array(positions[local_idx]).flatten()[:3]
+                                                local_pos_homogeneous = np.append(local_pos, 1.0)
+                                                world_pos = (transform_matrix @ local_pos_homogeneous)[:3]
+                                                link_vertex_positions[(link_idx, env_idx)].append(world_pos)
+
+                    except Exception as e:
+                        gs.logger.warning(f"Failed to process geometry for contact forces: {e}")
+                    finally:
+                        # Always update offset
+                        global_vertex_offset += n_verts
+
+        # Compute contact forces and torques for each link
+        link_forces = self._compute_link_contact_forces_and_torques(
+            total_force_dict, vertex_to_link, link_vertex_positions
+        )
+
+        # Store forces in the proper format
+        for (link_idx, env_idx), data in link_forces.items():
+            if link_idx not in self._ipc_contact_forces:
+                self._ipc_contact_forces[link_idx] = {}
+
+            self._ipc_contact_forces[link_idx][env_idx] = {"force": data["force"], "torque": data["torque"]}
+
+        # Compute external force from contact forces using taichi kernel
+        # Collect data directly into pre-allocated Taichi fields
+        contact_idx = 0
+
+        for link_idx, env_data in self._ipc_contact_forces.items():
+            for env_idx, force_data in env_data.items():
+                # Check if we've exceeded pre-allocated capacity
+                if contact_idx >= self.contact_forces_ti.shape[0]:
+                    gs.logger.warning(
+                        f"Contact capacity exceeded: {contact_idx} >= {self.contact_forces_ti.shape[0]}. "
+                        f"Increase max_contacts in __init__."
+                    )
+                    break
+
+                # Get contact force and torque
+                force = force_data["force"]
+                torque = force_data["torque"]
+
+                # Get ABD transform for this link
+                if hasattr(self, "abd_data_by_link") and link_idx in self.abd_data_by_link:
+                    if env_idx in self.abd_data_by_link[link_idx]:
+                        abd_transform = self.abd_data_by_link[link_idx][env_idx].get("transform")
+                        if abd_transform is not None:
+                            # Write directly to pre-allocated Taichi fields
+                            self.contact_forces_ti[contact_idx] = force
+                            self.contact_torques_ti[contact_idx] = torque
+                            self.abd_transforms_ti[contact_idx] = abd_transform
+                            self.link_indices_ti[contact_idx] = link_idx
+                            self.env_indices_ti[contact_idx] = env_idx
+                            contact_idx += 1
+
+        if contact_idx > 0:
+            # Use a view/slice of the pre-allocated arrays for the kernel call
+            # Note: We still need to pass ndarray to kernel, so convert the used portion
+            n_links = contact_idx
+            contact_forces_arr = self.contact_forces_ti.to_numpy()[:n_links]
+            contact_torques_arr = self.contact_torques_ti.to_numpy()[:n_links]
+            abd_transforms_arr = self.abd_transforms_ti.to_numpy()[:n_links]
+            out_forces = np.zeros((n_links, 12), dtype=np.float32)
+
+            # Call taichi kernel to compute forces
+            self._compute_external_force_kernel(
+                n_links,
+                contact_forces_arr,
+                contact_torques_arr,
+                abd_transforms_arr,
+                out_forces,
+            )
+
+            # Store forces in _external_force_data for animator to use
+            for i in range(n_links):
+                link_idx = self.link_indices_ti[i]
+                env_idx = self.env_indices_ti[i]
+                force_vector = out_forces[i].astype(np.float64)  # Convert to float64 for IPC
+                self._external_force_data[(link_idx, env_idx)] = force_vector
+
+    def _apply_ipc_contact_forces(self):
+        """
+        Apply recorded IPC contact forces to Genesis rigid bodies.
+
+        OPTIMIZED VERSION: Batches forces and torques to reduce API call overhead.
+
+        This method takes the contact forces and torques recorded by _record_ipc_contact_forces
+        and applies them to the corresponding Genesis rigid links.
+        """
+        import torch
+        import numpy as np
+
+        if not self._ipc_contact_forces:
+            return  # No contact forces to apply
+
+        rigid_solver = self.rigid_solver
+        is_parallelized = self.sim._scene.n_envs > 0
+
+        # Collect all forces and torques into batches
+        # Group by environment for parallelized scenes, or single batch for non-parallelized
+        if is_parallelized:
+            # For parallelized scenes, we need to group by env_idx
+            env_batches = {}  # {env_idx: {'link_indices': [], 'forces': [], 'torques': []}}
+
+            for link_idx, env_data in self._ipc_contact_forces.items():
+                for env_idx, force_data in env_data.items():
+                    if env_idx not in env_batches:
+                        env_batches[env_idx] = {"link_indices": [], "forces": [], "torques": []}
+
+                    env_batches[env_idx]["link_indices"].append(link_idx)
+                    env_batches[env_idx]["forces"].append(force_data["force"] * 0.5)
+                    env_batches[env_idx]["torques"].append(force_data["torque"] * 0.5)
+
+            # Apply forces for each environment batch
+            for env_idx, batch_data in env_batches.items():
+                if not batch_data["link_indices"]:
+                    continue
+
+                # Convert to numpy arrays and then to torch tensors
+                forces_np = np.array(batch_data["forces"], dtype=np.float32)  # (n_links, 3)
+                torques_np = np.array(batch_data["torques"], dtype=np.float32)  # (n_links, 3)
+                link_indices = batch_data["link_indices"]
+
+                # Apply each force/torque individually (Genesis API limitation)
+                # TODO: Check if Genesis supports batch application
+                for i, link_idx in enumerate(link_indices):
+                    force_tensor = torch.as_tensor(forces_np[i], dtype=gs.tc_float, device=gs.device).unsqueeze(0)
+                    torque_tensor = torch.as_tensor(torques_np[i], dtype=gs.tc_float, device=gs.device).unsqueeze(0)
+
+                    rigid_solver.apply_links_external_force(
+                        force=force_tensor,
+                        links_idx=link_idx,
+                        envs_idx=env_idx,
+                        local=False,
+                    )
+                    rigid_solver.apply_links_external_torque(
+                        torque=torque_tensor,
+                        links_idx=link_idx,
+                        envs_idx=env_idx,
+                        local=False,
+                    )
+
+        else:
+            # For non-parallelized scenes, batch all together
+            all_link_indices = []
+            all_forces = []
+            all_torques = []
+
+            for link_idx, env_data in self._ipc_contact_forces.items():
+                for env_idx, force_data in env_data.items():
+                    all_link_indices.append(link_idx)
+                    all_forces.append(force_data["force"] * 0.5)
+                    all_torques.append(force_data["torque"] * 0.5)
+
+            if not all_link_indices:
+                return
+
+            # Convert to numpy arrays
+            forces_np = np.array(all_forces, dtype=np.float32)  # (n_links, 3)
+            torques_np = np.array(all_torques, dtype=np.float32)  # (n_links, 3)
+
+            # Apply each force/torque individually
+            for i, link_idx in enumerate(all_link_indices):
+                force_tensor = torch.as_tensor(forces_np[i], dtype=gs.tc_float, device=gs.device).unsqueeze(0)
+                torque_tensor = torch.as_tensor(torques_np[i], dtype=gs.tc_float, device=gs.device).unsqueeze(0)
+
+                rigid_solver.apply_links_external_force(
+                    force=force_tensor,
+                    links_idx=link_idx,
+                    local=False,
+                )
+                rigid_solver.apply_links_external_torque(
+                    torque=torque_tensor,
+                    links_idx=link_idx,
+                    local=False,
+                )
