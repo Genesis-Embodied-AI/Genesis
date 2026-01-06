@@ -20,7 +20,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -215,7 +215,6 @@ class RigidEntity(Entity):
                 inertial_mass / 12.0 * (a**2 + c**2),  # Iyy  
                 inertial_mass / 12.0 * (a**2 + b**2),  # Izz
             ]).astype(gs.np_float)
-            
 
         else:
             gs.raise_exception("Unsupported primitive shape")
