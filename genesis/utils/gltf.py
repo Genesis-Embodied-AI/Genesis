@@ -201,12 +201,11 @@ def parse_glb_material(glb, material_index, surface):
             opacity_texture.apply_cutoff(alpha_cutoff)
 
     if "KHR_materials_unlit" in material.extensions:
-        # No unlit material implemented in renderers. Use emissive texture.
-        if color_texture is not None:
-            emissive_texture = color_texture
-            color_texture = None
+        # KHR_materials_unlit means the material should be rendered without lighting calculations,
+        # NOT that it should emit light. We treat it as a regular diffuse material.
         material.extensions.pop("KHR_materials_unlit")
-    else:
+
+    if True:
         # parse emissive
         emissive_image = None
         if material.emissiveTexture is not None:
