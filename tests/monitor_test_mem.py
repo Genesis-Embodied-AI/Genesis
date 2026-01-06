@@ -91,13 +91,13 @@ def main() -> None:
                 num_results_written += 1
         spinny = "x" if disp else "+"
         potential_output_line = (
-            f"{num_tests}"
-            "tests running, of which"
-            f"{len(_mem_by_test)}"
+            f"{num_tests} "
+            "tests running, of which "
+            f"{len(_mem_by_test)} "
             "on gpu. Num results written: "
-            f"{num_results_written}"
-            "[updating]"
-            "       "
+            f"{num_results_written} "
+            "[updating] "
+            "        "
         )
         if potential_output_line != last_output_line:
             print(potential_output_line, end="\r", flush=True)
