@@ -20,7 +20,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -153,6 +153,11 @@ class RigidEntity(Entity):
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
     def _load_primitive(self, morph, surface):
+        # Initialize inertial properties - will be set explicitly for planes, None for others
+        inertial_mass = None
+        inertial_pos = None
+        inertial_i = None
+        
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -191,6 +196,26 @@ class RigidEntity(Entity):
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
+            
+            # FIX: Planes use GEOM_TYPE.PLANE which represents an infinite geometric plane with no volume.
+            # We need to explicitly compute inertial properties based on the physical collision box dimensions.
+            # The collision mesh is a thin box with thickness=1e-2 (see mu.create_plane)
+            plane_thickness = 1e-2  # 1 cm, matches create_plane implementation
+            plane_volume = morph.plane_size[0] * morph.plane_size[1] * plane_thickness
+            inertial_mass = plane_volume * self.material.rho
+            
+            # Center of mass is at the geometric center (origin for a symmetric plane)
+            inertial_pos = np.zeros(3, dtype=gs.np_float)
+            
+            # Compute inertia tensor for a thin rectangular box
+            # I = m/12 * [(b² + c²), (a² + c²), (a² + b²)] for box with dimensions (a, b, c)
+            a, b, c = morph.plane_size[0], morph.plane_size[1], plane_thickness
+            inertial_i = np.diag([
+                inertial_mass / 12.0 * (b**2 + c**2),  # Ixx
+                inertial_mass / 12.0 * (a**2 + c**2),  # Iyy  
+                inertial_mass / 12.0 * (a**2 + b**2),  # Izz
+            ]).astype(gs.np_float)
+            
 
         else:
             gs.raise_exception("Unsupported primitive shape")
@@ -223,8 +248,10 @@ class RigidEntity(Entity):
                 name=f"{link_name_prefix}_baselink",
                 pos=np.array(morph.pos),
                 quat=np.array(morph.quat),
-                inertial_pos=None,  # we will compute the COM later based on the geometry
+                inertial_pos=inertial_pos,  # Explicit for planes, None for others (computed from geometry)
                 inertial_quat=gu.identity_quat(),
+                inertial_mass=inertial_mass,  # Explicit for planes, None for others (computed from geometry)
+                inertial_i=inertial_i,  # Explicit for planes, None for others (computed from geometry)
                 parent_idx=-1,
             ),
             j_infos=[
