@@ -102,6 +102,7 @@ class ImageTexture(Texture):
     """
 
     image_path: Optional[str] = None
+    input_image_path: Optional[str] = None
     image_array: Optional[np.ndarray] = None
     image_color: Optional[Union[float, List[float]]] = None
     encoding: str = "srgb"
@@ -116,13 +117,13 @@ class ImageTexture(Texture):
             gs.raise_exception("Please set either `image_path` or `image_array`.")
 
         if self.image_path is not None:
-            input_image_path = self.image_path
+            self.input_image_path = self.image_path
             if not os.path.exists(self.image_path):
                 self.image_path = os.path.join(gs.utils.get_assets_dir(), self.image_path)
 
             if not os.path.exists(self.image_path):
                 gs.raise_exception(
-                    f"File not found in either current directory or assets directory: '{input_image_path}'."
+                    f"File not found in either current directory or assets directory: '{self.input_image_path}'."
                 )
 
             # Load image_path as actual image_array, unless for special texture images (e.g. `.hdr` and `.exr`) that are only supported by raytracers
