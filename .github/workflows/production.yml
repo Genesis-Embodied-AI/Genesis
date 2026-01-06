@@ -19,7 +19,7 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_14"
+  GENESIS_IMAGE_VER: "1_20"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
   PY_COLORS: 1
@@ -78,7 +78,15 @@ jobs:
               pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
               pip install --no-input ".[dev,render,usd]"
 
+              # sudo apt update
+              # sudo apt install -y tmate
+              # tmate -S /tmp/tmate.sock new-session -d
+              # tmate -S /tmp/tmate.sock wait tmate-ready
+              # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+
               pytest -v -ra --backend gpu --dev --forked ./tests
+
+              # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
       - name: Kill srun job systematically
         if: always()
