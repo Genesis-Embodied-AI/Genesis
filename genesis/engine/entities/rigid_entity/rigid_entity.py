@@ -569,7 +569,7 @@ class RigidEntity(Entity):
         for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
             if l_info["parent_idx"] < 0:
                 if morph.pos is not None or morph.quat is not None:
-                    gs.logger.info("Applying offset to base link's pose with user provided value in morph.")
+                    gs.logger.debug("Applying offset to base link's pose with user provided value in morph.")
                     pos = np.asarray(l_info.get("pos", (0.0, 0.0, 0.0)))
                     quat = np.asarray(l_info.get("quat", (1.0, 0.0, 0.0, 0.0)))
                     if morph.pos is None:
