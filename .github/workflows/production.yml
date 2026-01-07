@@ -79,10 +79,11 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           srun ${SRUN_COMMON} bash -e -s <<'EOF'
-            export UPGRADE_WHEEL=1
-            export ADD_OMNI=1
-            export ADD_USD=1
             bash .github/workflows/scripts/production_build.sh
+            source /venv/bin/activate
+            uv pip install --upgrade pip setuptools wheel
+            uv pip install omniverse-kit --index-url https://pypi.nvidia.com/
+            uv pip install ".[usd]"
           EOF
 
       - name: Run benchmarks
