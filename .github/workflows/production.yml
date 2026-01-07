@@ -77,28 +77,30 @@ jobs:
 
       - name: Build
         if: github.event_name == 'pull_request'
-        shell: srun ${SRUN_COMMON} bash -e {0}
         run: |
-          export UPGRADE_WHEEL=1
-          export ADD_OMNI=1
-          export ADD_USD=1
-          bash .github/workflows/scripts/production_build.sh
+          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+            export UPGRADE_WHEEL=1
+            export ADD_OMNI=1
+            export ADD_USD=1
+            bash .github/workflows/scripts/production_build.sh
+          EOF
 
       - name: Run benchmarks
         if: github.event_name == 'pull_request'
-        shell: srun ${SRUN_COMMON} bash -e {0}
         run: |
-          source /venv/bin/activate
+          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+            source /venv/bin/activate
 
-          # sudo apt update
-          # sudo apt install -y tmate
-          # tmate -S /tmp/tmate.sock new-session -d
-          # tmate -S /tmp/tmate.sock wait tmate-ready
-          # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+            # sudo apt update
+            # sudo apt install -y tmate
+            # tmate -S /tmp/tmate.sock new-session -d
+            # tmate -S /tmp/tmate.sock wait tmate-ready
+            # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-          pytest -v -ra --backend gpu --dev --forked ./tests
+            pytest -v -ra --backend gpu --dev --forked ./tests
 
-          # tmate -S /tmp/tmate.sock wait tmate-exit
+            # tmate -S /tmp/tmate.sock wait tmate-exit
+          EOF
 
       - name: Kill srun job systematically
         if: always()
@@ -162,17 +164,18 @@ jobs:
           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
       - name: Build
-        shell: srun ${SRUN_COMMON} bash -e {0}
         run: |
-          bash .github/workflows/scripts/production_build.sh
+          srun ${SRUN_COMMON} \
+               bash .github/workflows/scripts/production_build.sh
 
       - name: Run benchmarks
-        shell: srun ${SRUN_COMMON} bash -e {0}
         run: |
-          source /venv/bin/activate
-          pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
-                  --print -x -m "benchmarks" ./tests
-          cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+            source /venv/bin/activate
+            pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
+                   --print -x -m "benchmarks" ./tests
+            cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+          EOF
 
       - name: Kill srun job systematically
         if: always()
