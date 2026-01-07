@@ -426,6 +426,67 @@ class TestAlarmWorkflowEdgeCases:
         assert (temp_workspace["output"] / "check_output.md").exists()
 
 
+class TestAlarmWorkflowMemoryTracking:
+    """Tests for memory usage tracking"""
+    
+    def test_memory_table_in_output(self, temp_workspace, mock_wandb_api, alarm_yml_path):
+        """Test that memory table appears in markdown output"""
+        create_sample_artifacts(temp_workspace["artifacts"], "ok")
+        run_alarm_script(
+            temp_workspace["artifacts"],
+            temp_workspace["output"],
+            mock_wandb_api,
+            alarm_yml_path
+        )
+        
+        markdown = (temp_workspace["output"] / "check_output.md").read_text()
+        assert "### Memory Usage" in markdown, "Markdown should contain Memory Usage section"
+        assert "Memory (MB)" in markdown, "Should have memory column header"
+    
+    def test_memory_csv_created(self, temp_workspace, mock_wandb_api, alarm_yml_path):
+        """Test that mem.csv file is created"""
+        create_sample_artifacts(temp_workspace["artifacts"], "ok")
+        run_alarm_script(
+            temp_workspace["artifacts"],
+            temp_workspace["output"],
+            mock_wandb_api,
+            alarm_yml_path
+        )
+        
+        assert (temp_workspace["output"] / "mem.csv").exists(), "mem.csv should be created"
+    
+    def test_memory_csv_has_correct_columns(self, temp_workspace, mock_wandb_api, alarm_yml_path):
+        """Test that mem.csv has expected columns"""
+        create_sample_artifacts(temp_workspace["artifacts"], "ok")
+        run_alarm_script(
+            temp_workspace["artifacts"],
+            temp_workspace["output"],
+            mock_wandb_api,
+            alarm_yml_path
+        )
+        
+        with open(temp_workspace["output"] / "mem.csv") as f:
+            reader = csv.DictReader(f)
+            headers = reader.fieldnames
+            assert "current" in headers, "mem.csv should have 'current' column"
+            assert "status" in headers, "mem.csv should have 'status' column"
+            rows = list(reader)
+            assert len(rows) > 0, "mem.csv should have data rows"
+    
+    def test_memory_thresholds_in_report(self, temp_workspace, mock_wandb_api, alarm_yml_path):
+        """Test that memory threshold is mentioned in report"""
+        create_sample_artifacts(temp_workspace["artifacts"], "ok")
+        run_alarm_script(
+            temp_workspace["artifacts"],
+            temp_workspace["output"],
+            mock_wandb_api,
+            alarm_yml_path
+        )
+        
+        markdown = (temp_workspace["output"] / "check_output.md").read_text()
+        assert "memory ± 10%" in markdown, "Should mention memory threshold"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

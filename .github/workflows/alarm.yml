@@ -73,6 +73,7 @@ jobs:
           MAX_FETCH_REVISIONS: 40
           RUNTIME_REGRESSION_TOLERANCE_PCT: 8
           COMPILE_REGRESSION_TOLERANCE_PCT: 16
+          MEMORY_REGRESSION_TOLERANCE_PCT: 10
 
           # Input/Output paths
           SPEED_ARTIFACTS_DIR: ${{ steps.dl_speed.outputs.download-path }}
@@ -100,6 +101,7 @@ jobs:
           METRICS_TOL = {
             "runtime_fps": float(os.environ["RUNTIME_REGRESSION_TOLERANCE_PCT"]),
             "compile_time": float(os.environ["COMPILE_REGRESSION_TOLERANCE_PCT"]),
+            "max_mem_mb": float(os.environ["MEMORY_REGRESSION_TOLERANCE_PCT"]),
           }
 
           speed_artifacts_dir = Path(os.environ["SPEED_ARTIFACTS_DIR"]).expanduser().resolve()
@@ -166,6 +168,39 @@ jobs:
                           pass
                   nbid = frozendict(kv)
                   out[nbid] = record
+              return out
+
+          def parse_mem_csv(mem_csv_path):
+              """Parse memory CSV file format: test,max_mem_mb"""
+              out = {}
+              with mem_csv_path.open() as f:
+                  reader = csv.DictReader(f)
+                  for row in reader:
+                      # Extract test name and parse it
+                      # Format: test_speed[scenario-solver-flag-n_envs-backend]
+                      test_name = row["test"]
+                      # Extract the part between brackets
+                      if "[" in test_name and "]" in test_name:
+                          params_str = test_name[test_name.index("[")+1:test_name.index("]")]
+                          # Split by '-' to get individual params
+                          parts = params_str.split("-")
+                          if len(parts) >= 5:
+                              scenario, solver, flag, n_envs, backend = parts[0], parts[1], parts[2], parts[3], parts[4]
+                              # Create normalized dict
+                              kv = {
+                                  "scenario": scenario,
+                                  "solver": solver if solver != "None" else None,
+                                  "flag": flag if flag != "None" else None,
+                                  "n_envs": n_envs,
+                                  "backend": backend,
+                              }
+                              # Remove None values for consistency
+                              kv = {k: v for k, v in kv.items() if v is not None}
+                              nbid = frozendict(kv)
+                              try:
+                                  out[nbid] = {"max_mem_mb": float(row["max_mem_mb"])}
+                              except (ValueError, TypeError, KeyError):
+                                  pass
               return out
 
           def fmt_num(v, is_int: bool):
@@ -259,14 +294,23 @@ jobs:
                   metric: summary[metric] for metric in METRIC_KEYS
               }
 
-          # ----- build TWO tables -----
+          # ----- load memory artifacts -----
+
+          current_mem_paths = list(mem_artifacts_dir.rglob("mem*.csv"))
+          current_mem = {}
+          if current_mem_paths:
+              for mem_path in current_mem_paths:
+                  current_mem |= parse_mem_csv(mem_path)
+          mem_bids_set = frozenset(current_mem.keys())
+
+          # ----- build THREE tables -----
 
           # Parse benchmark IDs into key-value dicts while preserving order
           params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_bm.keys()))
 
           reg_found, alert_found = False, False
           tables = {}
-          rows_for_csv = {"runtime_fps": [], "compile_time": []}
+          rows_for_csv = {"runtime_fps": [], "compile_time": [], "mem": []}
           info = {}
           for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
               rows_md = []
@@ -344,6 +388,57 @@ jobs:
 
               tables[metric] = [header, align] + rows_md
 
+          # ----- build memory table -----
+
+          if current_mem:
+              mem_params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_mem.keys()))
+              rows_md_mem = []
+
+              header_cells_mem = (
+                  "status",
+                  *mem_params_name,
+                  "current Memory (MB)",
+                  "baseline Memory (MB) [last (mean ± std)] (*1)",
+                  "Δ Memory (*2)"
+              )
+              header_mem = "| " + " | ".join(header_cells_mem) + " |"
+              align_mem  = "|:------:|" + "|".join([":---" for _ in mem_params_name]) + "|---:|---:|---:|"
+
+              def mem_sort_key(d):
+                  key_list = []
+                  for col in mem_params_name:
+                      if col in d:
+                          val = d[col]
+                          key_list.append((0, val))
+                      else:
+                          key_list.append((1, None))
+                  return key_list
+
+              for bid in sorted(current_mem.keys(), key=mem_sort_key):
+                  value_cur = current_mem[bid]["max_mem_mb"]
+                  is_int = isinstance(value_cur, int) or value_cur.is_integer()
+                  value_repr = fmt_num(value_cur, is_int)
+
+                  params_repr = [bid.get(k, "-") for k in mem_params_name]
+                  mem_info = {
+                      **dict(zip(mem_params_name, params_repr)),
+                      "current": value_cur,
+                      "baseline_last": None,
+                      "baseline_min": None,
+                      "baseline_max": None,
+                      "status": "n/a",
+                  }
+
+                  # For now, memory doesn't have W&B baselines, so just mark as info
+                  picto = "ℹ️"
+                  stats_repr = "---"
+                  delta_repr = "---"
+
+                  rows_md_mem.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
+                  rows_for_csv["mem"].append(mem_info)
+
+              tables["mem"] = [header_mem, align_mem] + rows_md_mem
+
           # ----- baseline commit list (MD) -----
           blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
           baseline_block = ["**Baselines considered:** " + f"**{len(records_by_rev)}** commits"] + blist
@@ -352,25 +447,35 @@ jobs:
 
           thr_repr = ", ".join(
               f"{alias} ± {METRICS_TOL[metric]:.0f}%"
-              for metric, alias in (("runtime_fps", "runtime"), ("compile_time", "compile"))
+              for metric, alias in (("runtime_fps", "runtime"), ("compile_time", "compile"), ("max_mem_mb", "memory"))
           )
 
-          check_body = "\n".join(
-              [
-                  *baseline_block,
+          check_body_parts = [
+              *baseline_block,
+              "",
+              f"Thresholds: {thr_repr}",
+              "",
+              "### Runtime FPS",
+              *tables["runtime_fps"],
+              "",
+              "### Compile Time",
+              *tables["compile_time"],
+          ]
+          
+          if current_mem and "mem" in tables:
+              check_body_parts.extend([
                   "",
-                  f"Thresholds: {thr_repr}",
-                  "",
-                  "### Runtime FPS",
-                  *tables["runtime_fps"],
-                  "",
-                  "### Compile Time",
-                  *tables["compile_time"],
-                  "",
-                  f"- (*1) last: last commit on main, mean/std: stats over revs {MAX_VALID_REVISIONS} commits if available.",
-                  f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
-              ]
-          )
+                  "### Memory Usage",
+                  *tables["mem"],
+              ])
+          
+          check_body_parts.extend([
+              "",
+              f"- (*1) last: last commit on main, mean/std: stats over revs {MAX_VALID_REVISIONS} commits if available.",
+              f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
+          ])
+
+          check_body = "\n".join(check_body_parts)
 
           # ----- COMMENT body (only if regressions) -----
 
@@ -380,13 +485,18 @@ jobs:
               comment_body = ""
 
           # CSV file
-          for metric in ("runtime_fps", "compile_time"):
+          for metric in ("runtime_fps", "compile_time", "mem"):
+            if not rows_for_csv[metric]:
+                continue
             # Collect all possible fieldnames from all records to handle mixed scenarios
             all_fieldnames = set()
             for rec in rows_for_csv[metric]:
                 all_fieldnames.update(rec.keys())
             # Sort fieldnames for consistent ordering, with key fields first
-            key_fields = list(params_name)
+            if metric == "mem" and current_mem:
+                key_fields = list(mem_params_name)
+            else:
+                key_fields = list(params_name)
             other_fields = sorted([f for f in all_fieldnames if f not in key_fields])
             fieldnames = key_fields + other_fields
             

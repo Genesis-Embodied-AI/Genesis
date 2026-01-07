@@ -151,6 +151,20 @@ solver=SAP | backend=gpu | n_envs=512 | compile_time=1.8 | runtime_fps=1500.0 | 
         content = ""
     
     speed_test_file.write_text(content)
+    
+    # Create memory test CSV file
+    mem_test_dir = artifacts_dir / "mem-test-results"
+    mem_test_dir.mkdir(parents=True, exist_ok=True)
+    mem_test_file = mem_test_dir / "mem.csv"
+    
+    # Create sample memory data
+    mem_content = """test,max_mem_mb
+test_speed[franka-None-True-30000-gpu],13213
+test_speed[go2-None-True-4096-gpu],3129
+test_speed[box_pyramid_5-None-None-4096-gpu],5859
+"""
+    mem_test_file.write_text(mem_content)
+    
     print(f"Created sample artifacts in {artifacts_dir} with scenario: {scenario}")
     return artifacts_dir
 
