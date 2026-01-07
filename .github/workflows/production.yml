@@ -79,7 +79,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           srun ${SRUN_COMMON} \
-               ADD_OMNI=1 ADD_USD=1 bash .github/workflows/scripts/production_build.sh
+              UPGRADE_WHEEL=1 ADD_OMNI=1 ADD_USD=1 bash .github/workflows/scripts/production_build.sh
 
       - name: Run benchmarks
         if: github.event_name == 'pull_request'
