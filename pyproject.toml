@@ -88,6 +88,7 @@ dev = [
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
+    "frozendict",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
