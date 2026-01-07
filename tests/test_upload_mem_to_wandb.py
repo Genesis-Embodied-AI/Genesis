@@ -119,8 +119,19 @@ class TestUploadMemToWandb:
         """Test script handles missing CSV file gracefully"""
         from upload_mem_to_wandb import upload_memory_to_wandb
         
-        result = upload_memory_to_wandb("/nonexistent/path.csv")
-        assert result == 1, "Should return 1 when file not found"
+        # Set a mock API key so it doesn't skip due to no key
+        old_key = os.environ.get('WANDB_API_KEY')
+        os.environ['WANDB_API_KEY'] = 'mock_key'
+        
+        try:
+            result = upload_memory_to_wandb("/nonexistent/path.csv")
+            assert result == 1, "Should return 1 when file not found"
+        finally:
+            # Restore original state
+            if old_key:
+                os.environ['WANDB_API_KEY'] = old_key
+            else:
+                os.environ.pop('WANDB_API_KEY', None)
 
 
 if __name__ == "__main__":
