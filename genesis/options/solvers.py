@@ -373,6 +373,7 @@ class RigidOptions(Options):
     batch_links_info: Optional[bool] = False
     batch_joints_info: Optional[bool] = False
     batch_dofs_info: Optional[bool] = False
+    batch_entities_info: Optional[bool] = False
 
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton

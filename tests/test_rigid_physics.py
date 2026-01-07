@@ -3839,3 +3839,59 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
 
     assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_heterogeneous_simulation(show_viewer):
+    """Test heterogeneous simulation with mixed geometry types and more environments than variants."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # 2 variants (box and sphere) but 8 environments
+    morphs_heterogeneous = [
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.025, pos=(0.0, 0.0, 0.1)),
+    ]
+
+    het_object = scene.add_entity(morph=morphs_heterogeneous)
+    scene.build(n_envs=8)
+
+    mass = het_object.get_mass()
+    assert isinstance(mass, np.ndarray)
+    assert len(mass) == 8
+
+    # First 4 envs get box, last 4 envs get sphere (round-robin distribution)
+    # Boxes should have same mass among themselves
+    assert_allclose(mass[0], mass[1], tol=gs.EPS)
+    assert_allclose(mass[0], mass[2], tol=gs.EPS)
+    assert_allclose(mass[0], mass[3], tol=gs.EPS)
+    # Spheres should have same mass among themselves
+    assert_allclose(mass[4], mass[5], tol=gs.EPS)
+    assert_allclose(mass[4], mass[6], tol=gs.EPS)
+    assert_allclose(mass[4], mass[7], tol=gs.EPS)
+    # Box mass should differ from sphere mass
+    assert not np.allclose(mass[0], mass[4])
+
+    scene.step()
+
+
+@pytest.mark.required
+def test_heterogeneous_invalid_material_raises():
+    """Test that heterogeneous morphs with non-Rigid material raises an exception."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        show_viewer=False,
+    )
+
+    morphs_heterogeneous = [
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.0, 0.0, 0.1)),
+    ]
+
+    # PBD material should raise an exception
+    with pytest.raises(gs.GenesisException):
+        scene.add_entity(morph=morphs_heterogeneous, material=gs.materials.PBD.Cloth())

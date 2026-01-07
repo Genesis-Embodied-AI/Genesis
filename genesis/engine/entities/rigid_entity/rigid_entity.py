@@ -84,6 +84,7 @@ class RigidEntity(Entity):
         vface_start=0,
         equality_start=0,
         visualize_contact: bool = False,
+        morph_heterogeneous: list[Morph] | None = None,
     ):
         super().__init__(idx, scene, morph, solver, material, surface)
 
@@ -114,6 +115,10 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
 
+        # Heterogeneous simulation support
+        self._morph_heterogeneous = morph_heterogeneous
+        self._enable_heterogeneous = morph_heterogeneous is not None and len(morph_heterogeneous) > 0
+
         self._load_model()
 
         # Initialize target variables and checkpoint
@@ -133,26 +138,194 @@ class RigidEntity(Entity):
     def init_ckpt(self):
         pass
 
+    def _load_morph(self, morph: Morph):
+        """Load a single morph into the entity."""
+        if isinstance(morph, gs.morphs.Mesh):
+            self._load_mesh(morph, self._surface)
+        elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
+            self._load_scene(morph, self._surface)
+        elif isinstance(morph, gs.morphs.Primitive):
+            self._load_primitive(morph, self._surface)
+        elif isinstance(morph, gs.morphs.Terrain):
+            self._load_terrain(morph, self._surface)
+        else:
+            gs.raise_exception(f"Unsupported morph: {morph}.")
+
+    def _compute_inertial_from_g_infos(self, cg_infos, vg_infos):
+        """Compute inertial properties from collision or visual geometry infos."""
+        from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
+
+        total_mass = gs.EPS
+        total_com = np.zeros(3, dtype=gs.np_float)
+        total_inertia = np.zeros((3, 3), dtype=gs.np_float)
+
+        # Use collision geoms if available, otherwise fall back to visual geoms
+        g_infos = cg_infos if cg_infos else vg_infos
+        mesh_key = "mesh" if cg_infos else "vmesh"
+
+        for g_info in g_infos:
+            mesh = g_info.get(mesh_key)
+            if mesh is None:
+                continue
+            geom_pos = g_info.get("pos", gu.zero_pos())
+            geom_quat = g_info.get("quat", gu.identity_quat())
+
+            inertia_mesh = mesh.trimesh
+            if not inertia_mesh.is_watertight:
+                inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+
+            if inertia_mesh.volume < -gs.EPS:
+                inertia_mesh.invert()
+
+            geom_mass = inertia_mesh.volume * self.material.rho
+            geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+            geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+
+            # Transform geom properties to link frame
+            geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
+            geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
+
+            # Compose with existing properties
+            total_mass, total_com, total_inertia = compose_inertial_properties(
+                total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
+            )
+
+        return total_mass, total_com, total_inertia
+
+    def _load_heterogeneous(self):
+        """
+        Load heterogeneous morphs (additional geometry variants for parallel environments).
+        Each variant is loaded as additional geoms/vgeoms attached to the single link.
+        """
+        # Initialize tracking lists for geom/vgeom ranges per variant
+        self.list_het_link_start = gs.List()
+        self.list_het_link_end = gs.List()
+        self.list_het_n_links = gs.List()
+        self.list_het_geom_group_start = gs.List()
+        self.list_het_geom_group_end = gs.List()
+        self.list_het_vgeom_group_start = gs.List()
+        self.list_het_vgeom_group_end = gs.List()
+        self.list_het_inertial_mass = gs.List()
+        self.list_het_inertial_pos = gs.List()
+        self.list_het_inertial_i = gs.List()
+
+        # Record the first variant (the main morph)
+        self.list_het_link_start.append(self._link_start)
+        self.list_het_n_links.append(len(self._links))
+        self.list_het_link_end.append(self._link_start + len(self._links))
+        self.list_het_geom_group_start.append(self._geom_start)
+        first_variant_geom_end = self._geom_start + len(self.geoms)
+        self.list_het_geom_group_end.append(first_variant_geom_end)
+        self.list_het_vgeom_group_start.append(self._vgeom_start)
+        self.list_het_vgeom_group_end.append(self._vgeom_start + len(self.vgeoms))
+        # For heterogeneous entities, store number of geoms in first variant for later
+        self._first_variant_n_geoms = len(self.geoms)
+        self._first_variant_n_vgeoms = len(self.vgeoms)
+
+        # Compute first variant's inertial properties from the link's current geoms
+        if self._enable_heterogeneous and len(self._links) == 1:
+            link = self._links[0]
+            # Build cg_infos and vg_infos from link's current geoms
+            first_cg_infos = []
+            for geom in link.geoms:
+                first_cg_infos.append(
+                    {
+                        "mesh": geom._mesh,
+                        "pos": geom._init_pos,
+                        "quat": geom._init_quat,
+                    }
+                )
+            first_vg_infos = []
+            for vgeom in link.vgeoms:
+                first_vg_infos.append(
+                    {
+                        "vmesh": vgeom._vmesh,
+                        "pos": vgeom._init_pos,
+                        "quat": vgeom._init_quat,
+                    }
+                )
+            het_mass, het_pos, het_i = self._compute_inertial_from_g_infos(first_cg_infos, first_vg_infos)
+            self.list_het_inertial_mass.append(het_mass)
+            self.list_het_inertial_pos.append(het_pos)
+            self.list_het_inertial_i.append(het_i)
+        else:
+            # Placeholder for first variant inertial (computed later during link build)
+            self.list_het_inertial_mass.append(None)
+            self.list_het_inertial_pos.append(None)
+            self.list_het_inertial_i.append(None)
+
+        if self._enable_heterogeneous:
+            for morph in self._morph_heterogeneous:
+                if isinstance(morph, gs.morphs.Mesh):
+                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                elif isinstance(morph, gs.morphs.Primitive):
+                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                else:
+                    gs.raise_exception(
+                        f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
+                    )
+
+                if len(self._links) != 1:
+                    gs.raise_exception("morph_heterogeneous only supports single-link entities.")
+
+                link = self._links[0]
+                cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
+
+                # Compute inertial properties for this variant from collision or visual geometries
+                het_mass, het_pos, het_i = self._compute_inertial_from_g_infos(cg_infos, vg_infos)
+                self.list_het_inertial_mass.append(het_mass)
+                self.list_het_inertial_pos.append(het_pos)
+                self.list_het_inertial_i.append(het_i)
+
+                # Add visual geometries
+                for g_info in vg_infos:
+                    link._add_vgeom(
+                        vmesh=g_info["vmesh"],
+                        init_pos=g_info.get("pos", gu.zero_pos()),
+                        init_quat=g_info.get("quat", gu.identity_quat()),
+                    )
+
+                # Add collision geometries
+                for g_info in cg_infos:
+                    friction = self.material.friction
+                    if friction is None:
+                        friction = g_info.get("friction", gu.default_friction())
+                    link._add_geom(
+                        mesh=g_info["mesh"],
+                        init_pos=g_info.get("pos", gu.zero_pos()),
+                        init_quat=g_info.get("quat", gu.identity_quat()),
+                        type=g_info["type"],
+                        friction=friction,
+                        sol_params=g_info["sol_params"],
+                        data=g_info.get("data"),
+                        needs_coup=self.material.needs_coup,
+                        contype=g_info["contype"],
+                        conaffinity=g_info["conaffinity"],
+                    )
+
+                # Record ranges for this variant
+                self.list_het_link_start.append(self.list_het_link_end[-1])
+                self.list_het_link_end.append(self._link_start + len(self._links))
+                self.list_het_n_links.append(self.list_het_link_end[-1] - self.list_het_link_start[-1])
+                self.list_het_geom_group_start.append(self.list_het_geom_group_end[-1])
+                self.list_het_geom_group_end.append(self.list_het_geom_group_end[-1] + len(cg_infos))
+                self.list_het_vgeom_group_start.append(self.list_het_vgeom_group_end[-1])
+                self.list_het_vgeom_group_end.append(self.list_het_vgeom_group_end[-1] + len(vg_infos))
+
     def _load_model(self):
         self._links = gs.List()
         self._joints = gs.List()
         self._equalities = gs.List()
 
-        if isinstance(self._morph, gs.morphs.Mesh):
-            self._load_mesh(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
-            self._load_scene(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.Primitive):
-            self._load_primitive(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.Terrain):
-            self._load_terrain(self._morph, self._surface)
-        else:
-            gs.raise_exception(f"Unsupported morph: {self._morph}.")
+        self._load_morph(self._morph)
+
+        # Load heterogeneous variants (if any)
+        self._load_heterogeneous()
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
 
-    def _load_primitive(self, morph, surface):
+    def _load_primitive(self, morph, surface, load_geom_only_for_heterogeneous=False):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -217,6 +390,10 @@ class RigidEntity(Entity):
                 )
             )
 
+        # For heterogeneous simulation, only return geometry info without creating link/joint
+        if load_geom_only_for_heterogeneous:
+            return g_infos
+
         self._add_by_info(
             l_info=dict(
                 is_robot=False,
@@ -241,7 +418,7 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _load_mesh(self, morph, surface):
+    def _load_mesh(self, morph, surface, load_geom_only_for_heterogeneous=False):
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -286,6 +463,10 @@ class RigidEntity(Entity):
                         sol_params=gu.default_solver_params(),
                     )
                 )
+
+        # For heterogeneous simulation, only return geometry info without creating link/joint
+        if load_geom_only_for_heterogeneous:
+            return g_infos
 
         link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
 
@@ -845,6 +1026,44 @@ class RigidEntity(Entity):
             )
 
         return link, joints
+
+    @staticmethod
+    def _convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot):
+        """
+        Separate collision from visual geometry and post-process collision meshes.
+        Used for both normal loading and heterogeneous simulation.
+        """
+        cg_infos, vg_infos = [], []
+        for g_info in g_infos:
+            is_col = g_info["contype"] or g_info["conaffinity"]
+            if morph.collision and is_col:
+                cg_infos.append(g_info)
+            if morph.visualization and not is_col:
+                vg_infos.append(g_info)
+
+        # Post-process all collision meshes at once
+        if isinstance(morph, gs.options.morphs.FileMorph):
+            if is_robot:
+                decompose_error_threshold = morph.decompose_robot_error_threshold
+            else:
+                decompose_error_threshold = morph.decompose_object_error_threshold
+
+            cg_infos = mu.postprocess_collision_geoms(
+                cg_infos,
+                morph.decimate,
+                morph.decimate_face_num,
+                morph.decimate_aggressiveness,
+                morph.convexify,
+                decompose_error_threshold,
+                morph.coacd_options,
+            )
+
+        # Randomize collision mesh colors
+        for g_info in cg_infos:
+            mesh = g_info["mesh"]
+            mesh.set_color((*np.random.rand(3), 0.7))
+
+        return cg_infos, vg_infos
 
     def _add_equality(self, name, type, objs_name, data, sol_params):
         objs_id = []
@@ -2972,15 +3191,27 @@ class RigidEntity(Entity):
         """
         Get the total mass of the entity in kg.
 
+        For heterogeneous entities, returns an array of masses for each environment.
+        For non-heterogeneous entities, returns a scalar mass.
+
         Returns
         -------
-        mass : float
-            The total mass of the entity in kg.
+        mass : float | np.ndarray
+            The total mass of the entity in kg. For heterogeneous entities, returns
+            an array of shape (n_envs,) with per-environment masses.
         """
-        mass = 0.0
-        for link in self.links:
-            mass += link.get_mass()
-        return mass
+        # Use solver's batched links_info for accurate per-environment masses
+        all_links_mass = self._solver.links_info.inertial_mass.to_numpy()
+        links_idx = np.arange(self.link_start, self.link_end)
+
+        if self._solver._options.batch_links_info:
+            # Shape: (n_links, n_envs) -> sum over links axis
+            entity_mass = all_links_mass[links_idx].sum(axis=0)
+        else:
+            # Shape: (n_links,) -> sum to scalar
+            entity_mass = all_links_mass[links_idx].sum()
+
+        return entity_mass
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
