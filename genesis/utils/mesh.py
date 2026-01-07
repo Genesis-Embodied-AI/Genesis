@@ -208,8 +208,8 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
             uvs[:, 1] = 1.0 - uvs[:, 1]
             assert texture.image_array.dtype == np.uint8
             material_kwargs = {"image": Image.fromarray(texture.image_array), "diffuse": (1.0, 1.0, 1.0, 1.0)}
-            if texture.input_image_path is not None:
-                material_kwargs["image_path"] = texture.input_image_path
+            if texture.image_path is not None:
+                material_kwargs["image_path"] = texture.image_path
             visual = trimesh.visual.TextureVisuals(
                 uv=uvs,
                 material=trimesh.visual.material.SimpleMaterial(**material_kwargs),
@@ -504,9 +504,9 @@ def create_texture(image, factor, encoding, image_path=None):
     if image is not None:
         return gs.textures.ImageTexture(
             image_array=image,
+            image_path=image_path,
             image_color=factor,
             encoding=encoding,
-            input_image_path=image_path
         )
     if factor is not None:
         return gs.textures.ColorTexture(color=factor)
