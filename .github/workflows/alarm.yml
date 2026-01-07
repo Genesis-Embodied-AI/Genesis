@@ -102,12 +102,14 @@ jobs:
             "compile_time": float(os.environ["COMPILE_REGRESSION_TOLERANCE_PCT"]),
           }
 
-          artifacts_dir = Path(os.environ["ARTIFACTS_DIR"]).expanduser().resolve()
+          speed_artifacts_dir = Path(os.environ["SPEED_ARTIFACTS_DIR"]).expanduser().resolve()
+          mem_artifacts_dir = Path(os.environ["MEM_ARTIFACTS_DIR"]).expanduser().resolve()
           check_body_path = Path(os.environ["CHECK_BODY_PATH"]).expanduser()
 
           csv_files = {
             "runtime_fps": Path(os.environ["CSV_RUNTIME_PATH"]).expanduser().resolve(),
             "compile_time": Path(os.environ["CSV_COMPILE_PATH"]).expanduser().resolve(),
+            "mem": Path(os.environ["CSV_MEM_PATH"]).expanduser().resolve(),
           }
 
           # ---------- helpers ----------
@@ -171,7 +173,7 @@ jobs:
 
           # ----- load artifacts (current results) -----
 
-          current_csv_paths = list(artifacts_dir.rglob("speed_test*.txt"))
+          current_csv_paths = list(speed_artifacts_dir.rglob("speed_test*.txt"))
           if not current_csv_paths:
               check_body_path.touch()
               sys.exit(0)
@@ -379,8 +381,17 @@ jobs:
 
           # CSV file
           for metric in ("runtime_fps", "compile_time"):
+            # Collect all possible fieldnames from all records to handle mixed scenarios
+            all_fieldnames = set()
+            for rec in rows_for_csv[metric]:
+                all_fieldnames.update(rec.keys())
+            # Sort fieldnames for consistent ordering, with key fields first
+            key_fields = list(params_name)
+            other_fields = sorted([f for f in all_fieldnames if f not in key_fields])
+            fieldnames = key_fields + other_fields
+            
             with csv_files[metric].open("w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=info.keys())
+                w = csv.DictWriter(f, fieldnames=fieldnames)
                 w.writeheader()
                 for rec in rows_for_csv[metric]:
                     w.writerow(rec)

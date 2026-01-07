@@ -282,9 +282,8 @@ def run_alarm_script(artifacts_dir: Path, output_dir: Path, wandb_api_mock: Mock
     env = {
         **yaml_env,
         # Override paths for local testing
-        "ARTIFACTS_DIR": str(artifacts_dir),  # Used by current Python code
-        "SPEED_ARTIFACTS_DIR": str(artifacts_dir),  # In case code gets updated
-        "MEM_ARTIFACTS_DIR": str(artifacts_dir),  # In case code gets updated
+        "SPEED_ARTIFACTS_DIR": str(artifacts_dir),
+        "MEM_ARTIFACTS_DIR": str(artifacts_dir),
         "CHECK_BODY_PATH": str(output_dir / "check_output.md"),
         "CSV_RUNTIME_PATH": str(output_dir / "runtime_fps.csv"),
         "CSV_COMPILE_PATH": str(output_dir / "compile_time.csv"),
