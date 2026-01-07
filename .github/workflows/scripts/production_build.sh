@@ -10,6 +10,7 @@ uv --version
 # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
 uv venv --python '3.10' /venv
 source /venv/bin/activate
+uv pip install --upgrade pip setuptools wheel
 if [[ "${ADD_OMNI}" == "1" ]]; then
     uv pip install omniverse-kit --index-url https://pypi.nvidia.com/
 fi
