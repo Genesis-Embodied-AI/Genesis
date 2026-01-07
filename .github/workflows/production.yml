@@ -161,6 +161,14 @@ jobs:
             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
                    --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+            
+            # Upload memory results to W&B (only if API key is set, i.e., on main branch)
+            if [[ -n "$WANDB_API_KEY" ]]; then
+              echo "Uploading memory metrics to W&B..."
+              python tests/upload_mem_to_wandb.py "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv"
+            else
+              echo "WANDB_API_KEY not set, skipping memory upload to W&B"
+            fi
           EOF
 
       - name: Kill srun job systematically
