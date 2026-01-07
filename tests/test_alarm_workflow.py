@@ -37,13 +37,13 @@ def temp_workspace():
     artifacts_dir = temp_dir / "artifacts"
     output_dir = temp_dir / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     yield {
         "base": temp_dir,
         "artifacts": artifacts_dir,
         "output": output_dir,
     }
-    
+
     # Cleanup
     shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -63,58 +63,40 @@ def reset_github_api_calls():
 
 class TestAlarmWorkflowOkScenario:
     """Tests for the OK scenario (no regressions)"""
-    
+
     def test_ok_scenario_exit_code(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that OK scenario returns exit code 0"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
         exit_code = run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
+            temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path
         )
         assert exit_code == 0, "OK scenario should return exit code 0"
-    
+
     def test_ok_scenario_creates_output_files(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that all expected output files are created"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         output_dir = temp_workspace["output"]
         assert (output_dir / "check_output.md").exists(), "check_output.md should be created"
         assert (output_dir / "runtime_fps.csv").exists(), "runtime_fps.csv should be created"
         assert (output_dir / "compile_time.csv").exists(), "compile_time.csv should be created"
-    
+
     def test_ok_scenario_markdown_contains_ok_status(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that markdown output contains OK status indicators"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "✅" in markdown, "Markdown should contain OK emoji"
         assert "Thresholds: runtime ± 8%, compile ± 16%" in markdown
         assert "**5** commits" in markdown, "Should reference 5 baseline commits"
-    
+
     def test_ok_scenario_csv_has_ok_status(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that CSV files contain 'ok' status"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check runtime_fps.csv
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
@@ -126,59 +108,41 @@ class TestAlarmWorkflowOkScenario:
 
 class TestAlarmWorkflowRegressionScenario:
     """Tests for the regression scenario"""
-    
+
     def test_regression_scenario_exit_code(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that regression scenario returns exit code 42"""
         create_sample_artifacts(temp_workspace["artifacts"], "regression")
         exit_code = run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
+            temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path
         )
         assert exit_code == 42, "Regression scenario should return exit code 42"
-    
+
     def test_regression_scenario_markdown_shows_regression(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that markdown output shows regression indicators"""
         create_sample_artifacts(temp_workspace["artifacts"], "regression")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "🔴" in markdown, "Markdown should contain regression emoji"
         assert "**-1" in markdown, "Should show negative percentage changes"
-    
+
     def test_regression_scenario_csv_has_regression_status(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that CSV files contain 'regression' status"""
         create_sample_artifacts(temp_workspace["artifacts"], "regression")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check runtime_fps.csv
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
             for row in rows:
                 assert row["status"] == "regression", f"Status should be 'regression', got {row['status']}"
-    
+
     def test_regression_scenario_validates_thresholds(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that regressions are properly detected based on thresholds"""
         create_sample_artifacts(temp_workspace["artifacts"], "regression")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check that FPS values are significantly lower (>8% regression)
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
@@ -192,42 +156,29 @@ class TestAlarmWorkflowRegressionScenario:
 
 class TestAlarmWorkflowAlertScenario:
     """Tests for the alert scenario (unusual improvement)"""
-    
+
     def test_alert_scenario_exit_code(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that alert scenario returns exit code 43"""
         create_sample_artifacts(temp_workspace["artifacts"], "alert")
         exit_code = run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
+            temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path
         )
         assert exit_code == 43, "Alert scenario should return exit code 43"
-    
+
     def test_alert_scenario_markdown_shows_alert(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that markdown output shows alert indicators"""
         create_sample_artifacts(temp_workspace["artifacts"], "alert")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "⚠️" in markdown, "Markdown should contain alert emoji"
         assert "**+1" in markdown, "Should show positive percentage changes"
-    
+
     def test_alert_scenario_csv_has_alert_status(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that CSV files contain 'alert' status"""
         create_sample_artifacts(temp_workspace["artifacts"], "alert")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check runtime_fps.csv
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
@@ -238,45 +189,32 @@ class TestAlarmWorkflowAlertScenario:
 
 class TestAlarmWorkflowCompileRegression:
     """Tests for compile time regression scenario"""
-    
+
     def test_compile_regression_exit_code(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that compile regression returns exit code 42"""
         create_sample_artifacts(temp_workspace["artifacts"], "compile_regression")
         exit_code = run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
+            temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path
         )
         assert exit_code == 42, "Compile regression should return exit code 42"
-    
+
     def test_compile_regression_csv_shows_regression(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that compile_time.csv shows regression status"""
         create_sample_artifacts(temp_workspace["artifacts"], "compile_regression")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check compile_time.csv
         with open(temp_workspace["output"] / "compile_time.csv") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
             for row in rows:
                 assert row["status"] == "regression", f"Compile time status should be 'regression'"
-    
+
     def test_compile_regression_threshold(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that compile regression uses 16% threshold"""
         create_sample_artifacts(temp_workspace["artifacts"], "compile_regression")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check that compile times exceed 16% threshold
         with open(temp_workspace["output"] / "compile_time.csv") as f:
             reader = csv.DictReader(f)
@@ -290,46 +228,33 @@ class TestAlarmWorkflowCompileRegression:
 
 class TestAlarmWorkflowNewBenchmark:
     """Tests for new benchmark scenario"""
-    
+
     def test_new_benchmark_exit_code(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that new benchmark returns appropriate exit code"""
         create_sample_artifacts(temp_workspace["artifacts"], "new_benchmark")
         exit_code = run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
+            temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path
         )
         # Exit code could be 0 if existing benchmarks are ok
         assert exit_code in [0, 42, 43], f"Exit code should be 0, 42, or 43, got {exit_code}"
-    
+
     def test_new_benchmark_shows_info_status(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that new benchmarks show info indicator"""
         create_sample_artifacts(temp_workspace["artifacts"], "new_benchmark")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "ℹ️" in markdown, "Markdown should contain info emoji for new benchmark"
 
 
 class TestAlarmWorkflowOutputFormat:
     """Tests for output format validation"""
-    
+
     def test_csv_has_required_columns(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that CSV files have all required columns"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         # Check runtime_fps.csv
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
@@ -337,39 +262,29 @@ class TestAlarmWorkflowOutputFormat:
             required_columns = ["solver", "backend", "n_envs", "current", "baseline_last", "status"]
             for col in required_columns:
                 assert col in headers, f"CSV should have column '{col}'"
-    
+
     def test_markdown_has_table_structure(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that markdown output has proper table structure"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
-        
+
         # Check for table headers
         assert "### Runtime FPS" in markdown
         assert "### Compile Time" in markdown
         assert "| status |" in markdown
         assert "|:------:|" in markdown  # Table alignment row
-        
+
         # Check for footnotes
         assert "(*1)" in markdown
         assert "(*2)" in markdown
-    
+
     def test_baseline_statistics_present(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that baseline statistics are calculated and present"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -382,25 +297,20 @@ class TestAlarmWorkflowOutputFormat:
 
 class TestAlarmWorkflowBenchmarkParsing:
     """Tests for benchmark ID parsing"""
-    
+
     def test_benchmark_params_extracted(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that benchmark parameters are correctly extracted"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         with open(temp_workspace["output"] / "runtime_fps.csv") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-            
+
             # Check that we have the expected benchmark configurations
             solvers = {row["solver"] for row in rows}
             backends = {row["backend"] for row in rows}
-            
+
             assert "PBD" in solvers, "Should have PBD solver"
             assert "MPM" in solvers, "Should have MPM solver"
             assert "cpu" in backends, "Should have cpu backend"
@@ -409,62 +319,44 @@ class TestAlarmWorkflowBenchmarkParsing:
 
 class TestAlarmWorkflowEdgeCases:
     """Tests for edge cases and error handling"""
-    
+
     def test_no_artifacts_exits_gracefully(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that script exits gracefully when no artifacts present"""
         # Don't create artifacts
         exit_code = run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
+            temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path
         )
         # Should exit with 0 (no artifacts to check)
         assert exit_code == 0, "Should exit gracefully when no artifacts present"
-        
+
         # Should create empty check file
         assert (temp_workspace["output"] / "check_output.md").exists()
 
 
 class TestAlarmWorkflowMemoryTracking:
     """Tests for memory usage tracking"""
-    
+
     def test_memory_table_in_output(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that memory table appears in markdown output"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "### Memory Usage" in markdown, "Markdown should contain Memory Usage section"
         assert "Memory (MB)" in markdown, "Should have memory column header"
-    
+
     def test_memory_csv_created(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that mem.csv file is created"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         assert (temp_workspace["output"] / "mem.csv").exists(), "mem.csv should be created"
-    
+
     def test_memory_csv_has_correct_columns(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that mem.csv has expected columns"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         with open(temp_workspace["output"] / "mem.csv") as f:
             reader = csv.DictReader(f)
             headers = reader.fieldnames
@@ -472,35 +364,25 @@ class TestAlarmWorkflowMemoryTracking:
             assert "status" in headers, "mem.csv should have 'status' column"
             rows = list(reader)
             assert len(rows) > 0, "mem.csv should have data rows"
-    
+
     def test_memory_thresholds_in_report(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that memory threshold is mentioned in report"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "memory ± 10%" in markdown, "Should mention memory threshold"
-    
+
     def test_memory_baselines_populated(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that memory baselines are fetched from W&B and populated"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         with open(temp_workspace["output"] / "mem.csv") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
             assert len(rows) > 0, "Should have memory data"
-            
+
             for row in rows:
                 # Check that baseline values are populated (not None or empty)
                 assert row.get("baseline_last"), f"baseline_last should be populated, got: {row.get('baseline_last')}"
@@ -508,32 +390,30 @@ class TestAlarmWorkflowMemoryTracking:
                 assert row.get("baseline_min"), f"baseline_min should be populated"
                 assert row.get("baseline_max"), f"baseline_max should be populated"
                 assert row.get("status") == "ok", f"Status should be 'ok', got: {row.get('status')}"
-    
+
     def test_memory_delta_calculated(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that memory delta is calculated correctly"""
         create_sample_artifacts(temp_workspace["artifacts"], "ok")
-        run_alarm_script(
-            temp_workspace["artifacts"],
-            temp_workspace["output"],
-            mock_wandb_api,
-            alarm_yml_path
-        )
-        
+        run_alarm_script(temp_workspace["artifacts"], temp_workspace["output"], mock_wandb_api, alarm_yml_path)
+
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
-        
+
         # Check that deltas are shown (not just "--")
         # Should see percentage changes like "+1.0%" or "-2.5%"
         assert "| ✅ |" in markdown, "Should have OK status indicators for memory"
         # Memory deltas should be present (not just "---")
-        mem_section = markdown[markdown.index("### Memory Usage"):]
+        mem_section = markdown[markdown.index("### Memory Usage") :]
         # Count how many "---" appear in delta column (should be 0 if baselines work)
-        lines = [l for l in mem_section.split('\n') if l.startswith('| ✅ |') or l.startswith('| 🔴 |') or l.startswith('| ⚠️ |')]
+        lines = [
+            l
+            for l in mem_section.split("\n")
+            if l.startswith("| ✅ |") or l.startswith("| 🔴 |") or l.startswith("| ⚠️ |")
+        ]
         if lines:
             # At least one line should have a percentage delta, not "---"
-            has_percentage = any('%' in line for line in lines)
+            has_percentage = any("%" in line for line in lines)
             assert has_percentage, "Memory delta should show percentage changes, not just '---'"
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
