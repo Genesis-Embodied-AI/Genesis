@@ -485,6 +485,53 @@ class TestAlarmWorkflowMemoryTracking:
         
         markdown = (temp_workspace["output"] / "check_output.md").read_text()
         assert "memory ± 10%" in markdown, "Should mention memory threshold"
+    
+    def test_memory_baselines_populated(self, temp_workspace, mock_wandb_api, alarm_yml_path):
+        """Test that memory baselines are fetched from W&B and populated"""
+        create_sample_artifacts(temp_workspace["artifacts"], "ok")
+        run_alarm_script(
+            temp_workspace["artifacts"],
+            temp_workspace["output"],
+            mock_wandb_api,
+            alarm_yml_path
+        )
+        
+        with open(temp_workspace["output"] / "mem.csv") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            assert len(rows) > 0, "Should have memory data"
+            
+            for row in rows:
+                # Check that baseline values are populated (not None or empty)
+                assert row.get("baseline_last"), f"baseline_last should be populated, got: {row.get('baseline_last')}"
+                assert row.get("baseline_mean"), f"baseline_mean should be populated, got: {row.get('baseline_mean')}"
+                assert row.get("baseline_min"), f"baseline_min should be populated"
+                assert row.get("baseline_max"), f"baseline_max should be populated"
+                assert row.get("status") == "ok", f"Status should be 'ok', got: {row.get('status')}"
+    
+    def test_memory_delta_calculated(self, temp_workspace, mock_wandb_api, alarm_yml_path):
+        """Test that memory delta is calculated correctly"""
+        create_sample_artifacts(temp_workspace["artifacts"], "ok")
+        run_alarm_script(
+            temp_workspace["artifacts"],
+            temp_workspace["output"],
+            mock_wandb_api,
+            alarm_yml_path
+        )
+        
+        markdown = (temp_workspace["output"] / "check_output.md").read_text()
+        
+        # Check that deltas are shown (not just "--")
+        # Should see percentage changes like "+1.0%" or "-2.5%"
+        assert "| ✅ |" in markdown, "Should have OK status indicators for memory"
+        # Memory deltas should be present (not just "---")
+        mem_section = markdown[markdown.index("### Memory Usage"):]
+        # Count how many "---" appear in delta column (should be 0 if baselines work)
+        lines = [l for l in mem_section.split('\n') if l.startswith('| ✅ |') or l.startswith('| 🔴 |') or l.startswith('| ⚠️ |')]
+        if lines:
+            # At least one line should have a percentage delta, not "---"
+            has_percentage = any('%' in line for line in lines)
+            assert has_percentage, "Memory delta should show percentage changes, not just '---'"
 
 
 if __name__ == "__main__":
