@@ -117,19 +117,19 @@ class ImageTexture(Texture):
             gs.raise_exception("Please set either `image_path` or `image_array`.")
 
         if self.image_path is not None:
-            # Try to resolve path if it doesn't exist
+            input_image_path = self.image_path
             if not os.path.exists(self.image_path):
-                resolved_path = os.path.join(gs.utils.get_assets_dir(), self.image_path)
-                if os.path.exists(resolved_path):
-                    self.image_path = resolved_path
-                elif self.image_array is None:
+                self.image_path = os.path.join(gs.utils.get_assets_dir(), self.image_path)
+
+            if not os.path.exists(self.image_path):
+                if self.image_array is None:
                     # Only error if we don't have image_array as fallback
                     gs.raise_exception(
-                        f"File not found in either current directory or assets directory: '{self.image_path}'."
+                        f"File not found in either current directory or assets directory: '{input_image_path}'."
                     )
 
             # Only load image if we don't already have image_array
-            if self.image_array is None and os.path.exists(self.image_path):
+            if self.image_array is None:
                 # Load image_path as actual image_array, unless for special texture images (e.g. `.hdr` and `.exr`) that are only supported by raytracers
                 if self.image_path.endswith(HDR_EXTENSIONS):
                     self.encoding = "linear"  # .exr or .hdr images should be encoded with 'linear'
