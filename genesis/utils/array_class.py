@@ -1348,10 +1348,6 @@ class StructLinksInfo(metaclass=BASE_METACLASS):
     dof_end: V_ANNOTATION
     joint_end: V_ANNOTATION
     n_dofs: V_ANNOTATION
-    geom_start: V_ANNOTATION
-    geom_end: V_ANNOTATION
-    vgeom_start: V_ANNOTATION
-    vgeom_end: V_ANNOTATION
     pos: V_ANNOTATION
     quat: V_ANNOTATION
     invweight: V_ANNOTATION
@@ -1361,6 +1357,11 @@ class StructLinksInfo(metaclass=BASE_METACLASS):
     inertial_i: V_ANNOTATION
     inertial_mass: V_ANNOTATION
     entity_idx: V_ANNOTATION
+    # Heterogeneous simulation support - added at end to preserve memory layout
+    geom_start: V_ANNOTATION
+    geom_end: V_ANNOTATION
+    vgeom_start: V_ANNOTATION
+    vgeom_end: V_ANNOTATION
 
 
 def get_links_info(solver):
@@ -1376,10 +1377,6 @@ def get_links_info(solver):
         dof_end=V(dtype=gs.ti_int, shape=links_info_shape),
         joint_end=V(dtype=gs.ti_int, shape=links_info_shape),
         n_dofs=V(dtype=gs.ti_int, shape=links_info_shape),
-        geom_start=V(dtype=gs.ti_int, shape=links_info_shape),
-        geom_end=V(dtype=gs.ti_int, shape=links_info_shape),
-        vgeom_start=V(dtype=gs.ti_int, shape=links_info_shape),
-        vgeom_end=V(dtype=gs.ti_int, shape=links_info_shape),
         pos=V(dtype=gs.ti_vec3, shape=links_info_shape),
         quat=V(dtype=gs.ti_vec4, shape=links_info_shape),
         invweight=V(dtype=gs.ti_vec2, shape=links_info_shape),
@@ -1389,6 +1386,11 @@ def get_links_info(solver):
         inertial_i=V(dtype=gs.ti_mat3, shape=links_info_shape),
         inertial_mass=V(dtype=gs.ti_float, shape=links_info_shape),
         entity_idx=V(dtype=gs.ti_int, shape=links_info_shape),
+        # Heterogeneous simulation support - added at end to preserve memory layout
+        geom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        geom_end=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_end=V(dtype=gs.ti_int, shape=links_info_shape),
     )
 
 
