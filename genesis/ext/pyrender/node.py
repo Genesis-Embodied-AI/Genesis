@@ -157,7 +157,7 @@ class Node(object):
 
     @rotation.setter
     def rotation(self, value):
-        value = np.asanyarray(value, copy=True)
+        value = np.array(value, copy=True)
         if value.shape != (4,):
             raise ValueError("Quaternion must be a (4,) vector")
         if np.abs(np.linalg.norm(value) - 1.0) > 1e-3:
@@ -172,7 +172,7 @@ class Node(object):
 
     @translation.setter
     def translation(self, value):
-        value = np.asanyarray(value, copy=True)
+        value = np.array(value, copy=True)
         if value.shape != (3,):
             raise ValueError("Translation must be a (3,) vector")
         self._translation = value
@@ -185,7 +185,7 @@ class Node(object):
 
     @scale.setter
     def scale(self, value):
-        value = np.asanyarray(value, copy=True)
+        value = np.array(value, copy=True)
         if value.shape != (3,):
             raise ValueError("Scale must be a (3,) vector")
         self._scale = value
@@ -205,7 +205,7 @@ class Node(object):
 
     @matrix.setter
     def matrix(self, value):
-        value = np.asanyarray(value, copy=True)
+        value = np.array(value, copy=True)
         if value.shape != (4, 4):
             raise ValueError("Matrix must be a 4x4 numpy ndarray")
         if not np.allclose(value[3, :], np.array([0.0, 0.0, 0.0, 1.0])):
