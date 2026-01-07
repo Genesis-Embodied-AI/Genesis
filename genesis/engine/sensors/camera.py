@@ -95,6 +95,7 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
         super().__init__(sensor)
         self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
         self.debug = False
+        self.model = "pinhole"  # Default camera model for batch renderer sensors
 
         # Initial pose
         pos = torch.tensor(sensor._options.pos, dtype=gs.tc_float, device=gs.device)
@@ -423,11 +424,14 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
+        n_envs = max(self._manager._sim._B, 1)
         vis_options = VisOptions(
             show_world_frame=False,
             show_link_frame=False,
             show_cameras=False,
-            rendered_envs_idx=range(max(self._manager._sim._B, 1)),
+            rendered_envs_idx=list(range(n_envs)),
+            # Enable env_separate_rigid when n_envs > 1 to support batched rendering
+            env_separate_rigid=(n_envs > 1),
         )
 
         context = RasterizerContext(vis_options)
@@ -512,11 +516,9 @@ class RasterizerCameraSensor(BaseCameraSensor):
             # Single environment case - add batch dimension
             self._shared_metadata.image_cache[self._idx][0] = rgb_tensor
         else:
-            # Multi-environment rendering is not yet supported for Rasterizer cameras
-            gs.raise_exception(
-                f"Rasterizer camera sensors do not support multi-environment rendering (n_envs={n_envs}). "
-                "Use BatchRenderer camera sensors for batched rendering."
-            )
+            # Multi-environment rendering: rgb_arr has shape (n_envs, H, W, 3)
+            # rgb_tensor already has the correct shape from the batched rendering
+            self._shared_metadata.image_cache[self._idx] = rgb_tensor
 
 
 # ========================== Raytracer Camera Sensor ==========================
