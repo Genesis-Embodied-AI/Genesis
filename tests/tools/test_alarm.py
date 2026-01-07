@@ -44,6 +44,10 @@ class MockSummary:
         for k, v in data.items():
             setattr(self, k, v)
     
+    def get(self, key, default=None):
+        """Add get method for dict-like access"""
+        return self._json_dict.get(key, default)
+    
     def __getitem__(self, key):
         """Support subscript access like summary['key']"""
         return self._json_dict[key]
@@ -73,15 +77,23 @@ def create_sample_historical_data() -> List[MockWandbRun]:
         "mno345pqr678",
     ]
     
-    # Base benchmark configurations
+    # Base benchmark configurations for speed tests
     benchmark_configs = [
         "solver=PBD-backend=cpu-n_envs=128",
         "solver=PBD-backend=gpu-n_envs=1024",
         "solver=MPM-backend=cpu-n_envs=64",
     ]
     
+    # Base memory configurations
+    memory_configs = [
+        "scenario=franka-n_envs=30000-backend=gpu-flag=True",
+        "scenario=go2-n_envs=4096-backend=gpu-flag=True",
+        "scenario=box_pyramid_5-n_envs=4096-backend=gpu",
+    ]
+    
     runs = []
     for i, commit in enumerate(base_commits):
+        # Speed benchmarks
         for bench_config in benchmark_configs:
             # Add some variation to the baseline data
             variation = 1.0 + (i * 0.01)  # Slight increase over time
@@ -95,6 +107,29 @@ def create_sample_historical_data() -> List[MockWandbRun]:
                 "compile_time": 2.5 * variation,
                 "runtime_fps": 1000.0 / variation,
                 "realtime_factor": 50.0 / variation,
+            }
+            
+            runs.append(MockWandbRun(config, summary, state="finished"))
+        
+        # Memory benchmarks
+        for mem_config in memory_configs:
+            # Add some variation to memory data
+            variation = 1.0 + (i * 0.02)  # Slight increase over time
+            
+            # Base memory values
+            base_mem = {
+                "scenario=franka-n_envs=30000-backend=gpu-flag=True": 13000,
+                "scenario=go2-n_envs=4096-backend=gpu-flag=True": 3100,
+                "scenario=box_pyramid_5-n_envs=4096-backend=gpu": 5800,
+            }
+            
+            config = {
+                "revision": f"{commit}@Genesis-Embodied-AI/genesis",
+                "benchmark_id": f"memory-{mem_config}",
+            }
+            
+            summary = {
+                "max_mem_mb": base_mem[mem_config] * variation,
             }
             
             runs.append(MockWandbRun(config, summary, state="finished"))

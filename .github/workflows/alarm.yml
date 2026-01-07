@@ -303,6 +303,68 @@ jobs:
                   current_mem |= parse_mem_csv(mem_path)
           mem_bids_set = frozenset(current_mem.keys())
 
+          # ----- W&B memory baselines -----
+          
+          mem_records_by_rev = {}
+          if current_mem:
+              # Fetch memory baselines from W&B
+              runs_iter_mem = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
+              mem_revs = set()
+              
+              for i, run in enumerate(runs_iter_mem):
+                  if len(mem_revs) == MAX_FETCH_REVISIONS:
+                      break
+                  
+                  # Early return if enough complete records collected
+                  mem_records_complete = [mem_bids_set.issubset(record.keys()) for record in mem_records_by_rev.values()]
+                  if sum(mem_records_complete) == MAX_VALID_REVISIONS:
+                      break
+                  
+                  # Load config and summary
+                  config, summary = run.config, run.summary
+                  if isinstance(config, str):
+                      config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
+                  if isinstance(summary._json_dict, str):
+                      summary = json.loads(summary._json_dict)
+                  
+                  # Extract revision commit and branch
+                  try:
+                      rev, branch = config["revision"].split("@", 1)
+                      mem_revs.add(rev)
+                  except (ValueError, KeyError):
+                      continue
+                  
+                  if not branch.startswith('Genesis-Embodied-AI/'):
+                      continue
+                  
+                  if run.state != "finished":
+                      continue
+                  
+                  if len(mem_records_by_rev) == MAX_VALID_REVISIONS and rev not in mem_records_by_rev:
+                      continue
+                  
+                  # Extract benchmark ID for memory tests
+                  try:
+                      sid, bid = config["benchmark_id"].split("-", 1)
+                      if sid != "memory":
+                          continue
+                  except (ValueError, KeyError):
+                      continue
+                  
+                  # Get max_mem_mb from summary
+                  try:
+                      max_mem_mb = summary.get("max_mem_mb")
+                      if not isinstance(max_mem_mb, (float, int)) or math.isnan(max_mem_mb):
+                          continue
+                  except (KeyError, TypeError):
+                      continue
+                  
+                  # Store memory record
+                  nbid = normalize_benchmark_id(bid)
+                  mem_records_by_rev.setdefault(rev, {})[nbid] = {
+                      "max_mem_mb": max_mem_mb
+                  }
+
           # ----- build THREE tables -----
 
           # Parse benchmark IDs into key-value dicts while preserving order
@@ -426,13 +488,55 @@ jobs:
                       "baseline_last": None,
                       "baseline_min": None,
                       "baseline_max": None,
-                      "status": "n/a",
                   }
 
-                  # For now, memory doesn't have W&B baselines, so just mark as info
-                  picto = "ℹ️"
-                  stats_repr = "---"
-                  delta_repr = "---"
+                  # Check for historical memory data
+                  values_prev = [
+                      record[bid]["max_mem_mb"]
+                      for record in mem_records_by_rev.values()
+                      if bid in record
+                  ]
+                  
+                  if values_prev:
+                      value_last = values_prev[0]
+                      value_ref = statistics.fmean(values_prev)
+                      delta = (value_cur - value_last) / value_last * 100.0
+
+                      mem_info["baseline_last"] = int(value_last) if is_int else float(value_last)
+
+                      stats_repr = f"{fmt_num(value_last, is_int)}"
+                      delta_repr = f"{delta:+.1f}%"
+                      
+                      if len(values_prev) == MAX_VALID_REVISIONS:
+                          mem_info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
+                          mem_info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
+                          mem_info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
+
+                          value_std = statistics.stdev(values_prev)
+                          stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
+                          
+                          # Memory increase is bad (sign = -1)
+                          if delta > METRICS_TOL["max_mem_mb"]:
+                              mem_info["status"] = "regression"
+                              delta_repr = f"**{delta_repr}**"
+                              picto = "🔴"
+                              reg_found = True
+                          elif delta < -METRICS_TOL["max_mem_mb"]:
+                              mem_info["status"] = "alert"
+                              delta_repr = f"**{delta_repr}**"
+                              picto = "⚠️"
+                              alert_found = True
+                          else:
+                              mem_info["status"] = "ok"
+                              picto = "✅"
+                      else:
+                          mem_info["status"] = "n/a"
+                          picto = "ℹ️"
+                  else:
+                      mem_info["status"] = "n/a"
+                      picto = "ℹ️"
+                      stats_repr = "---"
+                      delta_repr = "---"
 
                   rows_md_mem.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
                   rows_for_csv["mem"].append(mem_info)
