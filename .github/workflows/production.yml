@@ -19,7 +19,7 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_14"
+  GENESIS_IMAGE_VER: "1_20"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
   PY_COLORS: 1
@@ -78,7 +78,15 @@ jobs:
               pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
               pip install --no-input ".[dev,render,usd]"
 
+              # sudo apt update
+              # sudo apt install -y tmate
+              # tmate -S /tmp/tmate.sock new-session -d
+              # tmate -S /tmp/tmate.sock wait tmate-ready
+              # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+
               pytest -v -ra --backend gpu --dev --forked ./tests
+
+              # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
       - name: Kill srun job systematically
         if: always()
@@ -150,7 +158,8 @@ jobs:
         run: |
           srun ${SRUN_COMMON} bash -e -s <<'EOF'
             source /venv/bin/activate
-            pytest --print -x -m "benchmarks" ./tests
+            pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
+                   --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
           EOF
 
@@ -168,3 +177,8 @@ jobs:
         with:
           name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
           path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+      - name: Upload benchmark mem stats as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
+          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"

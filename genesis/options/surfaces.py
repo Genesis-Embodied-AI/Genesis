@@ -521,7 +521,7 @@ class Plastic(Surface):
         Options for foam generation.
     """
 
-    ior: Optional[float] = 1.0
+    ior: float = 1.0
     diffuse_texture: Optional[Texture] = None
     specular_texture: Optional[Texture] = None
 
@@ -588,8 +588,9 @@ class BSDF(Surface):
     """
 
     diffuse_texture: Optional[Texture] = None
-    specular_trans: Optional[float] = 0.0
-    diffuse_trans: Optional[float] = 0.0
+    specular_trans: float = 0.0
+    diffuse_trans: float = 0.0
+    ior: float = 1.0
 
     def get_texture(self):
         return self.diffuse_texture
