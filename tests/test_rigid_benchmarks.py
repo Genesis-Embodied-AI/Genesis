@@ -18,6 +18,7 @@ from .utils import (
     get_platform_fingerprint,
     get_git_commit_timestamp,
     get_git_commit_info,
+    pprint_oneline,
 )
 
 
@@ -32,18 +33,6 @@ pytestmark = [
     pytest.mark.benchmarks,
     pytest.mark.taichi_offline_cache(False),
 ]
-
-
-def pprint_oneline(data, delimiter, digits=None):
-    msg_items = []
-    for key, value in data.items():
-        if isinstance(value, Enum):
-            value = value.name
-        if digits is not None and isinstance(value, (numbers.Real, np.floating)):
-            value = f"{value:.{digits}f}"
-        msg_item = "=".join((key, str(value)))
-        msg_items.append(msg_item)
-    return delimiter.join(msg_items)
 
 
 def get_rigid_solver_options(**kwargs):

@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 # Import utility functions from tests
-from utils import get_git_commit_info
+from utils import get_git_commit_info, pprint_oneline
 
 
 def parse_test_name(test_name):
@@ -97,7 +97,7 @@ def upload_memory_to_wandb(mem_csv_path):
 
             # Create benchmark ID matching alarm.yml format
             # Format: memory-scenario=franka-n_envs=30000-backend=gpu-flag=True
-            benchmark_id = f"memory-{'-'.join(f'{k}={v}' for k, v in params.items())}"
+            benchmark_id = f"memory-{pprint_oneline(params, delimiter='-')}"
 
             print(f"📊 Uploading {benchmark_id}: {max_mem_mb:.0f} MB")
 

@@ -1,5 +1,6 @@
 import platform
 import io
+import numbers
 import os
 import re
 import subprocess
@@ -8,6 +9,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from functools import cache
 from itertools import chain
 from pathlib import Path
@@ -44,6 +46,29 @@ IMAGE_EXTENSIONS = (".png", ".jpg")
 
 # Get repository "root" path (actually test dir is good enough)
 TEST_DIR = os.path.dirname(__file__)
+
+
+def pprint_oneline(data, delimiter, digits=None):
+    """
+    Format a dictionary as a single-line string with key=value pairs.
+    
+    Args:
+        data: Dictionary to format
+        delimiter: String to use between key=value pairs
+        digits: Optional number of digits for floating point values
+        
+    Returns:
+        Formatted string like "key1=value1{delimiter}key2=value2"
+    """
+    msg_items = []
+    for key, value in data.items():
+        if isinstance(value, Enum):
+            value = value.name
+        if digits is not None and isinstance(value, (numbers.Real, np.floating)):
+            value = f"{value:.{digits}f}"
+        msg_item = "=".join((key, str(value)))
+        msg_items.append(msg_item)
+    return delimiter.join(msg_items)
 
 
 @dataclass
