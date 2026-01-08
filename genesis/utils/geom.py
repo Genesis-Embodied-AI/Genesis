@@ -1824,3 +1824,87 @@ class SpatialHasher:
     @ti.func
     def pos_to_slot(self, pos):
         return self.grid_to_slot(self.pos_to_grid(pos))
+
+
+@nb.jit(nopython=True, cache=True)
+def cubic_spline_1d(x, y, xv):
+    """
+    Evaluate a 1D cubic spline at specified points.
+
+    Constructs a cubic spline interpolation of the input data `(x, y)` and
+    evaluates it at `xv`. The spline is C² continuous and uses **not-a-knot**
+    boundary conditions, producing a smooth curve that passes through all data points.
+
+    Parameters
+    ----------
+    x : array_like, shape (n,)
+        Strictly increasing x-coordinates of the data points.
+    y : array_like, shape (n,) or (n, m)
+        Corresponding y-coordinates. Multiple columns can be provided for
+        simultaneous interpolation of multiple datasets.
+    xv : array_like
+        Points at which to evaluate the spline.
+
+    Returns
+    -------
+    yv : ndarray, shape (len(xv),) or (len(xv), m)
+        Interpolated values at `xv`.
+    """
+    assert len(x) == len(y)
+    y_2d = y[:, None] if y.ndim == 1 else y
+    n, m = y_2d.shape
+    h = np.diff(x)
+
+    # Band storage: only store the non-zero diagonals
+    # band[0] = 2nd lower diagonal (only element at (2, 0))
+    # band[1] = 1st lower diagonal
+    # band[2] = main diagonal
+    # band[3] = 1st upper diagonal
+    # band[4] = 2nd upper diagonal (only element at (n - 3, n - 1))
+    band = np.zeros((5, n), dtype=gs.np_float)
+    rhs = np.zeros((n, m), dtype=gs.np_float)
+
+    # Not-a-knot boundary conditions
+    band[2, 0], band[3, 0], band[4, 0] = h[1], -(h[0] + h[1]), h[0]
+    band[0, n - 1], band[1, n - 1], band[2, n - 1] = h[-1], -(h[-2] + h[-1]), h[-2]
+
+    # Interior points
+    for i in range(1, n - 1):
+        band[1, i], band[2, i], band[3, i] = h[i - 1], 2 * (h[i - 1] + h[i]), h[i]
+        rhs[i] = 3 * ((y_2d[i + 1] - y_2d[i]) / h[i] - (y_2d[i] - y_2d[i - 1]) / h[i - 1])
+
+    # Specialized Gaussian elimination with band storage
+    for k in range(n - 1):
+        pivot = band[2, k]
+        if k + 1 < n:
+            factor = band[1, k + 1] / pivot
+            band[2, k + 1] -= factor * band[3, k]
+            if k + 2 < n:
+                band[3, k + 1] -= factor * band[4, k]
+            rhs[k + 1] -= factor * rhs[k]
+        if k == n - 3:
+            factor = band[0, n - 1] / pivot
+            band[1, n - 1] -= factor * band[3, k]
+            band[2, n - 1] -= factor * band[4, k]
+            rhs[n - 1] -= factor * rhs[k]
+
+    # Back substitution
+    c = np.zeros_like(rhs)
+    c[n - 1] = rhs[n - 1] / band[2, n - 1]
+    if n > 1:
+        c[n - 2] = (rhs[n - 2] - band[3, n - 2] * c[n - 1]) / band[2, n - 2]
+    for i in range(n - 3, -1, -1):
+        c[i] = rhs[i] - band[3, i] * c[i + 1]
+        if i + 2 < n and band[4, i] != 0:
+            c[i] -= band[4, i] * c[i + 2]
+        c[i] /= band[2, i]
+
+    # Solve for b and d
+    b = (y_2d[1:] - y_2d[:-1]) / h[:, None] - h[:, None] * (2 * c[:-1] + c[1:]) / 3
+    d = (c[1:] - c[:-1]) / (3 * h[:, None])
+
+    # Evaluate spline at xv
+    xv = np.atleast_1d(xv)
+    ix = np.clip(np.searchsorted(x[1:], xv), 0, n - 2)
+    dx = (xv - x[ix])[:, None]
+    return y_2d[ix] + b[ix] * dx + c[ix] * dx**2 + d[ix] * dx**3
