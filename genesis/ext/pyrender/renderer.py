@@ -114,7 +114,7 @@ class Renderer(object):
     def point_size(self, value):
         self._point_size = float(value)
 
-    def render(self, scene, flags, seg_node_map=None, *, is_first_pass=True, force_skip_shadows=False):
+    def render(self, scene, flags, seg_node_map=None, *, is_first_pass=True, force_skip_shadows=False, camera_poses=None):
         """Render a scene with the given set of flags.
 
         Parameters
@@ -127,6 +127,10 @@ class Renderer(object):
             A map from :class:`.Node` objects to (3,) colors for each.
             If specified along with flags set to :attr:`.RenderFlags.SEG`,
             the color image will be a segmentation image.
+        camera_poses : ndarray, shape (n_envs, 4, 4), optional
+            Per-environment camera poses. If provided, the camera pose will be
+            updated for each environment during the render loop. This enables
+            attached cameras to have different poses in each environment.
 
         Returns
         -------
@@ -160,6 +164,10 @@ class Renderer(object):
         retval_list = None
         for i in range(n_envs):
             env_idx = i if use_env_idx else -1
+
+            # Update camera pose for this environment if per-env poses are provided
+            if camera_poses is not None and use_env_idx:
+                scene.set_pose(scene.main_camera_node, camera_poses[i])
 
             # Render necessary shadow maps
             if not (force_skip_shadows or flags & RenderFlags.SEG or flags & RenderFlags.DEPTH_ONLY):

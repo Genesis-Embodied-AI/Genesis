@@ -132,6 +132,7 @@ class Raytracer:
 
         self.render_particle_as = vis_options.render_particle_as
         self.rendered_envs_idx = vis_options.rendered_envs_idx
+        self._original_rendered_envs_idx = None  # For temporary override during multi-env rendering
 
         self._scene = None
         self._shapes = dict()
@@ -335,6 +336,100 @@ class Raytracer:
                 gs.raise_exception("Texture type error. Both 'image_path' and 'image_array' are None")
         else:
             gs.raise_exception(f"Texture type error: {type(texture)}")
+
+    def set_render_env_idx(self, env_idx: int):
+        """
+        Temporarily set the environment index for rendering.
+
+        This method is used for multi-environment sensor rendering, where each
+        environment is rendered sequentially with its own camera pose and scene state.
+
+        Parameters
+        ----------
+        env_idx : int
+            The environment index to render.
+        """
+        # Save current state on first call (before any modification)
+        if self._original_rendered_envs_idx is None:
+            self._original_rendered_envs_idx = self.rendered_envs_idx
+        self.rendered_envs_idx = [env_idx]
+
+    def restore_render_env_idx(self):
+        """
+        Restore the original rendered_envs_idx after multi-env rendering.
+
+        Call this after completing multi-environment rendering to restore
+        the raytracer to its original state.
+        """
+        if self._original_rendered_envs_idx is not None:
+            self.rendered_envs_idx = self._original_rendered_envs_idx
+            self._original_rendered_envs_idx = None  # Reset for next use
+
+    def update_scene_for_env(self, env_idx: int):
+        """
+        Update scene with transforms from a specific environment only.
+
+        This is used for multi-env sensor rendering. Instead of rendering N copies
+        of each shape (one per env), we update only the first shape (batch_index=0)
+        with the transform from the specified environment, and hide all other shapes.
+
+        Parameters
+        ----------
+        env_idx : int
+            The environment index to use for transforms.
+        """
+        # Update visual states
+        self.visualizer.update_visual_states(True)
+
+        # Update rigid entities - use batch_index=0 shape with transform from env_idx
+        if self.sim.rigid_solver.is_active:
+            for rigid_entity in self.sim.rigid_solver.entities:
+                if rigid_entity.surface.vis_mode == "visual":
+                    geoms = rigid_entity.vgeoms
+                    geoms_T = self.sim.rigid_solver._vgeoms_render_T
+                else:
+                    geoms = rigid_entity.geoms
+                    geoms_T = self.sim.rigid_solver._geoms_render_T
+
+                for geom in geoms:
+                    name = str(geom.uid)
+                    geom_T = geoms_T[geom.idx][env_idx]
+                    # Update the _0 shape with transform from current env
+                    self.update_rigid(name, geom_T, batch_index=0)
+
+        # Hide all other env shapes by moving them far away
+        n_envs = (
+            len(self._original_rendered_envs_idx) if self._original_rendered_envs_idx else len(self.rendered_envs_idx)
+        )
+        self._hide_non_zero_env_shapes(n_envs)
+
+        self._scene.update_scene(time=self._t)
+
+    def _hide_non_zero_env_shapes(self, n_envs: int):
+        """Hide shapes for envs > 0 by moving them far off-screen."""
+        # Create a transform that moves shapes very far away
+        hide_matrix = np.array(
+            [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, -1e9],
+                [0, 0, 0, 1],
+            ],
+            dtype=np.float32,
+        )
+
+        if self.sim.rigid_solver.is_active:
+            for rigid_entity in self.sim.rigid_solver.entities:
+                if rigid_entity.surface.vis_mode == "visual":
+                    geoms = rigid_entity.vgeoms
+                else:
+                    geoms = rigid_entity.geoms
+
+                for geom in geoms:
+                    name = str(geom.uid)
+                    # Hide all shapes except _0
+                    for batch_idx in range(1, n_envs):
+                        self.update_rigid(name, hide_matrix, batch_index=batch_idx)
 
     def add_surface(self, shape_name, surface):
         # add emission
