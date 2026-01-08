@@ -1,15 +1,16 @@
-import pxr
-import genesis as gs
+from enum import Enum
+from typing import Dict, List, Literal
+
 import numpy as np
 import trimesh
-from typing import List, Dict, Literal
-from enum import Enum
 from pxr import Usd, UsdGeom, UsdShade
-from genesis.utils.usd.usd_parser_context import UsdParserContext
-from genesis.utils.usd.usd_parser_utils import compute_gs_related_transform, compute_gs_global_transform
-from genesis.utils import geom as gu
-from genesis.utils import mesh as mu
-from genesis.utils.usd.usd_parser_utils import bfs_iterator
+
+import genesis as gs
+
+from .. import geom as gu
+from .. import mesh as mu
+from .usd_parser_context import UsdParserContext
+from .usd_parser_utils import compute_gs_global_transform, compute_gs_relative_transform
 
 
 class UsdGeometryAdapter:
@@ -19,7 +20,7 @@ class UsdGeometryAdapter:
     Return: Genesis geometry info
     """
 
-    SupportUsdGeoms = [UsdGeom.Mesh, UsdGeom.Plane, UsdGeom.Sphere, UsdGeom.Capsule, UsdGeom.Cube, UsdGeom.Cylinder]
+    SupportedUsdGeoms = [UsdGeom.Mesh, UsdGeom.Plane, UsdGeom.Sphere, UsdGeom.Capsule, UsdGeom.Cube, UsdGeom.Cylinder]
 
     def __init__(self, ctx: UsdParserContext, prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]):
         self._prim: Usd.Prim = prim
@@ -27,10 +28,7 @@ class UsdGeometryAdapter:
         self._ctx: UsdParserContext = ctx
         self._mesh_type: Literal["mesh", "vmesh"] = mesh_type
 
-    def is_primitive(self) -> bool:
-        return self._is_primitive
-
-    def create_gs_geo_info(self) -> Dict:
+    def create_geo_info(self) -> Dict:
         g_info = dict()
         geom_is_col = self._mesh_type == "mesh"
         g_info["contype"] = 1 if geom_is_col else 0
@@ -40,27 +38,26 @@ class UsdGeometryAdapter:
 
         if self._prim.IsA(UsdGeom.Mesh):
             if self._mesh_type == "vmesh":
-                r = self._create_gs_visual_mesh_geo_info()
+                r = self._create_visual_mesh_geo_info()
             else:
-                r = self._create_gs_collision_mesh_geo_info()
+                r = self._create_collision_mesh_geo_info()
             g_info.update(r)
         elif self._prim.IsA(UsdGeom.Plane):
-            r = self._create_gs_plane_geo_info()
+            r = self._create_plane_geo_info()
             g_info.update(r)
         elif self._prim.IsA(UsdGeom.Sphere):
-            r = self._create_gs_sphere_geo_info()
+            r = self._create_sphere_geo_info()
             g_info.update(r)
         elif self._prim.IsA(UsdGeom.Capsule):
-            r = self._create_gs_capsule_geo_info()
+            r = self._create_capsule_geo_info()
             g_info.update(r)
         elif self._prim.IsA(UsdGeom.Cube):
-            r = self._create_gs_cube_geo_info()
+            r = self._create_cube_geo_info()
             g_info.update(r)
         elif self._prim.IsA(UsdGeom.Cylinder):
-            r = self._create_gs_cylinder_geo_info()
+            r = self._create_cylinder_geo_info()
             g_info.update(r)
         else:
-            # gs.logger.warning(f"Unsupported Geometry Type: {self._prim.GetTypeName()} of {self._prim}")
             return None
 
         return g_info
@@ -81,7 +78,7 @@ class UsdGeometryAdapter:
                 - triangles: np.ndarray, shape (m, 3) - The triangles of the mesh.
         """
         # Compute Genesis transform relative to ref_prim (Q^i_j)
-        Q_rel, S = compute_gs_related_transform(mesh_prim.GetPrim(), self._ref_prim)
+        Q_rel, S = compute_gs_relative_transform(mesh_prim.GetPrim(), self._ref_prim)
 
         # Get USD mesh attributes
         points_attr = mesh_prim.GetPointsAttr()
@@ -117,10 +114,10 @@ class UsdGeometryAdapter:
                 if normals.shape[0] == face_vertex_indices.shape[0]:  # face varying meshes
                     points_faces_varying = True
                 else:
-                    gs.logger.warning(
-                        f"Size of normals mismatch for mesh {mesh_prim.GetPath()} in usd file {self._get_usd_file_path()}."
+                    gs.raise_exception(
+                        f"Size of normals mismatch for mesh {mesh_prim.GetPath()} in usd file "
+                        f"{self._get_usd_file_path()}"
                     )
-                    normals = None
 
         uv_name = self._get_uv_name()
 
@@ -137,14 +134,14 @@ class UsdGeometryAdapter:
                     elif uvs.shape[0] == 1:
                         uvs = None
                     else:
-                        gs.logger.warning(
-                            f"Size of uvs mismatch for mesh {mesh_prim.GetPath()} in usd file {self._get_usd_file_path()}."
+                        gs.raise_exception(
+                            f"Size of uvs mismatch for mesh {mesh_prim.GetPath()} in usd file "
+                            f"{self._get_usd_file_path()}"
                         )
-                        uvs = None
 
         # Triangulate faces
         if len(face_vertex_counts) == 0:
-            triangles = np.array([], dtype=np.int32).reshape(0, 3)
+            triangles = np.zeros((0, 3), dtype=np.int32)
         else:
             # rearrange points and faces
             if points_faces_varying:
@@ -173,11 +170,10 @@ class UsdGeometryAdapter:
                 triangles = np.array(triangles, dtype=np.int32)
             else:
                 triangles = face_vertex_indices.reshape(-1, 3)
-                # Get UV name from material (needed for UV extraction)
 
         return Q_rel, points, normals, uvs, triangles
 
-    def _create_gs_visual_mesh_geo_info(self) -> Dict:
+    def _create_visual_mesh_geo_info(self) -> Dict:
         """Create geometry info for USD visual Mesh with rendering information."""
         mesh_prim = UsdGeom.Mesh(self._prim)
 
@@ -210,7 +206,7 @@ class UsdGeometryAdapter:
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
-    def _create_gs_collision_mesh_geo_info(self) -> Dict:
+    def _create_collision_mesh_geo_info(self) -> Dict:
         """Create geometry info for USD collision Mesh without rendering information."""
         mesh_prim = UsdGeom.Mesh(self._prim)
 
@@ -280,7 +276,7 @@ class UsdGeometryAdapter:
             metadata={"mesh_path": f"{self._get_usd_file_path()}::{self._prim.GetPath()}"},
         )
 
-    def _create_gs_plane_geo_info(self) -> Dict:
+    def _create_plane_geo_info(self) -> Dict:
         plane_prim = UsdGeom.Plane(self._prim)
 
         # Get plane properties
@@ -288,12 +284,12 @@ class UsdGeometryAdapter:
         length_attr = plane_prim.GetLengthAttr()
         axis_attr = plane_prim.GetAxisAttr()
 
-        # Get plane dimensions (default to large size if not specified)
-        width = width_attr.Get() if width_attr and width_attr.HasValue() else 1e3
-        length = length_attr.Get() if length_attr and length_attr.HasValue() else 1e3
+        # Get plane dimensions
+        width = width_attr.Get()
+        length = length_attr.Get()
 
-        # Get plane axis (default to "Z" for Z-up)
-        axis_str = axis_attr.Get() if axis_attr and axis_attr.HasValue() else "Z"
+        # Get plane axis
+        axis_str = axis_attr.Get()
 
         # Convert axis string to normal vector
         if axis_str == "X":
@@ -307,7 +303,7 @@ class UsdGeometryAdapter:
             plane_normal_local = np.array([0.0, 0.0, 1.0])
 
         # Get plane transform relative to reference prim (includes scale S)
-        Q_rel, S = compute_gs_related_transform(self._prim, self._ref_prim)
+        Q_rel, S = compute_gs_relative_transform(self._prim, self._ref_prim)
         S_diag = np.diag(S)
 
         # Apply scale to plane dimensions
@@ -343,15 +339,15 @@ class UsdGeometryAdapter:
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
-    def _create_gs_sphere_geo_info(self) -> Dict:
+    def _create_sphere_geo_info(self) -> Dict:
         sphere_prim = UsdGeom.Sphere(self._prim)
 
         # Get sphere radius
         radius_attr = sphere_prim.GetRadiusAttr()
-        radius = radius_attr.Get() if radius_attr and radius_attr.HasValue() else 0.5
+        radius = radius_attr.Get()
 
         # Get transform relative to reference prim (includes scale S)
-        Q_rel, S = compute_gs_related_transform(self._prim, self._ref_prim)
+        Q_rel, S = compute_gs_relative_transform(self._prim, self._ref_prim)
         S_diag = np.diag(S)
 
         if not np.allclose(S_diag, S_diag[0]):
@@ -375,7 +371,7 @@ class UsdGeometryAdapter:
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
-    def _create_gs_capsule_geo_info(self) -> Dict:
+    def _create_capsule_geo_info(self) -> Dict:
         capsule_prim = UsdGeom.Capsule(self._prim)
 
         # Get capsule properties
@@ -383,15 +379,15 @@ class UsdGeometryAdapter:
         height_attr = capsule_prim.GetHeightAttr()
         axis_attr = capsule_prim.GetAxisAttr()
 
-        # Get capsule dimensions (defaults)
-        radius = radius_attr.Get() if radius_attr and radius_attr.HasValue() else 0.5
-        height = height_attr.Get() if height_attr and height_attr.HasValue() else 1.0
+        # Get capsule dimensions
+        radius = radius_attr.Get()
+        height = height_attr.Get()
 
-        # Get axis (default to "Z")
-        axis_str = axis_attr.Get() if axis_attr and axis_attr.HasValue() else "Z"
+        # Get axis
+        axis_str = axis_attr.Get()
 
         # Get transform relative to reference prim (includes scale S)
-        Q_rel, S = compute_gs_related_transform(self._prim, self._ref_prim)
+        Q_rel, S = compute_gs_relative_transform(self._prim, self._ref_prim)
         S_diag = np.diag(S)
 
         # Apply scale to capsule dimensions
@@ -423,14 +419,19 @@ class UsdGeometryAdapter:
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
-    def _create_gs_cube_geo_info(self) -> Dict:
+    def _create_cube_geo_info(self) -> Dict:
         cube_prim = UsdGeom.Cube(self._prim)
 
         # Get cube size/extents
         size_attr = cube_prim.GetSizeAttr()
-        if size_attr and size_attr.HasValue():
+        size_val = size_attr.Get()
+        # Check if size is meaningful (not default empty value)
+        if size_val is not None and (
+            isinstance(size_val, (int, float))
+            and size_val > 0
+            or (isinstance(size_val, (list, tuple, np.ndarray)) and len(size_val) > 0)
+        ):
             # If size is a single value, create uniform cube
-            size_val = size_attr.Get()
             if isinstance(size_val, (int, float)):
                 extents = np.array([size_val, size_val, size_val])
             else:
@@ -438,19 +439,15 @@ class UsdGeometryAdapter:
         else:
             # Try to get extent (bounding box)
             extent_attr = cube_prim.GetExtentAttr()
-            if extent_attr and extent_attr.HasValue():
-                extent = extent_attr.Get()
-                # Extent is typically [min, max] for each axis
-                if len(extent) == 6:
-                    extents = np.array([extent[1] - extent[0], extent[3] - extent[2], extent[5] - extent[4]])
-                else:
-                    extents = np.array([1.0, 1.0, 1.0])
+            extent = extent_attr.Get()
+            # Extent is typically [min, max] for each axis
+            if len(extent) == 6:
+                extents = np.array([extent[1] - extent[0], extent[3] - extent[2], extent[5] - extent[4]])
             else:
-                # Default size
                 extents = np.array([1.0, 1.0, 1.0])
 
         # Get transform relative to reference prim (includes scale S)
-        Q_rel, S = compute_gs_related_transform(self._prim, self._ref_prim)
+        Q_rel, S = compute_gs_relative_transform(self._prim, self._ref_prim)
         S_diag = np.diag(S)
         # Apply scale to extents (element-wise multiplication)
         extents = S_diag * extents
@@ -468,7 +465,7 @@ class UsdGeometryAdapter:
             "quat": gu.R_to_quat(Q_rel[:3, :3]),
         }
 
-    def _create_gs_cylinder_geo_info(self) -> Dict:
+    def _create_cylinder_geo_info(self) -> Dict:
         """Create geometry info for USD Cylinder as a primitive."""
         cylinder_prim = UsdGeom.Cylinder(self._prim)
 
@@ -477,15 +474,15 @@ class UsdGeometryAdapter:
         height_attr = cylinder_prim.GetHeightAttr()
         axis_attr = cylinder_prim.GetAxisAttr()
 
-        # Get cylinder dimensions (defaults)
-        radius = radius_attr.Get() if radius_attr and radius_attr.HasValue() else 0.5
-        height = height_attr.Get() if height_attr and height_attr.HasValue() else 1.0
+        # Get cylinder dimensions
+        radius = radius_attr.Get()
+        height = height_attr.Get()
 
-        # Get axis (default to "Z")
-        axis_str = axis_attr.Get() if axis_attr and axis_attr.HasValue() else "Z"
+        # Get axis
+        axis_str = axis_attr.Get()
 
         # Get transform relative to reference prim (includes scale S)
-        Q_rel, S = compute_gs_related_transform(self._prim, self._ref_prim)
+        Q_rel, S = compute_gs_relative_transform(self._prim, self._ref_prim)
         S_diag = np.diag(S)
 
         # Apply scale to cylinder dimensions
@@ -517,45 +514,51 @@ class UsdGeometryAdapter:
         }
 
 
-class BatchedUsdGeometryAdapater:
+def create_geo_info_from_prim(
+    ctx: UsdParserContext, prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]
+) -> Dict | None:
     """
-    A adapter to convert USD geometry to Genesis geometry info.
-    Receive: List[UsdGeom.Mesh], List[UsdGeom.Plane], List[UsdGeom.Sphere], List[UsdGeom.Capsule], List[UsdGeom.Cube]
-    Return: List[Dict]
+    A function to convert USD geometry to Genesis geometry info.
+    Receive: prim (Usd.Prim), ref_prim (Usd.Prim), mesh_type
+    Return: Dict | None - Geometry info dictionary or None if the prim is not a supported geometry
     """
+    adapter = UsdGeometryAdapter(ctx, prim, ref_prim, mesh_type)
+    return adapter.create_geo_info()
 
-    def __init__(
-        self, ctx: UsdParserContext, start_prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]
-    ):
-        self._ctx: UsdParserContext = ctx
-        self._start_prim: Usd.Prim = start_prim
-        self._ref_prim: Usd.Prim = ref_prim
-        self._mesh_type: Literal["mesh", "vmesh"] = mesh_type
-        self._geometries: List[Usd.Prim] = self._find_all_geometries()
 
-    def _find_all_geometries(self) -> List[Usd.Prim]:
-        """Find all geometries under the start prim."""
-        geometries: List[Usd.Prim] = []
+def create_geo_infos_from_prim_tree(
+    ctx: UsdParserContext, start_prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]
+) -> List[Dict]:
+    """
+    Create geometry info from a prim tree.
+    Parameters:
+        ctx: UsdParserContext
+            The USD parser context.
+        start_prim: Usd.Prim
+            The start prim (tree root) to create geometry info from.
+        ref_prim: Usd.Prim
+            The reference prim (parent of the prim tree) to calculate the relative transform.
+        mesh_type: Literal["mesh", "vmesh"]
+            The mesh type to create geometry info for.
+    Returns:
+        List[Dict] - List of geometry info dictionaries
+    """
+    # Find all geometries under the start prim
+    geometries: List[Usd.Prim] = []
 
-        # consider the start prim itself
-        for geom_type in UsdGeometryAdapter.SupportUsdGeoms:
-            if self._start_prim.IsA(geom_type):
-                geometries.append(self._start_prim)
+    # consider the children of the start prim
+    # Use USD's native traversal to find all geometries (including nested ones)
+    for prim in Usd.PrimRange(start_prim):
+        for geom_type in UsdGeometryAdapter.SupportedUsdGeoms:
+            if prim.IsA(geom_type):
+                geometries.append(prim)
                 break
 
-        # consider the children of the start prim
-        for prim in bfs_iterator(self._start_prim):
-            for geom_type in UsdGeometryAdapter.SupportUsdGeoms:
-                if prim.IsA(geom_type):
-                    geometries.append(prim)
-                    break
-        return geometries
-
-    def create_gs_geo_infos(self) -> List[Dict]:
-        """Create geometry info for all geometries."""
-        g_infos: List[Dict] = []
-        for geometry in self._geometries:
-            g_info = UsdGeometryAdapter(self._ctx, geometry, self._ref_prim, self._mesh_type).create_gs_geo_info()
-            assert g_info is not None, f"Geometry: {geometry.GetPath()} create gs geo info failed"
-            g_infos.append(g_info)
-        return g_infos
+    # Create geometry info for all geometries
+    g_infos: List[Dict] = []
+    for geometry in geometries:
+        g_info = create_geo_info_from_prim(ctx, geometry, ref_prim, mesh_type)
+        if g_info is None:
+            gs.raise_exception(f"Geometry: {geometry.GetPath()} create gs geo info failed")
+        g_infos.append(g_info)
+    return g_infos

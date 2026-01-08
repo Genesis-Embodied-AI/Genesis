@@ -7,25 +7,28 @@ The parser is agnostic to genesis structures, focusing only on USD articulation 
 Also includes Genesis-specific parsing functions that translate USD structures into Genesis info structures.
 """
 
-from pxr import Usd, UsdGeom, UsdPhysics, UsdShade, Sdf
-from typing import List, Dict, Tuple, Literal
-import genesis as gs
-import numpy as np
 import re
+from typing import Dict, List, Literal, Tuple
+
+import numpy as np
+from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 from scipy.spatial.transform import Rotation as R
+
+import genesis as gs
+
+from .. import geom as gu
+from .. import urdf as urdf_utils
+from .usd_geo_adapter import create_geo_info_from_prim, create_geo_infos_from_prim_tree
 from .usd_parser_context import UsdParserContext
 from .usd_parser_utils import (
     bfs_iterator,
-    compute_gs_related_transform,
-    extract_quat_from_transform,
     compute_gs_global_transform,
+    compute_gs_relative_transform,
     convert_usd_joint_axis_to_gs,
-    usd_quat_to_numpy,
     convert_usd_joint_pos_to_gs,
+    extract_quat_from_transform,
+    usd_quat_to_numpy,
 )
-from .usd_geo_adapter import BatchedUsdGeometryAdapater, UsdGeometryAdapter
-from .. import geom as gu
-from .. import urdf as urdf_utils
 
 
 class UsdArticulationParser:
@@ -52,7 +55,7 @@ class UsdArticulationParser:
                 f"Provided prim {articulation_root_prim.GetPath()} is not an Articulation Root. Now we only support articulation parsing from ArticulationRootAPI."
             )
 
-        gs.logger.info(f"Parsing USD articulation from {articulation_root_prim.GetPath()}.")
+        gs.logger.debug(f"Parsing USD articulation from {articulation_root_prim.GetPath()}.")
 
         self.joints: List[UsdPhysics.Joint] = []
         self.fixed_joints: List[UsdPhysics.FixedJoint] = []
@@ -136,13 +139,12 @@ class UsdArticulationParser:
     all_pattern = re.compile(r"^.*")
 
     @staticmethod
-    def create_gs_geo_infos(
+    def create_geo_infos(
         context: UsdParserContext, link: Usd.Prim, pattern, mesh_type: Literal["mesh", "vmesh"]
     ) -> List[Dict]:
         # if the link itself is a geometry
         geo_infos: List[Dict] = []
-        link_geo_adapter = UsdGeometryAdapter(context, link, link, mesh_type)
-        link_geo_info = link_geo_adapter.create_gs_geo_info()
+        link_geo_info = create_geo_info_from_prim(context, link, link, mesh_type)
         if link_geo_info is not None:
             geo_infos.append(link_geo_info)
 
@@ -155,15 +157,14 @@ class UsdArticulationParser:
                 search_roots.append(child)
 
         for search_root in search_roots:
-            adapter = BatchedUsdGeometryAdapater(context, search_root, link, mesh_type)
-            geo_infos.extend(adapter.create_gs_geo_infos())
+            geo_infos.extend(create_geo_infos_from_prim_tree(context, search_root, link, mesh_type))
 
         return geo_infos
 
     @staticmethod
     def get_visual_geometries(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
         if context.vis_mode == "visual":
-            vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+            vis_geo_infos = UsdArticulationParser.create_geo_infos(
                 context, link, UsdArticulationParser.visual_pattern, "vmesh"
             )
             if len(vis_geo_infos) == 0:
@@ -171,11 +172,11 @@ class UsdArticulationParser:
                 gs.logger.info(
                     f"No visual geometries found, using any pattern to find visual geometries in {link.GetPath()}"
                 )
-                vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+                vis_geo_infos = UsdArticulationParser.create_geo_infos(
                     context, link, UsdArticulationParser.all_pattern, "vmesh"
                 )
         elif context.vis_mode == "collision":
-            vis_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+            vis_geo_infos = UsdArticulationParser.create_geo_infos(
                 context, link, UsdArticulationParser.collision_pattern, "vmesh"
             )
         else:
@@ -184,7 +185,7 @@ class UsdArticulationParser:
 
     @staticmethod
     def get_collision_geometries(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
-        col_geo_infos = UsdArticulationParser.create_gs_geo_infos(
+        col_geo_infos = UsdArticulationParser.create_geo_infos(
             context, link, UsdArticulationParser.collision_pattern, "mesh"
         )
         return col_geo_infos
@@ -450,9 +451,9 @@ def _parse_fixed_joint(joint_prim: Usd.Prim, parent_link: Usd.Prim, child_link: 
     j_info = dict()
 
     if not parent_link:
-        gs.logger.info(f"Root Fixed Joint detected {joint_prim.GetPath()}")
+        gs.logger.debug(f"Root Fixed Joint detected {joint_prim.GetPath()}")
     else:
-        gs.logger.info(f"Fixed Joint detected {joint_prim.GetPath()}")
+        gs.logger.debug(f"Fixed Joint detected {joint_prim.GetPath()}")
 
     j_info["dofs_motion_ang"] = np.zeros((0, 3))
     j_info["dofs_motion_vel"] = np.zeros((0, 3))
@@ -830,7 +831,7 @@ def _parse_joints(
         l_info = l_infos[idx]
 
         # Update link transform
-        trans_mat, _ = compute_gs_related_transform(child_link, parent_link)
+        trans_mat, _ = compute_gs_relative_transform(child_link, parent_link)
 
         l_info["pos"] = trans_mat[:3, 3]
         l_info["quat"] = extract_quat_from_transform(trans_mat)
@@ -932,7 +933,7 @@ def _setup_free_joints_for_base_links(l_infos: List[Dict], links_j_infos: List[L
 # ==================== Main Parsing Function ====================
 
 
-def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surfaces.Surface):
+def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Parse USD articulation from the given USD file and prim path, translating it into genesis structures.
 

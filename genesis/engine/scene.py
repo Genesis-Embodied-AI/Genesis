@@ -448,13 +448,13 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_stage(
         self,
-        morph: gs.morphs.USDMorph,
+        morph: gs.morphs.USD,
         vis_mode: Literal["visual", "collision"] = "visual",
         visualize_contact: bool = False,
     ):
-        from ..utils.usd import import_from_usd
+        from genesis.utils.usd import import_from_stage
 
-        return import_from_usd(self, morph, vis_mode, visualize_contact)
+        return import_from_stage(self, morph.file, vis_mode, morph, visualize_contact)
 
     @gs.assert_unbuilt
     def add_mesh_light(

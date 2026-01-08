@@ -7,18 +7,21 @@ The parser is agnostic to genesis structures, focusing only on USD rigid body st
 Also includes Genesis-specific parsing functions that translate USD structures into Genesis info structures.
 """
 
-from pxr import Usd, UsdGeom, UsdPhysics, UsdShade, Sdf
-from typing import List, Dict, Tuple, Literal
-import genesis as gs
-import numpy as np
 import re
+from typing import Dict, List, Literal, Tuple
+
+import numpy as np
+from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 from scipy.spatial.transform import Rotation as R
-from .usd_parser_context import UsdParserContext
-from .usd_parser_utils import bfs_iterator, compute_gs_global_transform, compute_gs_related_transform
-from .usd_articulation_parser import UsdArticulationParser
-from .usd_geo_adapter import BatchedUsdGeometryAdapater, UsdGeometryAdapter
+
+import genesis as gs
+
 from .. import geom as gu
 from .. import mesh as mu
+from .usd_articulation_parser import UsdArticulationParser
+from .usd_geo_adapter import UsdGeometryAdapter, create_geo_info_from_prim, create_geo_infos_from_prim_tree
+from .usd_parser_context import UsdParserContext
+from .usd_parser_utils import bfs_iterator, compute_gs_global_transform, compute_gs_relative_transform
 
 
 class UsdRigidBodyParser:
@@ -80,7 +83,7 @@ class UsdRigidBodyParser:
 
     @staticmethod
     def is_geo_prim(prim: Usd.Prim) -> bool:
-        return any(prim.IsA(geo_type) for geo_type in UsdGeometryAdapter.SupportUsdGeoms)
+        return any(prim.IsA(geo_type) for geo_type in UsdGeometryAdapter.SupportedUsdGeoms)
 
     @staticmethod
     def create_gs_geo_infos(
@@ -88,22 +91,21 @@ class UsdRigidBodyParser:
     ) -> List[Dict]:
         # if the rigid body itself is a geometry
         geo_infos: List[Dict] = []
-        rigid_body_geo_adapter = UsdGeometryAdapter(context, rigid_body_prim, rigid_body_prim, mesh_type)
-        rigid_body_geo_info = rigid_body_geo_adapter.create_gs_geo_info()
+        rigid_body_geo_info = create_geo_info_from_prim(context, rigid_body_prim, rigid_body_prim, mesh_type)
         if rigid_body_geo_info is not None:
             geo_infos.append(rigid_body_geo_info)
 
         # - RigidBody
         #     - Visuals
         #     - Collisions
+        # find all direct children of the rigid body that match the pattern
         search_roots: list[Usd.Prim] = []
         for child in rigid_body_prim.GetChildren():
             if pattern.match(child.GetName()):
                 search_roots.append(child)
 
         for search_root in search_roots:
-            adapter = BatchedUsdGeometryAdapater(context, search_root, rigid_body_prim, mesh_type)
-            geo_infos.extend(adapter.create_gs_geo_infos())
+            geo_infos.extend(create_geo_infos_from_prim_tree(context, search_root, rigid_body_prim, mesh_type))
 
         return geo_infos
 
@@ -209,7 +211,12 @@ class UsdRigidBodyParser:
 
         # Find all rigid bodies that are not part of any articulation
         rigid_bodies = []
-        for prim in bfs_iterator(stage.GetPseudoRoot()):
+
+        def should_continue(prim: Usd.Prim) -> bool:
+            # Don't process children if already part of a rigid body subtree or articulation
+            return prim.GetPath() not in rigid_body_descendants and prim.GetPath() not in articulation_descendants
+
+        for prim in bfs_iterator(stage.GetPseudoRoot(), should_continue=should_continue):
             # Skip if already part of a rigid body subtree
             if prim.GetPath() in rigid_body_descendants:
                 continue
@@ -241,7 +248,7 @@ class UsdRigidBodyParser:
 # ==================== Helper Functions for Genesis Parsing ====================
 
 
-def _finalize_geometry_info(g_info: Dict, morph: gs.morphs.USDRigidBody, is_visual: bool) -> Dict:
+def _finalize_geometry_info(g_info: Dict, morph: gs.morphs.USD, is_visual: bool) -> Dict:
     """
     Finalize geometry info dictionary by adding parser-specific fields.
 
@@ -344,7 +351,7 @@ def _create_rigid_body_link_info(rigid_body_prim: Usd.Prim, is_fixed: bool) -> T
 # ==================== Main Parsing Function ====================
 
 
-def parse_usd_rigid_body(morph: gs.morphs.USDRigidBody, surface: gs.surfaces.Surface):
+def parse_usd_rigid_body(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Parse USD rigid body from the given USD file and prim path, returning info structures
     suitable for mesh-style loading (similar to gs.morph.Mesh).

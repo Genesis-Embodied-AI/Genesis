@@ -1,9 +1,9 @@
 import io
+import logging
 import os
-import sys
 import shutil
 import subprocess
-import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +15,7 @@ import genesis as gs
 from .. import mesh as mu
 
 try:
-    from pxr import Usd, UsdGeom, UsdShade, Sdf
+    from pxr import Sdf, Usd, UsdGeom, UsdShade
 except ImportError as e:
     raise ImportError(
         "Failed to import USD dependencies. Try installing Genesis with 'usd' optional dependencies."

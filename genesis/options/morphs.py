@@ -6,7 +6,7 @@ rigid object / MPM object / FEM object.
 """
 
 import os
-from typing import Any, List, Optional, Sequence, Tuple, Union, ClassVar
+from typing import Any, List, Optional, Sequence, Tuple, Union, Literal
 
 import numpy as np
 
@@ -1285,70 +1285,7 @@ class Terrain(Morph):
         return self._subterrain_parameters
 
 
-class USDArticulation(FileMorph):
-    """
-    Morph loaded from a USD Prim inside a USD file.
-
-    This morph only supports Prim with APISchema:
-
-    - PhysicsRigidBodyAPI
-    - PhysicsArticulationRootAPI
-
-    Parameters
-    ----------
-    file : str
-        The path to the file.
-
-    prim_path : str, optional
-        The path to the USD prim inside the USD file. If not specified, the default prim will be used.
-
-    parser_ctx : UsdParserContext, optional, for better performance when parsing large USD files
-    """
-
-    file: str
-    prim_path: str = None
-    parser_ctx: Any = None
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        for USD_FORMAT in USD_FORMATS:
-            if self.is_format(USD_FORMAT):
-                break
-        else:
-            gs.raise_exception(f"Expected one of `{USD_FORMATS}` extensions for USD file: {self.file}")
-
-
-class USDRigidBody(FileMorph):
-    """
-    Morph loaded from a USD Prim with RigidBodyAPI (but not ArticulationRootAPI) inside a USD file.
-
-    This morph supports single rigid bodies (not articulated structures).
-
-    Parameters
-    ----------
-    file : str
-        The path to the file.
-
-    prim_path : str, optional
-        The path to the USD prim inside the USD file. If not specified, the first prim with RigidBodyAPI will be used.
-
-    parser_ctx : UsdParserContext, optional, for better performance when parsing large USD files
-    """
-
-    file: str
-    prim_path: str = None
-    parser_ctx: Any = None
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        for USD_FORMAT in USD_FORMATS:
-            if self.is_format(USD_FORMAT):
-                break
-        else:
-            gs.raise_exception(f"Expected one of `{USD_FORMATS}` extensions for USD file: {self.file}")
-
-
-class USDMorph(Options):
+class USD(FileMorph):
     """
     Configuration class for USD file loading with advanced processing options.
 
@@ -1384,6 +1321,13 @@ class USDMorph(Options):
         0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the original
         geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
         **This is only used for RigidEntity.**
+    _prim_path : str, optional
+        The parsing target prim path. Defaults to None.
+    _parsing_type : str, optional
+        The parsing type.
+        'articulation' for articulated body parsing, ArticulationRootAPI is required.
+        'rigid_body' for rigid body parsing, CollisionAPI|RigidBodyAPI is required.
+        Defaults to None, no parsing will be performed.
     """
 
     file: str
@@ -1394,17 +1338,18 @@ class USDMorph(Options):
     decimate: bool = True
     decimate_face_num: int = 500
     decimate_aggressiveness: int = 2
+    prim_path: Optional[str] = None
+    parsing_type: Optional[Literal["articulation", "rigid_body"]] = None
+    parser_ctx: Any = None
 
     def __init__(self, **data):
         super().__init__(**data)
 
-        # File validation
         if not isinstance(self.file, str):
             gs.raise_exception("`file` should be a string.")
 
         if not self.file.lower().endswith(USD_FORMATS):
             gs.raise_exception(f"USDMorph requires a USD file with extension {USD_FORMATS}, got: {self.file}")
 
-        # Initialize COACD options if not provided
         if self.coacd_options is None:
             self.coacd_options = CoacdOptions()

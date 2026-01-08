@@ -4,11 +4,13 @@ USD Parser Context
 Context class for tracking materials, articulations, and rigid bodies during USD parsing.
 """
 
+from typing import Literal, Set
+
 from pxr import Usd, UsdShade
-from typing import Set
+
 import genesis as gs
+
 from .usd_parser_utils import bfs_iterator
-from typing import Literal
 
 
 class UsdParserContext:

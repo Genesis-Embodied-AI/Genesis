@@ -1,28 +1,33 @@
 """
 USD Parser Utilities
 
-Utility functions for USD parsing, including transform conversions,
-mesh conversions, and other helper functions.
+Utility functions for USD parsing, including transform conversions, mesh conversions, and other helper functions.
 """
 
-from pxr import Usd, UsdGeom, Gf
-from typing import List, Tuple
-import genesis as gs
-import numpy as np
-import trimesh
 from collections import deque
-from .. import geom as gu
+from typing import Callable, List, Tuple
+
+import numpy as np
 import scipy.linalg
+import trimesh
+from pxr import Gf, Usd, UsdGeom
+
+import genesis as gs
+
+from .. import geom as gu
 
 
-def bfs_iterator(root: Usd.Prim):
+def bfs_iterator(root: Usd.Prim, should_continue: Callable[[Usd.Prim], bool] | None = None):
     """
-    Breadth-first iterator over USD prims.
+    Breadth-first iterator over USD prims with optional early break support.
 
     Parameters
     ----------
     root : Usd.Prim
         Root prim to start iteration from.
+    should_continue : Callable[[Usd.Prim], bool], optional
+        Optional callback function that takes a prim and returns True if children
+        should be processed, False otherwise. If None, all children are processed.
 
     Yields
     ------
@@ -33,13 +38,15 @@ def bfs_iterator(root: Usd.Prim):
     while queue:
         prim = queue.popleft()
         yield prim
-        for child in prim.GetChildren():
-            queue.append(child)
+        # Only process children if should_continue is None or returns True
+        if should_continue is None or should_continue(prim):
+            for child in prim.GetChildren():
+                queue.append(child)
 
 
 def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     """
-    Convert a USD Gf.Quatf to a numpy array (w, x, y, z format).
+    Convert a USD Gf.Quatf to a numpy array (w, x, y, z) format.
 
     Parameters
     ----------
@@ -81,17 +88,17 @@ def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) ->
     """
 
     # Compute Genesis transform relative to ref_prim (Q^i_j)
-    Q_rel, S = compute_gs_related_transform(usd_mesh.GetPrim(), ref_prim)
+    Q_rel, S = compute_gs_relative_transform(usd_mesh.GetPrim(), ref_prim)
 
     points_attr = usd_mesh.GetPointsAttr()
     face_vertex_counts_attr = usd_mesh.GetFaceVertexCountsAttr()
     face_vertex_indices_attr = usd_mesh.GetFaceVertexIndicesAttr()
 
-    points = np.array(points_attr.Get())
+    points = np.asarray(points_attr.Get())
     # Apply only scaling to every point
     points = points @ S
-    face_vertex_counts = np.array(face_vertex_counts_attr.Get())
-    face_vertex_indices = np.array(face_vertex_indices_attr.Get())
+    face_vertex_counts = np.asarray(face_vertex_counts_attr.Get())
+    face_vertex_indices = np.asarray(face_vertex_indices_attr.Get())
     faces = []
 
     offset = 0
@@ -122,7 +129,7 @@ def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) ->
         gs.logger.info(
             f"USD mesh {usd_mesh.GetPath()} contains polygons with more than 4 vertices. Triangulated using triangle fan method."
         )
-    faces = np.array(faces)
+    faces = np.asarray(faces)
     tmesh = trimesh.Trimesh(vertices=points, faces=faces)
 
     return Q_rel, tmesh
@@ -187,7 +194,7 @@ def compute_usd_global_transform(prim: Usd.Prim) -> np.ndarray:
     return np.array(t)
 
 
-def compute_usd_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> np.ndarray:
+def compute_usd_relative_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> np.ndarray:
     """
     Compute the transformation matrix from the reference prim to the prim.
 
@@ -246,7 +253,7 @@ def compute_gs_global_transform(prim: Usd.Prim) -> tuple[np.ndarray, np.ndarray]
     return Q_w, S
 
 
-def compute_gs_related_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> tuple[np.ndarray, np.ndarray]:
+def compute_gs_relative_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute Genesis transform (Q^i_j) relative to a reference prim.
     This computes the transform in Genesis tree structure (without scaling).

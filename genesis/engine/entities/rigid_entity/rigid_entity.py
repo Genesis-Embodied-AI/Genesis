@@ -138,21 +138,15 @@ class RigidEntity(Entity):
         self._joints = gs.List()
         self._equalities = gs.List()
 
-        if isinstance(self._morph, (gs.morphs.Mesh, gs.morphs.USDRigidBody)):
-            if isinstance(self._morph, gs.morphs.Mesh):
-                self._load_mesh(self._morph, self._surface)
-            else:
-                self._load_usd_rigid_body(self._morph, self._surface)
-        elif isinstance(
-            self._morph,
-            (
-                gs.morphs.MJCF,
-                gs.morphs.URDF,
-                gs.morphs.Drone,
-                gs.morphs.USDArticulation,
-            ),
-        ):
+        if isinstance(self._morph, gs.morphs.Mesh):
+            self._load_mesh(self._morph, self._surface)
+        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
             self._load_scene(self._morph, self._surface)
+        elif isinstance(self._morph, gs.morphs.USD):
+            if self._morph.parsing_type == "articulation":
+                self._load_scene(self._morph, self._surface)
+            elif self._morph.parsing_type == "rigid_body":
+                self._load_usd_rigid_body(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Terrain):
@@ -325,15 +319,9 @@ class RigidEntity(Entity):
         )
 
     def _load_usd_rigid_body(self, morph, surface):
-        """
-        Load a USD rigid body, similar to _load_mesh but parsing from USD file.
-        """
         from genesis.utils.usd import parse_usd_rigid_body
 
-        # Parse USD rigid body to get l_info, j_infos, and g_infos
         l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
-
-        # Create link and joint using _add_by_info
         link, (joint,) = self._add_by_info(
             l_info=l_info,
             j_infos=j_infos,
@@ -392,54 +380,65 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _collect_urdf_articulation_info(self, morph, surface):
-        # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
-        # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
-        l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-        # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
-        morph_ = copy(morph)
-        morph_.visualization = False
-        try:
-            # Mujoco's unified MJCF+URDF parser for URDF files.
-            # Note that Mujoco URDF parser completely ignores equality constraints.
-            l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+    def _load_scene(self, morph, surface):
+        # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
+        # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
+        # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
+        # initialized undetermined physics parameters.
+        if isinstance(morph, gs.morphs.MJCF):
+            # Mujoco's unified MJCF+URDF parser systematically for MJCF files
+            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
+        elif isinstance(morph, gs.morphs.URDF):
+            # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
+            # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
+            l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
+            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
+            morph_ = copy(morph)
+            morph_.visualization = False
+            try:
+                # Mujoco's unified MJCF+URDF parser for URDF files.
+                # Note that Mujoco URDF parser completely ignores equality constraints.
+                l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
 
-            # Mujoco is not parsing actuators properties
-            for j_info_gs in chain.from_iterable(links_j_infos):
-                for j_info_mj in chain.from_iterable(links_j_infos_mj):
-                    if j_info_mj["name"] == j_info_gs["name"]:
-                        for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
-                            j_info_mj[name] = j_info_gs[name]
-            links_j_infos = links_j_infos_mj
+                # Mujoco is not parsing actuators properties
+                for j_info_gs in chain.from_iterable(links_j_infos):
+                    for j_info_mj in chain.from_iterable(links_j_infos_mj):
+                        if j_info_mj["name"] == j_info_gs["name"]:
+                            for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
+                                j_info_mj[name] = j_info_gs[name]
+                links_j_infos = links_j_infos_mj
 
-            # Take into account 'world' body if it was added automatically for our legacy URDF parser
-            if len(links_g_infos_mj) == len(links_g_infos) + 1:
-                assert not links_g_infos_mj[0]
-                links_g_infos.insert(0, [])
-            assert len(links_g_infos_mj) == len(links_g_infos)
+                # Take into account 'world' body if it was added automatically for our legacy URDF parser
+                if len(links_g_infos_mj) == len(links_g_infos) + 1:
+                    assert not links_g_infos_mj[0]
+                    links_g_infos.insert(0, [])
+                assert len(links_g_infos_mj) == len(links_g_infos)
 
-            # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
-            # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
-            # by our custom legacy URDF parser.
-            # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
-            for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
-                # Remove collision geometries from our legacy URDF parser
-                for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
-                    is_col = g_info["contype"] or g_info["conaffinity"]
-                    if is_col:
-                        del link_g_infos[i_g]
+                # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
+                # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
+                # by our custom legacy URDF parser.
+                # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
+                for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
+                    # Remove collision geometries from our legacy URDF parser
+                    for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            del link_g_infos[i_g]
 
-                # Add visual geometries from Mujoco's unified MJCF+URDF parser
-                for g_info in link_g_infos_mj:
-                    is_col = g_info["contype"] or g_info["conaffinity"]
-                    if is_col:
-                        link_g_infos.append(g_info)
-        except (ValueError, AssertionError):
-            gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+                    # Add visual geometries from Mujoco's unified MJCF+URDF parser
+                    for g_info in link_g_infos_mj:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            link_g_infos.append(g_info)
+            except (ValueError, AssertionError):
+                gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+        elif isinstance(morph, gs.morphs.USD):
+            from genesis.utils.usd import parse_usd_articulation
 
-        return l_infos, links_j_infos, links_g_infos, eqs_info
-
-    def _build_up_articulation(self, l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface):
+            if morph.parsing_type == "articulation":
+                l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
+            else:
+                gs.raise_exception(f"Unsupported parsing type: {morph.parsing_type}")
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))
@@ -605,26 +604,6 @@ class RigidEntity(Entity):
                 sol_params=eq_info["sol_params"],
             )
 
-    def _load_scene(self, morph, surface):
-        # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
-        # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
-        # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
-        # initialized undetermined physics parameters.
-        if isinstance(morph, gs.morphs.MJCF):
-            # Mujoco's unified MJCF+URDF parser systematically for MJCF files
-            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
-        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
-            l_infos, links_j_infos, links_g_infos, eqs_info = self._collect_urdf_articulation_info(morph, surface)
-        elif isinstance(morph, gs.morphs.USDArticulation):
-            from genesis.utils.usd import parse_usd_articulation
-
-            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
-        else:
-            gs.raise_exception(f"Unsupported morph type: {type(morph)}")
-
-        if len(l_infos) > 0:
-            self._build_up_articulation(l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface)
-
     def _build(self):
         for link in self._links:
             link._build()
@@ -783,7 +762,6 @@ class RigidEntity(Entity):
                 dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
                 dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
-                dofs_target=j_info.get("dofs_target", np.zeros(n_dofs)),
             )
             joints.append(joint)
 
