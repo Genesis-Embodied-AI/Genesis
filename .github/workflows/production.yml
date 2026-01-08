@@ -88,19 +88,20 @@ jobs:
 
       - name: Run benchmarks
         if: github.event_name == 'pull_request'
-        shell: srun ${{ env.SRUN_COMMON }} bash -e {0}
         run: |
-          source /venv/bin/activate
+          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+            source /venv/bin/activate
 
-          # sudo apt update
-          # sudo apt install -y tmate
-          # tmate -S /tmp/tmate.sock new-session -d
-          # tmate -S /tmp/tmate.sock wait tmate-ready
-          # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+            # sudo apt update
+            # sudo apt install -y tmate
+            # tmate -S /tmp/tmate.sock new-session -d
+            # tmate -S /tmp/tmate.sock wait tmate-ready
+            # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-          pytest -v -ra --backend gpu --dev --forked ./tests
+            pytest -v -ra --backend gpu --dev --forked ./tests
 
-          # tmate -S /tmp/tmate.sock wait tmate-exit
+            # tmate -S /tmp/tmate.sock wait tmate-exit
+          EOF
 
       - name: Kill srun job systematically
         if: always()
