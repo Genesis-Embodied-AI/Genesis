@@ -431,6 +431,8 @@ class MPMOptions(Options):
         Lower bound of the simulation domain. Defaults to (-1.0, -1.0, 0.0).
     upper_bound : tuple, shape (3,), optional
         Upper bound of the simulation domain. Defaults to (1.0, 1.0, 1.0).
+    enable_particle_constraints : bool, optional
+        Whether to enable particle constraints for attaching MPM particles to rigid links. Defaults to False.
     use_sparse_grid : bool, optional
         This option is deprecated.
     leaf_block_size : int, optional
@@ -442,6 +444,7 @@ class MPMOptions(Options):
     particle_size: Optional[float] = None  # in meters. Will be computed automatically if it's None.
     grid_density: float = 64
     enable_CPIC: bool = False
+    enable_particle_constraints: bool = False
 
     # These will later be converted to discrete grid bound. The actual grid boundary could be slightly tighter.
     lower_bound: tuple = (-1.0, -1.0, 0.0)
