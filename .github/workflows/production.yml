@@ -28,77 +28,77 @@ env:
   OMNI_KIT_ALLOW_ROOT: "1"
 
 jobs:
-  # unit-tests:
-  #   name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+  unit-tests:
+    name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
 
-  #   runs-on: [self-hosted, coreweave, genesis-world]
+    runs-on: [self-hosted, coreweave, genesis-world]
 
-  #   strategy:
-  #     fail-fast: true
-  #     max-parallel: 1
-  #     matrix:
-  #       GS_ENABLE_NDARRAY: ["0", "1"]
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        GS_ENABLE_NDARRAY: ["0", "1"]
 
-  #   env:
-  #     GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
+    env:
+      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
 
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #     - name: Run unit tests
-  #       if: github.event_name == 'pull_request'
-  #       run: |
-  #         SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-  #         echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Run unit tests
+        if: github.event_name == 'pull_request'
+        run: |
+          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
 
-  #         mkdir -p "${HOME}/.cache" "${HOME}/.venv"
+          mkdir -p "${HOME}/.cache" "${HOME}/.venv"
 
-  #         # TODO: USD baking does not currently support Python 3.11 since
-  #         # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
-  #         # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
-  #         srun \
-  #           --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
-  #           --container-mounts=\
-  #         "${HOME}/.venv":/root/.venv,\
-  #         "${HOME}/.cache":/root/.cache,\
-  #         "${{ github.workspace }}":/root/workspace \
-  #           --no-container-mount-home --container-workdir=/root/workspace \
-  #           --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
-  #           --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
-  #           --job-name=${SLURM_JOB_NAME} \
-  #           bash -e -s << 'EOF'
-  #             if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
-  #               python3 -m venv --system-site-packages /root/.venv
-  #               source /root/.venv/bin/activate
-  #               pip install --no-input --upgrade pip pkg-info wheel
-  #               pip install --no-input --ignore-installed --upgrade blinker pyparsing setuptools
-  #             fi
-  #             source /root/.venv/bin/activate
+          # TODO: USD baking does not currently support Python 3.11 since
+          # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
+          # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
+          srun \
+            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
+            --container-mounts=\
+          "${HOME}/.venv":/root/.venv,\
+          "${HOME}/.cache":/root/.cache,\
+          "${{ github.workspace }}":/root/workspace \
+            --no-container-mount-home --container-workdir=/root/workspace \
+            --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
+            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
+            --job-name=${SLURM_JOB_NAME} \
+            bash -e -s << 'EOF'
+              if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
+                python3 -m venv --system-site-packages /root/.venv
+                source /root/.venv/bin/activate
+                pip install --no-input --upgrade pip pkg-info wheel
+                pip install --no-input --ignore-installed --upgrade blinker pyparsing setuptools
+              fi
+              source /root/.venv/bin/activate
 
-  #             pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
-  #             pip install --no-input ".[dev,render,usd]"
+              pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
+              pip install --no-input ".[dev,render,usd]"
 
-  #             # sudo apt update
-  #             # sudo apt install -y tmate
-  #             # tmate -S /tmp/tmate.sock new-session -d
-  #             # tmate -S /tmp/tmate.sock wait tmate-ready
-  #             # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+              # sudo apt update
+              # sudo apt install -y tmate
+              # tmate -S /tmp/tmate.sock new-session -d
+              # tmate -S /tmp/tmate.sock wait tmate-ready
+              # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-  #             pytest -v -ra --backend gpu --dev --forked ./tests
+              pytest -v -ra --backend gpu --dev --forked ./tests
 
-  #             # tmate -S /tmp/tmate.sock wait tmate-exit
-  #         EOF
-  #     - name: Kill srun job systematically
-  #       if: always()
-  #       run: |
-  #         if [ -n "${SLURM_JOB_NAME}" ] ; then
-  #           scancel --user=${USER} --name="${SLURM_JOB_NAME}"
-  #         fi
+              # tmate -S /tmp/tmate.sock wait tmate-exit
+          EOF
+      - name: Kill srun job systematically
+        if: always()
+        run: |
+          if [ -n "${SLURM_JOB_NAME}" ] ; then
+            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+          fi
 
   benchmarks:
     name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
 
-    # needs: unit-tests
+    needs: unit-tests
     runs-on: [self-hosted, coreweave, genesis-world]
 
     strategy:
