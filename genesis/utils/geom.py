@@ -1092,7 +1092,7 @@ def transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
 
 
 def inv_transform_pos_quat_by_trans_quat(pos, quat, t_trans, t_quat):
-    t_quat_inv = inv_quat(quat)
+    t_quat_inv = inv_quat(t_quat)
     new_pos = transform_by_quat(pos - t_trans, t_quat_inv)
     new_quat = transform_quat_by_quat(quat, t_quat_inv)
     return new_pos, new_quat
@@ -1137,15 +1137,9 @@ def transform_by_R(pos, R):
 
 def transform_by_trans_R(pos, trans, R):
     assert trans.shape[:-1] == R.shape[:-2]
-
-    B = trans.shape[:-1]
     if trans.ndim < pos.ndim:
         trans = trans[..., None, :]
-
-    new_pos = transform_by_R(pos, R)
-    new_pos += trans
-
-    return new_pos
+    return transform_by_R(pos, R) + trans
 
 
 def transform_by_T(pos, T):

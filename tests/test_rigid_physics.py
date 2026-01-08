@@ -2206,7 +2206,8 @@ def test_nan_reset(gs_sim, mode):
         pytest.param(gs.gpu, marks=pytest.mark.required),
     ],
 )
-def test_terrain_generation(request, show_viewer):
+@pytest.mark.parametrize("is_named", [True, False])
+def test_terrain_generation(is_named, show_viewer):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
         ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
@@ -2240,7 +2241,7 @@ def test_terrain_generation(request, show_viewer):
         vertical_scale=0.05,
         subterrain_types=TERRAIN_PATTERN,
         randomize=False,
-        name="my_terrain",
+        name="my_terrain" if is_named else None,
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
     terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
@@ -2282,10 +2283,11 @@ def test_terrain_generation(request, show_viewer):
     assert (signed_distance < 2 * OBJ_SIZE).all()
 
     # Check if cache is being reloaded as expected
-    scene = gs.Scene()
-    terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
-    terrain_2_mesh = terrain_2.geoms[0].mesh
-    assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
+    if is_named:
+        scene = gs.Scene()
+        terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
+        terrain_2_mesh = terrain_2.geoms[0].mesh
+        assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
 
 
 @pytest.mark.required
