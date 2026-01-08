@@ -384,7 +384,7 @@ class RigidSolver(Solver):
             return
 
         # Handling default arguments
-        batched = self._options.batch_dofs_info and self._options.batch_links_info
+        batched = self._options.batch_dofs_info or self._options.batch_links_info
         if not batched and envs_idx is not None:
             gs.raise_exception(
                 "Links and dofs must be batched to selectively update invweight and meaninertia for some environment."
