@@ -1,9 +1,12 @@
 import numpy as np
+from numpy.__config__ import show
 import pytest
+import torch
+import sys
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
-from .utils import assert_allclose
+from .utils import assert_allclose, rgb_array_to_png_bytes
 
 
 @pytest.mark.required
@@ -130,3 +133,86 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     cam_move_dist_offset_T = np.linalg.norm(cam_pos_final_offset_T - cam_pos_initial_offset_T)
     assert cam_move_dist_offset_T > 1e-2
     assert_allclose(cam_move_dist_offset_T, cam_move_dist, atol=1e-2)
+
+
+# ========================== Multi-environment tests ==========================
+
+
+@pytest.mark.required
+def test_rasterizer_camera_sensor_n_envs(show_viewer, png_snapshot):
+    if sys.platform == "darwin":
+        pytest.skip(
+            "Batched rendering with Rasterizer backend is not supported on this machine because it requires OpenGL 4.2."
+        )
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(),
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=show_viewer,
+    )
+
+    # Add a plane
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    )
+
+    # Add a sphere
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0), radius=0.3),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
+    )
+
+    options = gs.sensors.RasterizerCameraOptions(
+        res=(64, 64), pos=(3.0, 0.0, 1.5), lookat=(0.0, 0.0, 0.5), fov=60.0, draw_debug=show_viewer
+    )
+    camera = scene.add_sensor(options)
+    n_envs = 2
+
+    scene.build(n_envs=n_envs)
+    sphere.set_pos([[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]])
+
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (2, 64, 64, 3)
+    assert data.rgb.dtype == torch.uint8
+    assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
+
+    for i in range(n_envs):
+        assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
+
+
+@pytest.mark.required
+def test_rasterizer_camera_sensor_n_envs_attached_camera(show_viewer):
+    if sys.platform == "darwin":
+        pytest.skip(
+            "Batched rendering with Rasterizer backend is not supported on this machine because it requires OpenGL 4.2."
+        )
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(),
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=show_viewer,
+    )
+
+    # Add a sphere
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0), radius=0.3),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
+    )
+
+    options = gs.sensors.RasterizerCameraOptions(
+        res=(64, 64),
+        pos=(3.0, 0.0, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=60.0,
+        entity_idx=sphere.idx,
+        draw_debug=show_viewer,
+    )
+    scene.add_sensor(options)
+    n_envs = 2
+
+    with pytest.raises(gs.GenesisException, match="does not work with attached cameras yet."):
+        scene.build(n_envs=n_envs)
