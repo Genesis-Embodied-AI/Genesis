@@ -1,8 +1,8 @@
+import sys
+
 import numpy as np
-from numpy.__config__ import show
 import pytest
 import torch
-import sys
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
