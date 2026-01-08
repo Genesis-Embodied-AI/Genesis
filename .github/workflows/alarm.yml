@@ -146,16 +146,6 @@ jobs:
                           merged_set.add(key)
               return tuple(merged)
 
-          def sort_key(d):
-              key_list = []
-              for col in params_name:
-                  if col in d:
-                      val = d[col]
-                      key_list.append((0, val))
-                  else:
-                      key_list.append((1, None))
-              return key_list
-
           def artifacts_parse_csv_summary(current_txt_path):
               out = {}
               for line in current_txt_path.read_text().splitlines():
@@ -206,6 +196,200 @@ jobs:
           def fmt_num(v, is_int: bool):
               return f"{int(v):,}" if is_int else f"{v:.2f}"
 
+          def fetch_wandb_baselines(api, entity, project, bids_set, suite_name, metric_keys, max_valid_revisions, max_fetch_revisions):
+              """
+              Fetch baseline data from W&B for a given benchmark suite.
+              
+              Args:
+                  api: W&B API instance
+                  entity: W&B entity name
+                  project: W&B project name
+                  bids_set: Set of benchmark IDs to look for
+                  suite_name: Benchmark suite name (e.g., "rigid_body", "memory")
+                  metric_keys: Tuple of metric keys to extract (e.g., ("compile_time", "runtime_fps") or ("max_mem_mb",))
+                  max_valid_revisions: Maximum number of complete revisions to collect
+                  max_fetch_revisions: Maximum number of runs to fetch before giving up
+              
+              Returns:
+                  dict: Records by revision {rev: {bid: {metric: value, ...}, ...}, ...}
+              """
+              runs_iter = api.runs(f"{entity}/{project}", order="-created_at")
+              
+              revs = set()
+              records_by_rev = {}
+              
+              for i, run in enumerate(runs_iter):
+                  # Abort if still not complete after checking enough runs
+                  if len(revs) == max_fetch_revisions:
+                      break
+                  
+                  # Early return if enough complete records have been collected
+                  records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+                  if sum(records_is_complete) == max_valid_revisions:
+                      break
+                  
+                  # Load config and summary, with support of legacy runs
+                  config, summary = run.config, run.summary
+                  if isinstance(config, str):
+                      config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
+                  if isinstance(summary._json_dict, str):
+                      summary = json.loads(summary._json_dict)
+                  
+                  # Extract revision commit and branch
+                  try:
+                      rev, branch = config["revision"].split("@", 1)
+                      revs.add(rev)
+                  except (ValueError, KeyError):
+                      continue
+                  
+                  # Ignore runs associated with a commit that is not part of the official repository
+                  if not branch.startswith('Genesis-Embodied-AI/'):
+                      continue
+                  
+                  # Skip runs that did not finish for some reason
+                  if run.state != "finished":
+                      continue
+                  
+                  # Do not store new records if the desired number of revisions is already reached
+                  if len(records_by_rev) == max_valid_revisions and rev not in records_by_rev:
+                      continue
+                  
+                  # Extract benchmark ID and normalize it
+                  try:
+                      sid, bid = config["benchmark_id"].split("-", 1)
+                      if sid != suite_name:
+                          continue
+                  except (ValueError, KeyError):
+                      continue
+                  
+                  # Make sure that stats are valid
+                  try:
+                      is_valid = True
+                      for k in metric_keys:
+                          v = summary.get(k)
+                          if not isinstance(v, (float, int)) or math.isnan(v):
+                              is_valid = False
+                              break
+                      if not is_valid:
+                          continue
+                  except (KeyError, TypeError):
+                      continue
+                  
+                  # Store all the records into a dict
+                  nbid = normalize_benchmark_id(bid)
+                  records_by_rev.setdefault(rev, {})[nbid] = {
+                      metric: summary[metric] for metric in metric_keys
+                  }
+              
+              return records_by_rev
+
+          def build_comparison_table(current_data, records_by_rev, params_name, metric_key, metric_alias, sign, tolerance, max_valid_revisions):
+              """
+              Build a comparison table for a given metric.
+              
+              Args:
+                  current_data: Dict of current benchmark results {bid: {metric: value, ...}, ...}
+                  records_by_rev: Historical records by revision
+                  params_name: Tuple of parameter names for table columns
+                  metric_key: The metric key to analyze (e.g., "runtime_fps", "max_mem_mb")
+                  metric_alias: Display name for the metric (e.g., "FPS", "Memory (MB)")
+                  sign: 1 if higher is better, -1 if lower is better
+                  tolerance: Regression tolerance percentage
+                  max_valid_revisions: Number of revisions needed for stats
+              
+              Returns:
+                  tuple: (table_rows, csv_rows, reg_found, alert_found)
+              """
+              rows_md = []
+              rows_csv = []
+              reg_found = False
+              alert_found = False
+
+              header_cells = (
+                  "status",
+                  *params_name,
+                  f"current {metric_alias}",
+                  f"baseline {metric_alias} [last (mean ± std)] (*1)",
+                  f"Δ {metric_alias} (*2)"
+              )
+              header = "| " + " | ".join(header_cells) + " |"
+              align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
+
+              def local_sort_key(d):
+                  key_list = []
+                  for col in params_name:
+                      if col in d:
+                          val = d[col]
+                          key_list.append((0, val))
+                      else:
+                          key_list.append((1, None))
+                  return key_list
+
+              for bid in sorted(current_data.keys(), key=local_sort_key):
+                  value_cur = current_data[bid][metric_key]
+                  is_int = isinstance(value_cur, int) or value_cur.is_integer()
+                  value_repr = fmt_num(value_cur, is_int)
+
+                  params_repr = [bid.get(k, "-") for k in params_name]
+                  info = {
+                      **dict(zip(params_name, params_repr)),
+                      "current": value_cur,
+                      "baseline_last": None,
+                      "baseline_min": None,
+                      "baseline_max": None,
+                  }
+
+                  values_prev = [
+                      record[bid][metric_key]
+                      for record in records_by_rev.values()
+                      if bid in record
+                  ]
+                  
+                  if values_prev:
+                      value_last = values_prev[0]
+                      value_ref = statistics.fmean(values_prev)
+                      delta = (value_cur - value_last) / value_last * 100.0
+
+                      info["baseline_last"] = int(value_last) if is_int else float(value_last)
+
+                      stats_repr = f"{fmt_num(value_last, is_int)}"
+                      delta_repr = f"{delta:+.1f}%"
+                      
+                      if len(values_prev) == max_valid_revisions:
+                          info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
+                          info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
+                          info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
+
+                          value_std = statistics.stdev(values_prev)
+                          stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
+                          
+                          if sign * delta < -tolerance:
+                              info["status"] = "regression"
+                              delta_repr = f"**{delta_repr}**"
+                              picto = "🔴"
+                              reg_found = True
+                          elif sign * delta > tolerance:
+                              info["status"] = "alert"
+                              delta_repr = f"**{delta_repr}**"
+                              picto = "⚠️"
+                              alert_found = True
+                          else:
+                              info["status"] = "ok"
+                              picto = "✅"
+                      else:
+                          info["status"] = "n/a"
+                          picto = "ℹ️"
+                  else:
+                      info["status"] = "n/a"
+                      picto = "ℹ️"
+                      stats_repr = "---"
+                      delta_repr = "---"
+
+                  rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
+                  rows_csv.append(info)
+
+              return [header, align] + rows_md, rows_csv, reg_found, alert_found
+
           # ----- load artifacts (current results) -----
 
           current_csv_paths = list(speed_artifacts_dir.rglob("speed_test*.txt"))
@@ -228,71 +412,10 @@ jobs:
           PROJECT = os.environ["WANDB_PROJECT"]
 
           api = wandb.Api()
-          runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
-
-          revs = set()
-          records_by_rev = {}
-          for i, run in enumerate(runs_iter):
-              # Abort if still not complete after checking enough runs.
-              # This would happen if a new benchmark has been added, and not enough past data is available yet.
-              if len(revs) == MAX_FETCH_REVISIONS:
-                  break
-
-              # Early return if enough complete records have been collected
-              records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
-              if sum(records_is_complete) == MAX_VALID_REVISIONS:
-                  break
-
-              # Load config and summary, with support of legacy runs
-              config, summary = run.config, run.summary
-              if isinstance(config, str):
-                  config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
-              if isinstance(summary._json_dict, str):
-                  summary = json.loads(summary._json_dict)
-
-              # Extract revision commit and branch
-              try:
-                  rev, branch = config["revision"].split("@", 1)
-                  revs.add(rev)
-              except ValueError:
-                  # Ignore this run if the revision has been corrupted for some unknown reason
-                  continue
-              # Ignore runs associated with a commit that is not part of the official repository
-              if not branch.startswith('Genesis-Embodied-AI/'):
-                  continue
-
-              # Skip runs did not finish for some reason
-              if run.state != "finished":
-                  continue
-
-              # Do not store new records if the desired number of revision is already reached
-              if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
-                  continue
-
-              # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
-              # Note that the rigid body benchmark suite is the only one being supported for now.
-              sid, bid = config["benchmark_id"].split("-", 1)
-              if sid != "rigid_body":
-                  continue
-
-              # Make sure that stats are valid
-              try:
-                  is_valid = True
-                  for k in METRIC_KEYS:
-                      v = summary[k]
-                      if not isinstance(v, (float, int)) or math.isnan(v):
-                          is_valid = False
-                          break
-                  if not is_valid:
-                      continue
-              except KeyError:
-                  continue
-
-              # Store all the records into a dict
-              nbid = normalize_benchmark_id(bid)
-              records_by_rev.setdefault(rev, {})[nbid] = {
-                  metric: summary[metric] for metric in METRIC_KEYS
-              }
+          records_by_rev = fetch_wandb_baselines(
+              api, ENTITY, PROJECT, bids_set, "rigid_body", METRIC_KEYS,
+              MAX_VALID_REVISIONS, MAX_FETCH_REVISIONS
+          )
 
           # ----- load memory artifacts -----
 
@@ -308,62 +431,10 @@ jobs:
           mem_records_by_rev = {}
           if current_mem:
               # Fetch memory baselines from W&B
-              runs_iter_mem = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
-              mem_revs = set()
-              
-              for i, run in enumerate(runs_iter_mem):
-                  if len(mem_revs) == MAX_FETCH_REVISIONS:
-                      break
-                  
-                  # Early return if enough complete records collected
-                  mem_records_complete = [mem_bids_set.issubset(record.keys()) for record in mem_records_by_rev.values()]
-                  if sum(mem_records_complete) == MAX_VALID_REVISIONS:
-                      break
-                  
-                  # Load config and summary
-                  config, summary = run.config, run.summary
-                  if isinstance(config, str):
-                      config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
-                  if isinstance(summary._json_dict, str):
-                      summary = json.loads(summary._json_dict)
-                  
-                  # Extract revision commit and branch
-                  try:
-                      rev, branch = config["revision"].split("@", 1)
-                      mem_revs.add(rev)
-                  except (ValueError, KeyError):
-                      continue
-                  
-                  if not branch.startswith('Genesis-Embodied-AI/'):
-                      continue
-                  
-                  if run.state != "finished":
-                      continue
-                  
-                  if len(mem_records_by_rev) == MAX_VALID_REVISIONS and rev not in mem_records_by_rev:
-                      continue
-                  
-                  # Extract benchmark ID for memory tests
-                  try:
-                      sid, bid = config["benchmark_id"].split("-", 1)
-                      if sid != "memory":
-                          continue
-                  except (ValueError, KeyError):
-                      continue
-                  
-                  # Get max_mem_mb from summary
-                  try:
-                      max_mem_mb = summary.get("max_mem_mb")
-                      if not isinstance(max_mem_mb, (float, int)) or math.isnan(max_mem_mb):
-                          continue
-                  except (KeyError, TypeError):
-                      continue
-                  
-                  # Store memory record
-                  nbid = normalize_benchmark_id(bid)
-                  mem_records_by_rev.setdefault(rev, {})[nbid] = {
-                      "max_mem_mb": max_mem_mb
-                  }
+              mem_records_by_rev = fetch_wandb_baselines(
+                  api, ENTITY, PROJECT, mem_bids_set, "memory", ("max_mem_mb",),
+                  MAX_VALID_REVISIONS, MAX_FETCH_REVISIONS
+              )
 
           # ----- build THREE tables -----
 
@@ -373,175 +444,30 @@ jobs:
           reg_found, alert_found = False, False
           tables = {}
           rows_for_csv = {"runtime_fps": [], "compile_time": [], "mem": []}
-          info = {}
+          
           for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
-              rows_md = []
-
-              header_cells = (
-                  "status",
-                  *params_name,
-                  f"current {alias}",
-                  f"baseline {alias} [last (mean ± std)] (*1)",
-                  f"Δ {alias} (*2)"
+              table_rows, csv_rows, metric_reg, metric_alert = build_comparison_table(
+                  current_bm, records_by_rev, params_name, metric, alias, sign,
+                  METRICS_TOL[metric], MAX_VALID_REVISIONS
               )
-              header = "| " + " | ".join(header_cells) + " |"
-              align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
-
-              for bid in sorted(current_bm.keys(), key=sort_key):
-                  value_cur = current_bm[bid][metric]
-                  is_int = isinstance(value_cur, int) or value_cur.is_integer()
-                  value_repr = fmt_num(value_cur, is_int)
-
-                  params_repr = [bid.get(k, "-") for k in params_name]
-                  info = {
-                      **dict(zip(params_name, params_repr)),
-                      "current": value_cur,
-                      "baseline_last": None,
-                      "baseline_min": None,
-                      "baseline_max": None,
-                  }
-
-                  values_prev = [
-                      record[bid][metric]
-                      for record in records_by_rev.values()
-                      if bid in record
-                  ]
-                  if values_prev:
-                      value_last = values_prev[0]
-                      value_ref = statistics.fmean(values_prev)
-                      delta = (value_cur - value_last) / value_last * 100.0
-
-                      info["baseline_last"] = int(value_last) if is_int else float(value_last)
-
-                      stats_repr = f"{fmt_num(value_last, is_int)}"
-                      delta_repr = f"{delta:+.1f}%"
-                      if len(values_prev) == MAX_VALID_REVISIONS:
-                          info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
-                          info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
-                          info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
-
-                          value_std = statistics.stdev(values_prev)
-                          stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                          if sign * delta < - METRICS_TOL[metric]:
-                              info["status"] = "regression"
-
-                              delta_repr = f"**{delta_repr}**"
-                              picto = "🔴"
-                              reg_found = True
-                          elif sign * delta > METRICS_TOL[metric]:
-                              info["status"] = "alert"
-
-                              delta_repr = f"**{delta_repr}**"
-                              picto = "⚠️"
-                              alert_found = True
-                          else:
-                              info["status"] = "ok"
-
-                              picto = "✅"
-                      else:
-                          info["status"] = "n/a"
-
-                          picto = "ℹ️"
-                  else:
-                      picto, stats_repr, delta_repr = "ℹ️", "---", "---"
-
-                  rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
-                  rows_for_csv[metric].append(info)
-
-              tables[metric] = [header, align] + rows_md
+              tables[metric] = table_rows
+              rows_for_csv[metric] = csv_rows
+              reg_found = reg_found or metric_reg
+              alert_found = alert_found or metric_alert
 
           # ----- build memory table -----
 
           if current_mem:
               mem_params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_mem.keys()))
-              rows_md_mem = []
-
-              header_cells_mem = (
-                  "status",
-                  *mem_params_name,
-                  "current Memory (MB)",
-                  "baseline Memory (MB) [last (mean ± std)] (*1)",
-                  "Δ Memory (*2)"
+              
+              table_rows, csv_rows, mem_reg, mem_alert = build_comparison_table(
+                  current_mem, mem_records_by_rev, mem_params_name, "max_mem_mb", "Memory (MB)", -1,
+                  METRICS_TOL["max_mem_mb"], MAX_VALID_REVISIONS
               )
-              header_mem = "| " + " | ".join(header_cells_mem) + " |"
-              align_mem  = "|:------:|" + "|".join([":---" for _ in mem_params_name]) + "|---:|---:|---:|"
-
-              def mem_sort_key(d):
-                  key_list = []
-                  for col in mem_params_name:
-                      if col in d:
-                          val = d[col]
-                          key_list.append((0, val))
-                      else:
-                          key_list.append((1, None))
-                  return key_list
-
-              for bid in sorted(current_mem.keys(), key=mem_sort_key):
-                  value_cur = current_mem[bid]["max_mem_mb"]
-                  is_int = isinstance(value_cur, int) or value_cur.is_integer()
-                  value_repr = fmt_num(value_cur, is_int)
-
-                  params_repr = [bid.get(k, "-") for k in mem_params_name]
-                  mem_info = {
-                      **dict(zip(mem_params_name, params_repr)),
-                      "current": value_cur,
-                      "baseline_last": None,
-                      "baseline_min": None,
-                      "baseline_max": None,
-                  }
-
-                  # Check for historical memory data
-                  values_prev = [
-                      record[bid]["max_mem_mb"]
-                      for record in mem_records_by_rev.values()
-                      if bid in record
-                  ]
-                  
-                  if values_prev:
-                      value_last = values_prev[0]
-                      value_ref = statistics.fmean(values_prev)
-                      delta = (value_cur - value_last) / value_last * 100.0
-
-                      mem_info["baseline_last"] = int(value_last) if is_int else float(value_last)
-
-                      stats_repr = f"{fmt_num(value_last, is_int)}"
-                      delta_repr = f"{delta:+.1f}%"
-                      
-                      if len(values_prev) == MAX_VALID_REVISIONS:
-                          mem_info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
-                          mem_info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
-                          mem_info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
-
-                          value_std = statistics.stdev(values_prev)
-                          stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                          
-                          # Memory increase is bad (sign = -1)
-                          if delta > METRICS_TOL["max_mem_mb"]:
-                              mem_info["status"] = "regression"
-                              delta_repr = f"**{delta_repr}**"
-                              picto = "🔴"
-                              reg_found = True
-                          elif delta < -METRICS_TOL["max_mem_mb"]:
-                              mem_info["status"] = "alert"
-                              delta_repr = f"**{delta_repr}**"
-                              picto = "⚠️"
-                              alert_found = True
-                          else:
-                              mem_info["status"] = "ok"
-                              picto = "✅"
-                      else:
-                          mem_info["status"] = "n/a"
-                          picto = "ℹ️"
-                  else:
-                      mem_info["status"] = "n/a"
-                      picto = "ℹ️"
-                      stats_repr = "---"
-                      delta_repr = "---"
-
-                  rows_md_mem.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
-                  rows_for_csv["mem"].append(mem_info)
-
-              tables["mem"] = [header_mem, align_mem] + rows_md_mem
+              tables["mem"] = table_rows
+              rows_for_csv["mem"] = csv_rows
+              reg_found = reg_found or mem_reg
+              alert_found = alert_found or mem_alert
 
           # ----- baseline commit list (MD) -----
           blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
