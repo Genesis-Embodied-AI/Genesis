@@ -11,7 +11,8 @@ import os
 # Add tests directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from upload_mem_to_wandb import parse_test_name, get_revision
+from upload_mem_to_wandb import parse_test_name
+from utils import get_git_commit_info
 
 
 class TestParseTestName:
@@ -56,12 +57,12 @@ class TestParseTestName:
         assert result == {}
 
 
-class TestGetRevision:
-    """Tests for get_revision function"""
+class TestGetGitCommitInfo:
+    """Tests for get_git_commit_info function"""
 
-    def test_get_revision_format(self):
-        """Test that revision has correct format"""
-        revision = get_revision()
+    def test_get_git_commit_info_format(self):
+        """Test that git commit info has correct format"""
+        revision, timestamp = get_git_commit_info()
 
         # Should be in format: commit_hash@org/repo
         assert "@" in revision

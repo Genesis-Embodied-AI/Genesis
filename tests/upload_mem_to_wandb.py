@@ -8,37 +8,13 @@ and uploads each test's memory usage as a separate W&B run.
 
 import wandb
 import csv
-import subprocess
 import os
 import re
 import sys
 from pathlib import Path
 
-
-def get_revision():
-    """
-    Get current git revision in format: commit_hash@org/repo
-
-    Returns:
-        str: Revision string like "abc123def456@Genesis-Embodied-AI/Genesis"
-    """
-    try:
-        rev = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
-
-        # Get remote URL and parse org/repo
-        remote = (
-            subprocess.check_output(["git", "remote", "get-url", "origin"], stderr=subprocess.DEVNULL).decode().strip()
-        )
-
-        # Parse GitHub URL to get org/repo
-        if "github.com" in remote:
-            # Handle both SSH (git@github.com:org/repo.git) and HTTPS (https://github.com/org/repo.git)
-            org_repo = remote.split("github.com")[-1].strip("/:").replace(".git", "")
-            return f"{rev}@{org_repo}"
-
-        return f"{rev}@unknown"
-    except subprocess.CalledProcessError:
-        return "unknown@unknown"
+# Import utility functions from tests
+from utils import get_git_commit_info
 
 
 def parse_test_name(test_name):
@@ -99,7 +75,7 @@ def upload_memory_to_wandb(mem_csv_path):
         print(f"Memory CSV file not found: {mem_csv_path}")
         return 1
 
-    revision = get_revision()
+    revision, _ = get_git_commit_info()
     print(f"Uploading memory metrics to W&B for revision: {revision}")
 
     uploaded_count = 0
