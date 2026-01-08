@@ -178,7 +178,6 @@ class Renderer(object):
                             self._shadow_mapping_pass(scene, ln, flags, env_idx=env_idx)
                         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
-            # Make forward pass
             if flags & RenderFlags.REFLECTIVE_FLOOR:
                 self._floor_pass(scene, flags, env_idx=env_idx)
 
@@ -190,7 +189,8 @@ class Renderer(object):
                     for idx, val in enumerate(retval):
                         retval_list[idx].append(val)
 
-            # If necessary, make normals pass
+            # Render normal visualization on screen only if requested, ie after reading frame buffer and without
+            # cleaning first.
             if flags & (RenderFlags.VERTEX_NORMALS | RenderFlags.FACE_NORMALS):
                 self._normal_pass(scene, flags, env_idx=env_idx)
 

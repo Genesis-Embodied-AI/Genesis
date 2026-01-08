@@ -1,5 +1,4 @@
 import copy
-import io
 import os
 import time
 import xml.etree.ElementTree as ET
@@ -10,15 +9,8 @@ import networkx as nx
 import numpy as np
 import PIL
 import trimesh
-from scipy.spatial.transform import Rotation
 
-from .utils import (
-    configure_origin,
-    get_filename,
-    load_meshes,
-    parse_origin,
-    unparse_origin,
-)
+from .utils import configure_origin, get_filename, load_meshes, parse_origin, unparse_origin
 
 
 class URDFType(object):
@@ -4025,12 +4017,8 @@ class URDF(URDFType):
                 for grandchild_node in G.successors(child_node):
                     joint_edge_vec1 = norm_vec(G_pos[parent_node] - G_pos[child_node])
                     joint_edge_vec2 = norm_vec(G_pos[grandchild_node] - G_pos[child_node])
-                    joint_rotmat = rotation_matrix_from_vectors(
-                        joint_edge_vec1, joint_edge_vec2
-                    )  # broken down into joint axis and initial pose
-                    joint_rotvec = Rotation.from_matrix(joint_rotmat).as_rotvec()
-                    joint_init_ang = np.linalg.norm(joint_rotvec)
-                    joint_axis = joint_rotvec / joint_init_ang  # the same as np.cross(joint_edge_vec2, joint_edge_vec1)
+                    joint_axis = np.cross(joint_edge_vec1, joint_edge_vec2)
+                    joint_axis /= np.linalg.norm(joint_axis)
                     joint_origin_rotmat = np.eye(3)
                     joint_origin = xyz_rotmat_to_matrix(joint_xyz, joint_origin_rotmat)
                     joint = Joint(
