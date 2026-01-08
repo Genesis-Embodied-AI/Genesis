@@ -152,7 +152,7 @@ class Renderer(object):
 
         if flags & RenderFlags.ENV_SEPARATE and flags & RenderFlags.OFFSCREEN:
             n_envs = scene.n_envs
-            use_env_idx = True
+            use_env_idx = True and scene.n_envs > 1
         else:
             n_envs = 1
             use_env_idx = False
