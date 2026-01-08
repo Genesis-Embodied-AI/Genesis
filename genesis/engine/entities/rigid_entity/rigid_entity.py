@@ -3200,18 +3200,18 @@ class RigidEntity(Entity):
             The total mass of the entity in kg. For heterogeneous entities, returns
             an array of shape (n_envs,) with per-environment masses.
         """
-        # Use solver's batched links_info for accurate per-environment masses
-        all_links_mass = self._solver.links_info.inertial_mass.to_numpy()
-        links_idx = np.arange(self.link_start, self.link_end)
-
-        if self._solver._options.batch_links_info:
+        if self._enable_heterogeneous:
+            # Use solver's batched links_info for accurate per-environment masses
+            all_links_mass = self._solver.links_info.inertial_mass.to_numpy()
+            links_idx = np.arange(self.link_start, self.link_end)
             # Shape: (n_links, n_envs) -> sum over links axis
-            entity_mass = all_links_mass[links_idx].sum(axis=0)
+            return all_links_mass[links_idx].sum(axis=0)
         else:
-            # Shape: (n_links,) -> sum to scalar
-            entity_mass = all_links_mass[links_idx].sum()
-
-        return entity_mass
+            # Original behavior: sum link masses to scalar
+            mass = 0.0
+            for link in self.links:
+                mass += link.get_mass()
+            return mass
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
