@@ -14,4 +14,6 @@ source /venv/bin/activate
 # in the Slurm container image, otherwise poorly packaged libraries, such as
 # libuipc, may fail to import.
 uv pip install torch --index-url https://download.pytorch.org/whl/cu129
-uv pip install ".[dev,render]"
+uv pip install --upgrade pip setuptools wheel
+uv pip install omniverse-kit --index-url https://pypi.nvidia.com/
+uv pip install ".[dev,render,usd]"
