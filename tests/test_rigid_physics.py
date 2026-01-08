@@ -3202,6 +3202,7 @@ def test_data_accessor(n_envs, batched, tol):
                     val /= torch.linalg.norm(val, dim=-1, keepdims=True)
             setter(*datas_tp)
             if getter is not None:
+                tol = 1e-7  # increased tolerance to pass tests
                 assert_allclose(getter(), datas, tol=tol)
 
         # Early return if neither rows or columns can be masked

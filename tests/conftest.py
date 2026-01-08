@@ -53,7 +53,7 @@ if not has_display and has_egl:
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
 
 TOL_SINGLE = 5e-5
-TOL_DOUBLE = 1e-7  # Relaxed from 1e-9 to handle numerical precision in getter/setter roundtrips
+TOL_DOUBLE = 1e-9
 IMG_STD_ERR_THR = 1.0
 IMG_NUM_ERR_THR = 0.001
 
