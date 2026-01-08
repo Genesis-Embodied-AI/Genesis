@@ -481,8 +481,6 @@ class Scene(object):
         pose : (4,4) float
             The pose to set the node to.
         """
-        # if node not in self.nodes:
-        #     raise ValueError('Node must already be in scene')
         node._matrix = pose
         if node.mesh is not None:
             self._bounds = None
