@@ -28,8 +28,8 @@ class ElastoPlastic(Base):
     mu: float, optional
         The second Lame's parameter. Default is None, computed by E and nu.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
-        'pbs' on supported platforms, 'random' otherwise.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux x86 for now. Defaults
+        to 'pbs' on supported platforms, 'random' otherwise.
     yield_lower: float, optional
         Lower bound for the yield clamp (ignored if using von Mises). Default is 2.5e-2.
     yield_higher: float, optional
