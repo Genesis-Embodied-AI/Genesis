@@ -124,19 +124,24 @@ def main():
     print(f"Static camera output shape: {static_data.rgb.shape}")
     print(f"Attached camera output shape: {attached_data.rgb.shape}")
 
-    # Save images for each environment
-    for i in range(args.n_envs):
-        # Static camera
-        static_img = Image.fromarray(static_data.rgb[i].cpu().numpy())
-        static_path = f"{args.output}_static_env{i}.png"
-        static_img.save(static_path)
-        print(f"Saved: {static_path}")
+    # Create a combined image grid: 2 rows (static, attached) x n_envs columns
+    h, w = static_data.rgb.shape[1:3]
+    combined = Image.new("RGB", (w * args.n_envs, h * 2))
 
-        # Attached camera
+    for i in range(args.n_envs):
+        # Static camera (top row)
+        static_img = Image.fromarray(static_data.rgb[i].cpu().numpy())
+        combined.paste(static_img, (i * w, 0))
+
+        # Attached camera (bottom row)
         attached_img = Image.fromarray(attached_data.rgb[i].cpu().numpy())
-        attached_path = f"{args.output}_attached_env{i}.png"
-        attached_img.save(attached_path)
-        print(f"Saved: {attached_path}")
+        combined.paste(attached_img, (i * w, h))
+
+    output_path = f"{args.output}.png"
+    combined.save(output_path)
+    print(f"Saved combined image: {output_path}")
+    print(f"  Top row: static camera (env 0 to {args.n_envs - 1})")
+    print(f"  Bottom row: attached camera (env 0 to {args.n_envs - 1})")
 
     # Compute and print image differences to verify per-env poses
     if args.n_envs >= 2:

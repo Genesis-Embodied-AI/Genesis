@@ -689,13 +689,10 @@ class RaytracerCameraSensor(BaseCameraSensor):
             debug=False,
         )
 
-        # Attach the visualizer camera to the link if this sensor is attached
-        if self._link is not None:
-            from genesis.utils.geom import trans_quat_to_T
-
-            pos = torch.tensor(opts.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
-            self._camera_obj.attach(self._link, offset_T)
+        # Note: We don't call self._camera_obj.attach() here because the sensor's own
+        # move_to_attach() (in BaseCameraSensor) handles attachment correctly by computing
+        # the world transform from pos/lookat/up. The visualizer camera's attach() uses
+        # a different offset-based approach that conflicts with our desired behavior.
 
         h, w = self._options.res[1], self._options.res[0]
         n_envs = max(self._manager._sim._B, 1)
@@ -724,15 +721,27 @@ class RaytracerCameraSensor(BaseCameraSensor):
             cutoff=cutoff,
         )
 
+    def _apply_camera_transform(self, camera_T: torch.Tensor):
+        """Update raytracer camera from a world transform."""
+        from genesis.utils.geom import T_to_pos_lookat_up
+        from genesis.utils.misc import tensor_to_array
+
+        # Extract pos, lookat, up from the transform matrix
+        pos, lookat, up = T_to_pos_lookat_up(camera_T)
+
+        # Update the camera object using pos/lookat/up (LuisaRender expects these)
+        self._camera_obj.set_pose(
+            pos=tensor_to_array(pos).tolist(),
+            lookat=tensor_to_array(lookat).tolist(),
+            up=tensor_to_array(up).tolist(),
+        )
+
     def _render_current_state(self):
         """Perform the actual render for the current state."""
         n_envs = self._manager._sim._B
 
         if n_envs <= 1:
-            # Single environment - use existing logic
-            if self._link is not None:
-                self._camera_obj.move_to_attach()
-
+            # Single environment - camera pose already updated by base class move_to_attach()
             rgb_arr, _, _, _ = self._camera_obj.render(
                 rgb=True,
                 depth=False,
@@ -761,9 +770,27 @@ class RaytracerCameraSensor(BaseCameraSensor):
                     # Set which env to render (affects scene update for particles, etc.)
                     raytracer.set_render_env_idx(env_idx)
 
-                    # Update camera pose for this env
-                    camera_T = torch.from_numpy(camera_transforms[env_idx]).to(dtype=gs.tc_float, device=gs.device)
-                    self._camera_obj.set_pose(transform=tensor_to_array(camera_T))
+                    # Update camera pose for this env using pos/lookat/up directly
+                    # (LuisaRender expects these, not a transform matrix)
+                    local_pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
+                    lookat = self._options.lookat
+                    up = self._options.up
+
+                    if self._link is not None and self._link.is_built:
+                        link_pos = (
+                            self._link.get_pos()[env_idx] if self._link.get_pos().ndim > 1 else self._link.get_pos()
+                        )
+                        link_quat = (
+                            self._link.get_quat()[env_idx] if self._link.get_quat().ndim > 1 else self._link.get_quat()
+                        )
+                        link_T = trans_quat_to_T(link_pos, link_quat)
+                        local_pos_homo = torch.cat([local_pos, torch.ones(1, dtype=gs.tc_float, device=gs.device)])
+                        world_pos = torch.matmul(link_T, local_pos_homo)[:3]
+                        pos = tensor_to_array(world_pos).tolist()
+                    else:
+                        pos = self._options.pos
+
+                    self._camera_obj.set_pose(pos=pos, lookat=lookat, up=up)
                     raytracer.update_camera(self._camera_obj)
 
                     # Update scene for this specific env - uses single shapes with
