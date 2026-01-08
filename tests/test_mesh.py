@@ -517,7 +517,7 @@ def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-    water = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.SPH.Liquid(),
         morph=gs.morphs.Box(
             pos=(0.15, 0.15, 0.22),

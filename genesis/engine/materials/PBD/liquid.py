@@ -15,8 +15,8 @@ class Liquid(Base):
     rho: float, optional
         The rest density of the fluid in kg/m^3. Default is 1000.0.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
-        'pbs' on supported platforms, 'random' otherwise.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux x86 for now. Defaults
+        to 'pbs' on supported platforms, 'random' otherwise.
     density_relaxation: float, optional
         Relaxation factor for solving the density constraint. Controls the strength of positional correction to enforce incompressibility.
         Higher values lead to faster convergence but can cause instability. Default is 0.2.

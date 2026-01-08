@@ -29,8 +29,8 @@ class Elastic(Base):
     mu: float, optional
         The second Lame's parameter. Default is None, computed by E and nu.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
-        'pbs' on supported platforms, 'random' otherwise.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux x86 for now. Defaults
+        to 'pbs' on supported platforms, 'random' otherwise.
     model: str, optional
         Stress model ('corotation', 'neohooken'). Default is 'corotation'.
     """
