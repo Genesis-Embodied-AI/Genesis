@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
@@ -130,3 +131,342 @@ def test_rasterizer_camera_sensor(show_viewer, tol, n_envs):
     cam_move_dist_offset_T = np.linalg.norm(cam_pos_final_offset_T - cam_pos_initial_offset_T)
     assert cam_move_dist_offset_T > 1e-2
     assert_allclose(cam_move_dist_offset_T, cam_move_dist, atol=1e-2)
+
+
+# ========================== Multi-environment tests ==========================
+
+
+@pytest.fixture
+def rasterizer_camera_scene():
+    """Create a simple scene with rasterizer camera sensor for multi-env tests."""
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=True,
+            gravity=(0, 0, -9.8),
+        ),
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    )
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0), radius=0.3),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
+    )
+
+    options = gs.sensors.RasterizerCameraOptions(
+        res=(64, 64),
+        pos=(3.0, 0.0, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=60.0,
+    )
+    camera = scene.add_sensor(options)
+
+    return scene, sphere, camera
+
+
+@pytest.mark.parametrize("n_envs", [2, 4])
+def test_rasterizer_camera_sensor_n_envs(rasterizer_camera_scene, n_envs):
+    """Test that RasterizerCameraSensor works with n_envs > 1."""
+    scene, sphere, camera = rasterizer_camera_scene
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (n_envs, 64, 64, 3), f"Expected shape ({n_envs}, 64, 64, 3), got {data.rgb.shape}"
+    assert data.rgb.dtype == torch.uint8, f"Expected dtype torch.uint8, got {data.rgb.dtype}"
+
+
+@pytest.mark.parametrize("n_envs", [2])
+def test_rasterizer_camera_sensor_different_poses(rasterizer_camera_scene, n_envs):
+    """Test that different environments can have different object poses."""
+    scene, sphere, camera = rasterizer_camera_scene
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+
+    # Set different sphere positions for each environment
+    sphere.set_pos(torch.tensor([0.0, 0.0, 1.0], device=gs.device), envs_idx=[0])
+    sphere.set_pos(torch.tensor([1.0, 0.0, 1.0], device=gs.device), envs_idx=[1])
+
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (n_envs, 64, 64, 3)
+
+    # Verify that the two environment images are different
+    img0 = data.rgb[0].float()
+    img1 = data.rgb[1].float()
+    diff = (img0 - img1).abs().mean()
+
+    assert diff > 1.0, f"Images should be different, but mean absolute diff is only {diff}"
+
+
+@pytest.mark.parametrize("n_envs", [2])
+def test_rasterizer_camera_sensor_attached_n_envs(n_envs):
+    """Test that camera attachment works with n_envs > 1."""
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=True,
+            gravity=(0, 0, -9.8),
+        ),
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    )
+
+    box = scene.add_entity(
+        morph=gs.morphs.Box(pos=(0.0, 0.0, 1.0), size=(0.3, 0.3, 0.3)),
+        surface=gs.surfaces.Smooth(color=(0.2, 0.5, 0.8)),
+    )
+
+    target = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(2.0, 0.0, 1.0), radius=0.2),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.3, 0.3)),
+    )
+
+    # Camera attached to the box
+    options = gs.sensors.RasterizerCameraOptions(
+        res=(64, 64),
+        pos=(0.5, 0.0, 0.0),
+        lookat=(2.0, 0.0, 1.0),
+        fov=60.0,
+        entity_idx=box.idx,
+        link_idx_local=0,
+    )
+    camera = scene.add_sensor(options)
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (n_envs, 64, 64, 3), f"Expected shape ({n_envs}, 64, 64, 3), got {data.rgb.shape}"
+    assert data.rgb.dtype == torch.uint8, f"Expected dtype torch.uint8, got {data.rgb.dtype}"
+
+
+@pytest.mark.parametrize("n_envs", [2])
+def test_rasterizer_camera_sensor_attached_per_env_pose(n_envs):
+    """Test that attached camera has different poses per environment.
+
+    This verifies that when a camera is attached to an entity that has different
+    positions in different environments, the camera renders from different viewpoints.
+    """
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=True,
+            gravity=(0, 0, -9.8),
+        ),
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    )
+
+    # Box that camera is attached to
+    box = scene.add_entity(
+        morph=gs.morphs.Box(pos=(0.0, 0.0, 1.0), size=(0.3, 0.3, 0.3)),
+        surface=gs.surfaces.Smooth(color=(0.2, 0.5, 0.8)),
+    )
+
+    # Target sphere to look at (stays fixed in all envs)
+    target = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(2.0, 0.0, 1.0), radius=0.3),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.3, 0.3)),
+    )
+
+    # Camera attached to the box
+    camera = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(64, 64),
+            pos=(0.5, 0.0, 0.0),  # Offset from box
+            lookat=(2.0, 0.0, 1.0),
+            fov=60.0,
+            entity_idx=box.idx,
+            link_idx_local=0,
+        )
+    )
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+
+    # Move boxes to different positions in each env
+    # This should cause the attached cameras to render from different positions
+    box.set_pos(torch.tensor([0.0, 0.0, 1.0], device=gs.device), envs_idx=[0])
+    box.set_pos(torch.tensor([1.0, 0.0, 1.0], device=gs.device), envs_idx=[1])
+
+    scene.step()
+    data = camera.read()
+
+    # Verify shape
+    assert data.rgb.shape == (n_envs, 64, 64, 3)
+
+    # Verify that images are different due to different camera positions
+    img0 = data.rgb[0].float()
+    img1 = data.rgb[1].float()
+    diff = (img0 - img1).abs().mean()
+
+    # Images should be different because cameras are at different positions
+    assert diff > 1.0, f"Attached camera images should differ per env, but mean diff is only {diff}"
+
+
+# ========================== Raytracer Camera Sensor Tests ==========================
+
+
+@pytest.fixture
+def raytracer_camera_scene():
+    """Create a simple scene with raytracer for multi-env tests."""
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=True,
+            gravity=(0, 0, -9.8),
+        ),
+        renderer=gs.renderers.RayTracer(),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    )
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0), radius=0.3),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
+    )
+
+    return scene, sphere
+
+
+@pytest.mark.parametrize("n_envs", [2])
+def test_raytracer_camera_sensor_n_envs(raytracer_camera_scene, n_envs):
+    """Test that RaytracerCameraSensor works with n_envs > 1."""
+    scene, sphere = raytracer_camera_scene
+
+    camera = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            res=(64, 64),
+            pos=(3.0, 0.0, 1.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=60.0,
+            spp=1,
+        )
+    )
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (n_envs, 64, 64, 3), f"Expected shape ({n_envs}, 64, 64, 3), got {data.rgb.shape}"
+    assert data.rgb.dtype == torch.uint8, f"Expected dtype torch.uint8, got {data.rgb.dtype}"
+
+
+@pytest.mark.parametrize("n_envs", [2])
+def test_raytracer_camera_sensor_different_poses(raytracer_camera_scene, n_envs):
+    """Test that different environments can have different object poses with raytracer."""
+    scene, sphere = raytracer_camera_scene
+
+    camera = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            res=(64, 64),
+            pos=(3.0, 0.0, 1.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=60.0,
+            spp=1,
+        )
+    )
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+
+    # Set different sphere positions for each environment
+    sphere.set_pos(torch.tensor([0.0, 0.0, 1.0], device=gs.device), envs_idx=[0])
+    sphere.set_pos(torch.tensor([1.0, 0.0, 1.0], device=gs.device), envs_idx=[1])
+
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (n_envs, 64, 64, 3)
+
+    # Verify that the two environment images are different
+    img0 = data.rgb[0].float()
+    img1 = data.rgb[1].float()
+    diff = (img0 - img1).abs().mean()
+
+    assert diff > 1.0, f"Images should be different, but mean absolute diff is only {diff}"
+
+
+@pytest.mark.parametrize("n_envs", [2])
+def test_raytracer_camera_sensor_attached_per_env_pose(n_envs):
+    """Test that attached raytracer camera has different poses per environment."""
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=True,
+            gravity=(0, 0, -9.8),
+        ),
+        renderer=gs.renderers.RayTracer(),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    )
+
+    # Box that camera is attached to
+    box = scene.add_entity(
+        morph=gs.morphs.Box(pos=(0.0, 0.0, 1.0), size=(0.3, 0.3, 0.3)),
+        surface=gs.surfaces.Smooth(color=(0.2, 0.5, 0.8)),
+    )
+
+    # Target sphere to look at (stays fixed in all envs)
+    target = scene.add_entity(
+        morph=gs.morphs.Sphere(pos=(2.0, 0.0, 1.0), radius=0.3),
+        surface=gs.surfaces.Smooth(color=(1.0, 0.3, 0.3)),
+    )
+
+    # Camera attached to the box
+    camera = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            res=(64, 64),
+            pos=(0.5, 0.0, 0.0),  # Offset from box
+            lookat=(2.0, 0.0, 1.0),
+            fov=60.0,
+            spp=1,
+            entity_idx=box.idx,
+            link_idx_local=0,
+        )
+    )
+
+    scene.build(n_envs=n_envs, env_spacing=(0.0, 0.0))
+
+    # Move boxes to different positions in each env
+    box.set_pos(torch.tensor([0.0, 0.0, 1.0], device=gs.device), envs_idx=[0])
+    box.set_pos(torch.tensor([1.0, 0.0, 1.0], device=gs.device), envs_idx=[1])
+
+    scene.step()
+    data = camera.read()
+
+    # Verify shape
+    assert data.rgb.shape == (n_envs, 64, 64, 3)
+
+    # Verify that images are different due to different camera positions
+    img0 = data.rgb[0].float()
+    img1 = data.rgb[1].float()
+    diff = (img0 - img1).abs().mean()
+
+    # Images should be different because cameras are at different positions
+    assert diff > 1.0, f"Attached camera images should differ per env, but mean diff is only {diff}"

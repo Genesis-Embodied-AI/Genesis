@@ -113,6 +113,7 @@ class OffscreenRenderer(object):
         shadow=False,
         plane_reflection=False,
         env_separate_rigid=False,
+        camera_poses=None,
     ):
         """Render a scene with the given set of flags.
 
@@ -169,7 +170,7 @@ class OffscreenRenderer(object):
         if rgb or depth or seg:
             if self._platform.supports_framebuffers():
                 flags |= RenderFlags.OFFSCREEN
-                retval = renderer.render(scene, flags, seg_node_map)
+                retval = renderer.render(scene, flags, seg_node_map, camera_poses=camera_poses)
                 assert retval is not None
             else:
                 if flags & RenderFlags.ENV_SEPARATE:

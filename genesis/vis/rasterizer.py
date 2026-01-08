@@ -67,7 +67,7 @@ class Rasterizer(RBC):
             self._viewer.close_offscreen(self._camera_targets[camera.uid])
         del self._camera_targets[camera.uid]
 
-    def render_camera(self, camera, rgb=True, depth=False, segmentation=False, normal=False):
+    def render_camera(self, camera, rgb=True, depth=False, segmentation=False, normal=False, camera_poses=None):
         # Update camera
         self.update_camera(camera)
 
@@ -80,6 +80,9 @@ class Rasterizer(RBC):
             self._context.jit.update_buffer(self._context.buffer)
             self._context.buffer.clear()
 
+            # Enable env-separate rendering when per-env camera poses are provided
+            env_separate_rigid = self._context.env_separate_rigid or (camera_poses is not None)
+
             # Render
             try:
                 if rgb or depth or normal:
@@ -87,13 +90,14 @@ class Rasterizer(RBC):
                         self._context._scene,
                         self._camera_targets[camera.uid],
                         camera_node=self._camera_nodes[camera.uid],
-                        env_separate_rigid=self._context.env_separate_rigid,
+                        env_separate_rigid=env_separate_rigid,
                         rgb=rgb,
                         normal=normal,
                         seg=False,
                         depth=depth,
                         plane_reflection=rgb and self._context.plane_reflection,
                         shadow=rgb and self._context.shadow,
+                        camera_poses=camera_poses,
                     )
 
                 if segmentation:
@@ -101,13 +105,14 @@ class Rasterizer(RBC):
                         self._context._scene,
                         self._camera_targets[camera.uid],
                         camera_node=self._camera_nodes[camera.uid],
-                        env_separate_rigid=self._context.env_separate_rigid,
+                        env_separate_rigid=env_separate_rigid,
                         rgb=False,
                         normal=False,
                         seg=True,
                         depth=False,
                         plane_reflection=False,
                         shadow=False,
+                        camera_poses=camera_poses,
                     )
             finally:
                 # Unset the context
