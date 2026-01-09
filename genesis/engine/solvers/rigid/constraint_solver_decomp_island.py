@@ -995,9 +995,9 @@ class ConstraintSolverIsland:
                 self.grad,
                 self.Mgrad,
                 array_class.PLACEHOLDER,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
+                entities_info=self.entities_info,
+                rigid_global_info=self._solver.data_manager.rigid_global_info,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
                 is_backward=False,
             )
             for i_e in range(self._solver.n_entities):

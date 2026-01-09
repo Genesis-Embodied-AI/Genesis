@@ -771,6 +771,7 @@ def func_contact_sphere_sdf(
     i_b,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
 ):
