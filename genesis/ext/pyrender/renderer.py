@@ -702,8 +702,11 @@ class Renderer(object):
     def _get_camera_pose(self, scene, env_idx):
         cam_pos = scene.get_pose(scene.main_camera_node)
         if len(cam_pos.shape) == 3:
-            assert env_idx != -1, "We have a multiple camera pose scene, we should be rendering per env"
-            cam_pos = cam_pos[env_idx]
+            if cam_pos.shape[0] != 1:
+                assert env_idx != -1, "We have a multiple camera pose scene, we should be rendering per env"
+                cam_pos = cam_pos[env_idx]
+            else:
+                cam_pos = cam_pos[0]
         return cam_pos
 
     def _get_light_cam_matrices(self, scene, light_node, flags):
