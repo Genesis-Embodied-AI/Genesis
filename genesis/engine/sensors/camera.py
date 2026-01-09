@@ -267,11 +267,6 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
         link_pos = self._link.get_pos()
         link_quat = self._link.get_quat()
 
-        # Handle batched case - use first environment
-        if link_pos.ndim > 1:
-            link_pos = link_pos[0]
-            link_quat = link_quat[0]
-
         link_T = trans_quat_to_T(link_pos, link_quat)
         camera_T = torch.matmul(link_T, offset_T)
 
@@ -448,9 +443,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
                 )
             env_separate_rigid = False
         else:
-            if self._link is not None:
-                gs.raise_exception("Rasterizer with n_envs > 1, does not work with attached cameras yet.")
-
             if scene.n_envs > 1:
                 gs.logger.warning(
                     "Rasterizer with n_envs > 1 is slow as it doesn't do batched rendering consider using BatchRenderer instead."
@@ -497,11 +489,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
             # Convert pos from link-relative to world coordinates
             link_pos = self._link.get_pos()
             link_quat = self._link.get_quat()
-
-            # Handle batched case - use first environment
-            if link_pos.ndim > 1:
-                link_pos = link_pos[0]
-                link_quat = link_quat[0]
 
             # Apply pos directly as offset from link
             from genesis.utils.geom import transform_by_quat
@@ -608,11 +595,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
         if self._link is not None and self._link.is_built:
             link_pos = self._link.get_pos()
             link_quat = self._link.get_quat()
-
-            # Handle batched case - use first environment
-            if link_pos.ndim > 1:
-                link_pos = link_pos[0]
-                link_quat = link_quat[0]
 
             # Apply pos directly as offset from link
             from genesis.utils.geom import transform_by_quat
@@ -758,8 +740,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             resolutions = [s._options.res for s in all_sensors]
             if len(set(resolutions)) > 1:
                 gs.raise_exception(
-                    f"All BatchRendererCameraSensor instances must have the same resolution. "
-                    f"Found: {set(resolutions)}"
+                    f"All BatchRendererCameraSensor instances must have the same resolution. Found: {set(resolutions)}"
                 )
 
             br_options = BatchRendererOptions(
