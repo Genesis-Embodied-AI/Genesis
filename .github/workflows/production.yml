@@ -45,49 +45,59 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Run unit tests
+      - name: Start container
         if: github.event_name == 'pull_request'
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+          CONTAINER_NAME="${SLURM_JOB_NAME}"
+          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
+               --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
+               --no-container-mount-home \
+               --container-workdir=/root/workspace"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
+
+          JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
+          [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
+          mkfifo "$JOBID_FIFO"
+          salloc --job-name="${SLURM_JOB_NAME}" \
+                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+                 --time="${TIMEOUT_MINUTES}" \
+                 bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
+          SLURM_JOB_ID=$(cat "$JOBID_FIFO")
+          rm -f "$JOBID_FIFO"
+          SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
+          srun --jobid=${SLURM_JOB_ID} \
+               --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh \
+               ${SRUN_CONTAINER_OPTS} \
+               --export=${SLURM_ENV_VARS} \
+               echo "Container ready"
+
           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+          echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
 
-          mkdir -p "${HOME}/.cache" "${HOME}/.venv"
+      - name: Build
+        if: github.event_name == 'pull_request'
+        run: |
+          srun ${SRUN_COMMON} \
+               bash .github/workflows/scripts/production_build.sh
 
-          # TODO: USD baking does not currently support Python 3.11 since
-          # NVIDIA does not currently release `omniverse-kit==107.3` on PyPI.
-          # See: https://github.com/Genesis-Embodied-AI/Genesis/pull/1300
-          srun \
-            --container-image="/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh" \
-            --container-mounts=\
-          "${HOME}/.venv":/root/.venv,\
-          "${HOME}/.cache":/root/.cache,\
-          "${{ github.workspace }}":/root/workspace \
-            --no-container-mount-home --container-workdir=/root/workspace \
-            --export=NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY} \
-            --partition=hpc-mid --nodes=1 --gpus=8 --exclusive --time="${TIMEOUT_MINUTES}" \
-            --job-name=${SLURM_JOB_NAME} \
-            bash -e -s << 'EOF'
-              if test -n "$(find /root/.venv -maxdepth 0 -empty)"; then
-                python3 -m venv --system-site-packages /root/.venv
-                source /root/.venv/bin/activate
-                pip install --no-input --upgrade pip pkg-info wheel
-                pip install --no-input --ignore-installed --upgrade blinker pyparsing setuptools
-              fi
-              source /root/.venv/bin/activate
+      - name: Run benchmarks
+        if: github.event_name == 'pull_request'
+        run: |
+          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+            source /venv/bin/activate
 
-              pip install --no-input --extra-index-url https://pypi.nvidia.com/ omniverse-kit
-              pip install --no-input ".[dev,render,usd]"
+            # sudo apt update
+            # sudo apt install -y tmate
+            # tmate -S /tmp/tmate.sock new-session -d
+            # tmate -S /tmp/tmate.sock wait tmate-ready
+            # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-              # sudo apt update
-              # sudo apt install -y tmate
-              # tmate -S /tmp/tmate.sock new-session -d
-              # tmate -S /tmp/tmate.sock wait tmate-ready
-              # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+            pytest -v -ra --backend gpu --dev --forked ./tests
 
-              pytest -v -ra --backend gpu --dev --forked ./tests
-
-              # tmate -S /tmp/tmate.sock wait tmate-exit
+            # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
+
       - name: Kill srun job systematically
         if: always()
         run: |
