@@ -354,9 +354,9 @@ class Renderer(object):
         glClearColor(0.0, 0.0, 0.0, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        V, P = self._get_camera_matrices(scene)
+        V, P = self._get_camera_matrices(scene, env_idx)
+        cam_pose = self._get_camera_pose(scene, env_idx)[:3, 3]
 
-        cam_pos = scene.get_pose(scene.main_camera_node)[:3, 3]
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 
         self.jit.forward_pass(
@@ -391,8 +391,8 @@ class Renderer(object):
             glEnable(GL_MULTISAMPLE)
 
         # Set up camera matrices
-        V, P = self._get_camera_matrices(scene)
-        cam_pos = scene.get_pose(scene.main_camera_node)[:3, 3]
+        V, P = self._get_camera_matrices(scene, env_idx)
+        cam_pos = self._get_camera_pose(scene, env_idx)[:3, 3]
 
         floor_tex = self._floor_texture_color._texid if flags & RenderFlags.REFLECTIVE_FLOOR else 0
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
@@ -455,7 +455,7 @@ class Renderer(object):
         program = None
 
         # Set up camera matrices
-        V, P = self._get_camera_matrices(scene)
+        V, P = self._get_camera_matrices(scene, env_idx)
 
         # Now, render each object in sorted order
         for node in scene.sorted_mesh_nodes():
@@ -690,14 +690,21 @@ class Renderer(object):
     # Camera Matrix Management
     ###########################################################################
 
-    def _get_camera_matrices(self, scene):
+    def _get_camera_matrices(self, scene, env_idx):
         main_camera_node = scene.main_camera_node
         if main_camera_node is None:
             raise ValueError("Cannot render scene without a camera")
         P = main_camera_node.camera.get_projection_matrix(width=self.viewport_width, height=self.viewport_height)
-        pose = scene.get_pose(main_camera_node)
+        pose = self._get_camera_pose(scene, env_idx)
         V = np.linalg.inv(pose)  # V maps from world to camera
         return V, P
+
+    def _get_camera_pose(self, scene, env_idx):
+        cam_pos = scene.get_pose(scene.main_camera_node)
+        if len(cam_pos.shape) == 3:
+            assert env_idx != -1, "We have a multiple camera pose scene, we should be rendering per env"
+            cam_pos = cam_pos[env_idx]
+        return cam_pos
 
     def _get_light_cam_matrices(self, scene, light_node, flags):
         light = light_node.light

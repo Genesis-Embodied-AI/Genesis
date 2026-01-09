@@ -160,7 +160,6 @@ def test_rasterizer_camera_sensor_n_envs(show_viewer, png_snapshot):
     # Add a plane
     scene.add_entity(
         morph=gs.morphs.Plane(),
-        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
     )
 
     # Add a sphere
@@ -193,9 +192,15 @@ def test_rasterizer_camera_sensor_n_envs(show_viewer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
-def test_rasterizer_camera_sensor_n_envs_attached_camera():
-    scene = gs.Scene()
+def test_rasterizer_camera_sensor_n_attached_camera(show_viewer, png_snapshot):
+    scene = gs.Scene(show_viewer=show_viewer)
 
+    # Add a plane
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+
+    # Add a sphere
     sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
             radius=0.3,
@@ -206,11 +211,28 @@ def test_rasterizer_camera_sensor_n_envs_attached_camera():
         ),
     )
 
-    scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            entity_idx=sphere.idx,
-        )
+    options = gs.sensors.RasterizerCameraOptions(
+        res=(64, 64),
+        pos=(-0.4, 0.1, 2.0),
+        lookat=(-0.6, 0.4, 1.0),
+        fov=60.0,
+        entity_idx=sphere.idx,
     )
+    camera = scene.add_sensor(options)
 
-    with pytest.raises(gs.GenesisException, match="does not work with attached cameras yet."):
-        scene.build(n_envs=2)
+    scene.build(n_envs=2)
+
+    # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+    camera._shared_metadata.context.shadow = False
+
+    sphere.set_pos([[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]])
+    scene.step()
+
+    data = camera.read()
+
+    assert data.rgb.shape == (2, 64, 64, 3)
+    assert data.rgb.dtype == torch.uint8
+    assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
+
+    for i in range(scene.n_envs):
+        assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
