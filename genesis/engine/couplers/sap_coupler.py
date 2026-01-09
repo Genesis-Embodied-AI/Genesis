@@ -213,8 +213,7 @@ class SAPCoupler(RBC):
             self._rigid_rigid_contact_type = RigidRigidContactType.NONE
         else:
             gs.raise_exception(
-                f"Invalid rigid-rigid contact type: {options.rigid_rigid_contact_type}. "
-                "Must be one of 'tet' or 'none'."
+                f"Invalid rigid-rigid contact type: {options.rigid_rigid_contact_type}. Must be one of 'tet' or 'none'."
             )
 
         self._rigid_compliant = False

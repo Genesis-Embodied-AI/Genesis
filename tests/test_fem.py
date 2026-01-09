@@ -85,9 +85,9 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
 
     for idx in surface_indices:
         p = vertices[idx]
-        assert _point_on_surface(
-            p, verts, faces
-        ), f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
+        assert _point_on_surface(p, verts, faces), (
+            f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
+        )
 
     # Verify whether surface faces in the visualizer mesh matches the surface faces of the FEM entity
     static_nodes = scene.visualizer.context.static_nodes

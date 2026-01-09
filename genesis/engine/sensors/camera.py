@@ -758,8 +758,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             resolutions = [s._options.res for s in all_sensors]
             if len(set(resolutions)) > 1:
                 gs.raise_exception(
-                    f"All BatchRendererCameraSensor instances must have the same resolution. "
-                    f"Found: {set(resolutions)}"
+                    f"All BatchRendererCameraSensor instances must have the same resolution. Found: {set(resolutions)}"
                 )
 
             br_options = BatchRendererOptions(

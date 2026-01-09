@@ -231,7 +231,9 @@ def main():
             phase = (
                 "Gripping"
                 if total_t < grip_duration
-                else "Twisting" if total_t < twist_start_time + twist_duration else "Settling"
+                else "Twisting"
+                if total_t < twist_start_time + twist_duration
+                else "Settling"
             )
             print(f"  Frame {frame}/{total_frames} (t={total_t:.2f}s) - {phase}")
 

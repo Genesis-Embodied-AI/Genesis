@@ -68,7 +68,7 @@ class RBC:
                 continue
             idx = content.find(">")
             # format with italic and color
-            formatted_content = f"{colors.MINT}{formats.ITALIC}{content[:idx + 1]}{formats.RESET}{colors.MINT}{content[idx + 1:]}{formats.RESET}"
+            formatted_content = f"{colors.MINT}{formats.ITALIC}{content[: idx + 1]}{formats.RESET}{colors.MINT}{content[idx + 1 :]}{formats.RESET}"
             # in case it's multi-line
             if isinstance(getattr(self, attr), gs.List):
                 # 4 = 2 x ' + : + space

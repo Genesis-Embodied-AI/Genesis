@@ -120,12 +120,8 @@ class VisOptions(Options):
     segmentation_level: str = "link"  # ['entity', 'link', 'geom']
     render_particle_as: str = "sphere"  # ['sphere', 'tet']
     particle_size_scale: float = 1.0  # scale applied to actual particle size for rendering
-    contact_force_scale: float = (
-        0.01  # scale of force visualization, m/N. E.g. the force arrow representing 10N wille be 0.1m long if scale is 0.01.
-    )
-    n_support_neighbors: int = (
-        12  # number of neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies.
-    )
+    contact_force_scale: float = 0.01  # scale of force visualization, m/N. E.g. the force arrow representing 10N wille be 0.1m long if scale is 0.01.
+    n_support_neighbors: int = 12  # number of neighbor particles used to compute vertex position of the visual mesh. Used for rendering deformable bodies.
     n_rendered_envs: Optional[int] = None  # number of environments being rendered
     rendered_envs_idx: Optional[list] = None  # idx of environments being rendered
     lights: list = [

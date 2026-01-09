@@ -89,7 +89,7 @@ class URDFType(object):
                     v = cls._parse_attrib(t, node.attrib[a])
                 except Exception:
                     raise ValueError(
-                        "Missing required attribute {} when parsing an object " "of type {}".format(a, cls.__name__)
+                        "Missing required attribute {} when parsing an object of type {}".format(a, cls.__name__)
                     )
             else:
                 v = None
@@ -132,8 +132,9 @@ class URDFType(object):
                 vs = node.findall(t._TAG)
                 if len(vs) == 0 and r:
                     raise ValueError(
-                        "Missing required subelement(s) of type {} when "
-                        "parsing an object of type {}".format(t.__name__, cls.__name__)
+                        "Missing required subelement(s) of type {} when parsing an object of type {}".format(
+                            t.__name__, cls.__name__
+                        )
                     )
                 v = [t._from_xml(n, node, path) for n in vs]
             kwargs[a] = v
@@ -641,7 +642,7 @@ class Mesh(URDFType):
                 raise ValueError("Mesh must have at least one trimesh.Trimesh")
             for m in value:
                 if not isinstance(m, trimesh.Trimesh):
-                    raise TypeError("Mesh requires a trimesh.Trimesh or a " "list of them")
+                    raise TypeError("Mesh requires a trimesh.Trimesh or a list of them")
         elif isinstance(value, trimesh.Trimesh):
             value = [value]
         else:
@@ -901,7 +902,7 @@ class Texture(URDFType):
         if isinstance(value, np.ndarray):
             value = PIL.Image.fromarray(value)
         elif not isinstance(value, PIL.Image.Image):
-            raise ValueError("Texture only supports numpy arrays " "or PIL images")
+            raise ValueError("Texture only supports numpy arrays or PIL images")
         self._image = value
 
     @classmethod
@@ -997,7 +998,7 @@ class Material(URDFType):
                 image = PIL.Image.open(value)
                 value = Texture(filename=value, image=image)
             elif not isinstance(value, Texture):
-                raise ValueError("Invalid type for texture -- expect path to " "image or Texture")
+                raise ValueError("Invalid type for texture -- expect path to image or Texture")
         self._texture = value
 
     @classmethod
@@ -2236,7 +2237,7 @@ class Joint(URDFType):
     def limit(self, value):
         if value is None:
             if self.joint_type in ["prismatic", "revolute"]:
-                raise ValueError("Require joint limit for prismatic and " "revolute joints")
+                raise ValueError("Require joint limit for prismatic and revolute joints")
         elif not isinstance(value, JointLimit):
             raise TypeError("Expected JointLimit type")
         self._limit = value
@@ -2741,17 +2742,17 @@ class URDF(URDFType):
 
         for x in self._joints:
             if x.name in self._joint_map:
-                raise ValueError("Two joints with name {} " "found".format(x.name))
+                raise ValueError("Two joints with name {} found".format(x.name))
             self._joint_map[x.name] = x
 
         for x in self._transmissions:
             if x.name in self._transmission_map:
-                raise ValueError("Two transmissions with name {} " "found".format(x.name))
+                raise ValueError("Two transmissions with name {} found".format(x.name))
             self._transmission_map[x.name] = x
 
         for x in self._materials:
             if x.name in self._material_map:
-                raise ValueError("Two materials with name {} " "found".format(x.name))
+                raise ValueError("Two materials with name {} found".format(x.name))
             self._material_map[x.name] = x
 
         # Synchronize materials between links and top-level set
@@ -3808,7 +3809,7 @@ class URDF(URDFType):
         for t in self.transmissions:
             for joint in t.joints:
                 if joint.name not in self._joint_map:
-                    raise ValueError("Transmission {} has invalid joint name " "{}".format(t.name, joint.name))
+                    raise ValueError("Transmission {} has invalid joint name {}".format(t.name, joint.name))
 
     def _validate_graph(self):
         """Raise an exception if the link-joint structure is invalid.
@@ -3835,7 +3836,7 @@ class URDF(URDFType):
                 for n in cc:
                     cluster.append(n.name)
                 link_clusters.append(cluster)
-            message = "Links are not all connected. " "Connected components are:"
+            message = "Links are not all connected. Connected components are:"
             for lc in link_clusters:
                 message += "\n\t"
                 for n in lc:
@@ -3874,7 +3875,7 @@ class URDF(URDFType):
                     joint_cfg[joint] = cfg[joint]
         elif isinstance(cfg, (list, tuple, np.ndarray)):
             if len(cfg) != len(self.actuated_joints):
-                raise ValueError("Cfg must have same length as actuated joints " "if specified as a numerical array")
+                raise ValueError("Cfg must have same length as actuated joints if specified as a numerical array")
             for joint, value in zip(self.actuated_joints, cfg):
                 joint_cfg[joint] = value
         else:

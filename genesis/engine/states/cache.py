@@ -41,4 +41,4 @@ class QueriedStates:
         return self.states[key]
 
     def __repr__(self):
-        return f"{brief(self)}\n" f"states: {brief(self.states)}"
+        return f"{brief(self)}\nstates: {brief(self.states)}"

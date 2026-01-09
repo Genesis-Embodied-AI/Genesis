@@ -732,7 +732,7 @@ class Camera(RBC):
             caller_file = inspect.stack()[-1].filename
             save_to_filename = (
                 os.path.splitext(os.path.basename(caller_file))[0]
-                + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+                + f"_cam_{self.idx}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
             )
 
         if self._is_batched:

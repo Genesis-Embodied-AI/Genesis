@@ -832,10 +832,10 @@ def test_double_pendulum_links_acc(gs_sim, tol):
         acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc()[[0, 2, 4]])
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = np.matmul(np.moveaxis(R, 2, 0), acc_classical_lin_world[1:, :, None])[..., 0]
-        assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -theta_dot[0] ** 2]), tol=tol)
+        assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -(theta_dot[0] ** 2)]), tol=tol)
         assert_allclose(
             acc_classical_lin_local[1],
-            R[..., 1] @ acc_classical_lin_world[1] + np.array([0.0, -theta_ddot.sum(), -theta_dot.sum() ** 2]),
+            R[..., 1] @ acc_classical_lin_world[1] + np.array([0.0, -theta_ddot.sum(), -(theta_dot.sum() ** 2)]),
             tol=tol,
         )
 

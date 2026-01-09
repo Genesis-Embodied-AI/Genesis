@@ -108,9 +108,9 @@ def init(
     wave_width = max(0, min(38, wave_width))
     bar_width = wave_width * 2 + 9
     wave = ("┈┉" * wave_width)[:wave_width]
-    logger.info(f"~<╭{'─'*(bar_width)}╮>~")
+    logger.info(f"~<╭{'─' * (bar_width)}╮>~")
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
-    logger.info(f"~<╰{'─'*(bar_width)}╯>~")
+    logger.info(f"~<╰{'─' * (bar_width)}╯>~")
 
     # Get concrete device and backend
     global device

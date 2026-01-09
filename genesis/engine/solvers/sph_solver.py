@@ -508,7 +508,6 @@ class SPHSolver(Solver):
         iteration = gs.ti_int(0)
         avg_density_err = gs.ti_float(0.0)
         while iteration < self._df_max_div_iters:
-
             avg_density_err = self._divergence_solver_iteration()
             # Max allowed density fluctuation
             # The SI unit for divergence is s^-1, use max density error divided by time step size

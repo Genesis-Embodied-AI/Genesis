@@ -822,7 +822,6 @@ class LegacyCoupler(RBC):
         pdb = self.pbd_solver
         for i_p, i_env in ti.ndrange(pdb._n_particles, pdb._B):
             if self.particle_attach_info[i_p, i_env].link_idx >= 0:
-
                 # read link state
                 link_idx = self.particle_attach_info[i_p, i_env].link_idx
                 link_pos = links_state.pos[link_idx, i_env]
@@ -940,7 +939,6 @@ class LegacyCoupler(RBC):
     def couple(self, f):
         # MPM <-> all others
         if self.mpm_solver.is_active:
-
             self.mpm_grid_op(
                 f,
                 self.sim.cur_t,

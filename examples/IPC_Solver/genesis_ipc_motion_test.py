@@ -223,9 +223,9 @@ def main():
             rigid_v = np.asarray(rigid_v).flatten()
             fem_v = np.asarray(fem_v).flatten()
 
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"Step {i_step:4d}: t = {i_step * dt:.3f}s")
-            print(f"{'-'*70}")
+            print(f"{'-' * 70}")
             print(f"Rigid  mass: {rigid_m:8.4f} kg")
             print(f"Rigid  vel:  [{rigid_v[0]:9.5f}, {rigid_v[1]:9.5f}, {rigid_v[2]:9.5f}] m/s")
             print(f"Rigid  mom:  [{rigid_p[0]:9.5f}, {rigid_p[1]:9.5f}, {rigid_p[2]:9.5f}] kg·m/s")
@@ -297,9 +297,9 @@ def main():
 
     plt.tight_layout()
     plt.savefig("momentum_conservation_test.png", dpi=150)
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Plot saved to: momentum_conservation_test.png")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     plt.show()
 
 

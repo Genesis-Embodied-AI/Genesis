@@ -316,7 +316,6 @@ class RaycasterData(NamedTuple):
 @register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
 @ti.data_oriented
 class RaycasterSensor(RigidSensorMixin, Sensor):
-
     def __init__(
         self,
         options: RaycasterOptions,

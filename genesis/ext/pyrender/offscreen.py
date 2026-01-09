@@ -195,6 +195,7 @@ class OffscreenRenderer(object):
             retval = ()
 
         if normal:
+
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None

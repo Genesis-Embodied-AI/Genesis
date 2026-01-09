@@ -113,7 +113,9 @@ class Trackball(object):
         if self._state == Trackball.STATE_ROTATE:
             # Compute updated azimut directly. No fancy math here because this angle can controlled freely.
             roll_angle = np.arctan2(self._pose[2, 1], self._pose[2, 2])
-            world_up_axis = np.array([0.0, 0.0, -1.0 if roll_angle < 0.0 else 1.0]) # safeguard for degenerate case when roll_angle = 0
+            world_up_axis = np.array(
+                [0.0, 0.0, -1.0 if roll_angle < 0.0 else 1.0]
+            )  # safeguard for degenerate case when roll_angle = 0
             azimuth_angle = -dx / mindim
             azimuth_transform = transformations.rotation_matrix(azimuth_angle, world_up_axis, target)
 
@@ -131,8 +133,8 @@ class Trackball(object):
             # Compute the elevation axis
             norm_view_dir = np.linalg.norm(view_dir)
             if norm_view_dir < EPSILON:
-                 elevation_axis = pose_after_azimuth[:3, 0]
-                 delta_elevation_angle = 0.0
+                elevation_axis = pose_after_azimuth[:3, 0]
+                delta_elevation_angle = 0.0
             else:
                 view_dir_normalized = view_dir / norm_view_dir
                 elevation_axis = np.cross(world_up_axis, view_dir_normalized)

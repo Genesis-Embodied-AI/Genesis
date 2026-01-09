@@ -139,6 +139,9 @@ force-exclude = '''
 )/
 '''
 
+[tool.ruff]
+line-length = 120
+
 [tool.pytest.ini_options]
 addopts = [
     "--color=yes",
