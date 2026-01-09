@@ -4,4 +4,6 @@ repos:
   rev: v0.14.11
   hooks:
     # Run the formatter.
+    - id: ruff-check
+    # Run the formatter.
     - id: ruff-format
