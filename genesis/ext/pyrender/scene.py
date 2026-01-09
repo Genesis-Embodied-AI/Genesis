@@ -602,12 +602,8 @@ class Scene(object):
 
     def sorted_mesh_nodes(self):
         cam_pos = self.get_pose(self.main_camera_node)
-        if len(cam_pos.shape) == 3:
-            batched_pos = True
-            cam_loc = cam_pos[:, :3, 3]
-        else:
-            batched_pos = False
-            cam_loc = cam_pos[:3, 3]
+        cam_loc = cam_pos[..., :3, 3]
+        batched_pos = len(cam_pos.shape) == 3
         solid_nodes = []
         trans_nodes = []
         for node in self.mesh_nodes:
