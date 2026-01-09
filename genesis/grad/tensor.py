@@ -54,7 +54,7 @@ class Tensor(torch.Tensor):
                     element.scene = scene
                     element.uid = gs.UID()
                     element.parents = parents
-        except:  # obj is a single tensor
+        except Exception:  # obj is a single tensor
             if isinstance(obj, cls):
                 obj.scene = scene
                 obj.uid = gs.UID()
