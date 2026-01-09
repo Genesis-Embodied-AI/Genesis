@@ -282,7 +282,9 @@ def pytest_xdist_auto_num_workers(config):
                     check=True,
                     text=True,
                 )
-                devices_vram_memory = tuple(int(m.group(1)) for m in re.finditer(r"VRAM Total:\s+(\d+)\s*MiB", out))
+                devices_vram_memory = tuple(
+                    int(m.group(1)) for m in re.finditer(r"VRAM Total:\s+(\d+)\s*MiB", result.stdout)
+                )
             except (FileNotFoundError, subprocess.CalledProcessError):
                 pass
         if devices_vram_memory is not None:

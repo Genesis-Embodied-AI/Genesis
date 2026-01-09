@@ -4,6 +4,7 @@ import numpy as np
 from pydantic import Field
 
 import genesis as gs
+from genesis.engine.scene import Scene
 
 from ..options import Options
 from .raycaster import DepthCameraPattern, RaycastPattern
@@ -70,7 +71,7 @@ class RigidSensorOptionsMixin:
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
-    def validate(self, scene: "Scene"):
+    def validate(self, scene: Scene):
         from genesis.engine.entities import RigidEntity
 
         super().validate(scene)

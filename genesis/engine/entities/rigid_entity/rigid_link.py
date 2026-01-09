@@ -412,7 +412,7 @@ class RigidLink(RBC):
         return self._visualize_contact
 
     @property
-    def joints(self) -> list["Joint"]:
+    def joints(self):
         """
         The sequence of joints that connects the link to its parent link.
         """
