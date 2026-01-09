@@ -46,7 +46,7 @@ def skeletonization(mesh, sampling=True, verbose=False):
         gs.logger.debug("Skeleton (`.gel`) found in cache.")
         graph_gel = graph.load(gel_file_path)
     else:
-        with gs.logger.timer(f"Convert mesh to skeleton:"):
+        with gs.logger.timer("Convert mesh to skeleton:"):
             graph_gel = graph.LS_skeleton(g, sampling=sampling)
 
         os.makedirs(os.path.dirname(gel_file_path), exist_ok=True)

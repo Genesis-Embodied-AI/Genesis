@@ -15,7 +15,7 @@ try:
     sys.path.append(os.path.join(miscu.get_src_dir(), "ext/LuisaRender/build/bin"))
     import LuisaRenderPy
 except ImportError as e:
-    gs.raise_exception_from(f"Failed to import LuisaRenderer.", e)
+    gs.raise_exception_from("Failed to import LuisaRenderer.", e)
 
 logging_class = {
     "debug": LuisaRenderPy.LogLevel.DEBUG,
