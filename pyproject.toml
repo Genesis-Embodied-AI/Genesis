@@ -158,7 +158,6 @@ ignore = [
     "E712", # true-false-comparison
     "E713", # not-in-test
     "F811", # redefined-while-unused
-    "E711", # none-comparison
 ]
 
 [tool.pytest.ini_options]
