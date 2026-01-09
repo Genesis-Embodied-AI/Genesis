@@ -84,7 +84,7 @@ def get_device_by_index(device_id):
 
     devices = query_devices()
     if device_id >= len(devices):
-        raise ValueError("Invalid device ID ({})".format(device_id, len(devices)))
+        raise ValueError("Invalid device ID ({}) with {} devices".format(device_id, len(devices)))
     return devices[device_id]
 
 

@@ -160,7 +160,6 @@ ignore = [
     "F811", # redefined-while-unused
     "E711", # none-comparison
     "E714", # not-is-test
-    "F523", # string-dot-format-extra-positional-arguments
 ]
 
 [tool.pytest.ini_options]
