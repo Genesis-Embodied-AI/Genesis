@@ -12,12 +12,22 @@ import genesis.utils.mesh as mesh_utils
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
+# Check for USD support by testing if pxr module (from usd-core package) is available
 try:
+    from pxr import Usd
     import genesis.utils.usd.usda as usda_utils
 
     HAS_USD_SUPPORT = True
 except ImportError:
     HAS_USD_SUPPORT = False
+
+# Check for Omniverse Kit support (required for USD baking)
+try:
+    import omni.kit_app
+
+    HAS_OMNIVERSE_KIT_SUPPORT = True
+except ImportError:
+    HAS_OMNIVERSE_KIT_SUPPORT = False
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
 NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
@@ -257,10 +267,7 @@ def test_glb_parse_material(glb_file):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(
-    not HAS_USD_SUPPORT or platform.machine() == "aarch64",
-    reason="'usd-core' module not found or USD not supported on ARM.",
-)
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'usd-core' module (provides 'pxr') not found.")
 @pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 def test_usd_parse(usd_filename):
     asset_path = get_hf_dataset(pattern=f"{usd_filename}.glb")
@@ -310,10 +317,7 @@ def test_usd_parse(usd_filename):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(
-    not HAS_USD_SUPPORT or platform.machine() == "aarch64",
-    reason="'usd-core' module not found or USD not supported on ARM.",
-)
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'usd-core' module (provides 'pxr') not found.")
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
 def test_usd_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
@@ -334,8 +338,8 @@ def test_usd_parse_nodegraph(usd_file):
 
 @pytest.mark.required
 @pytest.mark.skipif(
-    sys.version_info[:2] != (3, 10) or sys.platform not in ("linux", "win32") or platform.machine() == "aarch64",
-    reason="omniverse-kit used by USD Baking cannot be correctly installed on this platform now, or USD not supported on ARM.",
+    not HAS_USD_SUPPORT or not HAS_OMNIVERSE_KIT_SUPPORT,
+    reason="'usd-core' module (provides 'pxr') or 'omni.kit_app' module (from omniverse-kit) not found.",
 )
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
