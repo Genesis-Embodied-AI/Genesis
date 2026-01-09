@@ -270,6 +270,7 @@ def func_cost_change(
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def compute_A_diag(
+    entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
