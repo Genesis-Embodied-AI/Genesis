@@ -1,3 +1,5 @@
+import platform
+
 import gstaichi as ti
 
 import genesis as gs
@@ -31,7 +33,7 @@ class Particle(Base):
         sampler=None,
     ):
         if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
+            sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
 
         super().__init__()
 
