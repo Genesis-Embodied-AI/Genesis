@@ -24,15 +24,6 @@ class TimeElapser:
         self.end_msg = end_msg + self.last_logger_output[-4:] + "\n"
 
     def __enter__(self):
-        self.thread = threading.Thread(target=self.run)
-        self.thread.start()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._stop.set()
-        self.thread.join()
-
-    def __enter__(self):
         pass
 
     def __exit__(self, exc_type, exc_value, traceback):
