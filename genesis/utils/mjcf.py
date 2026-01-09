@@ -330,7 +330,7 @@ def parse_link(mj, i_l, scale):
 
         if i_a >= 0:
             if mj.actuator_dyntype[i_a] != mujoco.mjtDyn.mjDYN_NONE:
-                gs.logger.warning(f"(MJCF) Actuator internal dynamics not supported")
+                gs.logger.warning("(MJCF) Actuator internal dynamics not supported")
             gaintype = mujoco.mjtGain(mj.actuator_gaintype[i_a])
             if gaintype != mujoco.mjtGain.mjGAIN_FIXED:
                 gs.logger.warning(f"(MJCF) Actuator control gain of type '{gaintype}' not supported")

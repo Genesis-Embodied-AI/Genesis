@@ -339,7 +339,7 @@ class RigidLink(RBC):
         from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_adjust_link_inertia
 
         if self.is_fixed:
-            gs.logger.warning(f"Updating the mass of a link that is fixed wrt world has no effect, skipping.")
+            gs.logger.warning("Updating the mass of a link that is fixed wrt world has no effect, skipping.")
             return
 
         if mass < gs.EPS:
