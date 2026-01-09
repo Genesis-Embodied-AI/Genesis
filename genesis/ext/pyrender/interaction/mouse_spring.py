@@ -49,9 +49,8 @@ class MouseSpring:
         link_T_principal: Pose = Pose(Vec3.from_arraylike(link.inertial_pos), Quat.from_arraylike(link.inertial_quat))
         world_T_principal: Pose = link_pose * link_T_principal
 
-        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(
-            self.held_point_in_local
-        )  # for non-spherical inertia
+        # for non-spherical inertia
+        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(self.held_point_in_local)
         arm_in_world: Vec3 = world_T_principal.rot * arm_in_principal  # for spherical inertia
 
         pos_err_v: Vec3 = control_point - held_point_in_world

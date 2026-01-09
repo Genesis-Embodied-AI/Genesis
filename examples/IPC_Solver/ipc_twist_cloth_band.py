@@ -228,13 +228,12 @@ def main():
 
         # Progress reporting
         if frame % 100 == 0:
-            phase = (
-                "Gripping"
-                if total_t < grip_duration
-                else "Twisting"
-                if total_t < twist_start_time + twist_duration
-                else "Settling"
-            )
+            if total_t < grip_duration:
+                phase = "Gripping"
+            elif total_t < twist_start_time + twist_duration:
+                phase = "Twisting"
+            else:
+                phase = "Settling"
             print(f"  Frame {frame}/{total_frames} (t={total_t:.2f}s) - {phase}")
 
 
