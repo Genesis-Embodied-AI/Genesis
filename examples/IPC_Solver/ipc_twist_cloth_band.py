@@ -43,13 +43,8 @@ def main():
     )
 
     # Band dimensions
-    band_length = 1.2
-    band_width = 0.13
-    band_height = 0.43
 
     # Cube gripper parameters
-    cube_size = 0.03  # 3cm cubes
-    grip_offset = 0.02  # Distance from band edge to cube center
 
     asset_path = snapshot_download(
         repo_type="dataset",
@@ -59,7 +54,7 @@ def main():
         max_workers=1,
     )
     # Add band (cloth with IPC) - positioned horizontally along Y axis
-    band = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/band.obj",
         ),
@@ -122,12 +117,12 @@ def main():
 
     # Phase 1: Gripping (move cubes to grip the band)
     grip_duration = 2.0  # 2 seconds to slowly grip
-    grip_frames = int(grip_duration / dt)
+    int(grip_duration / dt)
 
     # Phase 2: Twisting (rotate the grippers)
     twist_start_time = grip_duration
     twist_duration = 6.0
-    twist_frames = int(twist_duration / dt)
+    int(twist_duration / dt)
     angular_vel = np.deg2rad(180)  # 180 degrees per second
 
     print(f"\nStarting simulation for {total_frames} frames...")

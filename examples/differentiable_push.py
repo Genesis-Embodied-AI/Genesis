@@ -34,7 +34,7 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+    scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
     stick = scene.add_entity(
         material=gs.materials.Tool(friction=8.0),
         morph=gs.morphs.Mesh(
@@ -58,7 +58,7 @@ def main():
         ),
         vis_mode="particle",
     )
-    obj2 = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.MPM.Elastic(rho=500),
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
@@ -73,13 +73,13 @@ def main():
     )
 
     ########################## cameras ##########################
-    cam_0 = scene.add_camera(
+    scene.add_camera(
         pos=(1.5, 0.5, 2.42),
         lookat=(0.5, 0.5, 0.1),
         fov=30,
         GUI=True,
     )
-    cam_1 = scene.add_camera(
+    scene.add_camera(
         pos=(-3.0, 1.5, 2.0),
         lookat=(0.5, 0.5, 0.1),
         fov=30,

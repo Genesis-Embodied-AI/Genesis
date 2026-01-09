@@ -347,7 +347,7 @@ class IPCCoupler(RBC):
                 geom_type = rigid_solver.geoms_info.type[i_g]
                 link_idx = rigid_solver.geoms_info.link_idx[i_g]
                 entity_idx = rigid_solver.links_info.entity_idx[link_idx]
-                entity = rigid_solver._entities[entity_idx]
+                rigid_solver._entities[entity_idx]
 
                 # Check if this link should be included in IPC based on coupler's filter
                 if entity_idx in self._ipc_link_filters:
@@ -780,7 +780,7 @@ class IPCCoupler(RBC):
                                     pos = proc_geo.positions().view().reshape(-1, 3)
                                     fem_geo_by_entity[entity_idx][env_idx] = pos
 
-                    except Exception as e:
+                    except Exception:
                         # Skip this geometry if metadata reading fails
                         continue
 

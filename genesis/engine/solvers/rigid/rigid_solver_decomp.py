@@ -2874,7 +2874,7 @@ def kernel_init_meaninertia(
             rigid_global_info.meaninertia[i_b] = 0.0
             for i_e in range(n_entities):
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                    [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                     # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
                     ti.atomic_add(rigid_global_info.meaninertia[i_b], rigid_global_info.mass_mat[i_d, i_d, i_b])
                 rigid_global_info.meaninertia[i_b] = rigid_global_info.meaninertia[i_b] / n_dofs
@@ -5644,7 +5644,7 @@ def func_forward_velocity_entity(
                 if func_check_index_range(i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], BW):
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     joint_type = joints_info.type[I_j]
-                    q_start = joints_info.q_start[I_j]
+                    joints_info.q_start[I_j]
                     dof_start = joints_info.dof_start[I_j]
 
                     curr_I = (i_l, 0 if ti.static(not BW) else i_j_, i_b)
@@ -5957,7 +5957,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
 ):
-    n_entities = entities_state.hibernated.shape[0]
+    entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -6386,7 +6386,7 @@ def func_torque_and_passive_force(
                     joint_type = joints_info.type[I_j]
 
                     if joint_type != gs.JOINT_TYPE.FREE and joint_type != gs.JOINT_TYPE.FIXED:
-                        q_start = links_info.q_start[I_l]
+                        links_info.q_start[I_l]
                         dof_start = links_info.dof_start[I_l]
                         dof_end = links_info.dof_end[I_l]
 

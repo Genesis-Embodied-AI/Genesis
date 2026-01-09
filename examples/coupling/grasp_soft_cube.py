@@ -38,10 +38,10 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.MPM.Elastic(),
         morph=gs.morphs.Box(
             size=(0.04, 0.04, 0.04),

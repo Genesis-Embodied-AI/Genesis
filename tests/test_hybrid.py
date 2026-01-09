@@ -179,7 +179,6 @@ def test_fluid_emitter(n_envs, material_type, show_viewer):
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
-    BOX_POS = (0.0, 0.0, 0.1)
     BOX_HALFHEIGHT = 0.1
 
     scene = gs.Scene(
@@ -196,7 +195,7 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(
             collision=False,
         ),
@@ -267,7 +266,7 @@ def test_sap_fem_vs_robot(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(
             collision=False,
         ),
@@ -340,7 +339,7 @@ def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
         show_viewer=show_viewer,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
     )
 
@@ -358,7 +357,7 @@ def test_rigid_mpm_legacy_coupling(substeps, show_viewer):
         ),
     )
 
-    obj_sand = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.MPM.Liquid(),
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.2),

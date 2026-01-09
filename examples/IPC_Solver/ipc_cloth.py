@@ -51,7 +51,7 @@ def main():
         allow_patterns="grid20x20.obj",
         max_workers=1,
     )
-    cloth = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/grid20x20.obj",
             scale=2.0,
@@ -81,7 +81,7 @@ def main():
     )
 
     # Optional: Add another FEM volume object
-    soft_ball = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Sphere(pos=(0.5, 0.0, 0.1), radius=0.08),
         material=gs.materials.FEM.Elastic(E=1.0e3, nu=0.3, rho=1000.0, model="stable_neohookean"),
         surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.3, 0.8)),

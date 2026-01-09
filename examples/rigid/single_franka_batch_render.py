@@ -34,7 +34,7 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
         surface=gs.surfaces.Default(
             diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures"),
@@ -69,7 +69,7 @@ def main():
         fov=45,
         GUI=args.vis,
     )
-    cam_2 = scene.add_camera(
+    scene.add_camera(
         res=(512, 512),
         pos=(0.0, 0.0, 5.0),
         lookat=(0.0, 0.0, 0.0),

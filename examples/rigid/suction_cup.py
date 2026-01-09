@@ -22,7 +22,7 @@ def main():
         ),
         show_viewer=args.vis,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     cube = scene.add_entity(
@@ -32,7 +32,7 @@ def main():
         ),
         surface=gs.surfaces.Plastic(color=(1, 0, 0)),
     )
-    cube_2 = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
             pos=(0.4, 0.2, 0.02),

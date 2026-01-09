@@ -139,7 +139,7 @@ def test_deformable_parallel(show_viewer):
         show_viewer=show_viewer,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
         material=gs.materials.Rigid(
             needs_coup=True,
