@@ -1,6 +1,5 @@
 import hashlib
 import os
-import pickle as pkl
 import time
 from itertools import combinations
 
@@ -9,7 +8,6 @@ import numpy as np
 from matplotlib.patches import FancyArrowPatch
 
 import genesis as gs
-from genesis.utils.misc import redirect_libc_stderr
 
 from .misc import get_gel_cache_dir
 

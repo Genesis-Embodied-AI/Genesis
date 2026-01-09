@@ -1,10 +1,8 @@
 import os
 import xml.etree.ElementTree as ET
-import contextlib
 from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
-import io
 
 import numpy as np
 import trimesh

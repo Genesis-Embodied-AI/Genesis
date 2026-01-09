@@ -2,8 +2,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from .ray import Plane, Ray, RayHit
-from .vec3 import Pose, Quat, Vec3, Color
+from .vec3 import Pose, Quat, Vec3
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink

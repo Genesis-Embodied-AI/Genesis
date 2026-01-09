@@ -49,7 +49,7 @@ from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HA
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
-from .shader_program import ShaderProgram, ShaderProgramCache
+from .shader_program import ShaderProgram
 from .trackball import Trackball
 
 if TYPE_CHECKING:

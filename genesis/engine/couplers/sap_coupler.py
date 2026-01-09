@@ -9,7 +9,7 @@ import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.constants import IntEnum, EQUALITY_TYPE
+from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
 from genesis.options.solvers import SAPCouplerOptions

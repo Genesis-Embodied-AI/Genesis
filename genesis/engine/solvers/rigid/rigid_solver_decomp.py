@@ -1,5 +1,4 @@
 import math
-from collections import defaultdict
 from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
@@ -13,7 +12,6 @@ from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
-from genesis.utils import linalg as lu
 from genesis.utils.misc import (
     DeprecationError,
     ti_to_torch,
