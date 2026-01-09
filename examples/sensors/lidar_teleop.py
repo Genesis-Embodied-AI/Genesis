@@ -1,62 +1,21 @@
 import argparse
 import os
-import threading
 
 import numpy as np
 
 import genesis as gs
+from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
 from genesis.utils.geom import euler_to_quat
-
-IS_PYNPUT_AVAILABLE = False
-try:
-    from pynput import keyboard
-
-    IS_PYNPUT_AVAILABLE = True
-except ImportError:
-    pass
 
 # Position and angle increments for keyboard teleop control
 KEY_DPOS = 0.1
 KEY_DANGLE = 0.1
-
-# Movement when no keyboard control is available
-MOVE_RADIUS = 1.0
-MOVE_RATE = 1.0 / 100.0
 
 # Number of obstacles to create in a ring around the robot
 NUM_CYLINDERS = 8
 NUM_BOXES = 6
 CYLINDER_RING_RADIUS = 3.0
 BOX_RING_RADIUS = 5.0
-
-
-class KeyboardDevice:
-    def __init__(self):
-        self.pressed_keys = set()
-        self.lock = threading.Lock()
-        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-
-    def start(self):
-        self.listener.start()
-
-    def stop(self):
-        try:
-            self.listener.stop()
-        except NotImplementedError:
-            # Dummy backend does not implement stop
-            pass
-        self.listener.join()
-
-    def on_press(self, key: "keyboard.Key"):
-        with self.lock:
-            self.pressed_keys.add(key)
-
-    def on_release(self, key: "keyboard.Key"):
-        with self.lock:
-            self.pressed_keys.discard(key)
-
-    def get_cmd(self):
-        return self.pressed_keys
 
 
 def main():
@@ -68,12 +27,6 @@ def main():
         "--pattern", type=str, default="spherical", choices=("spherical", "depth", "grid"), help="Sensor pattern type"
     )
     args = parser.parse_args()
-
-    if IS_PYNPUT_AVAILABLE:
-        kb = KeyboardDevice()
-        kb.start()
-    else:
-        print("Keyboard teleop is disabled since pynput is not installed. To install, run `pip install pynput`.")
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
@@ -169,17 +122,7 @@ def main():
 
     scene.build(n_envs=args.n_envs)
 
-    if IS_PYNPUT_AVAILABLE:
-        # Avoid using same keys as interactive viewer keyboard controls
-        print("Keyboard Controls:")
-        print("[↑/↓/←/→]: Move XY")
-        print("[j/k]: Down/Up")
-        print("[n/m]: Roll CCW/CW")
-        print("[,/.]: Pitch Up/Down")
-        print("[o/p]: Yaw CCW/CW")
-        print("[\\]: Reset")
-        print("[esc]: Quit")
-
+    # Initialize pose state
     init_pos = np.array([0.0, 0.0, 0.35], dtype=np.float32)
     init_euler = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
@@ -193,48 +136,81 @@ def main():
         robot.set_pos(pos_np)
         robot.set_quat(quat_np)
 
+    # Define control callbacks
+    def reset_pose():
+        target_pos[:] = init_pos
+        target_euler[:] = init_euler
+
+    def move_forward():
+        target_pos[0] += KEY_DPOS
+
+    def move_backward():
+        target_pos[0] -= KEY_DPOS
+
+    def move_right():
+        target_pos[1] -= KEY_DPOS
+
+    def move_left():
+        target_pos[1] += KEY_DPOS
+
+    def move_down():
+        target_pos[2] -= KEY_DPOS
+
+    def move_up():
+        target_pos[2] += KEY_DPOS
+
+    def roll_ccw():
+        target_euler[0] += KEY_DANGLE
+
+    def roll_cw():
+        target_euler[0] -= KEY_DANGLE
+
+    def pitch_up():
+        target_euler[1] += KEY_DANGLE
+
+    def pitch_down():
+        target_euler[1] -= KEY_DANGLE
+
+    def yaw_ccw():
+        target_euler[2] += KEY_DANGLE
+
+    def yaw_cw():
+        target_euler[2] -= KEY_DANGLE
+
+    # Register keybindings
+    from pyglet.window import key
+
+    scene.viewer.register_keybinds(
+        (
+            Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback_func=move_forward),
+            Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback_func=move_backward),
+            Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback_func=move_right),
+            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback_func=move_left),
+            Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="move_down", callback_func=move_down),
+            Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="move_up", callback_func=move_up),
+            Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="roll_ccw", callback_func=roll_ccw),
+            Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="roll_cw", callback_func=roll_cw),
+            Keybind(key_code=key.COMMA, key_action=KeyAction.HOLD, name="pitch_up", callback_func=pitch_up),
+            Keybind(key_code=key.PERIOD, key_action=KeyAction.HOLD, name="pitch_down", callback_func=pitch_down),
+            Keybind(key_code=key.O, key_action=KeyAction.HOLD, name="yaw_ccw", callback_func=yaw_ccw),
+            Keybind(key_code=key.P, key_action=KeyAction.HOLD, name="yaw_cw", callback_func=yaw_cw),
+            Keybind(key_code=key.BACKSLASH, key_action=KeyAction.HOLD, name="reset", callback_func=reset_pose),
+        )
+    )
+
+    # Print controls
+    print("Keyboard Controls:")
+    print("[↑/↓/←/→]: Move XY")
+    print("[j/k]: Down/Up")
+    print("[n/m]: Roll CCW/CW")
+    print("[,/.]: Pitch Up/Down")
+    print("[o/p]: Yaw CCW/CW")
+    print("[\\]: Reset")
+
     apply_pose_to_all_envs(target_pos, euler_to_quat(target_euler))
 
     try:
         while True:
-            if IS_PYNPUT_AVAILABLE:
-                pressed = kb.pressed_keys.copy()
-                if keyboard.Key.esc in pressed:
-                    break
-                if keyboard.KeyCode.from_char("\\") in pressed:
-                    target_pos[:] = init_pos
-                    target_euler[:] = init_euler
-
-                if keyboard.Key.up in pressed:
-                    target_pos[0] += KEY_DPOS
-                if keyboard.Key.down in pressed:
-                    target_pos[0] -= KEY_DPOS
-                if keyboard.Key.right in pressed:
-                    target_pos[1] -= KEY_DPOS
-                if keyboard.Key.left in pressed:
-                    target_pos[1] += KEY_DPOS
-                if keyboard.KeyCode.from_char("j") in pressed:
-                    target_pos[2] -= KEY_DPOS
-                if keyboard.KeyCode.from_char("k") in pressed:
-                    target_pos[2] += KEY_DPOS
-
-                if keyboard.KeyCode.from_char("n") in pressed:
-                    target_euler[0] += KEY_DANGLE  # roll CCW around +X
-                if keyboard.KeyCode.from_char("m") in pressed:
-                    target_euler[0] -= KEY_DANGLE  # roll CW around +X
-                if keyboard.KeyCode.from_char(",") in pressed:
-                    target_euler[1] += KEY_DANGLE  # pitch up around +Y
-                if keyboard.KeyCode.from_char(".") in pressed:
-                    target_euler[1] -= KEY_DANGLE  # pitch down around +Y
-                if keyboard.KeyCode.from_char("o") in pressed:
-                    target_euler[2] += KEY_DANGLE  # yaw CCW around +Z
-                if keyboard.KeyCode.from_char("p") in pressed:
-                    target_euler[2] -= KEY_DANGLE  # yaw CW around +Z
-            else:
-                # move in a circle if no keyboard control
-                target_pos[0] = MOVE_RADIUS * np.cos(scene.t * MOVE_RATE)
-                target_pos[1] = MOVE_RADIUS * np.sin(scene.t * MOVE_RATE)
-
             apply_pose_to_all_envs(target_pos, euler_to_quat(target_euler))
             scene.step()
 
