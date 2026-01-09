@@ -127,12 +127,6 @@ jobs:
           pip install --upgrade pip setuptools pkg-info wheel
           pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Black Format Check
-        if: ${{ matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12' && matrix.GS_BACKEND == 'cpu' && matrix.GS_ENABLE_NDARRAY == '1' }}
-        run: |
-          pip install black
-          black --line-length 120 --check .
-
       - name: Install Genesis
         shell: bash
         run: |

@@ -24,17 +24,18 @@ class ViewerInteraction(ViewerInteractionBase):
     - mouse dragging
     """
 
-    def __init__(self,
-        camera: 'Node',
-        scene: 'Scene',
+    def __init__(
+        self,
+        camera: "Node",
+        scene: "Scene",
         viewport_size: tuple[int, int],
         camera_yfov: float,
         log_events: bool = False,
         camera_fov: float = 60.0,
     ) -> None:
         super().__init__(log_events)
-        self.camera: 'Node' = camera
-        self.scene: 'Scene' = scene
+        self.camera: "Node" = camera
+        self.scene: "Scene" = scene
         self.viewport_size: tuple[int, int] = viewport_size
         self.camera_yfov: float = camera_yfov
 
@@ -66,7 +67,7 @@ class ViewerInteraction(ViewerInteractionBase):
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_press(x, y, button, modifiers)
-        if button == 1: # left mouse button
+        if button == 1:  # left mouse button
             ray_hit = self.raycast_against_entities(self.screen_position_to_ray(x, y))
             with self.lock:
                 if ray_hit.geom:
@@ -87,7 +88,7 @@ class ViewerInteraction(ViewerInteractionBase):
     @override
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_release(x, y, button, modifiers)
-        if button == 1: # left mouse button
+        if button == 1:  # left mouse button
             with self.lock:
                 self.picked_link = None
                 self.picked_point_in_local = None
@@ -119,7 +120,7 @@ class ViewerInteraction(ViewerInteractionBase):
                         # apply force
                         self.mouse_spring.apply_force(new_mouse_3d_pos, self.scene.sim.dt)
                     else:
-                        #apply displacement
+                        # apply displacement
                         pos = Vec3.from_tensor(self.picked_link.entity.get_pos())
                         pos += delta_3d_pos
                         self.picked_link.entity.set_pos(pos.as_tensor())
@@ -155,7 +156,6 @@ class ViewerInteraction(ViewerInteractionBase):
                         self._draw_arrow(closest_hit.position, 0.25 * closest_hit.normal, (0, 1, 0, 1))
                     if closest_hit.geom:
                         self._draw_entity_unrotated_obb(closest_hit.geom)
-
 
     def screen_position_to_ray(self, x: float, y: float) -> Ray:
         # convert screen position to ray
@@ -234,17 +234,20 @@ class ViewerInteraction(ViewerInteractionBase):
         half_extents = 0.5 * Vec3.from_xyz(*box.size)
         return OBB(pose, half_extents)
 
-    def _get_geom_placeholder_obb(self, geom: 'RigidGeom') -> OBB:
+    def _get_geom_placeholder_obb(self, geom: "RigidGeom") -> OBB:
         pose = Pose.from_geom(geom)
         half_extents = Vec3.full(0.5 * 0.125)
         return OBB(pose, half_extents)
 
     def _draw_arrow(
-        self, pos: Vec3, dir: Vec3, color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+        self,
+        pos: Vec3,
+        dir: Vec3,
+        color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
     ) -> None:
         self.scene.draw_debug_arrow(pos.v, dir.v, color=color)
 
-    def _draw_entity_unrotated_obb(self, geom: 'RigidGeom') -> None:
+    def _draw_entity_unrotated_obb(self, geom: "RigidGeom") -> None:
         obb: OBB | None = None
         if isinstance(geom.entity.morph, gs.morphs.Box):
             obb = self._get_box_obb(geom.entity)

@@ -53,7 +53,7 @@ def skeletonization(mesh, sampling=True, verbose=False):
         graph.save(gel_file_path, graph_gel)
     if verbose:
         toc = time.time()
-        print(f"Skeletonization time {toc-tic}")
+        print(f"Skeletonization time {toc - tic}")
 
     return graph_gel
 

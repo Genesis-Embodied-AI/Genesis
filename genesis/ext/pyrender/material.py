@@ -89,7 +89,6 @@ class Material(metaclass=ABCMeta):
         smooth=True,
         wireframe=False,
     ):
-
         # Set defaults
         if alphaMode is None:
             alphaMode = "OPAQUE"

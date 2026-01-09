@@ -108,7 +108,7 @@ class Surface(Options):
 
     @staticmethod
     def shortcut_info(name, map_name):
-        return f"`{name}` is a shortcut for texture. " f"When {name} is set, {map_name} setting is not allowed."
+        return f"`{name}` is a shortcut for texture. When {name} is set, {map_name} setting is not allowed."
 
     def __init__(self, **data):
         super().__init__(**data)
