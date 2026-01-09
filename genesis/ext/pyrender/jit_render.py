@@ -5,14 +5,11 @@ import numba as nb
 
 import OpenGL.GL as GL
 import OpenGL.constant as GL_constant
-from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
 
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
 from .light import DirectionalLight, PointLight
 from .constants import RenderFlags, MAX_N_LIGHTS
 from .numba_gl_wrapper import GLWrapper
-
-import genesis as gs
 
 
 _DISABLE_OFFSCREEN_MARKERS = "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ

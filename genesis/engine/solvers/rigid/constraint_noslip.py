@@ -109,7 +109,7 @@ def kernel_noslip(
             # Project contact friction (pyramidal 4-edge) with normal fixed
             for i_col in range(n_con):
                 base = const_start + i_col * 4
-                mu = collider_state.contact_data.friction[i_col, i_b]
+                collider_state.contact_data.friction[i_col, i_b]
                 for j2 in ti.static(range(2)):
                     j_efc = base + j2 * 2
                     res = func_residual_constraint_force(
@@ -274,6 +274,7 @@ def compute_A_diag(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
+    entities_info: array_class.EntitiesInfo,
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]

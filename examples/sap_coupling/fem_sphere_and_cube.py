@@ -1,6 +1,5 @@
 import argparse
 import sys
-import numpy as np
 import genesis as gs
 import os
 from huggingface_hub import snapshot_download
@@ -32,7 +31,7 @@ def main():
         ),
         show_viewer=args.vis,
     )
-    sphere = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.0, 0.0, 0.1),
             radius=0.1,
@@ -50,7 +49,7 @@ def main():
         allow_patterns="cube8.obj",
         max_workers=1,
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/cube8.obj",
             pos=(0.0, 0.0, 0.4),

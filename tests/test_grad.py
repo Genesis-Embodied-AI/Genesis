@@ -1,6 +1,3 @@
-import platform
-import sys
-
 import numpy as np
 import pytest
 import torch
@@ -41,7 +38,7 @@ def test_differentiable_push(show_viewer):
         show_viewer=show_viewer,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.URDF(
             file="urdf/plane/plane.urdf",
             fixed=True,

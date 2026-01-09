@@ -1,6 +1,4 @@
-import time
 import argparse
-import numpy as np
 import genesis as gs
 
 
@@ -29,7 +27,7 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
@@ -38,18 +36,6 @@ def main():
     )
     ########################## build ##########################
     scene.build()
-
-    joints_name = (
-        "joint1",
-        "joint2",
-        "joint3",
-        "joint4",
-        "joint5",
-        "joint6",
-        "joint7",
-        "finger_joint1",
-        "finger_joint2",
-    )
 
     last_link_vel = None
     # PD control

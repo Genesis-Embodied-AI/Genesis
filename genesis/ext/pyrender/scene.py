@@ -6,7 +6,6 @@ Author: Matthew Matl
 
 import networkx as nx
 import numpy as np
-import trimesh
 
 from .camera import Camera
 from .light import DirectionalLight, Light, PointLight, SpotLight
@@ -293,14 +292,12 @@ class Scene(object):
             raise TypeError("Unrecognized object type")
 
         if parent_node is None and parent_name is not None:
-            try:
-                (parent_node,) = self.get_nodes(name=parent_name)
-            except ValueError:
-                if len(parent_nodes) == 0:
-                    raise ValueError(f"No parent node with name '{parent_name}' found")
-                elif len(parent_nodes) > 1:
-                    raise ValueError(f"More than one parent node with name '{parent_name}' found")
-                raise
+            parent_nodes = self.get_nodes(name=parent_name)
+            if len(parent_nodes) == 0:
+                raise ValueError(f"No parent node with name '{parent_name}' found")
+            elif len(parent_nodes) > 1:
+                raise ValueError(f"More than one parent node with name '{parent_name}' found")
+            parent_node = parent_nodes[0]
 
         self.add_node(node, parent_node=parent_node)
 

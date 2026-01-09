@@ -1,6 +1,5 @@
 import inspect
 import os
-import threading
 import time
 
 import numpy as np

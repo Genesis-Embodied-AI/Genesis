@@ -697,7 +697,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         show_FPS=False,
     )
 
-    robot = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/simple/two_link_arm.urdf",
             pos=(-1.0, -1.0, 0.5),
@@ -1329,7 +1329,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
                 cutoff=45.0,
                 intensity=0.5,
             )
-        plane = scene.add_entity(
+        scene.add_entity(
             gs.morphs.Plane(plane_size=plane_size, tile_size=tile_size),
         )
         camera = scene.add_camera(

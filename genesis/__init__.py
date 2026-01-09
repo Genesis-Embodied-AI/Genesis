@@ -426,7 +426,7 @@ from .utils.misc import get_src_dir as _get_src_dir
 with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
     try:
         from pygel3d import graph, hmesh
-    except OSError as e:
+    except OSError:
         # Import may fail because of missing system dependencies (libGLU.so.1).
         # This is not blocking because it is only an issue for hybrid entities.
         pass

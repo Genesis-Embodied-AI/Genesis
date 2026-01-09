@@ -9,7 +9,7 @@ import genesis as gs
 from .aabb import AABB, OBB
 from .mouse_spring import MouseSpring
 from .ray import Plane, Ray, RayHit
-from .vec3 import Pose, Quat, Vec3, Color
+from .vec3 import Pose, Vec3, Color
 from .viewer_interaction_base import ViewerInteractionBase, EVENT_HANDLE_STATE, EVENT_HANDLED
 
 if TYPE_CHECKING:

@@ -4,7 +4,6 @@ Cloth material for IPC-based cloth simulation.
 This material is used with FEMEntity and IPCCoupler for shell/membrane simulation.
 """
 
-import genesis as gs
 from .base import Base
 
 

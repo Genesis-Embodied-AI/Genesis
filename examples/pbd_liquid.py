@@ -1,7 +1,6 @@
 import argparse
 import os
 
-import numpy as np
 
 import genesis as gs
 
@@ -34,7 +33,7 @@ def main():
 
     ########################## entities ##########################
 
-    liquid = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.PBD.Liquid(
             sampler="regular",
             rho=1.0,

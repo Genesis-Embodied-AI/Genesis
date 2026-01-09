@@ -1,10 +1,8 @@
 from typing import TYPE_CHECKING
 
-import numpy as np
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 if TYPE_CHECKING:
@@ -18,7 +16,7 @@ class ContactIsland:
         self.solver: "RigidSolver" = collider._solver
         self.collider: "Collider" = collider
 
-        struct_agg_list = ti.types.struct(
+        ti.types.struct(
             curr=gs.ti_int,
             n=gs.ti_int,
             start=gs.ti_int,

@@ -120,7 +120,7 @@ class HybridEntity(Entity):
             )
 
         else:
-            raise ValueError(f"`morph` in hybrid entity should be either URDF or Mesh")
+            raise ValueError("`morph` in hybrid entity should be either URDF or Mesh")
 
         if not material.use_default_coupling:
             # get rigid-soft association function
@@ -568,7 +568,7 @@ def default_func_instantiate_soft_from_rigid(
         # can also do link.init_verts here and it seems to have more indices than geom.init_verts (but there is no idx_offset_vert)
         lower = geom.init_verts.min(axis=0)
         upper = geom.init_verts.max(axis=0)
-        center = (upper + lower) / 2.0
+        (upper + lower) / 2.0
         verts = geom.init_verts
         assert hasattr(geom, "init_normals")
         inner_mesh = trimesh.Trimesh(

@@ -6,7 +6,7 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    args = parser.parse_args()
+    parser.parse_args()
 
     ########################## init ##########################
     gs.init(backend=gs.gpu)
@@ -24,10 +24,10 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0, 0, 0),

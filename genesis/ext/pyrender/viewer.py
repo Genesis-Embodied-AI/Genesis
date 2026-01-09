@@ -49,7 +49,7 @@ from .interaction.viewer_interaction_base import ViewerInteractionBase, EVENT_HA
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
-from .shader_program import ShaderProgram, ShaderProgramCache
+from .shader_program import ShaderProgram
 from .trackball import Trackball
 
 if TYPE_CHECKING:
@@ -410,7 +410,7 @@ class Viewer(pyglet.window.Window):
             self._initialized_event.wait()
             if not self._is_active:
                 if self._exception:
-                    raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from self._exception
+                    raise RuntimeError("Unable to initialize an OpenGL 3+ context.") from self._exception
                 raise OpenGL.error.Error("Invalid OpenGL context.")
         else:
             if self.auto_start:
@@ -1234,7 +1234,8 @@ class Viewer(pyglet.window.Window):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
 
         try:
-            import pyglet.window.xlib, pyglet.display.xlib
+            import pyglet.window.xlib
+            import pyglet.display.xlib
 
             xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
@@ -1306,7 +1307,7 @@ class Viewer(pyglet.window.Window):
                         self._exception = e
                         return
                     else:
-                        raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
+                        raise RuntimeError("Unable to initialize an OpenGL 3+ context.") from e
                 pyglet.window.xlib._have_utf8 = False
                 confs.insert(0, conf)
             except (pyglet.window.NoSuchConfigException, pyglet.gl.ContextException) as e:
@@ -1316,7 +1317,7 @@ class Viewer(pyglet.window.Window):
                         self._exception = e
                         return
                     else:
-                        raise RuntimeError(f"Unable to initialize an OpenGL 3+ context.") from e
+                        raise RuntimeError("Unable to initialize an OpenGL 3+ context.") from e
 
         if self._run_in_thread:
             pyglet.clock.schedule_interval(Viewer._time_event, 1.0 / self.viewer_flags["refresh_rate"], self)

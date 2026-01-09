@@ -350,7 +350,7 @@ def test_usd_bake(usd_file, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    robot = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Mesh(
             file=usd_file,
         ),
@@ -444,7 +444,7 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
     )
 
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
-    robot = scene.add_entity(
+    scene.add_entity(
         gs.morphs.URDF(
             file=urdf_path,
         ),
@@ -503,7 +503,7 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
         show_FPS=False,
     )
     asset_path = get_hf_dataset(pattern="fridge/*")
-    fridge = scene.add_entity(
+    scene.add_entity(
         gs.morphs.URDF(
             file=f"{asset_path}/fridge/fridge.urdf",
             fixed=True,

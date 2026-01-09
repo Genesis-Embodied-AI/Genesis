@@ -2,7 +2,6 @@ import argparse
 import math
 import os
 
-import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu

@@ -1,7 +1,6 @@
 import argparse
 import os
 
-import numpy as np
 
 import genesis as gs
 
@@ -35,7 +34,7 @@ def main():
 
     ########################## entities ##########################
 
-    bunny = scene.add_entity(
+    scene.add_entity(
         material=mat_elastic,
         morph=gs.morphs.Mesh(
             file="meshes/dragon/dragon.obj",

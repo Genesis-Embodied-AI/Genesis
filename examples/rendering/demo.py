@@ -1,5 +1,3 @@
-import torch
-
 import genesis as gs
 
 
@@ -34,7 +32,7 @@ def main():
 
     ########################## entities ##########################
     # floor
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(
             pos=(0.0, 0.0, -0.5),
         ),
