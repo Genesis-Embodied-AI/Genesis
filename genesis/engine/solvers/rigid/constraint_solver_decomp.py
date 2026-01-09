@@ -35,6 +35,7 @@ class ConstraintSolver:
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         self.sparse_solve = rigid_solver._options.sparse_solve
         self.use_decomposed_solver = rigid_solver._options.use_decomposed_solver
+        self.use_decomposed_init_solver = rigid_solver._options.use_decomposed_init_solver
 
         # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
         # * 4 constraints per contact
@@ -195,14 +196,31 @@ class ConstraintSolver:
         )
 
     def resolve(self):
-        func_init_solver(
-            self._solver.dofs_info,
-            self._solver.dofs_state,
-            self._solver.entities_info,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
+        # Use decomposed init_solver only when mujoco_compatibility is disabled.
+        # The decomposed version doesn't handle the cost comparison warmstart logic
+        # needed for mujoco_compatibility mode.
+        use_decomposed = (
+            self.use_decomposed_init_solver and not self._solver._static_rigid_sim_config.enable_mujoco_compatibility
         )
+        if use_decomposed:
+            breakdown.func_init_solver_decomposed(
+                self._solver.dofs_info,
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver_type,
+            )
+        else:
+            func_init_solver(
+                self._solver.dofs_info,
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         if self.use_decomposed_solver:
             self._init_decomposed_kernels()
