@@ -154,7 +154,6 @@ ignore = [
     "F541", # f-string-missing-placeholders
     "F821", # undefined-name
     "E722", # bare-except
-    "E401", # multiple-imports-on-one-line
     "E712", # true-false-comparison
 ]
 
