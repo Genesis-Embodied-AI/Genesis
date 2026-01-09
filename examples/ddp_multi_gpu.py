@@ -11,8 +11,13 @@ Expectation:
     - As you increase the number of GPUs, the gradient will be less noisy and the loss decreases faster.
 """
 
-import os, argparse, random, numpy as np
-import torch, torch.nn as nn, torch.distributed as dist
+import os
+import argparse
+import random
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 import genesis as gs
 
