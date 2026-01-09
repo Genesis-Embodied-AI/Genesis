@@ -217,6 +217,7 @@ def test_rasterizer_camera_sensor_n_attached_camera(show_viewer, png_snapshot):
         lookat=(-0.6, 0.4, 1.0),
         fov=60.0,
         entity_idx=sphere.idx,
+        draw_debug=show_viewer,
     )
     camera = scene.add_sensor(options)
 

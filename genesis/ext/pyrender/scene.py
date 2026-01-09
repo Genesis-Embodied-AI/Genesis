@@ -89,7 +89,7 @@ class Scene(object):
             for node in nodes:
                 for child in node.children:
                     if node_parent_map[child] is not None:
-                        raise ValueError("Nodes may not have more than " "one parent")
+                        raise ValueError("Nodes may not have more than one parent")
                     node_parent_map[child] = node
             for node in node_parent_map:
                 if node_parent_map[node] is None:
@@ -294,7 +294,7 @@ class Scene(object):
 
         if parent_node is None and parent_name is not None:
             try:
-                parent_node, = self.get_nodes(name=parent_name)
+                (parent_node,) = self.get_nodes(name=parent_name)
             except ValueError:
                 if len(parent_nodes) == 0:
                     raise ValueError(f"No parent node with name '{parent_name}' found")
@@ -619,6 +619,7 @@ class Scene(object):
 
         # TODO BETTER SORTING METHOD
         if batched_pos:
+            # FIXME normally sorting should be done PER scene when having a batched rasterizer render
             trans_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc[0]))
             solid_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc[0]))
         else:
