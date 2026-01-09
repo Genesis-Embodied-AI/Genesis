@@ -17,33 +17,6 @@ import genesis as gs
 from .. import geom as gu
 
 
-def bfs_iterator(root: Usd.Prim, should_continue: Callable[[Usd.Prim], bool] | None = None):
-    """
-    Breadth-first iterator over USD prims with optional early break support.
-
-    Parameters
-    ----------
-    root : Usd.Prim
-        Root prim to start iteration from.
-    should_continue : Callable[[Usd.Prim], bool], optional
-        Optional callback function that takes a prim and returns True if children
-        should be processed, False otherwise. If None, all children are processed.
-
-    Yields
-    ------
-    Usd.Prim
-        Prims in breadth-first order.
-    """
-    queue = deque([root])
-    while queue:
-        prim = queue.popleft()
-        yield prim
-        # Only process children if should_continue is None or returns True
-        if should_continue is None or should_continue(prim):
-            for child in prim.GetChildren():
-                queue.append(child)
-
-
 def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     """
     Convert a USD Gf.Quatf to a numpy array (w, x, y, z) format.
@@ -131,45 +104,7 @@ def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) ->
         )
     faces = np.asarray(faces)
     tmesh = trimesh.Trimesh(vertices=points, faces=faces)
-
     return Q_rel, tmesh
-
-
-def apply_transform_to_pos(trans_matrix: np.ndarray, pos: np.ndarray) -> np.ndarray:
-    """
-    Apply a transformation matrix to a position.
-
-    Parameters
-    ----------
-    trans_matrix : np.ndarray, shape (4, 4) or (3, 3)
-    pos : np.ndarray, shape (3,)
-        The position to apply the transformation to.
-
-    Returns
-    -------
-    np.ndarray, shape (3,)
-        The transformed position.
-    """
-    return trans_matrix[:3, :3] @ pos + trans_matrix[:3, 3]
-
-
-def extract_quat_from_transform(trans_matrix: np.ndarray) -> np.ndarray:
-    """
-    Extract quaternion from a 4x4 transformation matrix.
-
-    Parameters
-    ----------
-    trans_matrix : np.ndarray, shape (4, 4) or (3, 3)
-        The transformation matrix.
-
-    Returns
-    -------
-    np.ndarray, shape (4,)
-        Quaternion as numpy array [w, x, y, z].
-    """
-    R, _ = extract_rotation_and_scale(trans_matrix)
-    quat = gu.R_to_quat(R)
-    return quat
 
 
 def compute_usd_global_transform(prim: Usd.Prim) -> np.ndarray:
@@ -190,8 +125,7 @@ def compute_usd_global_transform(prim: Usd.Prim) -> np.ndarray:
     if not imageable:
         return np.eye(4)
     # USD's transform is left-multiplied, while we use right-multiplied convention in genesis.
-    t = imageable.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetTranspose()
-    return np.array(t)
+    return np.asarray(imageable.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).GetTranspose())
 
 
 def compute_usd_relative_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> np.ndarray:
@@ -215,8 +149,7 @@ def compute_usd_relative_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) ->
         return prim_world_transform
     ref_prim_to_world = compute_usd_global_transform(ref_prim)
     world_to_ref_prim = np.linalg.inv(ref_prim_to_world)
-    prim_to_ref_prim_transform = world_to_ref_prim @ prim_world_transform
-    return prim_to_ref_prim_transform
+    return world_to_ref_prim @ prim_world_transform
 
 
 def compute_gs_global_transform(prim: Usd.Prim) -> tuple[np.ndarray, np.ndarray]:
@@ -288,63 +221,29 @@ def compute_gs_relative_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> 
     return Q_i_j, S_prim
 
 
-def convert_usd_joint_axis_to_gs(usd_local_joint_axis: np.ndarray, usd_link_prim: Usd.Prim | None) -> np.ndarray:
-    """
-    Convert USD joint axis from USD link local space to Genesis link local space.
-
-    Parameters
-    ----------
-    usd_local_joint_axis : np.ndarray, shape (3,)
-        The joint axis in USD link local space.
-    usd_link_prim : Usd.Prim
-        The USD link prim.
-
-    Returns
-    -------
-    np.ndarray, shape (3,)
-        The joint axis in Genesis link local space.
-    """
-
-    if usd_link_prim is None:
-        # if usd_link_prim is None, the joint axis is in the world frame
-        return usd_local_joint_axis
-
-    T_w = compute_usd_global_transform(usd_link_prim)
-    axis_w = T_w[:3, :3] @ usd_local_joint_axis
-    Q_w, _ = compute_gs_global_transform(usd_link_prim)
-    Q_w_inv = np.linalg.inv(Q_w)
-    gs_local_joint_axis = Q_w_inv[:3, :3] @ axis_w
-
-    return gs_local_joint_axis
-
-
 def convert_usd_joint_pos_to_gs(usd_local_joint_pos: np.ndarray, usd_link_prim: Usd.Prim | None) -> np.ndarray:
     """
     Convert USD joint position from USD link local space to Genesis link local space.
-
-    Parameters
-    ----------
-    usd_local_joint_pos : np.ndarray, shape (3,)
-        The joint position in USD link local space.
-    usd_link_prim : Usd.Prim
-        The USD link prim.
-
-    Returns
-    -------
-    np.ndarray, shape (3,)
-        The joint position in Genesis link local space.
     """
-    if usd_link_prim is None:
-        # if usd_link_prim is None, the joint position is in the world frame
-        return usd_local_joint_pos
-
     T_w = compute_usd_global_transform(usd_link_prim)
     pos_w = T_w[:3, :3] @ usd_local_joint_pos + T_w[:3, 3]
     Q_w, _ = compute_gs_global_transform(usd_link_prim)
     Q_w_inv = np.linalg.inv(Q_w)
-    gs_local_joint_pos = Q_w_inv[:3, :3] @ (pos_w - Q_w[:3, 3])
+    return Q_w_inv[:3, :3] @ (pos_w - Q_w[:3, 3])
 
-    return gs_local_joint_pos
+
+def convert_usd_joint_axis_pos_to_gs(
+    usd_local_joint_axis: np.ndarray, usd_local_joint_pos: np.ndarray, usd_link_prim: Usd.Prim | None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert USD joint axis and position from USD link local space to Genesis link local space.
+    """
+    T_w = compute_usd_global_transform(usd_link_prim)
+    axis_w = T_w[:3, :3] @ usd_local_joint_axis
+    pos_w = T_w[:3, :3] @ usd_local_joint_pos + T_w[:3, 3]
+    Q_w, _ = compute_gs_global_transform(usd_link_prim)
+    Q_w_inv = np.linalg.inv(Q_w)
+    return Q_w_inv[:3, :3] @ axis_w, Q_w_inv[:3, :3] @ (pos_w - Q_w[:3, 3])
 
 
 def compute_joint_axis_scaling_factor(gs_local_joint_axis: np.ndarray) -> float:

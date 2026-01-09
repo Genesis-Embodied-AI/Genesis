@@ -10,7 +10,7 @@ import genesis as gs
 from .. import geom as gu
 from .. import mesh as mu
 from .usd_parser_context import UsdParserContext
-from .usd_parser_utils import compute_gs_global_transform, compute_gs_relative_transform
+from .usd_parser_utils import compute_gs_relative_transform
 
 
 class UsdGeometryAdapter:
@@ -351,12 +351,9 @@ class UsdGeometryAdapter:
         S_diag = np.diag(S)
 
         if not np.allclose(S_diag, S_diag[0]):
-            gs.logger.warning(
-                f"Sphere: {self._prim.GetPath()} scale is not uniform: {S}, take the mean of the three components"
-            )
-            radius *= np.mean(S_diag)
-        else:
-            radius *= S_diag[0]
+            gs.raise_exception(f"Sphere: {self._prim.GetPath()} scale is not uniform: {S}")
+
+        radius *= S_diag[0]
 
         # Create sphere mesh (use fewer subdivisions for collision, more for visual)
         subdivisions = 2 if self._mesh_type == "mesh" else 3
@@ -526,11 +523,11 @@ def create_geo_info_from_prim(
     return adapter.create_geo_info()
 
 
-def create_geo_infos_from_prim_tree(
+def create_geo_infos_from_subtree(
     ctx: UsdParserContext, start_prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]
 ) -> List[Dict]:
     """
-    Create geometry info from a prim tree.
+    Create geometry info from a UsdPrim's subtree.
     Parameters:
         ctx: UsdParserContext
             The USD parser context.
@@ -543,18 +540,13 @@ def create_geo_infos_from_prim_tree(
     Returns:
         List[Dict] - List of geometry info dictionaries
     """
-    # Find all geometries under the start prim
     geometries: List[Usd.Prim] = []
-
-    # consider the children of the start prim
-    # Use USD's native traversal to find all geometries (including nested ones)
     for prim in Usd.PrimRange(start_prim):
         for geom_type in UsdGeometryAdapter.SupportedUsdGeoms:
             if prim.IsA(geom_type):
                 geometries.append(prim)
                 break
 
-    # Create geometry info for all geometries
     g_infos: List[Dict] = []
     for geometry in geometries:
         g_info = create_geo_info_from_prim(ctx, geometry, ref_prim, mesh_type)

@@ -10,8 +10,6 @@ from pxr import Usd, UsdShade
 
 import genesis as gs
 
-from .usd_parser_utils import bfs_iterator
-
 
 class UsdParserContext:
     """
@@ -19,9 +17,8 @@ class UsdParserContext:
 
     Tracks:
     - Materials: rendering materials parsed from the stage
-    - Articulation roots: prims with ArticulationRootAPI
-    - Prims in articulation: flattened set of all prims in articulations
-    - Rigid body top prims: top-most rigid body prims (including CollisionAPI)
+    - Articulation prims: prims with ArticulationRootAPI
+    - Rigid body prims: prims with RigidBodyAPI or CollisionAPI
     """
 
     def __init__(self, stage: Usd.Stage):
@@ -36,8 +33,7 @@ class UsdParserContext:
         self._stage = stage
         self._materials: dict[str, tuple[gs.surfaces.Surface, str]] = {}  # material_id -> (material_surface, uv_name)
         self._articulation_root_prims: dict[str, Usd.Prim] = {}  # prim_path -> articulation_root_prim
-        self._prims_in_articulation: dict[str, Usd.Prim] = {}  # prim_path -> prim (flattened set)
-        self._rigid_body_top_prims: dict[str, Usd.Prim] = {}  # prim_path -> rigid_body_top_prim
+        self._rigid_body_prims: dict[str, Usd.Prim] = {}  # prim_path -> rigid_body_top_prim
         self._vis_mode: Literal["visual", "collision"] = "visual"
 
     @property
@@ -63,6 +59,32 @@ class UsdParserContext:
         """
         return self._materials
 
+    @property
+    def rigid_body_prims(self) -> dict[str, Usd.Prim]:
+        """
+        Get the top-most rigid body prims dictionary.
+
+        Returns
+        -------
+        dict
+            Key: prim_path (str)
+            Value: rigid_body_top_prim
+        """
+        return self._rigid_body_prims
+
+    @property
+    def articulation_root_prim(self) -> dict[str, Usd.Prim]:
+        """
+        Get the articulation root prims dictionary.
+
+        Returns
+        -------
+        dict
+            Key: prim_path (str)
+            Value: articulation_root_prim
+        """
+        return self._articulation_root_prims
+
     def find_material(self, mesh_prim: Usd.Prim):
         mesh_material = gs.surfaces.Default()
         if mesh_prim.HasRelationship("material:binding"):
@@ -78,45 +100,6 @@ class UsdParserContext:
                     mesh_material, _ = material_result
         return mesh_material
 
-    @property
-    def articulation_root_prim(self) -> dict[str, Usd.Prim]:
-        """
-        Get the articulation root prims dictionary.
-
-        Returns
-        -------
-        dict
-            Key: prim_path (str)
-            Value: articulation_root_prim
-        """
-        return self._articulation_root_prims
-
-    @property
-    def prims_in_articulation(self) -> dict[str, Usd.Prim]:
-        """
-        Get the flattened set of all prims in articulations.
-
-        Returns
-        -------
-        dict
-            Key: prim_path (str)
-            Value: prim
-        """
-        return self._prims_in_articulation
-
-    @property
-    def rigid_body_top_prims(self) -> dict[str, Usd.Prim]:
-        """
-        Get the top-most rigid body prims dictionary.
-
-        Returns
-        -------
-        dict
-            Key: prim_path (str)
-            Value: rigid_body_top_prim
-        """
-        return self._rigid_body_top_prims
-
     def add_articulation_root(self, prim: Usd.Prim):
         """
         Add an articulation root prim and flatten all its descendants.
@@ -126,28 +109,13 @@ class UsdParserContext:
         prim : Usd.Prim
             The articulation root prim to add.
         """
-        self._articulation_root_prims[prim.GetPath()] = prim
-        # Flatten the prims in articulation to a dictionary (include the root prim itself)
-        self._prims_in_articulation[prim.GetPath()] = prim
-        for prim_in_articulation in bfs_iterator(prim):
-            if prim_in_articulation != prim:  # Don't duplicate the root
-                self._prims_in_articulation[prim_in_articulation.GetPath()] = prim_in_articulation
+        self._articulation_root_prims[str(prim.GetPath())] = prim
 
-    def is_prim_in_articulation(self, prim: Usd.Prim) -> bool:
+    def add_rigid_body(self, prim: Usd.Prim):
         """
-        Check if a prim is in an articulation.
-
-        Parameters
-        ----------
-        prim : Usd.Prim
-            The prim to check.
-
-        Returns
-        -------
-        bool
-            True if the prim is in an articulation, False otherwise.
+        Add a rigid body prim.
         """
-        return prim.GetPath() in self._prims_in_articulation
+        self._rigid_body_prims[str(prim.GetPath())] = prim
 
     def get_material(self, material_id: str):
         """

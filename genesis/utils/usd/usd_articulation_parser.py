@@ -9,6 +9,7 @@ Also includes Genesis-specific parsing functions that translate USD structures i
 
 import re
 from typing import Dict, List, Literal, Tuple
+import collections.abc
 
 import numpy as np
 from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
@@ -18,15 +19,13 @@ import genesis as gs
 
 from .. import geom as gu
 from .. import urdf as urdf_utils
-from .usd_geo_adapter import create_geo_info_from_prim, create_geo_infos_from_prim_tree
+from .usd_geo_adapter import create_geo_info_from_prim, create_geo_infos_from_subtree
 from .usd_parser_context import UsdParserContext
 from .usd_parser_utils import (
-    bfs_iterator,
     compute_gs_global_transform,
     compute_gs_relative_transform,
-    convert_usd_joint_axis_to_gs,
     convert_usd_joint_pos_to_gs,
-    extract_quat_from_transform,
+    convert_usd_joint_axis_pos_to_gs,
     usd_quat_to_numpy,
 )
 
@@ -52,7 +51,8 @@ class UsdArticulationParser:
         self._root: Usd.Prim = articulation_root_prim
         if not articulation_root_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
             gs.raise_exception(
-                f"Provided prim {articulation_root_prim.GetPath()} is not an Articulation Root. Now we only support articulation parsing from ArticulationRootAPI."
+                f"Provided prim {articulation_root_prim.GetPath()} is not an Articulation Root. Now we only support "
+                "articulation parsing from ArticulationRootAPI."
             )
 
         gs.logger.debug(f"Parsing USD articulation from {articulation_root_prim.GetPath()}.")
@@ -87,18 +87,24 @@ class UsdArticulationParser:
             List of articulation root prims.
         """
         articulation_roots = []
-        for prim in bfs_iterator(stage.GetPseudoRoot()):
+
+        # Use Usd.PrimRange for traversal
+        it = iter(Usd.PrimRange(stage.GetPseudoRoot()))
+        for prim in it:
             if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
                 articulation_roots.append(prim)
                 if context:
                     context.add_articulation_root(prim)
+                # Early break: skip descendants (they are part of this articulation)
+                it.PruneChildren()
+
         return articulation_roots
 
     # ==================== Collection Methods: Joints and Links ====================
 
     def _collect_joints(self):
         """Collect all joints in the articulation."""
-        for child in bfs_iterator(self._root):
+        for child in Usd.PrimRange(self._root):
             if child.IsA(UsdPhysics.Joint):
                 joint_api = UsdPhysics.Joint(child)
                 self.joints.append(joint_api)
@@ -132,63 +138,106 @@ class UsdArticulationParser:
             prim = self._stage.GetPrimAtPath(path)
             self.links.append(prim)
 
-    # ==================== Geometry Collection Methods ====================
 
-    visual_pattern = re.compile(r"^(visual|Visual).*")
-    collision_pattern = re.compile(r"^(collision|Collision).*")
-    all_pattern = re.compile(r"^.*")
+# ==================== Genesis-Specific Geometry Collection Functions ====================
 
-    @staticmethod
-    def create_geo_infos(
-        context: UsdParserContext, link: Usd.Prim, pattern, mesh_type: Literal["mesh", "vmesh"]
-    ) -> List[Dict]:
-        # if the link itself is a geometry
-        geo_infos: List[Dict] = []
-        link_geo_info = create_geo_info_from_prim(context, link, link, mesh_type)
-        if link_geo_info is not None:
-            geo_infos.append(link_geo_info)
+# Pattern matching for geometry collection
+_visual_pattern = re.compile(r"^(visual|Visual).*")
+_collision_pattern = re.compile(r"^(collision|Collision).*")
+_all_pattern = re.compile(r"^.*")
 
-        # - Link
-        #     - Visuals
-        #     - Collisions
-        search_roots: list[Usd.Prim] = []
-        for child in link.GetChildren():
-            if pattern.match(child.GetName()):
-                search_roots.append(child)
 
-        for search_root in search_roots:
-            geo_infos.extend(create_geo_infos_from_prim_tree(context, search_root, link, mesh_type))
+def _create_geo_infos(
+    context: UsdParserContext, link: Usd.Prim, pattern: re.Pattern, mesh_type: Literal["mesh", "vmesh"]
+) -> List[Dict]:
+    """
+    Create geometry info dictionaries from a link prim and its children that match the pattern.
 
-        return geo_infos
+    Parameters
+    ----------
+    context : UsdParserContext
+        The parser context.
+    link : Usd.Prim
+        The link prim.
+    pattern : re.Pattern
+        Pattern to match child prim names.
+    mesh_type : Literal["mesh", "vmesh"]
+        The mesh type to create geometry info for.
 
-    @staticmethod
-    def get_visual_geometries(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
-        if context.vis_mode == "visual":
-            vis_geo_infos = UsdArticulationParser.create_geo_infos(
-                context, link, UsdArticulationParser.visual_pattern, "vmesh"
+    Returns
+    -------
+    List[Dict]
+        List of geometry info dictionaries.
+    """
+    # if the link itself is a geometry
+    geo_infos: List[Dict] = []
+    link_geo_info = create_geo_info_from_prim(context, link, link, mesh_type)
+    if link_geo_info is not None:
+        geo_infos.append(link_geo_info)
+
+    # - Link
+    #     - Visuals
+    #     - Collisions
+    search_roots: list[Usd.Prim] = []
+    for child in link.GetChildren():
+        child: Usd.Prim
+        if pattern.match(str(child.GetName())):
+            search_roots.append(child)
+
+    for search_root in search_roots:
+        geo_infos.extend(create_geo_infos_from_subtree(context, search_root, link, mesh_type))
+
+    return geo_infos
+
+
+def _create_visual_geo_infos(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
+    """
+    Create visual geometry info dictionaries from a link prim.
+
+    Parameters
+    ----------
+    link : Usd.Prim
+        The link prim.
+    context : UsdParserContext
+        The parser context.
+
+    Returns
+    -------
+    List[Dict]
+        List of visual geometry info dictionaries.
+    """
+    if context.vis_mode == "visual":
+        vis_geo_infos = _create_geo_infos(context, link, _visual_pattern, "vmesh")
+        if len(vis_geo_infos) == 0:
+            # if no visual geometries found, use any pattern to find visual geometries
+            gs.logger.info(
+                f"No visual geometries found, using any pattern to find visual geometries in {link.GetPath()}"
             )
-            if len(vis_geo_infos) == 0:
-                # if no visual geometries found, use any pattern to find visual geometries
-                gs.logger.info(
-                    f"No visual geometries found, using any pattern to find visual geometries in {link.GetPath()}"
-                )
-                vis_geo_infos = UsdArticulationParser.create_geo_infos(
-                    context, link, UsdArticulationParser.all_pattern, "vmesh"
-                )
-        elif context.vis_mode == "collision":
-            vis_geo_infos = UsdArticulationParser.create_geo_infos(
-                context, link, UsdArticulationParser.collision_pattern, "vmesh"
-            )
-        else:
-            gs.raise_exception(f"Unsupported visualization mode {context.vis_mode}.")
-        return vis_geo_infos
+            vis_geo_infos = _create_geo_infos(context, link, _all_pattern, "vmesh")
+    elif context.vis_mode == "collision":
+        vis_geo_infos = _create_geo_infos(context, link, _collision_pattern, "vmesh")
+    else:
+        gs.raise_exception(f"Unsupported visualization mode {context.vis_mode}.")
+    return vis_geo_infos
 
-    @staticmethod
-    def get_collision_geometries(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
-        col_geo_infos = UsdArticulationParser.create_geo_infos(
-            context, link, UsdArticulationParser.collision_pattern, "mesh"
-        )
-        return col_geo_infos
+
+def _create_collision_geo_infos(link: Usd.Prim, context: UsdParserContext) -> List[Dict]:
+    """
+    Create collision geometry info dictionaries from a link prim.
+
+    Parameters
+    ----------
+    link : Usd.Prim
+        The link prim.
+    context : UsdParserContext
+        The parser context.
+
+    Returns
+    -------
+    List[Dict]
+        List of collision geometry info dictionaries.
+    """
+    return _create_geo_infos(context, link, _collision_pattern, "mesh")
 
 
 # ==================== Helper Functions for Genesis Parsing ====================
@@ -204,11 +253,11 @@ def _axis_str_to_vector(axis_str: str) -> np.ndarray:
         The axis string ('X', 'Y', or 'Z').
     """
     if axis_str == "X":
-        return np.array([1.0, 0.0, 0.0])
+        return np.array([1.0, 0.0, 0.0], dtype=gs.np_float)
     elif axis_str == "Y":
-        return np.array([0.0, 1.0, 0.0])
+        return np.array([0.0, 1.0, 0.0], dtype=gs.np_float)
     elif axis_str == "Z":
-        return np.array([0.0, 0.0, 1.0])
+        return np.array([0.0, 0.0, 1.0], dtype=gs.np_float)
     else:
         gs.raise_exception(f"Unsupported joint axis {axis_str}.")
 
@@ -217,28 +266,25 @@ def _compute_child_link_local_axis_pos(
     joint: UsdPhysics.PrismaticJoint | UsdPhysics.RevoluteJoint, child_link: Usd.Prim
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Compute the local axis and position of a joint in the parent link local space.
+    Compute the local axis and position of a joint in the child link local space.
 
     Parameters
     ----------
-    joint : UsdPhysics.Joint
-    parent_link : Usd.Prim
+    joint : UsdPhysics.PrismaticJoint | UsdPhysics.RevoluteJoint
+    child_link : Usd.Prim
     """
     axis_attr = joint.GetAxisAttr()
-    axis_str = axis_attr.Get() if axis_attr else "X"
-    pos_attr = joint.GetLocalPos1Attr()
+    axis_str = axis_attr.Get()
     axis = _axis_str_to_vector(axis_str)
-    usd_local_pos = pos_attr.Get() if pos_attr else gu.zero_pos()
 
-    # rotate the orth-normal axis (X/Y/Z) to the local space
+    pos_attr = joint.GetLocalPos1Attr()
+    usd_local_pos = pos_attr.Get()
+
     rotation_attr = joint.GetLocalRot1Attr()
-    usd_local_rotation = usd_quat_to_numpy(rotation_attr.Get()) if rotation_attr.Get() else gu.identity_quat()
+    usd_local_rotation = usd_quat_to_numpy(rotation_attr.Get())
     usd_local_axis = gu.quat_to_R(usd_local_rotation) @ axis
 
-    # convert to gs
-    gs_local_axis = convert_usd_joint_axis_to_gs(usd_local_axis, child_link)
-    gs_local_pos = convert_usd_joint_pos_to_gs(usd_local_pos, child_link)
-    return gs_local_axis, gs_local_pos
+    return convert_usd_joint_axis_pos_to_gs(usd_local_axis, usd_local_pos, child_link)
 
 
 def _compute_child_link_local_pos(joint: UsdPhysics.SphericalJoint, child_link: Usd.Prim) -> np.ndarray:
@@ -573,6 +619,11 @@ def _parse_drive_api(joint_prim: Usd.Prim, joint_type: str, n_dofs: int) -> Dict
     """
     Parse UsdPhysics.DriveAPI attributes from a joint prim.
 
+    Including:
+    - Stiffness (maps to dofs_kp - position gain)
+    - Damping (maps to dofs_kv - velocity gain)
+    - Max Force (maps to dofs_force_range - max force range)
+
     Parameters
     ----------
     joint_prim : Usd.Prim
@@ -678,63 +729,38 @@ def _parse_joint_target(joint_prim: Usd.Prim, joint_type: str) -> np.ndarray | N
     # Determine the primary drive name based on joint type
     # For revolute and spherical joints, use "angular" drive
     # For prismatic joints, use "linear" drive
+    drive_name = "linear"
     if joint_type == gs.JOINT_TYPE.REVOLUTE or joint_type == gs.JOINT_TYPE.SPHERICAL:
-        primary_drive_name = "angular"
-        fallback_drive_names = ["linear"]  # Try linear as fallback
+        drive_name = "angular"
     elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-        primary_drive_name = "linear"
-        fallback_drive_names = ["angular"]  # Try angular as fallback
-    else:
-        # For fixed or other joint types, try both
-        primary_drive_name = "angular"
-        fallback_drive_names = ["linear"]
+        drive_name = "linear"
 
-    # Try primary drive name first, then fallbacks
-    drive_names_to_try = [primary_drive_name] + fallback_drive_names
     drive_api = None
 
-    for drive_name in drive_names_to_try:
-        if joint_prim.HasAPI(UsdPhysics.DriveAPI, drive_name):
-            drive_api = UsdPhysics.DriveAPI(joint_prim, drive_name)
-            break
+    if joint_prim.HasAPI(UsdPhysics.DriveAPI, drive_name):
+        drive_api = UsdPhysics.DriveAPI(joint_prim, drive_name)
 
-    # If no DriveAPI found, return None
     if drive_api is None:
         return None
 
     # Extract target value
     target_attr = drive_api.GetTargetPositionAttr()
-    if target_attr and target_attr.HasAuthoredValue():
-        target = target_attr.Get()
-        if target is not None:
-            # Convert target to numpy array
-            if joint_type == gs.JOINT_TYPE.SPHERICAL:
-                # For spherical joints, target is absolute quaternion (not relative to lower limit)
-                # Try to get as quaternion first
-                if hasattr(target, "__len__") and len(target) == 4:
-                    return np.array(target, dtype=gs.np_float)
-                elif hasattr(target, "__len__") and len(target) == 3:
-                    # If it's a rotation vector (axis-angle), convert to quaternion
-                    # For now, just return identity quaternion and log warning
-                    gs.logger.warning(
-                        f"Spherical joint target at {joint_prim.GetPath()} is axis-angle format. "
-                        "Quaternion conversion not yet implemented. Using identity quaternion."
-                    )
-                    return gu.identity_quat()
-                else:
-                    # Single value - treat as angle around some axis (not fully supported)
-                    gs.logger.warning(
-                        f"Spherical joint target at {joint_prim.GetPath()} has unexpected format. "
-                        "Using identity quaternion."
-                    )
-                    return gu.identity_quat()
-            else:
-                # For revolute joints, target is typically in degrees in USD, convert to radians
-                if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    target = np.deg2rad(target)
-                return np.array([target], dtype=gs.np_float)
+    if not target_attr or not target_attr.IsValid():
+        return None
 
-    return None
+    target = target_attr.Get()
+
+    if joint_type == gs.JOINT_TYPE.SPHERICAL:
+        if not isinstance(target, collections.abc.Sequence) or len(target) != 4:
+            gs.raise_exception(f"Spherical joint target at {joint_prim.GetPath()} is not a quaternion.")
+        return usd_quat_to_numpy(target)
+    elif joint_type == gs.JOINT_TYPE.REVOLUTE:
+        return np.array([np.deg2rad(target)], dtype=gs.np_float)
+    elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+        return np.array([target], dtype=gs.np_float)
+    else:
+        gs.logger.warning(f"Unsupported joint type: {joint_type} for target parsing. Ignoring target value.")
+        return None
 
 
 def _get_parent_child_links(stage: Usd.Stage, joint: UsdPhysics.Joint) -> Tuple[Usd.Prim, Usd.Prim]:
@@ -743,6 +769,8 @@ def _get_parent_child_links(stage: Usd.Stage, joint: UsdPhysics.Joint) -> Tuple[
 
     Parameters
     ----------
+    stage : Usd.Stage
+        The USD stage.
     joint : UsdPhysics.Joint
         The joint.
     """
@@ -782,8 +810,8 @@ def _parse_link_geometries(
         The parser context.
     """
     for link, l_info, link_g_infos in zip(robot.links, l_infos, links_g_infos):
-        visual_g_infos = UsdArticulationParser.get_visual_geometries(link, context)
-        collision_g_infos = UsdArticulationParser.get_collision_geometries(link, context)
+        visual_g_infos = _create_visual_geo_infos(link, context)
+        collision_g_infos = _create_collision_geo_infos(link, context)
         if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
             gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
             continue
@@ -791,9 +819,7 @@ def _parse_link_geometries(
             gs.logger.warning(
                 f"No collision geometries found for link {link.GetPath()}, using visual geometries instead."
             )
-        # Add all visual geometries
         link_g_infos.extend(visual_g_infos)
-        # Add all collision geometries
         link_g_infos.extend(collision_g_infos)
 
 
@@ -823,25 +849,22 @@ def _parse_joints(
     for joint in robot.joints:
         parent_link, child_link = _get_parent_child_links(stage, joint)
         child_link_path = child_link.GetPath()
-        # Find the child link index
+
         idx = link_name_to_idx.get(child_link_path)
         if idx is None:
             gs.raise_exception(f"Joint {joint.GetPath()} references unknown child link {child_link_path}.")
 
         l_info = l_infos[idx]
 
-        # Update link transform
         trans_mat, _ = compute_gs_relative_transform(child_link, parent_link)
 
         l_info["pos"] = trans_mat[:3, 3]
-        l_info["quat"] = extract_quat_from_transform(trans_mat)
+        l_info["quat"] = gu.R_to_quat(trans_mat[:3, :3])
 
-        # Set parent link index
         if parent_link:
             parent_link_path = parent_link.GetPath()
             l_info["parent_idx"] = link_name_to_idx.get(parent_link_path, -1)
 
-        # Common joint properties
         j_info = dict()
         links_j_infos[idx].append(j_info)
 
@@ -849,7 +872,6 @@ def _parse_joints(
         j_info["sol_params"] = gu.default_solver_params()
         joint_prim = joint.GetPrim()
 
-        # Parse joint type-specific properties
         if joint_prim.IsA(UsdPhysics.RevoluteJoint):
             revolute_joint = UsdPhysics.RevoluteJoint(joint_prim)
             joint_type_info = _parse_revolute_joint(revolute_joint, parent_link, child_link)
@@ -874,7 +896,8 @@ def _parse_joints(
         n_dofs = j_info["n_dofs"]
         n_qs = j_info["n_qs"]
 
-        # NOTE: Cuz we don't implement all the joint physics properties, we need to finalize the joint info with common properties.
+        # NOTE: Because we don't implement all the joint physics properties, we need to finalize the joint info with
+        # common properties.
         # TODO: Implement all the joint physics properties.
         j_info["dofs_invweight"] = np.full((n_dofs,), fill_value=-1.0)
 
@@ -887,12 +910,10 @@ def _parse_joints(
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
         j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=0.0)
 
-        # Parse joint target from DriveAPI to set initial position
-        # Target is relative to lower limit, so we pass dofs_limit to add it
         target = _parse_joint_target(joint_prim, j_info["type"])
         if target is not None:
-            # Override init_qpos with target value if found
             if target.shape[0] == n_dofs:
+                # NOTE: Wait for rigid solver to support target solving.
                 j_info["dofs_stiffness"] = np.full((n_dofs,), fill_value=10.0)
                 j_info["dofs_damping"] = np.full((n_dofs,), fill_value=1.0)
                 j_info["init_qpos"] = np.full((n_dofs,), fill_value=0.0)
@@ -903,13 +924,9 @@ def _parse_joints(
                     f"but expected {n_dofs} elements. Ignoring target value."
                 )
 
-        # Parse joint dynamics properties (friction, damping, armature)
-        dynamics_params = _parse_joint_dynamics(joint_prim, n_dofs)
-        j_info.update(dynamics_params)
+        j_info.update(_parse_joint_dynamics(joint_prim, n_dofs))
 
-        # Parse DriveAPI
-        drive_params = _parse_drive_api(joint_prim, j_info["type"], n_dofs)
-        j_info.update(drive_params)
+        j_info.update(_parse_drive_api(joint_prim, j_info["type"], n_dofs))
 
 
 def _setup_free_joints_for_base_links(l_infos: List[Dict], links_j_infos: List[List[Dict]]):
@@ -948,12 +965,10 @@ def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     eqs_info : list
         List of equality constraint info dictionaries.
     """
-    # Validate inputs and setup
     if morph.scale is not None and morph.scale != 1.0:
         gs.logger.warning("USD articulation parsing currently only supports scale=1.0. Scale will be set to 1.0.")
     morph.scale = 1.0
 
-    assert morph.scale == 1.0, "Currently we only support scale=1.0 for USD articulation parsing."
     assert morph.parser_ctx is not None, "USDArticulation must have a parser context."
     assert morph.prim_path is not None, "USDArticulation must have a prim path."
 
@@ -962,29 +977,23 @@ def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     root_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))
     assert root_prim.IsValid(), f"Invalid prim path {morph.prim_path} in USD file {morph.file}."
 
-    # Create parser and build link name mapping
     robot = UsdArticulationParser(stage, root_prim)
     link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(robot.links)}
     n_links = len(robot.links)
 
-    # Initialize data structures
     l_infos = [_create_link_info(link) for link in robot.links]
     links_j_infos = [[] for _ in range(n_links)]
     links_g_infos = [[] for _ in range(n_links)]
 
-    # Parse geometry for each link
     _parse_link_geometries(robot, l_infos, links_g_infos, context)
 
-    # Parse joints and update link transforms
     _parse_joints(robot, stage, l_infos, links_j_infos, link_name_to_idx)
 
-    # Add FREE joint to base links that have no incoming joints
     _setup_free_joints_for_base_links(l_infos, links_j_infos)
 
-    # Order links
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
 
-    # For now, no equalities
+    # USD doesn't support equality constraints.
     eqs_info = []
 
     return l_infos, links_j_infos, links_g_infos, eqs_info
