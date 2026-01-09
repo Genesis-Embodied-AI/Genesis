@@ -774,6 +774,7 @@ def func_contact_sphere_sdf(
     rigid_global_info: array_class.RigidGlobalInfo,
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
     is_col = False
     penetration = gs.ti_float(0.0)

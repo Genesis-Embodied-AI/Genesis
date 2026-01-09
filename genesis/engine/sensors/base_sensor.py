@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.options.sensors.options import SensorOptions
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
@@ -69,9 +70,9 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
     """
 
     def __init__(
-        self, sensor_options: "SensorOptions", sensor_idx: int, data_cls: Type[tuple], sensor_manager: "SensorManager"
+        self, sensor_options: SensorOptions, sensor_idx: int, data_cls: Type[tuple], sensor_manager: "SensorManager"
     ):
-        self._options: "SensorOptions" = sensor_options
+        self._options: SensorOptions = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
         self._shared_metadata: SharedSensorMetadataT = sensor_manager._sensors_metadata[type(self)]

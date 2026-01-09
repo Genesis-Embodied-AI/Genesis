@@ -152,7 +152,6 @@ ignore = [
     "E402", # module-import-not-at-top-of-file
     "F403", # undefined-local-with-import-star
     "F541", # f-string-missing-placeholders
-    "F821", # undefined-name
     "E712", # true-false-comparison
 ]
 
