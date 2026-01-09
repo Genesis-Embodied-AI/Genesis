@@ -8,7 +8,6 @@ with Genesis. The cloth is simulated using NeoHookeanShell constitution.
 import argparse
 import logging
 
-import numpy as np
 from huggingface_hub import snapshot_download
 
 import genesis as gs

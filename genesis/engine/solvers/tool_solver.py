@@ -1,4 +1,3 @@
-from typing import TYPE_CHECKING
 import gstaichi as ti
 
 from genesis.engine.boundaries import FloorBoundary

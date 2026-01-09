@@ -6,7 +6,6 @@ Author: Matthew Matl
 
 import networkx as nx
 import numpy as np
-import trimesh
 
 from .camera import Camera
 from .light import DirectionalLight, Light, PointLight, SpotLight

@@ -8,9 +8,7 @@ import numpy as np
 
 import OpenGL
 from OpenGL.GL import *
-from OpenGL.platform import ctypesloader
 from OpenGL.GL import shaders as gl_shader_utils
-from time import time
 
 func = None
 

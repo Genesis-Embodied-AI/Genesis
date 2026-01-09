@@ -1,6 +1,4 @@
-import numpy as np
 import gstaichi as ti
-import torch
 
 import genesis as gs
 import genesis.utils.geom as gu

@@ -9,7 +9,6 @@ import genesis as gs
 from genesis.ext import urdfpy
 
 from . import geom as gu
-from . import mesh as mu
 from .misc import get_assets_dir
 
 

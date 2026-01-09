@@ -2,7 +2,6 @@
 Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 """
 
-import os
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
@@ -39,7 +38,6 @@ if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
     from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.raytracer import Raytracer
-    from genesis.morphs.rigid_link import RigidLink
 
 
 # ========================== Data Class ==========================

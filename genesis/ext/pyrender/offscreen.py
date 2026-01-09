@@ -10,8 +10,7 @@ from OpenGL.GL import *
 import genesis as gs
 
 from .constants import RenderFlags
-from .renderer import Renderer
-from .shader_program import ShaderProgram, ShaderProgramCache
+from .shader_program import ShaderProgram
 
 
 MODULE_DIR = os.path.dirname(__file__)

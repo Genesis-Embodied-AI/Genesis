@@ -1,7 +1,5 @@
 import argparse
 import multiprocessing
-import os
-import threading
 from functools import partial
 
 import tkinter as tk
@@ -9,8 +7,6 @@ from tkinter import ttk
 
 import numpy as np
 import torch
-from gstaichi._lib import core as _ti_core
-from gstaichi.lang import impl
 
 import genesis as gs
 
