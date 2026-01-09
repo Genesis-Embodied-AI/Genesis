@@ -221,6 +221,71 @@ def test_deformable_parallel(show_viewer):
     assert_allclose(water.get_particles_vel(), 0.0, atol=5e-2)
 
 
+@pytest.mark.required
+def test_mpm_particle_constraints_disabled(show_viewer):
+    """Test that particle constraints raise error when disabled."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=2e-3, substeps=10),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-0.5, -0.5, 0.0),
+            upper_bound=(0.5, 0.5, 1.0),
+            grid_density=64,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    rigid_box = scene.add_entity(gs.morphs.Box(pos=(0, 0, 0.5), size=(0.1, 0.1, 0.05), fixed=True))
+    mpm_cube = scene.add_entity(
+        material=gs.materials.MPM.Elastic(E=1e4, nu=0.3, rho=1000),
+        morph=gs.morphs.Box(pos=(0, 0, 0.3), size=(0.1, 0.1, 0.1)),
+    )
+    scene.build()
+
+    particles = mpm_cube.get_particles_in_bbox([-0.05, -0.05, 0.35], [0.05, 0.05, 0.4])
+    with pytest.raises(gs.GenesisException, match="enable_particle_constraints"):
+        mpm_cube.set_particle_constraints(particles, link=rigid_box.links[0], stiffness=1e4)
+
+
+@pytest.mark.required
+def test_mpm_particle_constraints(show_viewer):
+    """Test MPM particle constraints: bbox selection, attachment, following, and removal."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=2e-3, substeps=20),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-1.0, -1.0, 0.0),
+            upper_bound=(1.0, 1.0, 1.0),
+            grid_density=64,
+            enable_particle_constraints=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    rigid_box = scene.add_entity(gs.morphs.Box(pos=(0, 0, 0.55), size=(0.12, 0.12, 0.05), fixed=True))
+    mpm_cube = scene.add_entity(
+        material=gs.materials.MPM.Elastic(E=5e4, nu=0.3, rho=1000),
+        morph=gs.morphs.Box(pos=(0, 0, 0.35), size=(0.15, 0.15, 0.15)),
+    )
+    scene.build()
+
+    # Test get_particles_in_bbox
+    all_pos = mpm_cube.get_particles_pos()
+    attached = mpm_cube.get_particles_in_bbox((-0.08, -0.08, 0.41), (0.08, 0.08, 0.44))
+    assert 0 < len(attached) < all_pos.shape[0], "bbox should select subset of particles"
+
+    # Attach and test following
+    mpm_cube.set_particle_constraints(attached, link=rigid_box.links[0], stiffness=1e5)
+    initial_rigid_pos = rigid_box.get_pos().clone()
+    initial_mpm_x = mpm_cube.get_particles_pos()[attached, 0].mean()
+
+    pos_diff = torch.tensor([0.2, 0, 0], device=gs.device)
+    rigid_box.set_pos(initial_rigid_pos + pos_diff, zero_velocity=False)
+    for _ in range(50):
+        scene.step()
+
+    mpm_diff = mpm_cube.get_particles_pos()[attached, 0].mean() - initial_mpm_x
+    assert mpm_diff > pos_diff[0] * 0.5, f"MPM should follow rigid link. Got {mpm_diff:.3f}"
+
+
 def test_sf_solver(show_viewer):
     import gstaichi as ti
 
