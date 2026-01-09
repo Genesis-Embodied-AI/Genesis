@@ -42,16 +42,16 @@ def main():
     debug_arrow = scene.draw_debug_arrow(pos=(1, 0, 0), vec=(0, 0, 1), radius=0.02, color=(1, 0, 0, 0.5))  # Green
 
     # Debug sphere
-    debug_sphere = scene.draw_debug_sphere(pos=(1.5, 0, 0.5), radius=0.1, color=(0, 0, 1, 0.5))  # Blue with alpha
+    scene.draw_debug_sphere(pos=(1.5, 0, 0.5), radius=0.1, color=(0, 0, 1, 0.5))  # Blue with alpha
 
     # Debug multiple spheres
     sphere_positions = np.array([[2, 0, 0.3], [2, 0, 0.5], [2, 0, 0.7]])
-    debug_spheres = scene.draw_debug_spheres(poss=sphere_positions, radius=0.05, color=(1, 1, 0, 0.5))  # Yellow
+    scene.draw_debug_spheres(poss=sphere_positions, radius=0.05, color=(1, 1, 0, 0.5))  # Yellow
 
     # Transformation matrix for frame (identity matrix with translation)
     T = np.eye(4)
     T[:3, 3] = [2.5, 0, 0.5]
-    debug_frame = scene.draw_debug_frame(T=T, axis_length=0.5, origin_size=0.03, axis_radius=0.02)
+    scene.draw_debug_frame(T=T, axis_length=0.5, origin_size=0.03, axis_radius=0.02)
 
     # Simulation loop
     horizon = 500 if "PYTEST_VERSION" not in os.environ else 5

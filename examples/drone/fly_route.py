@@ -62,7 +62,7 @@ def main():
     scene = gs.Scene(show_viewer=False, sim_options=gs.options.SimOptions(dt=0.01))
 
     ##### entities #####
-    plane = scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(morph=gs.morphs.Plane())
 
     drone = scene.add_entity(morph=gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 0.2)))
 

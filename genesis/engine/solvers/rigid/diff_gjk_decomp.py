@@ -753,7 +753,7 @@ def func_differentiable_contact(
     """
     eps_B = gjk_info.diff_contact_eps_boundary[None]
     eps_D = gjk_info.diff_contact_eps_distance[None]
-    eps_A = gjk_info.diff_contact_eps_affine[None]
+    gjk_info.diff_contact_eps_affine[None]
 
     # Result
     contact_pos = gs.ti_vec3(0.0, 0.0, 0.0)

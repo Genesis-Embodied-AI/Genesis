@@ -540,7 +540,6 @@ class LegacyCoupler(RBC):
         # TODO: all collisions are on vertices instead of surface and edge
         for i_s, i_b in ti.ndrange(self.fem_solver.n_surfaces, self.fem_solver._B):
             if self.fem_solver.surface[i_s].active:
-                dt = self.fem_solver.substep_dt
                 iel = self.fem_solver.surface[i_s].tri2el
                 mass = self.fem_solver.elements_i[iel].mass_scaled / self.fem_solver.vol_scale
 
@@ -843,7 +842,7 @@ class LegacyCoupler(RBC):
                 particle_pos = pdb.particles_reordered[i_rp, i_env].pos
                 pos_correction = target_world_pos - particle_pos
                 corrective_vel = pos_correction * clamped_inv_dt
-                old_vel = pdb.particles_reordered[i_rp, i_env].vel
+                pdb.particles_reordered[i_rp, i_env].vel
                 pdb.particles_reordered[i_rp, i_env].vel = corrective_vel + target_world_vel
 
     @ti.func
@@ -875,7 +874,7 @@ class LegacyCoupler(RBC):
             geom_idx=geom_idx,
             batch_idx=batch_idx,
         )
-        vel_rigid = self.rigid_solver._func_vel_at_point(
+        self.rigid_solver._func_vel_at_point(
             pos_world=pos_world,
             link_idx=geoms_info.link_idx[geom_idx],
             i_b=batch_idx,

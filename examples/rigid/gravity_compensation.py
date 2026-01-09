@@ -23,7 +23,7 @@ def main():
     )
 
     ########################## entities ##########################
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     scene.add_entity(

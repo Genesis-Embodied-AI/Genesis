@@ -114,14 +114,14 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
         link_names=["left_finger", "right_finger"],
     )
 
-    material = (
+    (
         gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")
         if use_ipc
         else gs.materials.Rigid()
     )
 
     if use_ipc:
-        cloth = scene.add_entity(
+        scene.add_entity(
             morph=gs.morphs.Mesh(
                 file="meshes/grid20x20.obj",
                 scale=0.5,

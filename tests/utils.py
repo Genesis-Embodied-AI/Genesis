@@ -588,7 +588,7 @@ def build_genesis_sim(
             links_to_keep=(),
             **morph_kwargs,
         )
-    gs_robot = scene.add_entity(
+    scene.add_entity(
         morph,
         visualize_contact=True,
     )
@@ -715,8 +715,7 @@ def check_mujoco_model_consistency(
     assert_allclose(gs_dof_armature[gs_dofs_idx], mj_dof_armature[mj_dofs_idx], tol=tol)
 
     # FIXME: 1 stiffness per joint in Mujoco, 1 stiffness per DoF in Genesis
-    gs_dof_stiffness = gs_sim.rigid_solver.dofs_info.stiffness.to_numpy()
-    mj_dof_stiffness = mj_sim.model.jnt_stiffness
+    gs_sim.rigid_solver.dofs_info.stiffness.to_numpy()
     # assert_allclose(gs_dof_stiffness[gs_dofs_idx], mj_dof_stiffness[mj_joints_idx], tol=tol)
 
     gs_dof_invweight0 = gs_sim.rigid_solver.dofs_info.invweight.to_numpy()
@@ -901,10 +900,10 @@ def check_mujoco_data_consistency(
             )
             mj_gradient = mj_sim.data.solver.gradient[mj_iter]
             assert_allclose(gs_gradient, mj_gradient, tol=tol)
-            gs_improvement = gs_scale * (
+            gs_scale * (
                 gs_sim.rigid_solver.constraint_solver.prev_cost[0] - gs_sim.rigid_solver.constraint_solver.cost[0]
             )
-            mj_improvement = mj_sim.data.solver.improvement[mj_iter]
+            mj_sim.data.solver.improvement[mj_iter]
             # FIXME: This is too challenging to match because of compounding of errors
             # assert_allclose(gs_improvement, mj_improvement, tol=tol)
 

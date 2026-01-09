@@ -33,7 +33,7 @@ def main():
 
     ########################## entities ##########################
 
-    liquid = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.PBD.Liquid(
             sampler="regular",
             rho=1.0,

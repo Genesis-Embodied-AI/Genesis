@@ -57,7 +57,7 @@ def main():
         else gs.materials.Rigid()
     )
 
-    cube = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Box(pos=(0.65, 0.0, 0.03), size=(0.05, 0.05, 0.05)),
         material=material,
         surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.2, 0.5)),

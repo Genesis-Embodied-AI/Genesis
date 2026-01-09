@@ -66,7 +66,7 @@ def main():
         com_shift=-0.05 + 0.1 * torch.rand(scene.n_envs, robot.n_links, 3),
         links_idx_local=np.arange(0, robot.n_links),
     )
-    aabb = robot.get_AABB()
+    robot.get_AABB()
 
     joints_name = (
         "FR_hip_joint",

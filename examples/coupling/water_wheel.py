@@ -44,8 +44,8 @@ def main():
         show_viewer=args.vis,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())
-    wheel = scene.add_entity(
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/wheel/fancy_wheel.urdf",
             pos=(0.5, 0.25, 1.6),

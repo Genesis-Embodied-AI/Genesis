@@ -23,7 +23,7 @@ def main():
     )
 
     ########################## entities ##########################
-    tank = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
             scale=5.0,
@@ -32,7 +32,7 @@ def main():
         ),
         # vis_mode="collision",
     )
-    ball = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Sphere(
             radius=0.1,
             pos=(0.0, 0.0, 1.0),

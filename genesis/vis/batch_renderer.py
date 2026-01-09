@@ -275,7 +275,6 @@ class BatchRenderer(RBC):
 
         if gs.backend != gs.cuda:
             gs.raise_exception("BatchRenderer requires CUDA backend.")
-        gpu_id = gs.device.index if gs.device.index is not None else 0
 
         # Extract the complete list of non-debug cameras
         self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])

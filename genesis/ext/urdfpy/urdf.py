@@ -673,7 +673,7 @@ class Mesh(URDFType):
 
     def _to_xml(self, parent, path):
         # Get the filename
-        fn = get_filename(path, self.filename, makedirs=True)
+        get_filename(path, self.filename, makedirs=True)
 
         # Export the meshes as a single file
         # meshes = self.meshes
