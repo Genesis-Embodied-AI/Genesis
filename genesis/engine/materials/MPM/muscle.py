@@ -1,7 +1,5 @@
 import gstaichi as ti
 
-import genesis as gs
-
 from .elastic import Elastic
 
 
@@ -42,9 +40,6 @@ class Muscle(Elastic):
         model="neohooken",
         n_groups=1,  # number of muscle group
     ):
-        if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
-
         super().__init__(E, nu, rho, lam, mu, sampler, model)
 
         # inherit from Elastic

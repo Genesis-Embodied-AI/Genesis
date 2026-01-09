@@ -45,9 +45,6 @@ class Elastic(Base):
         sampler=None,
         model="corotation",
     ):
-        if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
-
         super().__init__(E, nu, rho, lam, mu, sampler)
 
         if model == "corotation":

@@ -53,9 +53,6 @@ class ElastoPlastic(Base):
         use_von_mises=True,  # von Mises yield criterion
         von_mises_yield_stress=10000.0,
     ):
-        if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
-
         super().__init__(E, nu, rho, lam, mu, sampler)
 
         self._yield_lower = yield_lower

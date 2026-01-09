@@ -39,9 +39,6 @@ class Liquid(Base):
         viscous=False,
         sampler=None,
     ):
-        if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
-
         super().__init__(E, nu, rho, lam, mu, sampler)
 
         if not viscous:

@@ -1,7 +1,5 @@
 import gstaichi as ti
 
-import genesis as gs
-
 from .base import Base
 
 
@@ -36,9 +34,6 @@ class Liquid(Base):
         gamma=0.01,
         sampler=None,
     ):
-        if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
-
         super().__init__(sampler)
 
         self._rho = rho
