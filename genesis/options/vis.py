@@ -140,7 +140,7 @@ class VisOptions(Options):
                 f"Unsupported `render_particle_as`: {self.render_particle_as}, must be one of ['sphere', 'tet']"
             )
 
-        if not self.n_rendered_envs is None:
+        if self.n_rendered_envs is not None:
             gs.logger.warning(
                 "Viewer option 'n_rendered_envs' is deprecated and will be removed in future release. Please use "
                 "'rendered_envs_idx' instead."
