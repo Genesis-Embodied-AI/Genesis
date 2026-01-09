@@ -32,8 +32,11 @@ from .usd_parser_utils import (
 
 class UsdArticulationParser:
     """
-    A parser to extract articulation information from a USD stage.
-    The Parser is agnostic to genesis structures, it only focuses on USD articulation structure.
+    A parser to extract joints and links from a USD Physics articulation structure.
+
+    Extracts all joints (fixed, revolute, prismatic, spherical) and their connected
+    rigid body links from an articulation root prim in a USD stage.
+    The parser is agnostic to genesis structures, focusing only on USD articulation structure.
     """
 
     def __init__(self, stage: Usd.Stage, articulation_root_prim: Usd.Prim):
