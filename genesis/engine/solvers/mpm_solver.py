@@ -37,7 +37,6 @@ class MPMSolver(Solver):
         self._upper_bound = np.array(options.upper_bound)
         self._lower_bound = np.array(options.lower_bound)
         self._enable_CPIC = options.enable_CPIC
-        self._enable_particle_constraints = options.enable_particle_constraints
         self._constraints_initialized = False
 
         self._n_vvert_supports = self.scene.vis_options.n_support_neighbors
@@ -167,6 +166,15 @@ class MPMSolver(Solver):
 
     def init_constraints(self):
         """Lazy initialization of particle constraint fields."""
+        # Memory check: ensure index fits in int32
+        max_int32 = 2**31 - 1
+        total_elements = self._n_particles * self._B
+        if total_elements > max_int32:
+            gs.raise_exception(
+                f"Particle constraint array size ({total_elements}) exceeds int32 limit. "
+                "Reduce n_particles or n_envs."
+            )
+
         self._constraints_initialized = True
 
         particle_constraint_info = ti.types.struct(
@@ -525,7 +533,7 @@ class MPMSolver(Solver):
         )
 
         # Apply particle constraints after g2p
-        if self._enable_particle_constraints and self._constraints_initialized:
+        if self._constraints_initialized:
             self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
         # FIXME: Use existing errno mechanism for this.
@@ -1042,47 +1050,47 @@ class MPMSolver(Solver):
     def _kernel_set_particle_constraints(
         self,
         f: ti.i32,
-        particles_idx: ti.types.ndarray(),  # shape [n_envs, n_constrained]
-        envs_idx: ti.types.ndarray(),  # shape [n_envs]
+        particles_mask: ti.types.ndarray(),  # shape [n_envs, n_particles] boolean mask
+        particle_start: ti.i32,
         stiffness: ti.f32,
         link_idx: ti.i32,
         link_pos: ti.types.ndarray(),  # shape [n_envs, 3]
         link_quat: ti.types.ndarray(),  # shape [n_envs, 4]
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
-            i_p = particles_idx[i_b_, i_p_]
-            i_b = envs_idx[i_b_]
+        for i_p_local, i_b in ti.ndrange(particles_mask.shape[1], particles_mask.shape[0]):
+            if particles_mask[i_b, i_p_local]:
+                i_p = i_p_local + particle_start
 
-            # Get current particle position
-            pos = self.particles[f, i_p, i_b].pos
+                # Get current particle position
+                pos = self.particles[f, i_p, i_b].pos
 
-            # Get link transform
-            l_pos = ti.Vector([link_pos[i_b_, 0], link_pos[i_b_, 1], link_pos[i_b_, 2]], dt=gs.ti_float)
-            l_quat = ti.Vector(
-                [link_quat[i_b_, 0], link_quat[i_b_, 1], link_quat[i_b_, 2], link_quat[i_b_, 3]], dt=gs.ti_float
-            )
+                # Get link transform
+                l_pos = ti.Vector([link_pos[i_b, 0], link_pos[i_b, 1], link_pos[i_b, 2]], dt=gs.ti_float)
+                l_quat = ti.Vector(
+                    [link_quat[i_b, 0], link_quat[i_b, 1], link_quat[i_b, 2], link_quat[i_b, 3]], dt=gs.ti_float
+                )
 
-            # Compute offset in link's local frame
-            local_pos = gu.ti_inv_transform_by_trans_quat(pos, l_pos, l_quat)
+                # Compute offset in link's local frame
+                local_pos = gu.ti_inv_transform_by_trans_quat(pos, l_pos, l_quat)
 
-            # Store constraint info
-            self.particle_constraints[i_p, i_b].is_constrained = True
-            self.particle_constraints[i_p, i_b].target_pos = pos  # initial target is current position
-            self.particle_constraints[i_p, i_b].stiffness = stiffness
-            self.particle_constraints[i_p, i_b].link_idx = link_idx
-            self.particle_constraints[i_p, i_b].link_local_pos = local_pos
+                # Store constraint info
+                self.particle_constraints[i_p, i_b].is_constrained = True
+                self.particle_constraints[i_p, i_b].target_pos = pos  # initial target is current position
+                self.particle_constraints[i_p, i_b].stiffness = stiffness
+                self.particle_constraints[i_p, i_b].link_idx = link_idx
+                self.particle_constraints[i_p, i_b].link_local_pos = local_pos
 
     @ti.kernel
     def _kernel_remove_particle_constraints(
         self,
-        particles_idx: ti.types.ndarray(),  # shape [n_envs, n_constrained]
-        envs_idx: ti.types.ndarray(),  # shape [n_envs]
+        particles_mask: ti.types.ndarray(),  # shape [n_envs, n_particles] boolean mask
+        particle_start: ti.i32,
     ):
-        for i_p_, i_b_ in ti.ndrange(particles_idx.shape[1], envs_idx.shape[0]):
-            i_p = particles_idx[i_b_, i_p_]
-            i_b = envs_idx[i_b_]
-            self.particle_constraints[i_p, i_b].is_constrained = False
-            self.particle_constraints[i_p, i_b].link_idx = -1
+        for i_p_local, i_b in ti.ndrange(particles_mask.shape[1], particles_mask.shape[0]):
+            if particles_mask[i_b, i_p_local]:
+                i_p = i_p_local + particle_start
+                self.particle_constraints[i_p, i_b].is_constrained = False
+                self.particle_constraints[i_p, i_b].link_idx = -1
 
     @ti.kernel
     def apply_particle_constraints(
@@ -1090,32 +1098,31 @@ class MPMSolver(Solver):
         f: ti.i32,
         links_state: array_class.LinksState,
     ):
-        if ti.static(self._enable_particle_constraints):
-            for i_p, i_b in ti.ndrange(self._n_particles, self._B):
-                if self.particle_constraints[i_p, i_b].is_constrained:
-                    # Update target position from link pose
-                    i_l = self.particle_constraints[i_p, i_b].link_idx
-                    if i_l >= 0:
-                        link_pos = links_state.pos[i_l, i_b]
-                        link_quat = links_state.quat[i_l, i_b]
-                        local_pos = self.particle_constraints[i_p, i_b].link_local_pos
-                        target = gu.ti_transform_by_trans_quat(local_pos, link_pos, link_quat)
-                        self.particle_constraints[i_p, i_b].target_pos = target
+        for i_p, i_b in ti.ndrange(self._n_particles, self._B):
+            if self.particle_constraints[i_p, i_b].is_constrained:
+                # Update target position from link pose
+                i_l = self.particle_constraints[i_p, i_b].link_idx
+                if i_l >= 0:
+                    link_pos = links_state.pos[i_l, i_b]
+                    link_quat = links_state.quat[i_l, i_b]
+                    local_pos = self.particle_constraints[i_p, i_b].link_local_pos
+                    target = gu.ti_transform_by_trans_quat(local_pos, link_pos, link_quat)
+                    self.particle_constraints[i_p, i_b].target_pos = target
 
-                    # Apply spring force to velocity
-                    target_pos = self.particle_constraints[i_p, i_b].target_pos
-                    stiffness = self.particle_constraints[i_p, i_b].stiffness
-                    mass = self.particles_info[i_p].mass / self._particle_volume_scale
+                # Apply spring force to velocity
+                target_pos = self.particle_constraints[i_p, i_b].target_pos
+                stiffness = self.particle_constraints[i_p, i_b].stiffness
+                mass = self.particles_info[i_p].mass / self._particle_volume_scale
 
-                    pos = self.particles[f + 1, i_p, i_b].pos
-                    vel = self.particles[f + 1, i_p, i_b].vel
+                pos = self.particles[f + 1, i_p, i_b].pos
+                vel = self.particles[f + 1, i_p, i_b].vel
 
-                    pos_error = pos - target_pos
-                    spring_force = -stiffness * pos_error
-                    damping_force = -2.0 * ti.math.sqrt(stiffness * mass) * vel
+                pos_error = pos - target_pos
+                spring_force = -stiffness * pos_error
+                damping_force = -2.0 * ti.math.sqrt(stiffness * mass) * vel
 
-                    dv = self.substep_dt * (spring_force + damping_force) / mass
-                    self.particles[f + 1, i_p, i_b].vel = vel + dv
+                dv = self.substep_dt * (spring_force + damping_force) / mass
+                self.particles[f + 1, i_p, i_b].vel = vel + dv
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -26,7 +26,6 @@ def main():
             lower_bound=(-1.0, -1.0, 0.0),
             upper_bound=(1.0, 1.0, 1.5),
             grid_density=64,
-            enable_particle_constraints=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.5, 0.0, 0.8),
@@ -49,8 +48,8 @@ def main():
     scene.build()
 
     # Attach top particles of MPM cube to the rigid box
-    attached_particles = mpm_cube.get_particles_in_bbox((-0.08, -0.08, 0.41), (0.08, 0.08, 0.44))
-    mpm_cube.set_particle_constraints(attached_particles, link=rigid_box.links[0], stiffness=1e5)
+    mask = mpm_cube.get_particles_in_bbox((-0.08, -0.08, 0.41), (0.08, 0.08, 0.44))
+    mpm_cube.set_particle_constraints(mask, rigid_box.links[0].idx, stiffness=1e5)
 
     n_steps = 500 if "PYTEST_VERSION" not in os.environ else 1
     initial_z = 0.55
