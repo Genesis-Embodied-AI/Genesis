@@ -757,7 +757,7 @@ class IPCCoupler(RBC):
                                     solver_type = str(solver_type_view[0])
                                 else:
                                     continue
-                            except:
+                            except Exception:
                                 continue
 
                             # Accept both "fem" and "cloth" (both are FEM entities)
@@ -842,7 +842,7 @@ class IPCCoupler(RBC):
                                     solver_type = str(solver_type_view[0])
                                 else:
                                     continue
-                            except:
+                            except Exception:
                                 continue
 
                             if solver_type == "rigid":
