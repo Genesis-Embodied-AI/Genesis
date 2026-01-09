@@ -210,6 +210,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     candidates: V_ANNOTATION
     ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
+    alpha: V_ANNOTATION
     # Optional CG fields
     cg_prev_grad: V_ANNOTATION
     cg_prev_Mgrad: V_ANNOTATION
@@ -273,6 +274,7 @@ def get_constraint_state(constraint_solver, solver):
         gtol=V(dtype=gs.ti_float, shape=(_B,)),
         ls_it=V(dtype=gs.ti_int, shape=(_B,)),
         ls_result=V(dtype=gs.ti_int, shape=(_B,)),
+        alpha=V(dtype=gs.ti_float, shape=(_B,)),
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
