@@ -156,7 +156,6 @@ ignore = [
     "E722", # bare-except
     "E401", # multiple-imports-on-one-line
     "E712", # true-false-comparison
-    "E713", # not-in-test
 ]
 
 [tool.pytest.ini_options]

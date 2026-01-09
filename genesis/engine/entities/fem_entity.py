@@ -555,7 +555,7 @@ class FEMEntity(Entity):
         After saving, the internal target buffers are cleared to prepare for new input.
         """
 
-        if not ckpt_name in self._ckpt:
+        if ckpt_name not in self._ckpt:
             self._ckpt[ckpt_name] = {
                 "_tgt_buffer": dict(),
             }
