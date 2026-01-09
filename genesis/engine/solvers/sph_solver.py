@@ -399,7 +399,7 @@ class SPHSolver(Solver):
                 ret = ti.Vector.zero(gs.ti_float, 4)
 
                 self.sh.for_all_neighbors(
-                    i, self.particles_reordered.pos, self._support_radius, ret, self._task_compute_DFSPH_factor
+                    i_p, self.particles_reordered.pos, self._support_radius, ret, self._task_compute_DFSPH_factor
                 )
 
                 sum_grad_p_k = ret[3]

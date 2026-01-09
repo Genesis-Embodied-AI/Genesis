@@ -601,7 +601,9 @@ class Scene(object):
         return scene_pr
 
     def sorted_mesh_nodes(self):
-        cam_loc = self.get_pose(self.main_camera_node)[:3, 3]
+        cam_pos = self.get_pose(self.main_camera_node)
+        cam_loc = cam_pos[..., :3, 3]
+        batched_pos = len(cam_pos.shape) == 3
         solid_nodes = []
         trans_nodes = []
         for node in self.mesh_nodes:
@@ -612,7 +614,12 @@ class Scene(object):
                 solid_nodes.append(node)
 
         # TODO BETTER SORTING METHOD
-        trans_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc))
-        solid_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc))
+        if batched_pos:
+            # FIXME normally sorting should be done PER scene when having a batched rasterizer render
+            trans_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc[0]))
+            solid_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc[0]))
+        else:
+            trans_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc))
+            solid_nodes.sort(key=lambda n: -np.linalg.norm(self.get_pose(n)[:3, 3] - cam_loc))
 
         return solid_nodes + trans_nodes

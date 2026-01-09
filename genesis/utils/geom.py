@@ -1777,13 +1777,13 @@ class SpatialHasher:
             self.slot_start[i_s, i_b] -= self.slot_size[i_s, i_b]
 
     @ti.func
-    def for_all_neighbors(self, i, pos, task_range, ret: ti.template(), task: ti.template(), i_b):
+    def for_all_neighbors(self, i_p, pos, task_range, ret: ti.template(), task: ti.template(), i_b):
         """
         Iterates over all neighbors of a given position and performs a task on each neighbor.
         Elements are considered neighbors if they are within task_range.
 
         Parameters:
-            i (int)    : Index of the querying particle.
+            i_p (int)  : Index of the querying particle.
             pos        : Template for the positions of all particles.
             task       : Template for the task to be performed on each neighbor of the querying particle.
             task_range : Range within which the task should be performed.
@@ -1792,14 +1792,14 @@ class SpatialHasher:
         Returns:
             None
         """
-        base = self.pos_to_grid(pos[i, i_b])
+        base = self.pos_to_grid(pos[i_p, i_b])
         for offset in ti.grouped(ti.ndrange((-1, 2), (-1, 2), (-1, 2))):
             slot_idx = self.grid_to_slot(base + offset)
-            for j in range(
+            for j_p in range(
                 self.slot_start[slot_idx, i_b], self.slot_size[slot_idx, i_b] + self.slot_start[slot_idx, i_b]
             ):
-                if i != j and (pos[i, i_b] - pos[j, i_b]).norm() < task_range:
-                    task(i, j, ret, i_b)
+                if i_p != j_p and (pos[i_p, i_b] - pos[j_p, i_b]).norm() < task_range:
+                    task(i_p, j_p, ret, i_b)
 
     @ti.func
     def pos_to_grid(self, pos):
