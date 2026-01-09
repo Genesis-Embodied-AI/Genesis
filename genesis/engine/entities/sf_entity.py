@@ -1,13 +1,6 @@
-import numpy as np
 import gstaichi as ti
-from scipy.spatial import KDTree
 
-import genesis as gs
-import genesis.utils.geom as gu
-import genesis.utils.mesh as mu
-from genesis.engine.entities.base_entity import Entity
 from genesis.engine.entities.particle_entity import ParticleEntity
-import trimesh
 
 
 @ti.data_oriented

@@ -7,6 +7,9 @@ import argparse
 import psutil
 
 
+CHECK_INTERVAL = 2.0
+
+
 def grep(contents: list[str], target):
     return [l for l in contents if target in l]
 
@@ -69,6 +72,7 @@ def main() -> None:
     old_mem_by_test = {}
     num_results_written = 0
     disp = False
+    last_output_line = None
     while not args.die_with_parent or os.getppid() != 1:
         mem_by_pid = get_cuda_usage()
         test_by_psid = get_test_name_by_pid()
@@ -88,21 +92,16 @@ def main() -> None:
                 dict_writer.writerow({"test": _test, "max_mem_mb": max_mem_by_test[_test]})
                 f.flush()
                 num_results_written += 1
-        spinny = "x" if disp else "+"
-        print(
-            num_tests,
-            "tests running, of which",
-            len(_mem_by_test),
-            "on gpu. Num results written: ",
-            num_results_written,
-            "[updating]",
-            "       ",
-            end="\r",
-            flush=True,
+        potential_output_line = (
+            f"{num_tests} tests running, of which {len(_mem_by_test)} on gpu. "
+            f"Num results written: {num_results_written} [updating]         "
         )
+        if potential_output_line != last_output_line:
+            print(potential_output_line, end="\r", flush=True)
+            last_output_line = potential_output_line
         old_mem_by_test = _mem_by_test
         disp = not disp
-        time.sleep(2.0)
+        time.sleep(CHECK_INTERVAL)
     print("Test monitor exiting")
 
 

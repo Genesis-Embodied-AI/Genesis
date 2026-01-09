@@ -83,6 +83,32 @@ def test_rigid_mpm_muscle(show_viewer):
     assert_allclose(ball_pos_delta[..., 2], 0.0, tol=1e-3)
 
 
+@pytest.mark.slow  # ~700s
+@pytest.mark.required
+def test_mesh_mpm_build(show_viewer):
+    # FIXME: This test is crashing on Linux (x86 & aarch64) Github-hosted runners
+
+    scene = gs.Scene(
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(-0.5, -0.5, -0.5),
+            upper_bound=(0.5, 0.5, 0.5),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.15,
+        ),
+        material=gs.materials.Hybrid(
+            material_rigid=gs.materials.Rigid(),
+            material_soft=gs.materials.MPM.Muscle(),
+        ),
+    )
+    scene.build()
+
+
 @pytest.mark.required
 @pytest.mark.parametrize(
     "n_envs, material_type",
@@ -124,8 +150,8 @@ def test_fluid_emitter(n_envs, material_type, show_viewer):
         ),
         show_viewer=show_viewer,
     )
-    plane = scene.add_entity(gs.morphs.Plane())
-    wheel = scene.add_entity(
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/wheel/fancy_wheel.urdf",
             pos=(0.5, 0.25, 1.6),

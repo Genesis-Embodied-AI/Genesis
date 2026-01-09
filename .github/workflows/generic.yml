@@ -162,7 +162,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m required --forked ./tests
+          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: >-

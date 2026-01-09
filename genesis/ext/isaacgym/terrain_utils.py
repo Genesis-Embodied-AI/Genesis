@@ -5,10 +5,11 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-
 import numpy as np
-from scipy import interpolate
+
 import genesis as gs
+import genesis.utils.geom as gu
+
 
 def fractal_terrain(terrain, levels=8, scale=1.0):
     """
@@ -16,7 +17,7 @@ def fractal_terrain(terrain, levels=8, scale=1.0):
 
     Parameters
         terrain (SubTerrain): the terrain
-        levels (int, optional): granurarity of the fractal terrain. Defaults to 8.
+        levels (int, optional): granularity of the fractal terrain. Defaults to 8.
         scale (float, optional): scales vertical variation. Defaults to 1.0.
     """
     width = terrain.width
@@ -79,11 +80,11 @@ def random_uniform_terrain(
     x = np.linspace(0, scaled_width, height_field_downsampled.shape[0])
     y = np.linspace(0, scaled_length, height_field_downsampled.shape[1])
 
-    f = interpolate.RectBivariateSpline(x, y, height_field_downsampled)
-
     x_upsampled = np.linspace(0, scaled_width, terrain.width)
     y_upsampled = np.linspace(0, scaled_length, terrain.length)
-    z_upsampled = np.rint(f(x_upsampled, y_upsampled))
+    z_upsampled = np.rint(
+        gu.cubic_spline_1d(x, gu.cubic_spline_1d(y, height_field_downsampled.T, y_upsampled).T, x_upsampled)
+    )
 
     terrain.height_field_raw += z_upsampled
     return terrain

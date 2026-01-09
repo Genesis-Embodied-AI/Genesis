@@ -374,7 +374,7 @@ class JITRenderer:
         self.gl = GLWrapper()
 
         IS_OPENGL_42_AVAILABLE = hasattr(self.gl.wrapper_instance, "glDrawElementsInstancedBaseInstance")
-        OPENGL_42_ERROR_MSG = "Seperated env rendering not supported because OpenGL 4.2 not available on this machine."
+        OPENGL_42_ERROR_MSG = "Separated env rendering not supported because OpenGL 4.2 not available on this machine."
 
         @nb.jit(
             nb.none(

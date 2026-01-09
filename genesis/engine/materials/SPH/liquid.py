@@ -23,8 +23,8 @@ class Liquid(Base):
     gamma: float, optional
         The surface tension of the liquid. Controls how strongly the material "clumps" together at boundaries. Default is 0.01
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
-        'pbs' on supported platforms, 'random' otherwise.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux x86 for now. Defaults
+        to 'pbs' on supported platforms, 'random' otherwise.
     """
 
     def __init__(
