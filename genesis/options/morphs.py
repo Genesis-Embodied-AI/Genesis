@@ -1284,3 +1284,73 @@ class Terrain(Morph):
     @property
     def subterrain_params(self):
         return self._subterrain_parameters
+
+
+class USD(FileMorph):
+    """
+    Configuration class for USD file loading with advanced processing options.
+
+    This class encapsulates the file path and processing parameters for USD loading,
+    allowing users to control convexification, decimation, and decomposition behavior
+    when loading USD scenes via add_stage().
+
+    Parameters
+    ----------
+    file : str
+        The path to the USD file.
+    convexify : bool, optional
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
+        sufficient to meet the desired accuracy. The module 'coacd' is used for this decomposition process.
+        If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+    decompose_object_error_threshold : float, optional
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : float, optional
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int, optional
+        How hard the decimation process will try to match the target number of faces, as an integer ranging from 0 to 8.
+        0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
+    _prim_path : str, optional
+        The parsing target prim path. Defaults to None.
+    _parsing_type : str, optional
+        The parsing type.
+        'articulation' for articulated body parsing, ArticulationRootAPI is required.
+        'rigid_body' for rigid body parsing, CollisionAPI|RigidBodyAPI is required.
+        Defaults to None, no parsing will be performed.
+    """
+
+    file: str
+    convexify: Optional[bool] = None
+    decompose_object_error_threshold: float = 0.15
+    decompose_robot_error_threshold: float = float("inf")
+    coacd_options: Optional[CoacdOptions] = None
+    decimate: bool = True
+    decimate_face_num: int = 500
+    decimate_aggressiveness: int = 2
+    prim_path: Optional[str] = None
+    parsing_type: Optional[Literal["articulation", "rigid_body"]] = None
+    parser_ctx: Any = None
+
+    def __init__(self, **data):
+        super().__init__(**data)
+
+        if not isinstance(self.file, str):
+            gs.raise_exception("`file` should be a string.")
+
+        if not self.file.lower().endswith(USD_FORMATS):
+            gs.raise_exception(f"USDMorph requires a USD file with extension {USD_FORMATS}, got: {self.file}")
+
+        if self.coacd_options is None:
+            self.coacd_options = CoacdOptions()
