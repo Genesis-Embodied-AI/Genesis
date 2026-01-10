@@ -355,7 +355,7 @@ class Renderer(object):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         V, P = self._get_camera_matrices(scene, env_idx)
-        cam_pose = self._get_camera_pose(scene, env_idx)[:3, 3]
+        cam_pos = self._get_camera_pose(scene, env_idx)[:3, 3]
 
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 

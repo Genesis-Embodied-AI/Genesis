@@ -2877,8 +2877,9 @@ def kernel_init_meaninertia(
             for i_e in range(n_entities):
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                    # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-                    ti.atomic_add(rigid_global_info.meaninertia[i_b], rigid_global_info.mass_mat[i_d, i_d, i_b])
+                    rigid_global_info.meaninertia[i_b] = (
+                        rigid_global_info.meaninertia[i_b] + rigid_global_info.mass_mat[i_d, i_d, i_b]
+                    )
                 rigid_global_info.meaninertia[i_b] = rigid_global_info.meaninertia[i_b] / n_dofs
         else:
             rigid_global_info.meaninertia[i_b] = 1.0

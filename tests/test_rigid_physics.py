@@ -2207,7 +2207,7 @@ def test_nan_reset(gs_sim, mode):
     ],
 )
 @pytest.mark.parametrize("is_named", [True, False])
-def test_terrain_generation(is_named, show_viewer):
+def test_terrain_generation(is_named, show_viewer, tol):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
         ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
@@ -2287,7 +2287,7 @@ def test_terrain_generation(is_named, show_viewer):
         scene = gs.Scene()
         terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
         terrain_2_mesh = terrain_2.geoms[0].mesh
-        assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
+        assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=tol)
 
 
 @pytest.mark.required

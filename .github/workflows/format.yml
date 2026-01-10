@@ -1,4 +1,4 @@
-name: Lint and Format
+name: Precommit Checks (Lint and Format)
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   pre-commit:
     runs-on: ubuntu-24.04
-    name: ubuntu-24.04-3.12-examples
+    name: precommit-checks
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Update to your project's version
+          python-version: '3.12'
 
       - name: Run pre-commit hooks
         uses: pre-commit/action@v3.0.1

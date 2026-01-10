@@ -854,6 +854,7 @@ class SAPCoupler(RBC):
             norm_thr = self._sap_convergence_atol + self._sap_convergence_rtol * ti.max(
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
+            self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= norm_thr
 
     @ti.kernel
     def compute_regularization(
