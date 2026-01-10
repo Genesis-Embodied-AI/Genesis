@@ -1,22 +1,23 @@
 """
-USD Articulation Parser
+USD Rigid Entity Parser
 
-Parser for extracting articulation information from USD stages.
-The parser is agnostic to genesis structures, focusing only on USD articulation structure.
+Unified parser for extracting rigid entity information from USD stages.
+Treats both articulations and rigid bodies as rigid entities, where rigid bodies
+are treated as articulation roots with no child links.
 
-Also includes Genesis-specific parsing functions that translate USD structures into Genesis info structures.
+The parser is agnostic to genesis structures, focusing only on USD structure.
 """
 
+import copy
 import re
-from typing import Dict, List, Literal, Tuple
 import collections.abc
+from typing import Dict, List, Literal, Tuple, TYPE_CHECKING
 
 import numpy as np
-from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
-from scipy.spatial.transform import Rotation as R
+from pxr import Sdf, Usd, UsdPhysics
 
 import genesis as gs
-
+from genesis.options.morphs import USD
 from .. import geom as gu
 from .. import urdf as urdf_utils
 from .usd_geo_adapter import create_geo_info_from_prim, create_geo_infos_from_subtree
@@ -24,125 +25,47 @@ from .usd_parser_context import UsdParserContext
 from .usd_parser_utils import (
     compute_gs_global_transform,
     compute_gs_relative_transform,
-    convert_usd_joint_pos_to_gs,
-    convert_usd_joint_axis_pos_to_gs,
+    compute_gs_joint_pos_from_usd_prim,
+    compute_gs_joint_axis_and_pos_from_usd_prim,
     usd_quat_to_numpy,
 )
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.base_entity import Entity
 
-class UsdArticulationParser:
+
+# ==================== Helper Functions ====================
+
+
+def _is_rigid_body(prim: Usd.Prim) -> bool:
     """
-    A parser to extract joints and links from a USD Physics articulation structure.
+    Check if a prim should be regarded as a rigid body.
 
-    Extracts all joints (fixed, revolute, prismatic, spherical) and their connected
-    rigid body links from an articulation root prim in a USD stage.
-    The parser is agnostic to genesis structures, focusing only on USD articulation structure.
+    Note: We regard CollisionAPI also as rigid body (they are fixed rigid body).
+
+    Parameters
+    ----------
+    prim : Usd.Prim
+        The prim to check.
+
+    Returns
+    -------
+    bool
+        True if the prim should be regarded as a rigid body, False otherwise.
     """
+    if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+        return False
 
-    def __init__(self, stage: Usd.Stage, articulation_root_prim: Usd.Prim):
-        """
-        Initialize the articulation parser.
+    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+        return True
 
-        Parameters
-        ----------
-        stage : Usd.Stage
-            The USD stage.
-        articulation_root_prim : Usd.Prim
-            The root prim of the articulation (must have ArticulationRootAPI).
-        """
-        self._stage: Usd.Stage = stage
-        self._root: Usd.Prim = articulation_root_prim
-        if not articulation_root_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-            gs.raise_exception(
-                f"Provided prim {articulation_root_prim.GetPath()} is not an Articulation Root. Now we only support "
-                "articulation parsing from ArticulationRootAPI."
-            )
+    if prim.HasAPI(UsdPhysics.CollisionAPI):
+        return True
 
-        gs.logger.debug(f"Parsing USD articulation from {articulation_root_prim.GetPath()}.")
-
-        self.joints: List[UsdPhysics.Joint] = []
-        self.fixed_joints: List[UsdPhysics.FixedJoint] = []
-        self.revolute_joints: List[UsdPhysics.RevoluteJoint] = []
-        self.prismatic_joints: List[UsdPhysics.PrismaticJoint] = []
-        self.spherical_joints: List[UsdPhysics.SphericalJoint] = []
-        self._collect_joints()
-
-        self.links: List[Usd.Prim] = []
-        self._collect_links()
-
-    # ==================== Static Methods: Finding Articulation Roots ====================
-
-    @staticmethod
-    def find_all_articulation_roots(stage: Usd.Stage, context: UsdParserContext = None) -> List[Usd.Prim]:
-        """
-        Find all prims with ArticulationRootAPI in the stage.
-
-        Parameters
-        ----------
-        stage : Usd.Stage
-            The USD stage.
-        context : UsdParserContext, optional
-            If provided, articulation roots will be added to the context.
-
-        Returns
-        -------
-        List[Usd.Prim]
-            List of articulation root prims.
-        """
-        articulation_roots = []
-
-        # Use Usd.PrimRange for traversal
-        it = iter(Usd.PrimRange(stage.GetPseudoRoot()))
-        for prim in it:
-            if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-                articulation_roots.append(prim)
-                if context:
-                    context.add_articulation_root(prim)
-                # Early break: skip descendants (they are part of this articulation)
-                it.PruneChildren()
-
-        return articulation_roots
-
-    # ==================== Collection Methods: Joints and Links ====================
-
-    def _collect_joints(self):
-        """Collect all joints in the articulation."""
-        for child in Usd.PrimRange(self._root):
-            if child.IsA(UsdPhysics.Joint):
-                joint_api = UsdPhysics.Joint(child)
-                self.joints.append(joint_api)
-                if child.IsA(UsdPhysics.RevoluteJoint):
-                    revolute_joint_api = UsdPhysics.RevoluteJoint(child)
-                    self.revolute_joints.append(revolute_joint_api)
-                elif child.IsA(UsdPhysics.FixedJoint):
-                    fixed_joint_api = UsdPhysics.FixedJoint(child)
-                    self.fixed_joints.append(fixed_joint_api)
-                elif child.IsA(UsdPhysics.PrismaticJoint):
-                    prismatic_joint_api = UsdPhysics.PrismaticJoint(child)
-                    self.prismatic_joints.append(prismatic_joint_api)
-                elif child.IsA(UsdPhysics.SphericalJoint):
-                    spherical_joint_api = UsdPhysics.SphericalJoint(child)
-                    self.spherical_joints.append(spherical_joint_api)
-
-    def _collect_links(self):
-        """Collect all links connected by joints in the articulation."""
-        # Now we have joints collected, we can find links connected by these joints
-        paths = set()
-        for joint in self.joints:
-            body0_targets = joint.GetBody0Rel().GetTargets()
-            body1_targets = joint.GetBody1Rel().GetTargets()
-            for target_path in body0_targets + body1_targets:
-                # Check target is valid
-                if self._stage.GetPrimAtPath(target_path):
-                    paths.add(target_path)
-                else:
-                    gs.raise_exception(f"Joint {joint.GetPath()} has invalid target body reference {target_path}.")
-        for path in paths:
-            prim = self._stage.GetPrimAtPath(path)
-            self.links.append(prim)
+    return False
 
 
-# ==================== Genesis-Specific Geometry Collection Functions ====================
+# ==================== Geometry Collection Functions ====================
 
 # Pattern matching for geometry collection
 _visual_pattern = re.compile(r"^(visual|Visual).*")
@@ -243,7 +166,7 @@ def _create_collision_geo_infos(link: Usd.Prim, context: UsdParserContext) -> Li
     return _create_geo_infos(context, link, _collision_pattern, "mesh")
 
 
-# ==================== Helper Functions for Genesis Parsing ====================
+# ==================== Helper Functions for Joint Parsing ====================
 
 
 def _axis_str_to_vector(axis_str: str) -> np.ndarray:
@@ -287,21 +210,23 @@ def _compute_child_link_local_axis_pos(
     usd_local_rotation = usd_quat_to_numpy(rotation_attr.Get())
     usd_local_axis = gu.quat_to_R(usd_local_rotation) @ axis
 
-    return convert_usd_joint_axis_pos_to_gs(usd_local_axis, usd_local_pos, child_link)
+    return compute_gs_joint_axis_and_pos_from_usd_prim(usd_local_axis, usd_local_pos, child_link)
 
 
 def _compute_child_link_local_pos(joint: UsdPhysics.SphericalJoint, child_link: Usd.Prim) -> np.ndarray:
     """
-    Compute the local position of a spherical joint in the parent link local space.
+    Compute the local position of a spherical joint in the child link local space.
 
     Parameters
     ----------
     joint : UsdPhysics.SphericalJoint
-    parent_link : Usd.Prim
+        The spherical joint API.
+    child_link : Usd.Prim
+        The child link prim.
     """
     pos_attr = joint.GetLocalPos1Attr()
     usd_local_pos = pos_attr.Get() if pos_attr else gu.zero_pos()
-    gs_local_pos = convert_usd_joint_pos_to_gs(usd_local_pos, child_link)
+    gs_local_pos = compute_gs_joint_pos_from_usd_prim(usd_local_pos, child_link)
     return gs_local_pos
 
 
@@ -437,14 +362,14 @@ def _parse_prismatic_joint(
 
 
 def _parse_spherical_joint(
-    spherial_joint: UsdPhysics.SphericalJoint, parent_link: Usd.Prim | None, child_link: Usd.Prim
+    spherical_joint: UsdPhysics.SphericalJoint, parent_link: Usd.Prim | None, child_link: Usd.Prim
 ) -> Dict:
     """
     Parse a spherical joint and create joint info dictionary.
 
     Parameters
     ----------
-    spherial_joint : UsdPhysics.SphericalJoint
+    spherical_joint : UsdPhysics.SphericalJoint
         The spherical joint API.
     parent_link : Usd.Prim or None
         The parent link prim.
@@ -457,9 +382,8 @@ def _parse_spherical_joint(
         Joint info dictionary.
     """
     j_info = dict()
-    joint_prim = spherial_joint.GetPrim()
 
-    pos = _compute_child_link_local_pos(joint_prim, child_link)
+    pos = _compute_child_link_local_pos(spherical_joint, child_link)
 
     # Fill the joint info
     j_info["pos"] = pos
@@ -490,7 +414,6 @@ def _parse_fixed_joint(joint_prim: Usd.Prim, parent_link: Usd.Prim, child_link: 
         The parent link.
     child_link : Usd.Prim
         The child link.
-        The body0 targets (to determine if it's a root fixed joint).
 
     Returns
     -------
@@ -716,10 +639,6 @@ def _parse_joint_target(joint_prim: Usd.Prim, joint_type: str) -> np.ndarray | N
         The joint prim.
     joint_type : str
         The joint type (REVOLUTE, PRISMATIC, SPHERICAL, etc.).
-    n_qs : int
-        Number of position coordinates for the joint.
-    dofs_limit : np.ndarray
-        Joint limits array with shape (n_dofs, 2) where each row is [lower_limit, upper_limit].
 
     Returns
     -------
@@ -792,43 +711,190 @@ def _get_parent_child_links(stage: Usd.Stage, joint: UsdPhysics.Joint) -> Tuple[
     return parent_link, child_link
 
 
-# ==================== Parsing Helper Functions ====================
-
-
-def _parse_link_geometries(
-    robot: UsdArticulationParser, l_infos: List[Dict], links_g_infos: List[List[Dict]], context: UsdParserContext
-):
+def _setup_free_joints_for_base_links(l_infos: List[Dict], links_j_infos: List[List[Dict]]):
     """
-    Parse geometries (visual and collision) for all links.
+    Add FREE joints to base links that have no incoming joints.
 
     Parameters
     ----------
-    robot : UsdArticulationParser
-        The articulation parser instance.
     l_infos : List[Dict]
         List of link info dictionaries.
-    links_g_infos : List[List[Dict]]
-        List of lists of geometry info dictionaries.
-    context : UsdParserContext
-        The parser context.
+    links_j_infos : List[List[Dict]]
+        List of lists of joint info dictionaries.
     """
-    for link, l_info, link_g_infos in zip(robot.links, l_infos, links_g_infos):
-        visual_g_infos = _create_visual_geo_infos(link, context)
-        collision_g_infos = _create_collision_geo_infos(link, context)
-        if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
-            gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
+    for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
+        # Base link (no parent) with no joints should get a FREE joint
+        if l_info["parent_idx"] == -1 and len(link_j_infos) == 0:
+            j_info = _create_free_joint_for_base_link(l_info)
+            link_j_infos.append(j_info)
+
+
+# ==================== Finding Functions ====================
+
+
+def _find_all_rigid_entities(stage: Usd.Stage, context: UsdParserContext = None) -> Dict[str, List[Usd.Prim]]:
+    """
+    Find all articulation roots and rigid bodies in the stage.
+
+    Rigid bodies are treated as articulation roots with no child links.
+    This function distinguishes them at the finding level but they will be
+    processed similarly in the parsing part.
+
+    Parameters
+    ----------
+    stage : Usd.Stage
+        The USD stage.
+    context : UsdParserContext, optional
+        If provided, articulation roots and rigid bodies will be added to the context.
+
+    Returns
+    -------
+    Dict[str, List[Usd.Prim]]
+        Dictionary with keys:
+        - "articulation_roots": List of articulation root prims
+        - "rigid_bodies": List of rigid body prims
+    """
+    articulation_roots = []
+    rigid_bodies = []
+
+    # Use Usd.PrimRange for traversal
+    it = iter(Usd.PrimRange(stage.GetPseudoRoot()))
+    for prim in it:
+        # Early break if we come across an ArticulationRootAPI (don't go deeper)
+        if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+            articulation_roots.append(prim)
+            if context:
+                context.add_articulation_root(prim)
+            # Skip descendants (they are part of this articulation)
+            it.PruneChildren()
             continue
-        if len(collision_g_infos) == 0:
-            gs.logger.warning(
-                f"No collision geometries found for link {link.GetPath()}, using visual geometries instead."
-            )
-        link_g_infos.extend(visual_g_infos)
-        link_g_infos.extend(collision_g_infos)
+
+        # Early break if we come across a rigid body
+        if _is_rigid_body(prim):
+            rigid_bodies.append(prim)
+            if context:
+                context.add_rigid_body(prim)
+            # Skip descendants (they will be merged, not treated as separate rigid bodies)
+            it.PruneChildren()
+
+    return {
+        "articulation_roots": articulation_roots,
+        "rigid_bodies": rigid_bodies,
+    }
+
+
+# ==================== Collection Functions: Joints and Links ====================
+
+
+def _collect_joints(root_prim: Usd.Prim) -> Dict[str, List]:
+    """
+    Collect all joints in the articulation subtree.
+
+    Parameters
+    ----------
+    root_prim : Usd.Prim
+        The root prim of the articulation or rigid body.
+
+    Returns
+    -------
+    Dict[str, List]
+        Dictionary with keys:
+        - "joints": List of all UsdPhysics.Joint
+        - "fixed_joints": List of UsdPhysics.FixedJoint
+        - "revolute_joints": List of UsdPhysics.RevoluteJoint
+        - "prismatic_joints": List of UsdPhysics.PrismaticJoint
+        - "spherical_joints": List of UsdPhysics.SphericalJoint
+    """
+    joints = []
+    fixed_joints = []
+    revolute_joints = []
+    prismatic_joints = []
+    spherical_joints = []
+
+    for child in Usd.PrimRange(root_prim):
+        if child.IsA(UsdPhysics.Joint):
+            joint_api = UsdPhysics.Joint(child)
+            joints.append(joint_api)
+            if child.IsA(UsdPhysics.RevoluteJoint):
+                revolute_joint_api = UsdPhysics.RevoluteJoint(child)
+                revolute_joints.append(revolute_joint_api)
+            elif child.IsA(UsdPhysics.FixedJoint):
+                fixed_joint_api = UsdPhysics.FixedJoint(child)
+                fixed_joints.append(fixed_joint_api)
+            elif child.IsA(UsdPhysics.PrismaticJoint):
+                prismatic_joint_api = UsdPhysics.PrismaticJoint(child)
+                prismatic_joints.append(prismatic_joint_api)
+            elif child.IsA(UsdPhysics.SphericalJoint):
+                spherical_joint_api = UsdPhysics.SphericalJoint(child)
+                spherical_joints.append(spherical_joint_api)
+
+    return {
+        "joints": joints,
+        "fixed_joints": fixed_joints,
+        "revolute_joints": revolute_joints,
+        "prismatic_joints": prismatic_joints,
+        "spherical_joints": spherical_joints,
+    }
+
+
+def _collect_links(stage: Usd.Stage, joints: List[UsdPhysics.Joint]) -> List[Usd.Prim]:
+    """
+    Collect all links connected by joints.
+
+    Parameters
+    ----------
+    stage : Usd.Stage
+        The USD stage.
+    joints : List[UsdPhysics.Joint]
+        List of joints to extract links from.
+
+    Returns
+    -------
+    List[Usd.Prim]
+        List of link prims.
+    """
+    links = []
+    paths = set()
+    for joint in joints:
+        body0_targets = joint.GetBody0Rel().GetTargets()
+        body1_targets = joint.GetBody1Rel().GetTargets()
+        for target_path in body0_targets + body1_targets:
+            # Check target is valid
+            if stage.GetPrimAtPath(target_path):
+                paths.add(target_path)
+            else:
+                gs.raise_exception(f"Joint {joint.GetPath()} has invalid target body reference {target_path}.")
+    for path in paths:
+        prim = stage.GetPrimAtPath(path)
+        links.append(prim)
+    return links
+
+
+def _is_fixed_rigid_body(prim: Usd.Prim) -> bool:
+    """
+    Check if a rigid body prim is fixed (kinematic or collision-only).
+
+    Parameters
+    ----------
+    prim : Usd.Prim
+        The rigid body prim.
+
+    Returns
+    -------
+    bool
+        True if the rigid body is fixed, False otherwise.
+    """
+    collision_api_only = prim.HasAPI(UsdPhysics.CollisionAPI) and not prim.HasAPI(UsdPhysics.RigidBodyAPI)
+    kinematic_enabled = False
+    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+        rigid_body_api = UsdPhysics.RigidBodyAPI(prim)
+        kinematic_enabled = bool(rigid_body_api.GetKinematicEnabledAttr().Get())
+    return collision_api_only or kinematic_enabled
 
 
 def _parse_joints(
-    robot: UsdArticulationParser,
     stage: Usd.Stage,
+    joints: List[UsdPhysics.Joint],
     l_infos: List[Dict],
     links_j_infos: List[List[Dict]],
     link_name_to_idx: Dict,
@@ -838,10 +904,10 @@ def _parse_joints(
 
     Parameters
     ----------
-    robot : UsdArticulationParser
-        The articulation parser instance.
     stage : Usd.Stage
         The USD stage.
+    joints : List[UsdPhysics.Joint]
+        List of joints to parse.
     l_infos : List[Dict]
         List of link info dictionaries.
     links_j_infos : List[List[Dict]]
@@ -849,7 +915,7 @@ def _parse_joints(
     link_name_to_idx : Dict
         Dictionary mapping link paths to indices.
     """
-    for joint in robot.joints:
+    for joint in joints:
         parent_link, child_link = _get_parent_child_links(stage, joint)
         child_link_path = child_link.GetPath()
 
@@ -928,34 +994,26 @@ def _parse_joints(
                 )
 
         j_info.update(_parse_joint_dynamics(joint_prim, n_dofs))
-
         j_info.update(_parse_drive_api(joint_prim, j_info["type"], n_dofs))
-
-
-def _setup_free_joints_for_base_links(l_infos: List[Dict], links_j_infos: List[List[Dict]]):
-    """
-    Add FREE joints to base links that have no incoming joints.
-
-    Parameters
-    ----------
-    l_infos : List[Dict]
-        List of link info dictionaries.
-    links_j_infos : List[List[Dict]]
-        List of lists of joint info dictionaries.
-    """
-    for idx, (l_info, link_j_infos) in enumerate(zip(l_infos, links_j_infos)):
-        # Base link (no parent) with no joints should get a FREE joint
-        if l_info["parent_idx"] == -1 and len(link_j_infos) == 0:
-            j_info = _create_free_joint_for_base_link(l_info)
-            link_j_infos.append(j_info)
 
 
 # ==================== Main Parsing Function ====================
 
 
-def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
+def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
-    Parse USD articulation from the given USD file and prim path, translating it into genesis structures.
+    Unified parser for USD rigid entities (both articulations and rigid bodies).
+
+    Treats rigid bodies as articulation roots with no child links.
+    Automatically detects whether the prim is an articulation (has joints) or
+    a rigid body (no joints) and processes accordingly.
+
+    Parameters
+    ----------
+    morph : gs.morphs.USD
+        USD morph configuration.
+    surface : gs.surfaces.Surface
+        Surface configuration.
 
     Returns
     -------
@@ -968,35 +1026,208 @@ def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     eqs_info : list
         List of equality constraint info dictionaries.
     """
+    # Validate scale
     if morph.scale is not None and morph.scale != 1.0:
-        gs.logger.warning("USD articulation parsing currently only supports scale=1.0. Scale will be set to 1.0.")
+        gs.logger.warning("USD rigid entity parsing currently only supports scale=1.0. Scale will be set to 1.0.")
     morph.scale = 1.0
 
-    assert morph.parser_ctx is not None, "USDArticulation must have a parser context."
-    assert morph.prim_path is not None, "USDArticulation must have a prim path."
+    assert morph.parser_ctx is not None, "USDRigidEntity must have a parser context."
+    assert morph.prim_path is not None, "USDRigidEntity must have a prim path."
 
     context: UsdParserContext = morph.parser_ctx
     stage: Usd.Stage = context.stage
     root_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))
     assert root_prim.IsValid(), f"Invalid prim path {morph.prim_path} in USD file {morph.file}."
 
-    robot = UsdArticulationParser(stage, root_prim)
-    link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(robot.links)}
-    n_links = len(robot.links)
+    # Validate that the prim is either an articulation root or a rigid body
+    is_articulation_root = root_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
+    is_rigid_body = _is_rigid_body(root_prim)
 
-    l_infos = [_create_link_info(link) for link in robot.links]
-    links_j_infos = [[] for _ in range(n_links)]
-    links_g_infos = [[] for _ in range(n_links)]
+    if not is_articulation_root and not is_rigid_body:
+        gs.raise_exception(
+            f"Provided prim {root_prim.GetPath()} is neither an articulation root nor a rigid body. "
+            f"APIs found: {root_prim.GetAppliedSchemas()}"
+        )
 
-    _parse_link_geometries(robot, l_infos, links_g_infos, context)
+    gs.logger.debug(f"Parsing USD rigid entity from {root_prim.GetPath()}.")
 
-    _parse_joints(robot, stage, l_infos, links_j_infos, link_name_to_idx)
+    joint_data = _collect_joints(root_prim)
+    joints = joint_data["joints"]
+    has_joints = len(joints) > 0
 
-    _setup_free_joints_for_base_links(l_infos, links_j_infos)
+    if has_joints:
+        links = _collect_links(stage, joints)
 
-    l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
+        if len(links) == 0:
+            gs.raise_exception(f"Articulation at {root_prim.GetPath()} has joints but no links found.")
+
+        link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(links)}
+        n_links = len(links)
+
+        l_infos = [_create_link_info(link) for link in links]
+        links_j_infos = [[] for _ in range(n_links)]
+        links_g_infos = [[] for _ in range(n_links)]
+
+        for link, l_info, link_g_infos in zip(links, l_infos, links_g_infos):
+            visual_g_infos = _create_visual_geo_infos(link, context)
+            collision_g_infos = _create_collision_geo_infos(link, context)
+            if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
+                gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
+                continue
+            if len(collision_g_infos) == 0:
+                gs.logger.warning(
+                    f"No collision geometries found for link {link.GetPath()}, using visual geometries instead."
+                )
+            link_g_infos.extend(visual_g_infos)
+            link_g_infos.extend(collision_g_infos)
+
+        _parse_joints(stage, joints, l_infos, links_j_infos, link_name_to_idx)
+
+        _setup_free_joints_for_base_links(l_infos, links_j_infos)
+
+        l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
+    else:
+        link_prim = root_prim
+
+        Q_w, S = compute_gs_global_transform(link_prim)
+        body_pos = Q_w[:3, 3]
+        body_quat = gu.R_to_quat(Q_w[:3, :3])
+
+        link_name = str(link_prim.GetPath())
+
+        l_info = dict(
+            is_robot=False,
+            name=link_name,
+            pos=body_pos,
+            quat=body_quat,
+            inertial_pos=None,  # we will compute the COM later based on the geometry
+            inertial_quat=gu.identity_quat(),
+            parent_idx=-1,
+            invweight=np.full((2,), fill_value=-1.0),
+            inertial_i=None,
+            inertial_mass=None,
+        )
+
+        is_fixed = _is_fixed_rigid_body(root_prim)
+
+        # Create joint info (free joint if not fixed, fixed joint if fixed)
+        if is_fixed:
+            joint_type = gs.JOINT_TYPE.FIXED
+            n_qs = 0
+            n_dofs = 0
+            init_qpos = np.zeros(0)
+        else:
+            joint_type = gs.JOINT_TYPE.FREE
+            n_qs = 7
+            n_dofs = 6
+            init_qpos = np.concatenate([body_pos, body_quat])
+
+        j_info = _create_free_joint_for_base_link(l_info)
+        j_info["name"] = f"{link_name}_joint"
+        j_info["type"] = joint_type
+        j_info["n_qs"] = n_qs
+        j_info["n_dofs"] = n_dofs
+        j_info["init_qpos"] = init_qpos
+
+        if joint_type == gs.JOINT_TYPE.FIXED:
+            j_info["dofs_motion_ang"] = np.zeros((0, 3))
+            j_info["dofs_motion_vel"] = np.zeros((0, 3))
+            j_info["dofs_limit"] = np.zeros((0, 2))
+            j_info["dofs_stiffness"] = np.zeros(0)
+            j_info["dofs_invweight"] = np.zeros(0)
+            j_info["dofs_frictionloss"] = np.zeros(0)
+            j_info["dofs_damping"] = np.zeros(0)
+            j_info["dofs_armature"] = np.zeros(0)
+            j_info["dofs_kp"] = np.zeros((0,), dtype=gs.np_float)
+            j_info["dofs_kv"] = np.zeros((0,), dtype=gs.np_float)
+            j_info["dofs_force_range"] = np.zeros((0, 2))
+
+        links_g_infos = [[]]
+        visual_g_infos = _create_visual_geo_infos(link_prim, context)
+        collision_g_infos = _create_collision_geo_infos(link_prim, context)
+        if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
+            gs.logger.warning(
+                f"No visual or collision geometries found for rigid body {link_prim.GetPath()}, skipping."
+            )
+        if len(collision_g_infos) == 0:
+            gs.logger.warning(
+                f"No collision geometries found for rigid body {link_prim.GetPath()}, using visual geometries instead."
+            )
+        links_g_infos[0].extend(visual_g_infos)
+        links_g_infos[0].extend(collision_g_infos)
+
+        l_infos = [l_info]
+        links_j_infos = [[j_info]]
 
     # USD doesn't support equality constraints.
     eqs_info = []
 
     return l_infos, links_j_infos, links_g_infos, eqs_info
+
+
+# ==================== Stage-Level Parsing Function ====================
+
+
+def parse_all_rigid_entities(
+    scene: gs.Scene,
+    stage: Usd.Stage,
+    context: UsdParserContext,
+    usd_morph: USD,
+    vis_mode: Literal["visual", "collision"],
+    visualize_contact: bool = False,
+) -> Dict[str, "Entity"]:
+    """
+    Find and parse all rigid entities (articulations and rigid bodies) from a USD stage.
+
+    Parameters
+    ----------
+    scene : gs.Scene
+        The scene to add entities to.
+    stage : Usd.Stage
+        The USD stage.
+    context : UsdParserContext
+        The parser context.
+    usd_morph : USD
+        USD morph configuration.
+    vis_mode : Literal["visual", "collision"]
+        Visualization mode.
+    visualize_contact : bool, optional
+        Whether to visualize contact, by default False.
+
+    Returns
+    -------
+    Dict[str, Entity]
+        Dictionary of created entities (both articulations and rigid bodies) keyed by prim path.
+    """
+    from genesis.engine.entities.base_entity import Entity as GSEntity
+
+    entities: Dict[str, GSEntity] = {}
+
+    # Find all rigid entities (articulations and rigid bodies)
+    rigid_entities = _find_all_rigid_entities(stage, context)
+    articulation_roots = rigid_entities["articulation_roots"]
+    rigid_bodies = rigid_entities["rigid_bodies"]
+
+    gs.logger.debug(
+        f"Found {len(articulation_roots)} articulation(s) and {len(rigid_bodies)} rigid body(ies) in USD stage."
+    )
+
+    # Process articulation roots
+    for articulation_root in articulation_roots:
+        morph = copy.copy(usd_morph)
+        morph.prim_path = str(articulation_root.GetPath())
+        morph.parsing_type = "articulation"
+        entity = scene.add_entity(morph, vis_mode=vis_mode, visualize_contact=visualize_contact)
+        entities[str(articulation_root.GetPath())] = entity
+        gs.logger.debug(f"Imported articulation from prim: {articulation_root.GetPath()}")
+
+    # Process rigid bodies (treated as articulation roots with no child links)
+    for rigid_body_prim in rigid_bodies:
+        morph = copy.copy(usd_morph)
+        morph.prim_path = str(rigid_body_prim.GetPath())
+        morph.parsing_type = "rigid_body"
+        entity = scene.add_entity(morph, vis_mode=vis_mode, visualize_contact=visualize_contact)
+        entities[str(rigid_body_prim.GetPath())] = entity
+        gs.logger.debug(f"Imported rigid body from prim: {rigid_body_prim.GetPath()}")
+
+    return entities

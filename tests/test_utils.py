@@ -466,3 +466,124 @@ def test_compose_inertial_properties():
     assert_allclose(combined_mass, expected_mass, tol=TOL)
     assert_allclose(combined_com, expected_com, tol=TOL)
     assert_allclose(combined_inertia, expected_inertia, tol=TOL)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("side", ["right", "left"])
+def test_polar_decomposition(side, tol):
+    """Test polar decomposition for both numpy and torch inputs."""
+    # Generate random matrices (not necessarily square)
+    M, N = 3, 3
+    np_A = np.random.randn(M, N).astype(gs.np_float)
+    tc_A = torch.as_tensor(np_A, dtype=gs.tc_float, device=gs.device)
+
+    # Test numpy version (with pure_rotation=False to match original behavior)
+    np_U, np_P = gu.polar(np_A, pure_rotation=False, side=side)
+    assert np_U.shape == (M, N)
+    if side == "right":
+        assert np_P.shape == (N, N)
+        # Verify A ≈ U @ P
+        np_reconstructed = np_U @ np_P
+    else:
+        assert np_P.shape == (M, M)
+        # Verify A ≈ P @ U
+        np_reconstructed = np_P @ np_U
+
+    assert_allclose(np_A, np_reconstructed, tol=tol)
+
+    # Note: U from polar decomposition may not be exactly unitary due to numerical errors,
+    # but the reconstruction A ≈ U @ P (or P @ U) is the most important property
+
+    # Verify P is positive semi-definite (eigenvalues >= 0)
+    np_eigenvals = np.linalg.eigvals(np_P)
+    assert np.all(np_eigenvals.real >= -tol), "P should be positive semi-definite"
+
+    # Test torch version (with pure_rotation=False to match original behavior)
+    tc_U, tc_P = gu.polar(tc_A, pure_rotation=False, side=side)
+    assert tc_U.shape == (M, N)
+    if side == "right":
+        assert tc_P.shape == (N, N)
+        tc_reconstructed = tc_U @ tc_P
+    else:
+        assert tc_P.shape == (M, M)
+        tc_reconstructed = tc_P @ tc_U
+
+    tc_reconstructed = tensor_to_array(tc_reconstructed)
+    assert_allclose(np_A, tc_reconstructed, tol=tol)
+
+    # Verify P is positive semi-definite for torch
+    tc_P_arr = tensor_to_array(tc_P)
+    tc_eigenvals = np.linalg.eigvals(tc_P_arr)
+    assert np.all(tc_eigenvals.real >= -tol), "P should be positive semi-definite"
+
+    # Cross-check: numpy and torch should produce similar results
+    assert_allclose(np_U, tensor_to_array(tc_U), tol=tol)
+    assert_allclose(np_P, tc_P_arr, tol=tol)
+
+
+@pytest.mark.required
+def test_polar_decomposition_numpy_vs_tensor_consistency(tol):
+    """Test that numpy and torch versions of polar decomposition produce consistent results."""
+    M, N = 3, 3
+    np_A = np.random.randn(M, N).astype(gs.np_float)
+    tc_A = torch.as_tensor(np_A, dtype=gs.tc_float, device=gs.device)
+
+    for side in ["right", "left"]:
+        np_U, np_P = gu.polar(np_A, pure_rotation=False, side=side)
+        tc_U, tc_P = gu.polar(tc_A, pure_rotation=False, side=side)
+
+        tc_U = tensor_to_array(tc_U)
+        tc_P = tensor_to_array(tc_P)
+
+        assert_allclose(np_U, tc_U, tol=tol)
+        assert_allclose(np_P, tc_P, tol=tol)
+
+
+@pytest.mark.required
+def test_polar_pure_rotation(tol):
+    """Test that pure_rotation parameter ensures det(U) = 1 for square matrices."""
+    M, N = 3, 3  # Square matrices only
+    # Create a matrix that will have det(U) = -1 by using a reflection
+    np_A = np.random.randn(M, N).astype(gs.np_float) @ np.diag([1, 1, -1])
+
+    tc_A = torch.as_tensor(np_A, dtype=gs.tc_float, device=gs.device)
+
+    # Test without pure_rotation
+    np_U1, np_P1 = gu.polar(np_A, pure_rotation=False)
+    tc_U1, tc_P1 = gu.polar(tc_A, pure_rotation=False)
+
+    # Test with pure_rotation
+    np_U2, np_P2 = gu.polar(np_A, pure_rotation=True)
+    tc_U2, tc_P2 = gu.polar(tc_A, pure_rotation=True)
+
+    # Check determinants
+    np_det1 = np.linalg.det(np_U1)
+    np_det2 = np.linalg.det(np_U2)
+
+    tc_U1_arr = tensor_to_array(tc_U1)
+    tc_U2_arr = tensor_to_array(tc_U2)
+    tc_det1 = np.linalg.det(tc_U1_arr)
+    tc_det2 = np.linalg.det(tc_U2_arr)
+
+    # Without pure_rotation, det might be -1 (reflection)
+    # With pure_rotation, det should be 1 (pure rotation)
+    assert abs(abs(np_det2) - 1.0) < 1e-6, "With pure_rotation, det(U) should be ±1"
+    assert abs(abs(tc_det2) - 1.0) < 1e-6, "With pure_rotation, det(U) should be ±1"
+
+    # If the original had a reflection (det = -1), it should be fixed to rotation (det = 1)
+    if abs(np_det1 + 1) < 1e-6:
+        assert abs(np_det2 - 1.0) < 1e-6, "Reflection should be fixed to rotation"
+    if abs(tc_det1 + 1) < 1e-6:
+        assert abs(tc_det2 - 1.0) < 1e-6, "Reflection should be fixed to rotation"
+
+    # Reconstruction should still work
+    np_recon1 = np_U1 @ np_P1
+    np_recon2 = np_U2 @ np_P2
+
+    assert_allclose(np_A, np_recon1, tol=tol)
+    assert_allclose(np_A, np_recon2, tol=tol)
+
+    tc_recon1 = tensor_to_array(tc_U1 @ tc_P1)
+    tc_recon2 = tensor_to_array(tc_U2 @ tc_P2)
+    assert_allclose(np_A, tc_recon1, tol=tol)
+    assert_allclose(np_A, tc_recon2, tol=tol)

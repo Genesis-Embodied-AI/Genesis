@@ -1,4 +1,5 @@
 import math
+from typing import Literal
 
 import numpy as np
 import numba as nb
@@ -1177,6 +1178,113 @@ def inv_transform_by_T(pos, T):
         trans = trans.reshape((-1, 1, 3))
 
     return transform_by_R(pos - trans, R_inv)
+
+
+def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right"):
+    """
+    Compute the polar decomposition of a matrix.
+
+    Parameters
+    ----------
+    A : np.ndarray | torch.Tensor
+        The matrix to decompose. Must be a 2D matrix (M, N), not batched.
+    pure_rotation : bool, optional
+        If True, ensure the unitary matrix U has det(U) = 1 (pure rotation).
+        If False, U may have det(U) = -1 (contains reflection). Default is True.
+    side : Literal['right', 'left'], optional
+        The side of the decomposition. Either 'right' or 'left'. Default is 'right'.
+
+    Returns
+    -------
+    tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]
+        A tuple of (U, P) where:
+        - U : The unitary matrix (rotation part), same shape as A (M, N).
+        - P : The positive semi-definite matrix (scaling part). For 'right' decomposition,
+          P has shape (N, N). For 'left' decomposition, P has shape (M, M).
+    """
+    if isinstance(A, torch.Tensor):
+        if A.ndim != 2:
+            gs.raise_exception(f"Input must be a 2D matrix. got: {A.ndim=} dimensions")
+
+        U_svd, Sigma, Vt = torch.linalg.svd(A, full_matrices=False)
+
+        # Handle pure_rotation: if det(U) < 0, flip signs to make it a pure rotation
+        if pure_rotation and A.shape[0] == A.shape[1]:  # Only for square matrices
+            # Compute U first to check its determinant
+            U_temp = U_svd @ Vt
+            det_U = torch.linalg.det(U_temp)
+            if det_U < 0:
+                U_svd = U_svd.clone()
+                Vt = Vt.clone()
+                Sigma = Sigma.clone()
+
+                # Flip the smallest singular value (last one) and corresponding column/row
+                # This maintains A = U_svd @ diag(Sigma) @ Vt while changing det(U)
+                if side == "right":
+                    # Flip last singular value and last row of Vt
+                    Sigma[-1] *= -1
+                    Vt[-1, :] *= -1
+                else:
+                    # For left polar, flip last singular value and last column of U_svd
+                    Sigma[-1] *= -1
+                    U_svd[:, -1] *= -1
+
+        U = U_svd @ Vt
+
+        # Construct diagonal matrix from singular values
+        # Use absolute value to ensure P is positive semi-definite
+        # (even if we flipped Sigma's sign to fix rotation)
+        Sigma_abs = torch.abs(Sigma)
+        Sigma_diag = torch.diag_embed(Sigma_abs)
+        if side == "right":
+            # P = Vt.T @ diag(|Sigma|) @ Vt
+            P = Vt.transpose(-2, -1) @ Sigma_diag @ Vt
+        else:
+            # P = U_svd @ diag(|Sigma|) @ U_svd.T (left polar: A = P @ U)
+            P = U_svd @ Sigma_diag @ U_svd.transpose(-2, -1)
+        return U, P
+    elif isinstance(A, np.ndarray):
+        if A.ndim != 2:
+            gs.raise_exception(f"Input must be a 2D matrix. got: {A.ndim=} dimensions")
+
+        U_svd, Sigma, Vt = np.linalg.svd(A, full_matrices=False)
+
+        # Handle pure_rotation: if det(U) < 0, flip signs to make it a pure rotation
+        if pure_rotation and A.shape[0] == A.shape[1]:  # Only for square matrices
+            # Compute U first to check its determinant
+            U_temp = U_svd @ Vt
+            det_U = np.linalg.det(U_temp)
+            if det_U < 0:
+                U_svd = U_svd.copy()
+                Vt = Vt.copy()
+                Sigma = Sigma.copy()
+
+                # Flip the smallest singular value (last one) and corresponding column/row
+                # This maintains A = U_svd @ diag(Sigma) @ Vt while changing det(U)
+                if side == "right":
+                    # Flip last singular value and last row of Vt
+                    Sigma[-1] *= -1
+                    Vt[-1, :] *= -1
+                else:
+                    # For left polar, flip last singular value and last column of U_svd
+                    Sigma[-1] *= -1
+                    U_svd[:, -1] *= -1
+
+        U = U_svd @ Vt
+
+        # Use absolute value to ensure P is positive semi-definite
+        # (even if we flipped Sigma's sign to fix rotation)
+        Sigma_abs = np.abs(Sigma)
+
+        if side == "right":
+            # P = Vt.T @ diag(|Sigma|) @ Vt
+            P = Vt.T @ np.diag(Sigma_abs) @ Vt
+        else:
+            # P = U_svd @ diag(|Sigma|) @ U_svd.T (left polar: A = P @ U)
+            P = U_svd @ np.diag(Sigma_abs) @ U_svd.T
+        return U, P
+    else:
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(A)=}")
 
 
 # ------------------------------------------------------------------------------------

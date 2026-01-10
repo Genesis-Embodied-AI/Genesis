@@ -5,18 +5,16 @@ Main parser entrance for importing USD stages into Genesis scenes.
 Provides the parse pipeline: materials -> articulations -> rigid bodies.
 """
 
-import copy
-from typing import Dict, List, Literal
+from typing import Dict, Literal
 
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
+from pxr import Usd
 
 import genesis as gs
 from genesis.options.morphs import USD
 
-from .usd_articulation_parser import UsdArticulationParser
 from .usd_parser_context import UsdParserContext
 from .usd_rendering_material_parser import parse_all_materials
-from .usd_rigid_body_parser import UsdRigidBodyParser
+from .usd_rigid_entity_parser import parse_all_rigid_entities
 
 
 def import_from_stage(
@@ -71,29 +69,9 @@ def import_from_stage(
     materials = parse_all_materials(context)
     gs.logger.debug(f"Parsed {len(materials)} materials from USD stage.")
 
-    # Step 2: Find all articulations
-    articulation_roots = UsdArticulationParser.find_all_articulation_roots(stage, context)
-    gs.logger.debug(f"Found {len(articulation_roots)} articulation(s) in USD stage.")
-
-    for articulation_root in articulation_roots:
-        morph = copy.copy(usd_morph)
-        morph.prim_path = str(articulation_root.GetPath())
-        morph.parsing_type = "articulation"
-        entity = scene.add_entity(morph, vis_mode=vis_mode, visualize_contact=visualize_contact)
-        entities[str(articulation_root.GetPath())] = entity
-        gs.logger.debug(f"Imported articulation from prim: {articulation_root.GetPath()}")
-
-    # Step 3: Find all rigid bodies (not in articulation)
-    rigid_bodies = UsdRigidBodyParser.find_all_rigid_bodies(stage, context)
-    gs.logger.debug(f"Found {len(rigid_bodies)} rigid body(ies) in USD stage.")
-
-    for rigid_body_prim in rigid_bodies:
-        morph = copy.copy(usd_morph)
-        morph.prim_path = str(rigid_body_prim.GetPath())
-        morph.parsing_type = "rigid_body"
-        entity = scene.add_entity(morph, vis_mode=vis_mode, visualize_contact=visualize_contact)
-        entities[str(rigid_body_prim.GetPath())] = entity
-        gs.logger.debug(f"Imported rigid body from prim: {rigid_body_prim.GetPath()}")
+    # Step 2: Parse all rigid entities (articulations and rigid bodies)
+    entities = parse_all_rigid_entities(scene, stage, context, usd_morph, vis_mode, visualize_contact)
+    gs.logger.debug(f"Parsed {len(entities)} rigid entities from USD stage.")
 
     if not entities:
         gs.logger.warning(f"No articulations or rigid bodies found in USD: {usd_morph.file}")

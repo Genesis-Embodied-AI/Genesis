@@ -140,13 +140,8 @@ class RigidEntity(Entity):
 
         if isinstance(self._morph, gs.morphs.Mesh):
             self._load_mesh(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
+        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
             self._load_scene(self._morph, self._surface)
-        elif isinstance(self._morph, gs.morphs.USD):
-            if self._morph.parsing_type == "articulation":
-                self._load_scene(self._morph, self._surface)
-            elif self._morph.parsing_type == "rigid_body":
-                self._load_usd_rigid_body(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Terrain):
@@ -318,18 +313,6 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _load_usd_rigid_body(self, morph, surface):
-        from genesis.utils.usd import parse_usd_rigid_body
-
-        l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
-        link, (joint,) = self._add_by_info(
-            l_info=l_info,
-            j_infos=j_infos,
-            g_infos=g_infos,
-            morph=morph,
-            surface=surface,
-        )
-
     def _load_terrain(self, morph, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
@@ -433,12 +416,10 @@ class RigidEntity(Entity):
             except (ValueError, AssertionError):
                 gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
         elif isinstance(morph, gs.morphs.USD):
-            from genesis.utils.usd import parse_usd_articulation
+            from genesis.utils.usd import parse_usd_rigid_entity
 
-            if morph.parsing_type == "articulation":
-                l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
-            else:
-                gs.raise_exception(f"Unsupported parsing type: {morph.parsing_type}")
+            # Unified parser handles both articulations and rigid bodies
+            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_rigid_entity(morph, surface)
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))

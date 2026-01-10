@@ -2,13 +2,14 @@
 USD Parser Utilities
 
 Utility functions for USD parsing, including transform conversions, mesh conversions, and other helper functions.
+
+Reference: ./UsdParserSpec.md
 """
 
 from collections import deque
-from typing import Callable, List, Tuple
+from typing import Callable, List, Tuple, Literal
 
 import numpy as np
-import scipy.linalg
 import trimesh
 from pxr import Gf, Usd, UsdGeom
 
@@ -35,7 +36,8 @@ def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
 
 
 def extract_rotation_and_scale(trans_matrix: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    R, S = scipy.linalg.polar(trans_matrix[:3, :3], side="right")
+    R, S = gu.polar(trans_matrix[:3, :3], pure_rotation=True, side="right")
+    assert np.linalg.det(R) > 0, "Rotation matrix must contain only pure rotations."
     return R, S
 
 
@@ -221,9 +223,9 @@ def compute_gs_relative_transform(prim: Usd.Prim, ref_prim: Usd.Prim | None) -> 
     return Q_i_j, S_prim
 
 
-def convert_usd_joint_pos_to_gs(usd_local_joint_pos: np.ndarray, usd_link_prim: Usd.Prim | None) -> np.ndarray:
+def compute_gs_joint_pos_from_usd_prim(usd_local_joint_pos: np.ndarray, usd_link_prim: Usd.Prim | None) -> np.ndarray:
     """
-    Convert USD joint position from USD link local space to Genesis link local space.
+    Compute Genesis joint position from USD joint position in USD link local space.
     """
     T_w = compute_usd_global_transform(usd_link_prim)
     pos_w = T_w[:3, :3] @ usd_local_joint_pos + T_w[:3, 3]
@@ -232,11 +234,11 @@ def convert_usd_joint_pos_to_gs(usd_local_joint_pos: np.ndarray, usd_link_prim: 
     return Q_w_inv[:3, :3] @ (pos_w - Q_w[:3, 3])
 
 
-def convert_usd_joint_axis_pos_to_gs(
+def compute_gs_joint_axis_and_pos_from_usd_prim(
     usd_local_joint_axis: np.ndarray, usd_local_joint_pos: np.ndarray, usd_link_prim: Usd.Prim | None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Convert USD joint axis and position from USD link local space to Genesis link local space.
+    Compute Genesis joint axis and position from USD joint axis and position in USD link local space.
     """
     T_w = compute_usd_global_transform(usd_link_prim)
     axis_w = T_w[:3, :3] @ usd_local_joint_axis
