@@ -53,7 +53,7 @@ def as_grayscale_image(
     # Normalize values between 0.0 and 1.0
     data_delta = data_max - data_min
     data_rel = data_float - data_min if black_to_white else data_max - data_float
-    data_normalized = np.divide(data_max - data_float, data_delta, where=data_delta > gs.EPS)
+    data_normalized = np.divide(data_rel, data_delta, where=data_delta > gs.EPS)
 
     # Discretize as unsigned int8
     return (data_normalized * 255.0).astype(np.uint8)
