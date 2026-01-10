@@ -666,18 +666,13 @@ class MPMEntity(ParticleEntity):
         Parameters
         ----------
         particles_mask : torch.Tensor, shape (n_envs, n_particles), optional
-            Boolean mask indicating which particles to unconstrain.
-            If None, removes all constraints for this entity.
+            Boolean mask indicating which particles to unconstrain. If None, removes all constraints for this entity.
         """
         if not self._solver._constraints_initialized:
             return
 
+        # Remove all constraints for this entity if mask not specified
         if particles_mask is None:
-            # Remove all constraints for this entity
-            n_envs = max(1, self._scene.n_envs)
-            particles_mask = torch.ones((n_envs, self.n_particles), dtype=torch.bool, device=gs.device)
+            particles_mask = torch.ones((self._sim._B, self.n_particles), dtype=torch.bool, device=gs.device)
 
-        self._solver._kernel_remove_particle_constraints(
-            particles_mask,
-            self._particle_start,
-        )
+        self._solver._kernel_remove_particle_constraints(particles_mask, self._particle_start)
