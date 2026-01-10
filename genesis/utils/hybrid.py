@@ -35,7 +35,7 @@ def get_gel_path(positions, nodes, sampling):
 
 
 def skeletonization(mesh, sampling=True, verbose=False):
-    from pygel3d import graph
+    from pygel3d import hmesh, graph
 
     assert isinstance(mesh, hmesh.Manifold), "The input mesh of skeletonization should be pygel3d.hmesh.Manifold"
     g = graph.from_mesh(mesh)
@@ -53,7 +53,7 @@ def skeletonization(mesh, sampling=True, verbose=False):
         graph.save(gel_file_path, graph_gel)
     if verbose:
         toc = time.time()
-        print(f"Skeletonization time {toc-tic}")
+        print(f"Skeletonization time {toc - tic}")
 
     return graph_gel
 

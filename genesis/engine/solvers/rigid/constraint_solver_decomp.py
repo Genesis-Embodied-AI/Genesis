@@ -1412,7 +1412,6 @@ def func_ls_init(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     n_dofs = constraint_state.search.shape[0]
     n_entities = entities_info.dof_start.shape[0]
     # mv and jv

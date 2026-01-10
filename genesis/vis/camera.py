@@ -156,7 +156,7 @@ class Camera(RBC):
                 self._raytracer.add_camera(self)
             else:
                 self._is_batched = False
-                if self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid:
+                if self._visualizer.scene.n_envs > 1 and self._visualizer._context.env_separate_rigid:
                     gs.logger.warning(
                         "Batched rendering via 'VisOptions.env_separate_rigid=True' is only partially supported by "
                         "Rasterizer for now. The same camera transform will be used for all the environments."
@@ -165,7 +165,7 @@ class Camera(RBC):
                 if self._env_idx is None:
                     if not self._is_batched:
                         self._env_idx = int(self._visualizer._context.rendered_envs_idx[0])
-                        if self._visualizer.scene.n_envs > 0:
+                        if self._visualizer.scene.n_envs > 1:
                             gs.logger.info(
                                 "Raytracer and Rasterizer requires binding to the camera with a specific environment "
                                 "index. Defaulting to 'rendered_envs_idx[0]'. Please specify 'env_idx' if necessary."
@@ -732,7 +732,7 @@ class Camera(RBC):
             caller_file = inspect.stack()[-1].filename
             save_to_filename = (
                 os.path.splitext(os.path.basename(caller_file))[0]
-                + f'_cam_{self.idx}_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+                + f"_cam_{self.idx}_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
             )
 
         if self._is_batched:

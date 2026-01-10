@@ -832,10 +832,10 @@ def test_double_pendulum_links_acc(gs_sim, tol):
         acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc()[[0, 2, 4]])
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = np.matmul(np.moveaxis(R, 2, 0), acc_classical_lin_world[1:, :, None])[..., 0]
-        assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -theta_dot[0] ** 2]), tol=tol)
+        assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -(theta_dot[0] ** 2)]), tol=tol)
         assert_allclose(
             acc_classical_lin_local[1],
-            R[..., 1] @ acc_classical_lin_world[1] + np.array([0.0, -theta_ddot.sum(), -theta_dot.sum() ** 2]),
+            R[..., 1] @ acc_classical_lin_world[1] + np.array([0.0, -theta_ddot.sum(), -(theta_dot.sum() ** 2)]),
             tol=tol,
         )
 
@@ -2206,7 +2206,8 @@ def test_nan_reset(gs_sim, mode):
         pytest.param(gs.gpu, marks=pytest.mark.required),
     ],
 )
-def test_terrain_generation(request, show_viewer):
+@pytest.mark.parametrize("is_named", [True, False])
+def test_terrain_generation(is_named, show_viewer, tol):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
         ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
@@ -2240,7 +2241,7 @@ def test_terrain_generation(request, show_viewer):
         vertical_scale=0.05,
         subterrain_types=TERRAIN_PATTERN,
         randomize=False,
-        name="my_terrain",
+        name="my_terrain" if is_named else None,
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
     terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
@@ -2282,10 +2283,11 @@ def test_terrain_generation(request, show_viewer):
     assert (signed_distance < 2 * OBJ_SIZE).all()
 
     # Check if cache is being reloaded as expected
-    scene = gs.Scene()
-    terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
-    terrain_2_mesh = terrain_2.geoms[0].mesh
-    assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
+    if is_named:
+        scene = gs.Scene()
+        terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
+        terrain_2_mesh = terrain_2.geoms[0].mesh
+        assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=tol)
 
 
 @pytest.mark.required

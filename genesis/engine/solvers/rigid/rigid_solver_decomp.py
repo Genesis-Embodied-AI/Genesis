@@ -2728,8 +2728,7 @@ def update_qacc_from_qvel_delta(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
+                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -2769,8 +2768,7 @@ def update_qvel(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
+                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -2879,8 +2877,9 @@ def kernel_init_meaninertia(
             for i_e in range(n_entities):
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                    # FIXME: this atomic is not necessary but for some reason it improves performance in our benchmarks
-                    ti.atomic_add(rigid_global_info.meaninertia[i_b], rigid_global_info.mass_mat[i_d, i_d, i_b])
+                    rigid_global_info.meaninertia[i_b] = (
+                        rigid_global_info.meaninertia[i_b] + rigid_global_info.mass_mat[i_d, i_d, i_b]
+                    )
                 rigid_global_info.meaninertia[i_b] = rigid_global_info.meaninertia[i_b] / n_dofs
         else:
             rigid_global_info.meaninertia[i_b] = 1.0
@@ -3465,8 +3464,7 @@ def func_compute_mass_matrix(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_links))
+                ti.static(range(static_rigid_sim_config.max_n_awake_links))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -3501,8 +3499,7 @@ def func_compute_mass_matrix(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+                ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -3551,8 +3548,7 @@ def func_compute_mass_matrix(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_links))
+                ti.static(range(static_rigid_sim_config.max_n_awake_links))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -3598,8 +3594,7 @@ def func_compute_mass_matrix(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+                ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -3623,8 +3618,7 @@ def func_compute_mass_matrix(
                     )
                     if ti.static(not BW)
                     else (
-                        # Static inner loop for backward pass
-                        ti.static(
+                        ti.static(  # Static inner loop for backward pass
                             ti.ndrange(
                                 static_rigid_sim_config.max_n_dofs_per_entity,
                                 static_rigid_sim_config.max_n_dofs_per_entity,
@@ -4075,8 +4069,7 @@ def func_solve_mass_batch(
         )
         if ti.static(not BW)
         else (
-            # Static inner loop for backward pass
-            ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+            ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
             if ti.static(static_rigid_sim_config.use_hibernation)
             else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
@@ -4409,8 +4402,7 @@ def func_update_cartesian_space_batch(
         )
         if ti.static(not BW)
         else (
-            # Static inner loop for backward pass
-            ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+            ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
             if ti.static(static_rigid_sim_config.use_hibernation)
             else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
@@ -5467,8 +5459,7 @@ def func_update_geoms_entity(
         # Dynamic inner loop for forward pass
         range(entities_info.n_geoms[i_e])
         if ti.static(not BW)
-        # Static inner loop for backward pass
-        else ti.static(range(static_rigid_sim_config.max_n_geoms_per_entity))
+        else ti.static(range(static_rigid_sim_config.max_n_geoms_per_entity))  # Static inner loop for backward pass
     ):
         i_g = entities_info.geom_start[i_e] + i_g_
         if func_check_index_range(i_g, entities_info.geom_start[i_e], entities_info.geom_end[i_e], BW):
@@ -5511,8 +5502,7 @@ def func_update_geoms_batch(
         )
         if ti.static(not BW)
         else (
-            # Static inner loop for backward pass
-            ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+            ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
             if ti.static(static_rigid_sim_config.use_hibernation)
             else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
@@ -5760,8 +5750,7 @@ def func_forward_velocity_batch(
         )
         if ti.static(not BW)
         else (
-            # Static inner loop for backward pass
-            ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+            ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
             if ti.static(static_rigid_sim_config.use_hibernation)
             else ti.static(range(static_rigid_sim_config.max_n_links_per_entity))
         )
@@ -6347,8 +6336,7 @@ def func_torque_and_passive_force(
             )
             if ti.static(not BW)
             else (
-                # Static inner for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
+                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))  # Static inner for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6380,8 +6368,7 @@ def func_torque_and_passive_force(
             )
             if ti.static(not BW)
             else (
-                # Static inner for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_links))
+                ti.static(range(static_rigid_sim_config.max_n_awake_links))  # Static inner for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6457,8 +6444,7 @@ def func_update_acc(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+                ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6558,8 +6544,7 @@ def func_update_force(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_links))
+                ti.static(range(static_rigid_sim_config.max_n_awake_links))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6613,8 +6598,7 @@ def func_update_force(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+                ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6699,8 +6683,7 @@ def func_bias_force(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_links))
+                ti.static(range(static_rigid_sim_config.max_n_awake_links))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6789,8 +6772,7 @@ def func_compute_qacc(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_entities))
+                ti.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6840,8 +6822,7 @@ def func_integrate(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))
+                ti.static(range(static_rigid_sim_config.max_n_awake_dofs))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -6874,8 +6855,7 @@ def func_integrate(
             )
             if ti.static(not BW)
             else (
-                # Static inner loop for backward pass
-                ti.static(range(static_rigid_sim_config.max_n_awake_links))
+                ti.static(range(static_rigid_sim_config.max_n_awake_links))  # Static inner loop for backward pass
                 if ti.static(static_rigid_sim_config.use_hibernation)
                 else ti.static(range(1))
             )
@@ -7584,7 +7564,6 @@ def kernel_set_links_pos_grad(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
