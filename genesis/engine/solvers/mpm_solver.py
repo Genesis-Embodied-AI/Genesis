@@ -167,12 +167,10 @@ class MPMSolver(Solver):
     def init_constraints(self):
         """Lazy initialization of particle constraint fields."""
         # Memory check: ensure index fits in int32
-        max_int32 = 2**31 - 1
-        total_elements = self._n_particles * self._B
-        if total_elements > max_int32:
+        if self._n_particles * self._B * 3 > np.iinfo(np.int32).max::
             gs.raise_exception(
-                f"Particle constraint array size ({total_elements}) exceeds int32 limit. "
-                "Reduce n_particles or n_envs."
+                f"Particle constraint shape (n_envs={self._B}, n_particles={self._n_particles}, 3) is too large. "
+                "Consider reducing n_envs or n_particles."
             )
 
         self._constraints_initialized = True
