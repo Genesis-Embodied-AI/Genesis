@@ -246,20 +246,3 @@ def compute_gs_joint_axis_and_pos_from_usd_prim(
     Q_w, _ = compute_gs_global_transform(usd_link_prim)
     Q_w_inv = np.linalg.inv(Q_w)
     return Q_w_inv[:3, :3] @ axis_w, Q_w_inv[:3, :3] @ (pos_w - Q_w[:3, 3])
-
-
-def compute_joint_axis_scaling_factor(gs_local_joint_axis: np.ndarray) -> float:
-    """
-    Compute the scaling factor for a joint axis.
-
-    Parameters
-    ----------
-    gs_local_joint_axis : np.ndarray, shape (3,)
-        The joint axis in Genesis link local space.
-
-    Returns
-    -------
-    float
-        The scaling factor.
-    """
-    return np.linalg.norm(gs_local_joint_axis)
