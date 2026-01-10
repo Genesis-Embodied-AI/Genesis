@@ -221,7 +221,6 @@ def test_deformable_parallel(show_viewer):
     assert_allclose(water.get_particles_vel(), 0.0, atol=5e-2)
 
 
-@pytest.mark.slow  # ~30s
 @pytest.mark.required
 def test_mpm_particle_constraints(show_viewer):
     """Test MPM particle constraints: bbox selection, attachment, and following."""
