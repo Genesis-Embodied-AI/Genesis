@@ -331,6 +331,12 @@ class RigidOptions(Options):
         Tolerance for the noslip solver. Defaults to 1e-6.
     sparse_solve : bool, optional
         Whether to exploit sparsity in the constraint system. Defaults to False.
+    use_decomposed_solver : bool, optional
+        Whether to use the decomposed constraint solver with multi-dimensional parallelization.
+        This can improve GPU utilization for scenes with many DOFs and constraints. Defaults to True.
+    use_decomposed_init_solver : bool, optional
+        Whether to use the decomposed init_solver with multi-dimensional parallelization for
+        Hessian computation and solver initialization. Defaults to True.
     contact_resolve_time : float, optional
         Please note that this option will be deprecated in a future version. Use 'constraint_timeconst'
         instead.
@@ -383,6 +389,8 @@ class RigidOptions(Options):
     noslip_iterations: int = 0
     noslip_tolerance: float = 1e-6
     sparse_solve: bool = False
+    use_decomposed_solver: bool = True
+    use_decomposed_init_solver: bool = True
     contact_resolve_time: Optional[float] = None
     constraint_timeconst: float = 0.01
     use_contact_island: bool = False

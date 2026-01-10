@@ -10,6 +10,7 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.backward_constraint_solver as backward_constraint_solver
 import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
 import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
+import genesis.engine.solvers.rigid.constraint_solver_breakdown as breakdown
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.utils.misc import ti_to_torch
 
@@ -33,6 +34,8 @@ class ConstraintSolver:
         self.ls_iterations = rigid_solver._options.ls_iterations
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         self.sparse_solve = rigid_solver._options.sparse_solve
+        self.use_decomposed_solver = rigid_solver._options.use_decomposed_solver
+        self.use_decomposed_init_solver = rigid_solver._options.use_decomposed_init_solver
 
         # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
         # * 4 constraints per contact
@@ -106,6 +109,26 @@ class ConstraintSolver:
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
 
+        # Initialize decomposed solver wrapper kernels (created lazily on first use)
+        self._decomposed_kernels_initialized = False
+        self._kernel_linesearch_wrapper = None
+        self._kernel_compute_Mgrad = None
+        self._kernel_nt_hessian_incremental = None
+        self._kernel_nt_chol_solve = None
+
+    def _init_decomposed_kernels(self):
+        """Initialize wrapper kernels for the decomposed solver."""
+        if self._decomposed_kernels_initialized:
+            return
+
+        self._kernel_linesearch_wrapper = breakdown.create_linesearch_wrapper(func_linesearch)
+        self._kernel_compute_Mgrad = breakdown.create_compute_Mgrad_kernel()
+        self._kernel_nt_hessian_incremental = breakdown.create_nt_hessian_incremental_kernel(
+            func_nt_hessian_incremental
+        )
+        self._kernel_nt_chol_solve = breakdown.create_nt_chol_solve_kernel(func_nt_chol_solve)
+        self._decomposed_kernels_initialized = True
+
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()
 
@@ -173,21 +196,55 @@ class ConstraintSolver:
         )
 
     def resolve(self):
-        func_init_solver(
-            self._solver.dofs_info,
-            self._solver.dofs_state,
-            self._solver.entities_info,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
+        # Use decomposed init_solver only when mujoco_compatibility is disabled.
+        # The decomposed version doesn't handle the cost comparison warmstart logic
+        # needed for mujoco_compatibility mode.
+        use_decomposed = (
+            self.use_decomposed_init_solver and not self._solver._static_rigid_sim_config.enable_mujoco_compatibility
         )
-        func_solve(
-            self._solver.entities_info,
-            self._solver.dofs_state,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-        )
+        if use_decomposed:
+            breakdown.func_init_solver_decomposed(
+                self._solver.dofs_info,
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver_type,
+            )
+        else:
+            func_init_solver(
+                self._solver.dofs_info,
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+
+        if self.use_decomposed_solver:
+            self._init_decomposed_kernels()
+            breakdown.func_solve_decomposed(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver_type,
+                self.iterations,
+                self._kernel_linesearch_wrapper,
+                self._kernel_compute_Mgrad,
+                self._kernel_nt_hessian_incremental,
+                self._kernel_nt_chol_solve,
+            )
+        else:
+            func_solve(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         func_update_qacc(
             self._solver.dofs_state,
