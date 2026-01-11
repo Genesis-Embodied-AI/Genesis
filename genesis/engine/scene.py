@@ -30,7 +30,7 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
-from genesis.options.morphs import Morph
+from genesis.options.morphs import Morph, Stage
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.options.sensors import SensorOptions
@@ -448,15 +448,50 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_stage(
         self,
-        morph: gs.morphs.USDMorph,
-        vis_mode: Literal["visual", "collision"] = "visual",
+        stage: Stage,
+        material: Material | None = None,
+        surface: Surface | None = None,
         visualize_contact: bool = False,
+        vis_mode: Literal["visual", "collision"] = "visual",
     ):
-        from ..utils.usd import import_from_usd
+        """
+        Add a stage to the scene.
 
-        return import_from_usd(self, morph, vis_mode, visualize_contact)
+        Parameters
+        ----------
+        stage : gs.morphs.Stage
+            The stage to add to the scene.
+        material : gs.materials.Material | None, optional
+            The material of the stage. If None, use ``gs.materials.Rigid()`` for all morphs.
+        surface : gs.surfaces.Surface | None, optional
+            The surface of the stage. If None, use ``gs.surfaces.Default()`` for all morphs.
+        visualize_contact : bool
+            Whether to visualize contact forces applied to this stage as arrows in the viewer and rendered images. Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
+        vis_mode : str | None, optional
+            The visualization mode of the stage. This is a handy shortcut for setting `surface.vis_mode` without explicitly creating a surface object.
 
-    @gs.assert_unbuilt
+        Returns
+        -------
+        entities : List[genesis.Entity]
+            The created entities.
+        """
+        if material is not None and not isinstance(material, gs.materials.Rigid):
+            gs.raise_exception(f"Unsupported material for stage: {material}.")
+
+        morphs = []
+        if isinstance(stage, gs.morphs.USDStage):
+            from genesis.utils.usd.usd_stage import parse_usd_stage
+
+            morphs = parse_usd_stage(stage)
+        else:
+            gs.raise_exception(f"Unsupported stage: {stage}.")
+
+        entities = []
+        for morph in morphs:
+            entities.append(self.add_entity(morph, material, surface, visualize_contact, vis_mode))
+
+        return entities
+
     def add_mesh_light(
         self,
         morph: Morph | None = None,

@@ -33,8 +33,8 @@ def bfs_iterator(root: Usd.Prim):
     while queue:
         prim = queue.popleft()
         yield prim
-        for child in prim.GetChildren():
-            queue.append(child)
+        # Batch extend is faster than individual appends
+        queue.extend(prim.GetChildren())
 
 
 def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:

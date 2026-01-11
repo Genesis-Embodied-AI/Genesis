@@ -66,31 +66,6 @@ class UsdArticulationParser:
 
     # ==================== Static Methods: Finding Articulation Roots ====================
 
-    @staticmethod
-    def find_all_articulation_roots(stage: Usd.Stage, context: UsdParserContext = None) -> List[Usd.Prim]:
-        """
-        Find all prims with ArticulationRootAPI in the stage.
-
-        Parameters
-        ----------
-        stage : Usd.Stage
-            The USD stage.
-        context : UsdParserContext, optional
-            If provided, articulation roots will be added to the context.
-
-        Returns
-        -------
-        List[Usd.Prim]
-            List of articulation root prims.
-        """
-        articulation_roots = []
-        for prim in bfs_iterator(stage.GetPseudoRoot()):
-            if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-                articulation_roots.append(prim)
-                if context:
-                    context.add_articulation_root(prim)
-        return articulation_roots
-
     # ==================== Collection Methods: Joints and Links ====================
 
     def _collect_joints(self):
@@ -932,7 +907,7 @@ def _setup_free_joints_for_base_links(l_infos: List[Dict], links_j_infos: List[L
 # ==================== Main Parsing Function ====================
 
 
-def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surfaces.Surface):
+def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Parse USD articulation from the given USD file and prim path, translating it into genesis structures.
 
@@ -948,14 +923,6 @@ def parse_usd_articulation(morph: gs.morphs.USDArticulation, surface: gs.surface
         List of equality constraint info dictionaries.
     """
     # Validate inputs and setup
-    if morph.scale is not None and morph.scale != 1.0:
-        gs.logger.warning("USD articulation parsing currently only supports scale=1.0. Scale will be set to 1.0.")
-    morph.scale = 1.0
-
-    assert morph.scale == 1.0, "Currently we only support scale=1.0 for USD articulation parsing."
-    assert morph.parser_ctx is not None, "USDArticulation must have a parser context."
-    assert morph.prim_path is not None, "USDArticulation must have a prim path."
-
     context: UsdParserContext = morph.parser_ctx
     stage: Usd.Stage = context.stage
     root_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))

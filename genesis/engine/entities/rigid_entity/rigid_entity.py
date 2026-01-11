@@ -139,10 +139,7 @@ class RigidEntity(Entity):
         self._equalities = gs.List()
 
         if isinstance(self._morph, (gs.morphs.Mesh, gs.morphs.USDRigidBody)):
-            if isinstance(self._morph, gs.morphs.Mesh):
-                self._load_mesh(self._morph, self._surface)
-            else:
-                self._load_usd_rigid_body(self._morph, self._surface)
+            self._load_mesh(self._morph, self._surface)
         elif isinstance(
             self._morph,
             (
@@ -324,23 +321,23 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _load_usd_rigid_body(self, morph, surface):
-        """
-        Load a USD rigid body, similar to _load_mesh but parsing from USD file.
-        """
-        from genesis.utils.usd import parse_usd_rigid_body
+    # def _load_usd_rigid_body(self, morph, surface):
+    #     """
+    #     Load a USD rigid body, similar to _load_mesh but parsing from USD file.
+    #     """
+    #     from genesis.utils.usd import parse_usd_rigid_body
 
-        # Parse USD rigid body to get l_info, j_infos, and g_infos
-        l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
+    #     # Parse USD rigid body to get l_info, j_infos, and g_infos
+    #     l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
 
-        # Create link and joint using _add_by_info
-        link, (joint,) = self._add_by_info(
-            l_info=l_info,
-            j_infos=j_infos,
-            g_infos=g_infos,
-            morph=morph,
-            surface=surface,
-        )
+    #     # Create link and joint using _add_by_info
+    #     self._add_by_info(
+    #         l_info=l_info,
+    #         j_infos=j_infos,
+    #         g_infos=g_infos,
+    #         morph=morph,
+    #         surface=surface,
+    #     )
 
     def _load_terrain(self, morph, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
@@ -615,10 +612,10 @@ class RigidEntity(Entity):
             l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
         elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             l_infos, links_j_infos, links_g_infos, eqs_info = self._collect_urdf_articulation_info(morph, surface)
-        elif isinstance(morph, gs.morphs.USDArticulation):
-            from genesis.utils.usd import parse_usd_articulation
+        elif isinstance(morph, gs.morphs.USD):
+            from genesis.utils.usd import usd_scene as usu
 
-            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_articulation(morph, surface)
+            l_infos, links_j_infos, links_g_infos, eqs_info = usu.parse_usd(morph, surface)
         else:
             gs.raise_exception(f"Unsupported morph type: {type(morph)}")
 

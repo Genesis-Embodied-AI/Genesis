@@ -354,10 +354,6 @@ class Mesh(RBC):
                         " in morph options if you find the mesh is 90-degree rotated. We will set parse_glb_with_zup=True"
                         " and rotate glb mesh by default later and gradually enforce this option."
                     )
-            elif morph.is_format(gs.options.morphs.USD_FORMATS):
-                import genesis.utils.usd.usda as usda_utils
-
-                meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
@@ -365,6 +361,12 @@ class Mesh(RBC):
                 gs.raise_exception(f"File type not supported: {morph.file}")
 
             return meshes
+
+        elif isinstance(morph, gs.options.morphs.USDRigidBody):
+            import genesis.utils.usd.usda as usda_utils
+
+            # meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
+            meshes = usda_utils.parse_usd_rigid_body(morph, surface)
 
         else:
             if isinstance(morph, gs.options.morphs.Box):

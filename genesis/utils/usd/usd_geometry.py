@@ -1,11 +1,13 @@
-import pxr
-import genesis as gs
-import numpy as np
-import trimesh
+import re
 from typing import List, Dict, Literal
 from enum import Enum
+
+import numpy as np
+import trimesh
 from pxr import Usd, UsdGeom, UsdShade
-from genesis.utils.usd.usd_parser_context import UsdParserContext
+
+import genesis as gs
+from .usd_context import UsdContext
 from genesis.utils.usd.usd_parser_utils import compute_gs_related_transform, compute_gs_global_transform
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
@@ -21,10 +23,10 @@ class UsdGeometryAdapter:
 
     SupportUsdGeoms = [UsdGeom.Mesh, UsdGeom.Plane, UsdGeom.Sphere, UsdGeom.Capsule, UsdGeom.Cube, UsdGeom.Cylinder]
 
-    def __init__(self, ctx: UsdParserContext, prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]):
+    def __init__(self, ctx: UsdContext, prim: Usd.Prim, ref_prim: Usd.Prim, mesh_type: Literal["mesh", "vmesh"]):
         self._prim: Usd.Prim = prim
         self._ref_prim: Usd.Prim = ref_prim
-        self._ctx: UsdParserContext = ctx
+        self._ctx: UsdContext = ctx
         self._mesh_type: Literal["mesh", "vmesh"] = mesh_type
 
     def is_primitive(self) -> bool:
@@ -37,145 +39,6 @@ class UsdGeometryAdapter:
         g_info["conaffinity"] = 1 if geom_is_col else 0
         g_info["friction"] = gu.default_friction()
         g_info["sol_params"] = gu.default_solver_params()
-
-        if self._prim.IsA(UsdGeom.Mesh):
-            if self._mesh_type == "vmesh":
-                r = self._create_gs_visual_mesh_geo_info()
-            else:
-                r = self._create_gs_collision_mesh_geo_info()
-            g_info.update(r)
-        elif self._prim.IsA(UsdGeom.Plane):
-            r = self._create_gs_plane_geo_info()
-            g_info.update(r)
-        elif self._prim.IsA(UsdGeom.Sphere):
-            r = self._create_gs_sphere_geo_info()
-            g_info.update(r)
-        elif self._prim.IsA(UsdGeom.Capsule):
-            r = self._create_gs_capsule_geo_info()
-            g_info.update(r)
-        elif self._prim.IsA(UsdGeom.Cube):
-            r = self._create_gs_cube_geo_info()
-            g_info.update(r)
-        elif self._prim.IsA(UsdGeom.Cylinder):
-            r = self._create_gs_cylinder_geo_info()
-            g_info.update(r)
-        else:
-            # gs.logger.warning(f"Unsupported Geometry Type: {self._prim.GetTypeName()} of {self._prim}")
-            return None
-
-        return g_info
-
-    def _extract_mesh_geometry(self, mesh_prim: UsdGeom.Mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Extract basic mesh geometry (points, face_vertex_indices, face_vertex_counts, triangles).
-        Parameters:
-            mesh_prim: UsdGeom.Mesh
-                The USD mesh to extract geometry from.
-        Returns:
-            tuple: (Q_rel, points, triangles)
-                - Q_rel: np.ndarray, shape (4, 4) - The Genesis transformation matrix (rotation and translation)
-                  relative to ref_prim. This is the Q transform without scaling.
-                - points: np.ndarray, shape (n, 3) - The points of the mesh.
-                - normals: np.ndarray, shape (n, 3) - The normals of the mesh.
-                - uvs: np.ndarray, shape (n, 2) - The UVs of the mesh.
-                - triangles: np.ndarray, shape (m, 3) - The triangles of the mesh.
-        """
-        # Compute Genesis transform relative to ref_prim (Q^i_j)
-        Q_rel, S = compute_gs_related_transform(mesh_prim.GetPrim(), self._ref_prim)
-
-        # Get USD mesh attributes
-        points_attr = mesh_prim.GetPointsAttr()
-        face_vertex_counts_attr = mesh_prim.GetFaceVertexCountsAttr()
-        face_vertex_indices_attr = mesh_prim.GetFaceVertexIndicesAttr()
-
-        if not points_attr.HasValue():
-            gs.raise_exception(f"Mesh {mesh_prim.GetPath()} has no points.")
-
-        # Get points and apply scaling
-        points = np.array(points_attr.Get(), dtype=np.float32)
-        points = points @ S  # Apply scaling
-
-        # Get face data
-        face_vertex_indices = (
-            np.array(face_vertex_indices_attr.Get(), dtype=np.int32)
-            if face_vertex_indices_attr.HasValue()
-            else np.array([], dtype=np.int32)
-        )
-        face_vertex_counts = (
-            np.array(face_vertex_counts_attr.Get())
-            if face_vertex_counts_attr.HasValue()
-            else np.array([], dtype=np.int32)
-        )
-
-        points_faces_varying = False
-        # Parse normals
-        normals = None
-        normal_attr = mesh_prim.GetNormalsAttr()
-        if normal_attr.HasValue():
-            normals = np.array(normal_attr.Get(), dtype=np.float32)
-            if normals.shape[0] != points.shape[0]:
-                if normals.shape[0] == face_vertex_indices.shape[0]:  # face varying meshes
-                    points_faces_varying = True
-                else:
-                    gs.logger.warning(
-                        f"Size of normals mismatch for mesh {mesh_prim.GetPath()} in usd file {self._get_usd_file_path()}."
-                    )
-                    normals = None
-
-        uv_name = self._get_uv_name()
-
-        # Parse UVs
-        uvs = None
-        if uv_name is not None:
-            uv_var = UsdGeom.PrimvarsAPI(self._prim).GetPrimvar(uv_name)
-            if uv_var.IsDefined() and uv_var.HasValue():
-                uvs = np.array(uv_var.ComputeFlattened(), dtype=np.float32)
-                uvs[:, 1] = 1.0 - uvs[:, 1]  # Flip V coordinate
-                if uvs.shape[0] != points.shape[0]:
-                    if uvs.shape[0] == face_vertex_indices.shape[0]:
-                        points_faces_varying = True
-                    elif uvs.shape[0] == 1:
-                        uvs = None
-                    else:
-                        gs.logger.warning(
-                            f"Size of uvs mismatch for mesh {mesh_prim.GetPath()} in usd file {self._get_usd_file_path()}."
-                        )
-                        uvs = None
-
-        # Triangulate faces
-        if len(face_vertex_counts) == 0:
-            triangles = np.array([], dtype=np.int32).reshape(0, 3)
-        else:
-            # rearrange points and faces
-            if points_faces_varying:
-                points = points[face_vertex_indices]
-                face_vertex_indices = np.arange(face_vertex_indices.shape[0])
-
-            # triangulate faces
-            if np.max(face_vertex_counts) > 3:
-                triangles = []
-                bi = 0
-                for face_vertex_count in face_vertex_counts:
-                    if face_vertex_count == 3:
-                        triangles.append(
-                            [face_vertex_indices[bi + 0], face_vertex_indices[bi + 1], face_vertex_indices[bi + 2]]
-                        )
-                    elif face_vertex_count > 3:
-                        for i in range(1, face_vertex_count - 1):
-                            triangles.append(
-                                [
-                                    face_vertex_indices[bi + 0],
-                                    face_vertex_indices[bi + i],
-                                    face_vertex_indices[bi + i + 1],
-                                ]
-                            )
-                    bi += face_vertex_count
-                triangles = np.array(triangles, dtype=np.int32)
-            else:
-                triangles = face_vertex_indices.reshape(-1, 3)
-                # Get UV name from material (needed for UV extraction)
-
-        return Q_rel, points, normals, uvs, triangles
 
     def _create_gs_visual_mesh_geo_info(self) -> Dict:
         """Create geometry info for USD visual Mesh with rendering information."""
@@ -200,32 +63,6 @@ class UsdGeometryAdapter:
             uvs = tmesh.visual.uv
 
         # Create Genesis mesh from trimesh
-        mesh = self._create_mesh_from_trimesh(tmesh)
-
-        return {
-            self._mesh_type: mesh,
-            "type": gs.GEOM_TYPE.MESH,
-            "data": None,
-            "pos": Q_rel[:3, 3],
-            "quat": gu.R_to_quat(Q_rel[:3, :3]),
-        }
-
-    def _create_gs_collision_mesh_geo_info(self) -> Dict:
-        """Create geometry info for USD collision Mesh without rendering information."""
-        mesh_prim = UsdGeom.Mesh(self._prim)
-
-        # Extract basic geometry (no rendering info needed)
-        Q_rel, points, normals, uvs, triangles = self._extract_mesh_geometry(mesh_prim)
-
-        # Create trimesh without normals or UVs (collision meshes don't need rendering info)
-        tmesh = trimesh.Trimesh(
-            vertices=points,
-            faces=triangles,
-            vertex_normals=normals,
-            process=True,
-        )
-
-        # Create Genesis mesh from trimesh (uses Collision surface from _get_surface)
         mesh = self._create_mesh_from_trimesh(tmesh)
 
         return {
@@ -559,3 +396,224 @@ class BatchedUsdGeometryAdapater:
             assert g_info is not None, f"Geometry: {geometry.GetPath()} create gs geo info failed"
             g_infos.append(g_info)
         return g_infos
+
+
+visual_pattern = re.compile(r"^(visual|Visual).*")
+collision_pattern = re.compile(r"^(collision|Collision).*")
+
+
+def geom_warning(geom_type, geom_id, stage_file, reason_msg, action_msg):
+    gs.logger.warning(f"{reason_msg} for {geom_type} {geom_id} in usd file {stage_file}. {action_msg}.")
+
+
+def parse_mesh_geometry(prim: Usd.Prim, scale, group_by_material, surface: gs.surfaces.Surface):
+    """
+    Extract basic mesh geometry (points, face_vertex_indices, face_vertex_counts, triangles).
+    Parameters:
+        mesh_prim: UsdGeom.Mesh
+            The USD mesh to extract geometry from.
+    Returns:
+        tuple: (Q_rel, points, triangles)
+            - Q_rel: np.ndarray, shape (4, 4) - The Genesis transformation matrix (rotation and translation)
+                relative to ref_prim. This is the Q transform without scaling.
+            - points: np.ndarray, shape (n, 3) - The points of the mesh.
+            - normals: np.ndarray, shape (n, 3) - The normals of the mesh.
+            - uvs: np.ndarray, shape (n, 2) - The UVs of the mesh.
+            - triangles: np.ndarray, shape (m, 3) - The triangles of the mesh.
+    """
+    # Get USD mesh attributes
+    mesh_usd = UsdGeom.Mesh(prim)
+    mesh_id = context.get_prim_id(prim)
+
+    # parse vertices
+    points_attr = mesh_usd.GetPointsAttr()
+    if not points_attr.HasValue():
+        geom_warning("Mesh", mesh_id, stage_file, "No vertices", "Skip this mesh")
+        return None
+    points = np.array(mesh_usd.GetPointsAttr().Get(), dtype=np.float32)
+
+    # parse faces
+    faces_attr = mesh_usd.GetFaceVertexCountsAttr()
+    faces_vertex_counts_attr = mesh_usd.GetFaceVertexIndicesAttr()
+    faces = np.array(faces_attr.Get(), dtype=np.int32) if faces_attr.HasValue() else np.array([], dtype=np.int32)
+    faces_vertex_counts = (
+        np.array(faces_vertex_counts_attr.Get())
+        if faces_vertex_counts_attr.HasValue()
+        else np.array([], dtype=np.int32)
+    )
+    points_faces_varying = False
+
+    # parse normals
+    normals = None
+    normals_attr = mesh_usd.GetNormalsAttr()
+    if normals_attr.HasValue():
+        normals = np.array(normals_attr.Get(), dtype=np.float32)
+        if normals.shape[0] != points.shape[0]:
+            if normals.shape[0] == faces.shape[0]:  # face varying meshes, adjacent faces do not share vertices
+                points_faces_varying = True
+            else:
+                geom_warning("Mesh", mesh_id, stage_file, "Size of normals mismatch", "Discard the normals")
+                normals = None
+
+    # parse materials
+    if prim.HasRelationship("material:binding"):
+        if not prim.HasAPI(UsdShade.MaterialBindingAPI):
+            UsdShade.MaterialBindingAPI.Apply(prim)
+    prim_bindings = UsdShade.MaterialBindingAPI(prim)
+    material_usd = prim_bindings.ComputeBoundMaterial()[0]
+    if material_usd.GetPrim().IsValid():
+        material_id = context.get_prim_id(material_usd.GetPrim())
+        material, uv_name = context.apply_surface(material_id, surface)
+    else:
+        material, uv_name, material_id = surface.copy(), "st", None
+
+    # parse UVs
+    uvs = None
+    if uv_name is not None:
+        uv_var = UsdGeom.PrimvarsAPI(prim).GetPrimvar(uv_name)
+        if uv_var.IsDefined() and uv_var.HasValue():
+            uvs = np.array(uv_var.ComputeFlattened(), dtype=np.float32)
+            uvs[:, 1] = 1.0 - uvs[:, 1]  # Flip V coordinate
+            if uvs.shape[0] != points.shape[0]:
+                if uvs.shape[0] == faces.shape[0]:
+                    points_faces_varying = True
+                elif uvs.shape[0] == 1:
+                    uvs = None
+                else:
+                    geom_warning("Mesh", mesh_id, stage_file, "Size of uvs mismatch", "Discard the uvs")
+                    uvs = None
+
+    # process faces
+    if faces_vertex_counts.size == 0:
+        triangles = np.array([], dtype=np.int32).reshape(0, 3)
+    else:
+        # rearrange points and faces
+        if points_faces_varying:
+            points = points[faces]
+            faces = np.arange(faces.shape[0])
+
+        # triangulate faces
+        if np.max(faces_vertex_counts) > 3:
+            triangles = []
+            bi = 0
+            for face_vertex_count in faces_vertex_counts:
+                if face_vertex_count == 3:
+                    triangles.append([faces[bi + 0], faces[bi + 1], faces[bi + 2]])
+                elif face_vertex_count > 3:
+                    for i in range(1, face_vertex_count - 1):
+                        triangles.append([faces[bi + 0], faces[bi + i], faces[bi + i + 1]])
+                bi += face_vertex_count
+            triangles = np.array(triangles, dtype=np.int32)
+        else:
+            triangles = faces.reshape(-1, 3)
+
+    # process mesh
+    processed_mesh = trimesh.Trimesh(
+        vertices=points,
+        faces=triangles,
+        vertex_normals=normals,
+        visual=trimesh.visual.TextureVisuals(uv=uvs) if uvs is not None else None,
+        process=True,
+    )
+    points = processed_mesh.vertices
+    triangles = processed_mesh.faces
+    normals = processed_mesh.vertex_normals
+    if uvs is not None:
+        uvs = processed_mesh.visual.uv
+
+
+def _create_gs_collision_mesh_geo_info(self) -> Dict:
+    """Create geometry info for USD collision Mesh without rendering information."""
+    mesh_prim = UsdGeom.Mesh(self._prim)
+
+    # Extract basic geometry (no rendering info needed)
+    Q_rel, points, normals, uvs, triangles = self._extract_mesh_geometry(mesh_prim)
+
+    # Create trimesh without normals or UVs (collision meshes don't need rendering info)
+    tmesh = trimesh.Trimesh(
+        vertices=points,
+        faces=triangles,
+        vertex_normals=normals,
+        process=True,
+    )
+
+    # Create Genesis mesh from trimesh (uses Collision surface from _get_surface)
+    mesh = self._create_mesh_from_trimesh(tmesh)
+
+    return {
+        self._mesh_type: mesh,
+        "type": gs.GEOM_TYPE.MESH,
+        "data": None,
+        "pos": Q_rel[:3, 3],
+        "quat": gu.R_to_quat(Q_rel[:3, :3]),
+    }
+
+
+def parse_all_geometries(self, prim: Usd.Prim, surface: gs.surfaces.Surface, match_visual=False, match_collision=False):
+    g_infos = []
+
+    if visual_pattern.match(prim.GetName()):
+        match_visual = True
+    if collision_pattern.match(prim.GetName()):
+        match_collision = True
+
+    if prim.IsA(UsdGeom.Mesh):
+        mesh = parse_mesh_geometry(prim)
+        gs_type = gs.GEOM_TYPE.MESH
+    elif prim.IsA(UsdGeom.Plane):
+        mesh = parse_plane_geometry(prim)
+        gs_type = gs.GEOM_TYPE.PLANE
+    elif prim.IsA(UsdGeom.Sphere):
+        mesh = parse_sphere_geometry(prim)
+        gs_type = gs.GEOM_TYPE.SPHERE
+    elif prim.IsA(UsdGeom.Capsule):
+        mesh = parse_capsule_geometry(prim)
+        gs_type = gs.GEOM_TYPE.CAPSULE
+    elif prim.IsA(UsdGeom.Cube):
+        mesh = parse_cube_geometry(prim)
+        gs_type = gs.GEOM_TYPE.BOX
+    elif prim.IsA(UsdGeom.Cylinder):
+        mesh = parse_cylinder_geometry(prim)
+        gs_type = gs.GEOM_TYPE.CYLINDER
+    else:
+        mesh = None
+        gs_type = None
+
+    if mesh is not None:
+        geom_transform = compute_gs_related_transform(prim, ref_prim)
+        geom_pos = geom_transform[:3, 3]
+        geom_quat = gu.R_to_quat(geom_transform[:3, :3])
+        is_visual = match_visual or not (match_collision or match_visual)
+        is_collision = match_collision or not (match_collision or match_visual)
+        if is_visual:
+            g_infos.append(
+                dict(
+                    vmesh=mesh,
+                    pos=geom_pos,
+                    quat=geom_quat,
+                    contype=0,
+                    conaffinity=0,
+                    type=gs_type,
+                    data=geom_data,
+                )
+            )
+        if is_collision:
+            # TODO: use "physics:material:binding" to extract frictions
+            g_infos.append(
+                dict(
+                    mesh=mesh,
+                    pos=geom_pos,
+                    quat=geom_quat,
+                    contype=1,
+                    conaffinity=1,
+                    type=gs_type,
+                    data=geom_data,
+                    friction=gu.default_friction(),
+                    sol_params=gu.default_solver_params(),
+                )
+            )
+
+    for child in prim.GetChildren():
+        g_infos.extend(parse_all_geometries(child, surface, match_visual, match_collision))
+
+    return g_infos
