@@ -4,7 +4,6 @@ import numpy as np
 import gstaichi as ti
 import torch
 import trimesh
-from scipy.spatial import KDTree
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -191,10 +190,15 @@ class ParticleEntity(Entity):
 
     def _add_vverts_to_solver(self):
         # Compute supports for rendering vverts using neighboring particles
-        kdtree = KDTree(self._particles)
-        _, support_idxs = kdtree.query(self._vverts, k=self.solver._n_vvert_supports)
-        support_idxs = support_idxs.astype(gs.np_int)
+        dist2 = np.sum(np.square(self._vverts[:, None, :] - self._particles[None, :, :]), axis=2)
+        support_idxs = np.argpartition(dist2, self.solver._n_vvert_supports - 1, axis=1)[
+            :, : self.solver._n_vvert_supports
+        ]
+        row_indices = np.arange(dist2.shape[0])[:, None]
+        sorted_order = np.lexsort((support_idxs, dist2[row_indices, support_idxs]))
+        support_idxs = support_idxs[row_indices, sorted_order].astype(gs.np_int)
         support_idxs = np.clip(support_idxs, 0, len(self._particles) - 1)
+
         all_ps = self._particles[support_idxs]
         Ps = all_ps[:, :-1].swapaxes(-2, -1) - np.expand_dims(all_ps[:, -1], axis=-1)
         P_invs = np.linalg.pinv(Ps)

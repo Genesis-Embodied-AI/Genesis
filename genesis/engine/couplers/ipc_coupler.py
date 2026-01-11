@@ -603,7 +603,7 @@ class IPCCoupler(RBC):
             rigid_solver.links_info.inertial_i[link_idx] = original_inertia / 2.0
 
             gs.logger.debug(
-                f"  Link {link_idx}: mass {original_mass:.6f} -> {original_mass/2.0:.6f} kg, " f"inertia scaled by 0.5"
+                f"  Link {link_idx}: mass {original_mass:.6f} -> {original_mass / 2.0:.6f} kg, inertia scaled by 0.5"
             )
 
         # After scaling inertial_mass and inertial_i, we need to recompute derived quantities:

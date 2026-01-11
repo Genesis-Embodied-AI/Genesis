@@ -39,7 +39,7 @@ class RayHit:
         return self.distance < _MAX_RAY_DISTANCE
 
     @classmethod
-    def no_hit(cls) -> 'RayHit':
+    def no_hit(cls) -> "RayHit":
         return RayHit(_MAX_RAY_DISTANCE, Vec3.zero(), Vec3.zero(), None)
 
 

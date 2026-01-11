@@ -26,7 +26,7 @@ def animate(imgs, filename=None, fps=60):
     if filename is None:
         caller_file = inspect.stack()[-1].filename
         # caller file + timestamp + .mp4
-        filename = os.path.splitext(os.path.basename(caller_file))[0] + f'_{time.strftime("%Y%m%d_%H%M%S")}.mp4'
+        filename = os.path.splitext(os.path.basename(caller_file))[0] + f"_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
     os.makedirs(os.path.abspath(os.path.dirname(filename)), exist_ok=True)
 
     gs.logger.info(f'Saving video to ~<"{filename}">~...')
@@ -102,7 +102,7 @@ class Timer:
             prefix = ""
 
         print(
-            f"{prefix}[{msg.ljust(self.msg_width)}] step: {step_time:5.3f}ms | accu: {accu_time:5.3f}ms | step_avg: {self.accu_log[msg][1]/self.accu_log[msg][0]:5.3f}ms | accu_avg: {self.accu_log[msg][2]/self.accu_log[msg][0]:5.3f}ms"
+            f"{prefix}[{msg.ljust(self.msg_width)}] step: {step_time:5.3f}ms | accu: {accu_time:5.3f}ms | step_avg: {self.accu_log[msg][1] / self.accu_log[msg][0]:5.3f}ms | accu_avg: {self.accu_log[msg][2] / self.accu_log[msg][0]:5.3f}ms"
         )
 
         self.prev_time = time.perf_counter()
@@ -138,7 +138,7 @@ class Timer:
             prefix = ""
 
         print(
-            f"{prefix}[{msg.ljust(self.msg_width)}] step: {step_time:5.3f}ms | accu: {accu_time:5.3f}ms | step_avg: {self.accu_log[msg][1]/self.accu_log[msg][0]:5.3f}ms | accu_avg: {self.accu_log[msg][2]/self.accu_log[msg][0]:5.3f}ms"
+            f"{prefix}[{msg.ljust(self.msg_width)}] step: {step_time:5.3f}ms | accu: {accu_time:5.3f}ms | step_avg: {self.accu_log[msg][1] / self.accu_log[msg][0]:5.3f}ms | accu_avg: {self.accu_log[msg][2] / self.accu_log[msg][0]:5.3f}ms"
         )
 
         self.prev_time = time.perf_counter()

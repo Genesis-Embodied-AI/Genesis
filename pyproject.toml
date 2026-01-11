@@ -14,7 +14,6 @@ dependencies = [
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
-    "scipy>=1.14",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
@@ -58,7 +57,7 @@ dependencies = [
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
-    "gs-madrona==0.0.7.post1; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
+    "gs-madrona==0.0.7.post2; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations
@@ -141,6 +140,30 @@ force-exclude = '''
     genesis/ext
 )/
 '''
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Ignore the specific errors currently present in the codebase
+ignore = [
+    "F405", # undefined-local-with-import-star-usage
+    "F401", # unused-import
+    "F841", # unused-variable
+    "E741", # ambiguous-variable-name
+    "E402", # module-import-not-at-top-of-file
+    "F403", # undefined-local-with-import-star
+    "F541", # f-string-missing-placeholders
+    "F821", # undefined-name
+    "E722", # bare-except
+    "E401", # multiple-imports-on-one-line
+    "E712", # true-false-comparison
+    "E713", # not-in-test
+    "F811", # redefined-while-unused
+    "E711", # none-comparison
+    "E714", # not-is-test
+    "F523", # string-dot-format-extra-positional-arguments
+]
 
 [tool.pytest.ini_options]
 addopts = [

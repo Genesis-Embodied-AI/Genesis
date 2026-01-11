@@ -35,7 +35,18 @@ def renderer(renderer_type):
     if renderer_type == RENDERER_TYPE.RASTERIZER:
         return gs.renderers.Rasterizer()
     if renderer_type == RENDERER_TYPE.RAYTRACER:
-        return gs.renderers.RayTracer()
+        return gs.renderers.RayTracer(
+            env_surface=gs.surfaces.Emission(
+                emissive_texture=gs.textures.ImageTexture(
+                    image_path="textures/indoor_bright.png",
+                ),
+            ),
+            env_radius=15.0,
+            env_euler=(0, 0, 180),
+            lights=[
+                {"pos": (0.0, 0.0, 10.0), "radius": 3.0, "color": (15.0, 15.0, 15.0)},
+            ],
+        )
     return gs.renderers.BatchRenderer(
         use_rasterizer=renderer_type == RENDERER_TYPE.BATCHRENDER_RASTERIZER,
     )
@@ -45,6 +56,9 @@ def renderer(renderer_type):
 def backend(pytestconfig, renderer_type):
     if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
         return gs.cuda
+
+    if renderer_type == RENDERER_TYPE.RAYTRACER:
+        return gs.gpu
 
     backend = pytestconfig.getoption("--backend") or gs.cpu
     if isinstance(backend, str):
@@ -56,19 +70,49 @@ def backend(pytestconfig, renderer_type):
 def skip_if_not_installed(renderer_type):
     if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
         pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+    if renderer_type == RENDERER_TYPE.RAYTRACER:
+        # Cannot rely on 'pytest.importorskip' because LuisaRenderPy is not cleanly installed
+        try:
+            import LuisaRenderPy
+        except ImportError:
+            pytest.skip("Python module 'LuisaRenderPy' not installed.")
 
 
 @pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
-    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+    [
+        RENDERER_TYPE.RASTERIZER,
+        RENDERER_TYPE.RAYTRACER,
+        RENDERER_TYPE.BATCHRENDER_RASTERIZER,
+        RENDERER_TYPE.BATCHRENDER_RAYTRACER,
+    ],
 )
 def test_render_api(show_viewer, renderer_type, renderer):
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
     scene = gs.Scene(
         renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
     )
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
     scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.0, 0.0, 0.0),
@@ -89,14 +133,13 @@ def test_render_api(show_viewer, renderer_type, renderer):
         if rgb:
             rgb_arrs.append(tensor_to_array(rgb_arr).astype(np.float32))
         if depth:
+            if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
+                depth_arr[~torch.isfinite(depth_arr)] = 0
             depth_arrs.append(tensor_to_array(depth_arr).astype(np.float32))
         if seg:
             seg_arrs.append(tensor_to_array(seg_arr).astype(np.float32))
         if normal:
             normal_arrs.append(tensor_to_array(normal_arr).astype(np.float32))
-
-    if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
-        pytest.xfail(reason="'BATCHRENDER_RAYTRACER' is not working for some reason... it always returns empty data.")
 
     try:
         assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
@@ -118,6 +161,8 @@ def test_render_api(show_viewer, renderer_type, renderer):
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
 def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
@@ -127,7 +172,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
+    if IS_BATCHRENDER:
         scene.add_light(
             pos=(0.0, 0.0, 1.5),
             dir=(1.0, 1.0, -2.0),
@@ -818,7 +863,7 @@ def test_point_cloud(renderer_type, renderer, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
+    if IS_BATCHRENDER:
         scene.add_light(
             pos=(0.0, 0.0, 1.5),
             dir=(1.0, 1.0, -2.0),
@@ -1141,7 +1186,7 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
         show_viewer=True,
         show_FPS=False,
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
             pos=(0.0, 0.0, 0.0),
@@ -1253,6 +1298,7 @@ def test_camera_gimbal_lock_singularity(renderer, show_viewer):
 )
 def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
     CAM_RES = (256, 256)
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     for test_idx, (plane_size, tile_size) in enumerate(
         (
@@ -1266,7 +1312,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
             show_viewer=False,
             show_FPS=False,
         )
-        if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
+        if IS_BATCHRENDER:
             scene.add_light(
                 pos=(0.0, 0.0, 1.5),
                 dir=(1.0, 1.0, -2.0),
@@ -1350,14 +1396,14 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
         show_FPS=False,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
         material=gs.materials.Rigid(
             needs_coup=True,
             coup_friction=0.0,
         ),
     )
-    cube = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.5, 0.5, 0.2),
             size=(0.2, 0.2, 0.2),
@@ -1369,7 +1415,7 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             coup_friction=0.0,
         ),
     )
-    cloth = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/cloth.obj",
             scale=1.0,
@@ -1381,7 +1427,7 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             color=(0.2, 0.4, 0.8, 1.0),
         ),
     )
-    worm = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/worm/worm.obj",
             pos=(0.3, 0.3, 0.001),
@@ -1397,7 +1443,7 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             n_groups=4,
         ),
     )
-    liquid = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.65),
             size=(0.4, 0.4, 0.4),

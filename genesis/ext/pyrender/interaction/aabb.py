@@ -5,11 +5,12 @@ import numpy as np
 from .ray import Ray, RayHit, EPSILON
 from .vec3 import Pose, Vec3
 
+
 class AABB:
     v: "np.typing.NDArray[np.float32]"
 
     def __init__(self, v: "np.typing.NDArray[np.float32]"):
-        assert v.shape == (2, 3,), f"Aabb must be initialized with a (2,3)-element array, got {v.shape}"
+        assert v.shape == (2, 3), f"Aabb must be initialized with a (2,3)-element array, got {v.shape}"
         assert v.dtype == np.float32, f"Aabb must be initialized with a float32 array, got {v.dtype}"
         self.v = v
 
@@ -63,12 +64,12 @@ class AABB:
         return f"AABB: Min({self.min.x}, {self.min.y}, {self.min.z}) Max({self.max.x}, {self.max.y}, {self.max.z})"
 
     @classmethod
-    def from_min_max(cls, min: Vec3, max: Vec3) -> 'AABB':
+    def from_min_max(cls, min: Vec3, max: Vec3) -> "AABB":
         bounds = np.stack((min.v, max.v), axis=0)
         return cls(bounds)
 
     @classmethod
-    def from_center_and_half_extents(cls, center: Vec3, half_extents: Vec3) -> 'AABB':
+    def from_center_and_half_extents(cls, center: Vec3, half_extents: Vec3) -> "AABB":
         min = center - half_extents
         max = center + half_extents
         bounds = np.stack((min.v, max.v), axis=0)

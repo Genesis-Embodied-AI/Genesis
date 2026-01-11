@@ -181,9 +181,9 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
             err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
         )
     else:
-        assert (
-            gs_texture1 is None and gs_texture2 is None
-        ), f"Both textures should be None for material {material_name} in {texture_name}."
+        assert gs_texture1 is None and gs_texture2 is None, (
+            f"Both textures should be None for material {material_name} in {texture_name}."
+        )
 
 
 @pytest.mark.required
@@ -551,7 +551,7 @@ def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-    water = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.SPH.Liquid(),
         morph=gs.morphs.Box(
             pos=(0.15, 0.15, 0.22),

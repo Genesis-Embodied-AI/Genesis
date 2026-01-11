@@ -688,7 +688,7 @@ class Viewer(pyglet.window.Window):
 
             if self._offscreen_pending_close is not None:
                 # Extract request right away
-                target, = self._offscreen_pending_close
+                (target,) = self._offscreen_pending_close
                 self._offscreen_pending_close = None
 
                 # Delete renderer.
@@ -1199,6 +1199,7 @@ class Viewer(pyglet.window.Window):
             retval = ()
 
         if normal:
+
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None
@@ -1231,8 +1232,10 @@ class Viewer(pyglet.window.Window):
 
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
+
         try:
             import pyglet.window.xlib, pyglet.display.xlib
+
             xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
             xlib_exceptions = ()
@@ -1262,7 +1265,7 @@ class Viewer(pyglet.window.Window):
             # of nearest neighbors, and there is no way to tweak this behavior.
             confs = [
                 pyglet.gl.Config(
-                    sample_buffers=1,    # Enable multi-sampling (MSAA)
+                    sample_buffers=1,  # Enable multi-sampling (MSAA)
                     samples=2,
                     depth_size=24,
                     double_buffer=True,

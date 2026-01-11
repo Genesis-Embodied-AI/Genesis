@@ -55,7 +55,6 @@ def _data_to_array(data: Sequence) -> np.ndarray:
 
 
 class BasePlotter(Recorder):
-
     def __init__(self, manager: "RecorderManager", options: BasePlotterOptions, data_func: Callable[[], T]):
         if options.show_window is None:
             options.show_window = has_display()
@@ -138,19 +137,19 @@ class LinePlotHelper:
             self._is_dict_data = True
 
             if options.labels is not None:
-                assert isinstance(
-                    options.labels, dict
-                ), f"[{type(self).__name__}] Labels must be a dict when data is a dict"
-                assert set(options.labels.keys()) == set(
-                    data.keys()
-                ), f"[{type(self).__name__}] Label keys must match data keys"
+                assert isinstance(options.labels, dict), (
+                    f"[{type(self).__name__}] Labels must be a dict when data is a dict"
+                )
+                assert set(options.labels.keys()) == set(data.keys()), (
+                    f"[{type(self).__name__}] Label keys must match data keys"
+                )
 
                 for key in data.keys():
                     data_values = _data_to_array(data[key])
                     label_values = options.labels[key]
-                    assert len(label_values) == len(
-                        data_values
-                    ), f"[{type(self).__name__}] Label count must match data count for key '{key}'"
+                    assert len(label_values) == len(data_values), (
+                        f"[{type(self).__name__}] Label count must match data count for key '{key}'"
+                    )
                     self._subplot_structure[key] = tuple(label_values)
             else:
                 self._subplot_structure = {}
@@ -296,7 +295,6 @@ class BasePyQtPlotter(BasePlotter):
 
 @register_recording(PyQtLinePlotterOptions)
 class PyQtLinePlotter(BasePyQtPlotter):
-
     def build(self):
         super().build()
 
@@ -452,7 +450,6 @@ class BaseMPLPlotter(BasePlotter):
 
 @register_recording(MPLLinePlotterOptions)
 class MPLLinePlotter(BaseMPLPlotter):
-
     def build(self):
         super().build()
 

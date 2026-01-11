@@ -360,10 +360,7 @@ class Scene(RBC):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph}.")
 
         if surface.double_sided is None:
-            if isinstance(material, gs.materials.PBD.Cloth):
-                surface.double_sided = True
-            else:
-                surface.double_sided = False
+            surface.double_sided = isinstance(material, gs.materials.PBD.Cloth)
 
         if vis_mode is not None:
             surface.vis_mode = vis_mode
@@ -374,7 +371,8 @@ class Scene(RBC):
 
             if surface.vis_mode not in ("visual", "collision", "sdf"):
                 gs.raise_exception(
-                    f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'collision', 'sdf']."
+                    f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: "
+                    "['visual', 'collision', 'sdf']."
                 )
 
         elif isinstance(
