@@ -897,6 +897,8 @@ def assign_indexed_tensor(
     value: "np.typing.ArrayLike",
     dim_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
+    if isinstance(tensor, np.ndarray):
+        value = torch.as_tensor(value)
     try:
         tensor[indices] = value
     except (TypeError, RuntimeError):
