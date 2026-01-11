@@ -3157,9 +3157,17 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
         (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
         (-1, -1, gs_robot.get_AABB, None, None),
+        (-1, -1, gs_robot.get_vAABB, None, None),
         # LINK
+        (-1, -1, gs_link.get_pos, None, None),
+        (-1, -1, gs_link.get_quat, None, None),
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
         (-1, -1, gs_link.get_AABB, None, None),
+        (-1, -1, gs_link.get_vAABB, None, None),
+        # GEOM
+        (-1, -1, gs_link.get_pos, None, None),
+        (-1, -1, gs_link.get_quat, None, None),
+        (-1, -1, gs_link.get_vAABB, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
 
@@ -3387,7 +3395,8 @@ def test_extended_broadcasting():
 
 
 @pytest.mark.required
-def test_geom_pos_quat(show_viewer):
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_geom_pos_quat(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -10.0),
@@ -3401,12 +3410,22 @@ def test_geom_pos_quat(show_viewer):
             pos=(0.0, 0.0, 2.0),
         )
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    box.set_dofs_position(np.random.rand(*batch_shape, 6))
+    scene.rigid_solver.update_vgeoms()
 
     for link in box.links:
         for vgeom, geom in zip(link.vgeoms, link.geoms):
-            assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=gs.EPS)
-            assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=gs.EPS)
+            geom_pos, geom_quat = geom.get_pos(), geom.get_quat()
+            assert geom_pos.shape == (*batch_shape, 3)
+            assert geom_quat.shape == (*batch_shape, 4)
+            vgeom_pos, vgeom_quat = vgeom.get_pos(), vgeom.get_quat()
+            assert vgeom_pos.shape == (*batch_shape, 3)
+            assert vgeom_quat.shape == (*batch_shape, 4)
+            assert_allclose(geom_pos, vgeom_pos, atol=gs.EPS)
+            assert_allclose(geom_quat, vgeom_quat, atol=gs.EPS)
 
 
 @pytest.mark.required
