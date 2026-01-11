@@ -348,16 +348,21 @@ class Scene(RBC):
             # assign a local surface, otherwise modification will apply on global default surface
             surface = gs.surfaces.Default()
 
-        # Handle heterogeneous morphs (list of morphs)
-        morph_for_checks = morph[0] if isinstance(morph, list) else morph
-        if isinstance(morph, list):
+        # Handle heterogeneous morphs (list or tuple of morphs)
+        is_heterogeneous = isinstance(morph, (list, tuple))
+        morph_for_checks = morph[0] if is_heterogeneous else morph
+        if is_heterogeneous:
             if not isinstance(material, gs.materials.Rigid):
-                gs.raise_exception("Heterogeneous morphs (list of morphs) are only supported for Rigid materials.")
+                gs.raise_exception(
+                    "Heterogeneous morphs (list/tuple of morphs) are only supported for Rigid materials."
+                )
             for m in morph:
                 if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
                     gs.raise_exception(
                         f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
                     )
+            # Convert to list for downstream processing
+            morph = list(morph)
 
         if isinstance(material, gs.materials.Rigid):
             # small sdf res is sufficient for primitives regardless of size

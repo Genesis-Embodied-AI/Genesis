@@ -195,11 +195,15 @@ class RasterizerContext:
         with self.scene._visualizer.viewer_lock:
             self._scene.remove_node(node)
 
-    def _get_geom_rendered_envs_idx(self, geom, rendered_envs_idx):
-        """Get the intersection of geom.rendered_envs_idx (for heterogeneous sim) and rendered_envs_idx."""
-        geom_rendered_envs_idx = getattr(geom, "rendered_envs_idx", None)
-        if geom_rendered_envs_idx is not None:
-            return np.intersect1d(geom_rendered_envs_idx, rendered_envs_idx)
+    def _get_geom_active_envs_idx(self, geom, rendered_envs_idx):
+        """Get the intersection of geom.active_envs_idx (for heterogeneous sim) and rendered_envs_idx.
+
+        For heterogeneous simulation, each geom is only active in certain environments.
+        This returns the environments where the geom should actually be rendered.
+        """
+        geom_active_envs_idx = geom.active_envs_idx
+        if geom_active_envs_idx is not None:
+            return np.intersect1d(geom_active_envs_idx, rendered_envs_idx)
         return rendered_envs_idx
 
     def add_rigid_node(self, geom, obj, **kwargs):
@@ -386,8 +390,8 @@ class RasterizerContext:
 
                 for geom in geoms:
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
-                    geom_envs_idx = self._get_geom_rendered_envs_idx(geom, self.rendered_envs_idx)
-                    if len(geom_envs_idx) == 0:
+                    geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                    if not len(geom_envs_idx):
                         continue
 
                     if "sdf" in rigid_entity.surface.vis_mode:
@@ -422,13 +426,14 @@ class RasterizerContext:
                     geoms_T = self.sim.rigid_solver._geoms_render_T
 
                 for geom in geoms:
-                    # Skip geoms that weren't added (heterogeneous simulation)
+                    # Skip geoms that weren't added - in heterogeneous simulation, some geoms
+                    # may not be rendered in any of the requested environments
                     if geom.uid not in self.rigid_nodes:
                         continue
 
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
-                    geom_envs_idx = self._get_geom_rendered_envs_idx(geom, self.rendered_envs_idx)
-                    if len(geom_envs_idx) == 0:
+                    geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                    if not len(geom_envs_idx):
                         continue
 
                     geom_T = geoms_T[geom.idx][geom_envs_idx]

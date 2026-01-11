@@ -82,6 +82,9 @@ class RigidGeom(RBC):
         self._init_pos: np.ndarray = init_pos
         self._init_quat: np.ndarray = init_quat
 
+        # For heterogeneous simulation: which environments this geom is active in (None = all envs)
+        self.active_envs_idx: np.ndarray | None = None
+
         self._init_verts = mesh.verts
         self._init_faces = mesh.faces
         self._init_edges = mesh.get_unique_edges()
@@ -847,6 +850,9 @@ class RigidVisGeom(RBC):
 
         self._init_pos = init_pos
         self._init_quat = init_quat
+
+        # For heterogeneous simulation: which environments this vgeom is active in (None = all envs)
+        self.active_envs_idx: np.ndarray | None = None
 
         self._init_vverts = vmesh.verts
         self._init_vfaces = vmesh.faces

@@ -1357,7 +1357,7 @@ class StructLinksInfo(metaclass=BASE_METACLASS):
     inertial_i: V_ANNOTATION
     inertial_mass: V_ANNOTATION
     entity_idx: V_ANNOTATION
-    # Heterogeneous simulation support - added at end to preserve memory layout
+    # Heterogeneous simulation support: per-link geom/vgeom index ranges
     geom_start: V_ANNOTATION
     geom_end: V_ANNOTATION
     vgeom_start: V_ANNOTATION
@@ -1386,7 +1386,7 @@ def get_links_info(solver):
         inertial_i=V(dtype=gs.ti_mat3, shape=links_info_shape),
         inertial_mass=V(dtype=gs.ti_float, shape=links_info_shape),
         entity_idx=V(dtype=gs.ti_int, shape=links_info_shape),
-        # Heterogeneous simulation support - added at end to preserve memory layout
+        # Heterogeneous simulation support: per-link geom/vgeom index ranges
         geom_start=V(dtype=gs.ti_int, shape=links_info_shape),
         geom_end=V(dtype=gs.ti_int, shape=links_info_shape),
         vgeom_start=V(dtype=gs.ti_int, shape=links_info_shape),

@@ -150,11 +150,10 @@ class RigidSolver(Solver):
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
         # Handle heterogeneous morphs (list of morphs)
-        morph_heterogeneous = None
+        morph_heterogeneous = []
         if isinstance(morph, list):
-            morph_heterogeneous = morph[1:]  # Additional morphs (exclude first)
-            morph = morph[0]  # Use first morph for entity initialization
-            self._enable_heterogeneous = True
+            morph, *morph_heterogeneous = morph
+            self._enable_heterogeneous |= bool(morph_heterogeneous)
 
         if isinstance(morph, gs.morphs.Drone):
             EntityClass = DroneEntity
@@ -252,7 +251,8 @@ class RigidSolver(Solver):
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
         self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
-        # Enable batch_links_info when heterogeneous simulation is used
+        # batch_links_info is required when heterogeneous simulation is used.
+        # We must update options because get_links_info reads from solver._options.batch_links_info.
         if self._enable_heterogeneous:
             self._options.batch_links_info = True
 
@@ -680,47 +680,47 @@ class RigidSolver(Solver):
             return
 
         for entity in self._entities:
+            # Skip non-heterogeneous entities
             if not entity._enable_heterogeneous:
                 continue
 
-            # Get the number of variants
-            n_het = len(entity.list_het_geom_group_start)
-            if n_het == 0:
-                continue
+            # Get the number of variants for this entity
+            n_het = len(entity.het_geom_start)
 
-            # Distribute environments across heterogeneous variants (round-robin)
+            # Validate batch size before computing distribution
+            if self._B < n_het:
+                gs.raise_exception(
+                    f"Entity (idx={entity._idx}): Batch size {self._B} must be >= the number of heterogeneous variants {n_het}."
+                )
+
+            # Distribute variants across environments using balanced block assignment:
+            # first B/n_het environments get variant 0, next B/n_het get variant 1, etc.
+            # With uneven division, extra environments are distributed to earlier variants.
             base = self._B // n_het
             extra = self._B % n_het  # first `extra` chunks get one more
             sizes = np.r_[np.full(extra, base + 1), np.full(n_het - extra, base)]
             variant_idx = np.repeat(np.arange(n_het), sizes)
 
-            if self._B < n_het:
-                gs.raise_exception(
-                    f"Entity '{entity.name}': Batch size {self._B} must be >= the number of heterogeneous variants {n_het}."
-                )
-
             # Get arrays from entity
-            np_geom_group_start = np.array(entity.list_het_geom_group_start, dtype=gs.np_int)
-            np_geom_group_end = np.array(entity.list_het_geom_group_end, dtype=gs.np_int)
-            np_vgeom_group_start = np.array(entity.list_het_vgeom_group_start, dtype=gs.np_int)
-            np_vgeom_group_end = np.array(entity.list_het_vgeom_group_end, dtype=gs.np_int)
+            np_geom_start = np.array(entity.het_geom_start, dtype=gs.np_int)
+            np_geom_end = np.array(entity.het_geom_end, dtype=gs.np_int)
+            np_vgeom_start = np.array(entity.het_vgeom_start, dtype=gs.np_int)
+            np_vgeom_end = np.array(entity.het_vgeom_end, dtype=gs.np_int)
 
             # Process each link in this heterogeneous entity (currently only single-link supported)
             for link in entity.links:
                 i_l = link.idx
 
                 # Build per-env arrays for geom/vgeom ranges
-                links_geom_start = np_geom_group_start[variant_idx]
-                links_geom_end = np_geom_group_end[variant_idx]
-                links_vgeom_start = np_vgeom_group_start[variant_idx]
-                links_vgeom_end = np_vgeom_group_end[variant_idx]
+                links_geom_start = np_geom_start[variant_idx]
+                links_geom_end = np_geom_end[variant_idx]
+                links_vgeom_start = np_vgeom_start[variant_idx]
+                links_vgeom_end = np_vgeom_end[variant_idx]
 
                 # Build per-env arrays for inertial properties
-                links_inertial_mass = np.array(
-                    [entity.list_het_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
-                )
-                links_inertial_pos = np.array([entity.list_het_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
-                links_inertial_i = np.array([entity.list_het_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_mass = np.array([entity.het_inertial_mass[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_pos = np.array([entity.het_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_i = np.array([entity.het_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
 
                 # Update links_info with per-environment values
                 # Note: when batch_links_info is True, the shape is (n_links, B)
@@ -736,14 +736,14 @@ class RigidSolver(Solver):
                     self.links_info,
                 )
 
-                # Update rendered_envs_idx for geoms and vgeoms
+                # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
                 for geom in link.geoms:
-                    geom.rendered_envs_idx = np.where((links_geom_start <= geom.idx) & (geom.idx < links_geom_end))[0]
+                    geom.active_envs_idx = np.where((links_geom_start <= geom.idx) & (geom.idx < links_geom_end))[0]
 
                 for vgeom in link.vgeoms:
-                    vgeom.rendered_envs_idx = np.where(
-                        (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
-                    )[0]
+                    vgeom.active_envs_idx = np.where((links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end))[
+                        0
+                    ]
 
     def _init_vert_fields(self):
         # # collisioin geom

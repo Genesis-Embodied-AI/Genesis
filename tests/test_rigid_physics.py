@@ -3844,55 +3844,79 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
 
 @pytest.mark.required
 def test_heterogeneous_simulation(show_viewer):
-    """Test heterogeneous simulation with mixed geometry types and more environments than variants."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
-        show_viewer=show_viewer,
-    )
+    """Test heterogeneous simulation with mixed geometry types.
 
+    This test verifies that heterogeneous simulation correctly handles multiple
+    geometry variants distributed across parallel environments.
+    """
+    # Test basic heterogeneous simulation with 2 variants and 8 environments
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
 
-    # 2 variants (box and sphere) but 8 environments
-    morphs_heterogeneous = [
-        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Sphere(radius=0.025, pos=(0.0, 0.0, 0.1)),
-    ]
-
+    # Use box and sphere with clearly different sizes/volumes
+    morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.06, 0.06, 0.06), pos=(0.0, 0.0, 0.1)),  # volume ~2.16e-4
+        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),  # volume ~3.35e-5
+    )
     het_object = scene.add_entity(morph=morphs_heterogeneous)
+    # 8 envs with 2 variants: envs 0-3 get box (variant 0), envs 4-7 get sphere (variant 1)
     scene.build(n_envs=8)
 
+    # Verify mass distribution
     mass = het_object.get_mass()
-    assert isinstance(mass, np.ndarray)
-    assert len(mass) == 8
+    assert mass.shape == (8,)
 
-    # First 4 envs get box, last 4 envs get sphere (round-robin distribution)
-    # Boxes should have same mass among themselves
-    assert_allclose(mass[0], mass[1], tol=gs.EPS)
-    assert_allclose(mass[0], mass[2], tol=gs.EPS)
-    assert_allclose(mass[0], mass[3], tol=gs.EPS)
-    # Spheres should have same mass among themselves
-    assert_allclose(mass[4], mass[5], tol=gs.EPS)
-    assert_allclose(mass[4], mass[6], tol=gs.EPS)
-    assert_allclose(mass[4], mass[7], tol=gs.EPS)
-    # Box mass should differ from sphere mass
-    assert not np.allclose(mass[0], mass[4])
+    # First 4 envs get box, last 4 envs get sphere (balanced block distribution)
+    assert_allclose(mass[0], mass[1:4], tol=gs.EPS)
+    assert_allclose(mass[4], mass[5:8], tol=gs.EPS)
 
-    scene.step()
+    # Box mass should be greater than sphere mass (different volumes)
+    assert mass[0] > mass[4] * 1.5  # Box should be significantly heavier
+
+    # Verify physics works by stepping
+    for _ in range(3):
+        scene.step()
+
+    # Verify positions are different for different variants after free-fall
+    pos = het_object.get_pos()
+    # All boxes should have same position, all spheres should have same position
+    assert_allclose(pos[0], pos[1:4], tol=gs.EPS)
+    assert_allclose(pos[4], pos[5:8], tol=gs.EPS)
 
 
 @pytest.mark.required
 def test_heterogeneous_invalid_material_raises():
     """Test that heterogeneous morphs with non-Rigid material raises an exception."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
-        show_viewer=False,
-    )
+    scene = gs.Scene(show_viewer=False)
 
-    morphs_heterogeneous = [
-        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.0, 0.0, 0.1)),
-    ]
+    morphs_heterogeneous = (
+        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
+        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
+    )
 
     # PBD material should raise an exception
     with pytest.raises(gs.GenesisException):
-        scene.add_entity(morph=morphs_heterogeneous, material=gs.materials.PBD.Cloth())
+        scene.add_entity(
+            morph=morphs_heterogeneous,
+            material=gs.materials.PBD.Cloth(),
+        )
+
+
+@pytest.mark.required
+def test_heterogeneous_insufficient_envs_raises():
+    """Test that having fewer environments than variants raises an exception."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    # 4 variants require at least 4 environments
+    morphs_heterogeneous = [
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Box(size=(0.03, 0.03, 0.03), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),
+    ]
+    scene.add_entity(morph=morphs_heterogeneous)
+
+    # Building with only 2 environments (< 4 variants) should raise
+    with pytest.raises(gs.GenesisException, match="Batch size.*must be >= the number of heterogeneous variants"):
+        scene.build(n_envs=2)

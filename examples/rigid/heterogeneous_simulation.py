@@ -17,11 +17,6 @@ def main():
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
-        ),
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
         ),
         show_viewer=args.vis,
     )
@@ -78,7 +73,6 @@ def main():
         pos=np.array([[0.65, 0.0, 0.135]] * args.n_envs),
         quat=np.array([[0, 1, 0, 0]] * args.n_envs),
     )
-    print(qpos.shape, motors_dof.shape)
     franka.control_dofs_position(qpos[..., :-2], motors_dof)
 
     # hold

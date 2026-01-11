@@ -117,7 +117,7 @@ class RigidEntity(Entity):
 
         # Heterogeneous simulation support
         self._morph_heterogeneous = morph_heterogeneous
-        self._enable_heterogeneous = morph_heterogeneous is not None and len(morph_heterogeneous) > 0
+        self._enable_heterogeneous = bool(morph_heterogeneous)
 
         self._load_model()
 
@@ -197,62 +197,53 @@ class RigidEntity(Entity):
         Load heterogeneous morphs (additional geometry variants for parallel environments).
         Each variant is loaded as additional geoms/vgeoms attached to the single link.
         """
-        # Initialize tracking lists for geom/vgeom ranges per variant
-        self.list_het_link_start = gs.List()
-        self.list_het_link_end = gs.List()
-        self.list_het_n_links = gs.List()
-        self.list_het_geom_group_start = gs.List()
-        self.list_het_geom_group_end = gs.List()
-        self.list_het_vgeom_group_start = gs.List()
-        self.list_het_vgeom_group_end = gs.List()
-        self.list_het_inertial_mass = gs.List()
-        self.list_het_inertial_pos = gs.List()
-        self.list_het_inertial_i = gs.List()
+        # Initialize tracking lists for geom/vgeom ranges per variant.
+        # These store the start/end indices for each variant's geoms and vgeoms,
+        # enabling per-environment dispatch during simulation.
+        self.het_link_start = gs.List()
+        self.het_link_end = gs.List()
+        self.het_n_links = gs.List()
+        self.het_geom_start = gs.List()
+        self.het_geom_end = gs.List()
+        self.het_vgeom_start = gs.List()
+        self.het_vgeom_end = gs.List()
+        self.het_inertial_mass = gs.List()
+        self.het_inertial_pos = gs.List()
+        self.het_inertial_i = gs.List()
 
         # Record the first variant (the main morph)
-        self.list_het_link_start.append(self._link_start)
-        self.list_het_n_links.append(len(self._links))
-        self.list_het_link_end.append(self._link_start + len(self._links))
-        self.list_het_geom_group_start.append(self._geom_start)
+        self.het_link_start.append(self._link_start)
+        self.het_n_links.append(len(self._links))
+        self.het_link_end.append(self._link_start + len(self._links))
+        self.het_geom_start.append(self._geom_start)
         first_variant_geom_end = self._geom_start + len(self.geoms)
-        self.list_het_geom_group_end.append(first_variant_geom_end)
-        self.list_het_vgeom_group_start.append(self._vgeom_start)
-        self.list_het_vgeom_group_end.append(self._vgeom_start + len(self.vgeoms))
-        # For heterogeneous entities, store number of geoms in first variant for later
+        self.het_geom_end.append(first_variant_geom_end)
+        self.het_vgeom_start.append(self._vgeom_start)
+        self.het_vgeom_end.append(self._vgeom_start + len(self.vgeoms))
+        # Store number of geoms in first variant for balanced block distribution across environments
         self._first_variant_n_geoms = len(self.geoms)
         self._first_variant_n_vgeoms = len(self.vgeoms)
 
-        # Compute first variant's inertial properties from the link's current geoms
+        # Compute first variant's inertial properties from the link's current geoms.
+        # Single-link entities need manual inertial computation from their geoms.
         if self._enable_heterogeneous and len(self._links) == 1:
             link = self._links[0]
             # Build cg_infos and vg_infos from link's current geoms
             first_cg_infos = []
             for geom in link.geoms:
-                first_cg_infos.append(
-                    {
-                        "mesh": geom._mesh,
-                        "pos": geom._init_pos,
-                        "quat": geom._init_quat,
-                    }
-                )
+                first_cg_infos.append({"mesh": geom._mesh, "pos": geom._init_pos, "quat": geom._init_quat})
             first_vg_infos = []
             for vgeom in link.vgeoms:
-                first_vg_infos.append(
-                    {
-                        "vmesh": vgeom._vmesh,
-                        "pos": vgeom._init_pos,
-                        "quat": vgeom._init_quat,
-                    }
-                )
+                first_vg_infos.append({"vmesh": vgeom._vmesh, "pos": vgeom._init_pos, "quat": vgeom._init_quat})
             het_mass, het_pos, het_i = self._compute_inertial_from_g_infos(first_cg_infos, first_vg_infos)
-            self.list_het_inertial_mass.append(het_mass)
-            self.list_het_inertial_pos.append(het_pos)
-            self.list_het_inertial_i.append(het_i)
+            self.het_inertial_mass.append(het_mass)
+            self.het_inertial_pos.append(het_pos)
+            self.het_inertial_i.append(het_i)
         else:
-            # Placeholder for first variant inertial (computed later during link build)
-            self.list_het_inertial_mass.append(None)
-            self.list_het_inertial_pos.append(None)
-            self.list_het_inertial_i.append(None)
+            # Placeholder for first variant inertial - multi-link entities compute inertial during link build
+            self.het_inertial_mass.append(None)
+            self.het_inertial_pos.append(None)
+            self.het_inertial_i.append(None)
 
         if self._enable_heterogeneous:
             for morph in self._morph_heterogeneous:
@@ -273,9 +264,9 @@ class RigidEntity(Entity):
 
                 # Compute inertial properties for this variant from collision or visual geometries
                 het_mass, het_pos, het_i = self._compute_inertial_from_g_infos(cg_infos, vg_infos)
-                self.list_het_inertial_mass.append(het_mass)
-                self.list_het_inertial_pos.append(het_pos)
-                self.list_het_inertial_i.append(het_i)
+                self.het_inertial_mass.append(het_mass)
+                self.het_inertial_pos.append(het_pos)
+                self.het_inertial_i.append(het_i)
 
                 # Add visual geometries
                 for g_info in vg_infos:
@@ -304,13 +295,13 @@ class RigidEntity(Entity):
                     )
 
                 # Record ranges for this variant
-                self.list_het_link_start.append(self.list_het_link_end[-1])
-                self.list_het_link_end.append(self._link_start + len(self._links))
-                self.list_het_n_links.append(self.list_het_link_end[-1] - self.list_het_link_start[-1])
-                self.list_het_geom_group_start.append(self.list_het_geom_group_end[-1])
-                self.list_het_geom_group_end.append(self.list_het_geom_group_end[-1] + len(cg_infos))
-                self.list_het_vgeom_group_start.append(self.list_het_vgeom_group_end[-1])
-                self.list_het_vgeom_group_end.append(self.list_het_vgeom_group_end[-1] + len(vg_infos))
+                self.het_link_start.append(self.het_link_end[-1])
+                self.het_link_end.append(self._link_start + len(self._links))
+                self.het_n_links.append(self.het_link_end[-1] - self.het_link_start[-1])
+                self.het_geom_start.append(self.het_geom_end[-1])
+                self.het_geom_end.append(self.het_geom_end[-1] + len(cg_infos))
+                self.het_vgeom_start.append(self.het_vgeom_end[-1])
+                self.het_vgeom_end.append(self.het_vgeom_end[-1] + len(vg_infos))
 
     def _load_model(self):
         self._links = gs.List()
