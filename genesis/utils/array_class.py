@@ -1357,6 +1357,11 @@ class StructLinksInfo(metaclass=BASE_METACLASS):
     inertial_i: V_ANNOTATION
     inertial_mass: V_ANNOTATION
     entity_idx: V_ANNOTATION
+    # Heterogeneous simulation support: per-link geom/vgeom index ranges
+    geom_start: V_ANNOTATION
+    geom_end: V_ANNOTATION
+    vgeom_start: V_ANNOTATION
+    vgeom_end: V_ANNOTATION
 
 
 def get_links_info(solver):
@@ -1381,6 +1386,11 @@ def get_links_info(solver):
         inertial_i=V(dtype=gs.ti_mat3, shape=links_info_shape),
         inertial_mass=V(dtype=gs.ti_float, shape=links_info_shape),
         entity_idx=V(dtype=gs.ti_int, shape=links_info_shape),
+        # Heterogeneous simulation support: per-link geom/vgeom index ranges
+        geom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        geom_end=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_end=V(dtype=gs.ti_int, shape=links_info_shape),
     )
 
 
@@ -1747,7 +1757,7 @@ class StructEntitiesInfo(metaclass=BASE_METACLASS):
 
 
 def get_entities_info(solver):
-    shape = (solver.n_entities_,)
+    shape = (solver.n_entities_, solver._B) if solver._options.batch_entities_info else (solver.n_entities_,)
 
     return StructEntitiesInfo(
         dof_start=V(dtype=gs.ti_int, shape=shape),
@@ -1811,9 +1821,11 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     para_level: int
     enable_collision: bool
     use_hibernation: bool
+    batch_entities_info: bool
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool
+    enable_heterogeneous: bool
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
