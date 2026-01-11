@@ -23,10 +23,34 @@ except ImportError:
 
 # Check for Omniverse Kit support (required for USD baking)
 try:
-    import omni.kit_app
+    # Set environment variable to accept EULA if not already set (for CI/non-interactive environments)
+    if "OMNI_KIT_ACCEPT_EULA" not in os.environ:
+        os.environ["OMNI_KIT_ACCEPT_EULA"] = "yes"
 
-    HAS_OMNIVERSE_KIT_SUPPORT = True
-except ImportError:
+    # Mock input() to avoid stdin issues during import in non-interactive environments (e.g., pytest)
+    # This is necessary because omni.kit_app calls check_eula() at import time which uses input()
+    import builtins
+
+    _original_input = builtins.input
+    try:
+
+        def _mock_input(prompt=""):
+            # If EULA is being checked, return "Yes" automatically
+            if "EULA" in prompt or "accept" in prompt.lower():
+                return "Yes"
+            # In non-interactive environments, stdin may not be available
+            # Return "Yes" as a safe default for any prompt during import
+            return "Yes"
+
+        builtins.input = _mock_input
+
+        import omni.kit_app
+
+        HAS_OMNIVERSE_KIT_SUPPORT = True
+    finally:
+        # Restore original input function
+        builtins.input = _original_input
+except (ImportError, OSError):
     HAS_OMNIVERSE_KIT_SUPPORT = False
 
 VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
