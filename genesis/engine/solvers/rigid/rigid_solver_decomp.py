@@ -676,9 +676,6 @@ class RigidSolver(Solver):
         This method is called after _init_link_fields to update the per-environment inertial properties
         for entities with heterogeneous morphs.
         """
-        if not self._enable_heterogeneous:
-            return
-
         for entity in self._entities:
             # Skip non-heterogeneous entities
             if not entity._enable_heterogeneous:
@@ -736,12 +733,12 @@ class RigidSolver(Solver):
 
                 # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
                 for geom in link.geoms:
-                    geom.active_envs_idx = np.where((links_geom_start <= geom.idx) & (geom.idx < links_geom_end))[0]
+                    geom.active_envs_idx, _ = np.where((links_geom_start <= geom.idx) & (geom.idx < links_geom_end))[0]
 
                 for vgeom in link.vgeoms:
-                    vgeom.active_envs_idx = np.where((links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end))[
-                        0
-                    ]
+                    vgeom.active_envs_idx, _ = np.where(
+                        (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
+                    )[0]
 
     def _init_vert_fields(self):
         # # collisioin geom

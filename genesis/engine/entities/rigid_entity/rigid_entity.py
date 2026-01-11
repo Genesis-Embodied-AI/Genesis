@@ -213,12 +213,8 @@ class RigidEntity(Entity):
         else:
             gs.raise_exception(f"Unsupported morph: {morph}.")
 
-    def _compute_inertial_from_g_infos(self, cg_infos, vg_infos):
-        """Compute inertial properties from collision or visual geometry infos.
-
-        This method delegates to the standalone compute_inertial_from_geom_infos function.
-        """
-        return compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
+        # Load heterogeneous variants (if any)
+        self._load_heterogeneous_morphs()
 
     def _load_heterogeneous_morphs(self):
         """
@@ -263,7 +259,9 @@ class RigidEntity(Entity):
             first_vg_infos = []
             for vgeom in link.vgeoms:
                 first_vg_infos.append({"vmesh": vgeom._vmesh, "pos": vgeom._init_pos, "quat": vgeom._init_quat})
-            het_mass, het_pos, het_i = self._compute_inertial_from_g_infos(first_cg_infos, first_vg_infos)
+            het_mass, het_pos, het_i = compute_inertial_from_geom_infos(
+                first_cg_infos, first_vg_infos, self.material.rho
+            )
             self.het_inertial_mass.append(het_mass)
             self.het_inertial_pos.append(het_pos)
             self.het_inertial_i.append(het_i)
@@ -291,7 +289,7 @@ class RigidEntity(Entity):
                 cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
 
                 # Compute inertial properties for this variant from collision or visual geometries
-                het_mass, het_pos, het_i = self._compute_inertial_from_g_infos(cg_infos, vg_infos)
+                het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
                 self.het_inertial_mass.append(het_mass)
                 self.het_inertial_pos.append(het_pos)
                 self.het_inertial_i.append(het_i)
@@ -337,9 +335,6 @@ class RigidEntity(Entity):
         self._equalities = gs.List()
 
         self._load_morph(self._morph)
-
-        # Load heterogeneous variants (if any)
-        self._load_heterogeneous_morphs()
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
