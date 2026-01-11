@@ -50,6 +50,68 @@ def tracked(fun):
     return wrapper
 
 
+def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
+    """
+    Compute inertial properties (mass, center of mass, inertia tensor) from geometry infos.
+
+    This is a standalone helper function that computes combined inertial properties from
+    a collection of collision and/or visual geometry infos.
+
+    Parameters
+    ----------
+    cg_infos : list[dict]
+        List of collision geometry info dicts, each containing 'mesh', 'pos', 'quat'.
+    vg_infos : list[dict]
+        List of visual geometry info dicts, each containing 'vmesh', 'pos', 'quat'.
+        Used as fallback if cg_infos is empty.
+    rho : float
+        Material density (kg/m^3) used to compute mass from volume.
+
+    Returns
+    -------
+    tuple[float, np.ndarray, np.ndarray]
+        (total_mass, center_of_mass, inertia_tensor)
+    """
+    from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
+
+    total_mass = gs.EPS
+    total_com = np.zeros(3, dtype=gs.np_float)
+    total_inertia = np.zeros((3, 3), dtype=gs.np_float)
+
+    # Use collision geoms if available, otherwise fall back to visual geoms
+    g_infos = cg_infos if cg_infos else vg_infos
+    mesh_key = "mesh" if cg_infos else "vmesh"
+
+    for g_info in g_infos:
+        mesh = g_info.get(mesh_key)
+        if mesh is None:
+            continue
+        geom_pos = g_info.get("pos", gu.zero_pos())
+        geom_quat = g_info.get("quat", gu.identity_quat())
+
+        inertia_mesh = mesh.trimesh
+        if not inertia_mesh.is_watertight:
+            inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+
+        if inertia_mesh.volume < -gs.EPS:
+            inertia_mesh.invert()
+
+        geom_mass = inertia_mesh.volume * rho
+        geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+        geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+
+        # Transform geom properties to link frame
+        geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
+        geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
+
+        # Compose with existing properties
+        total_mass, total_com, total_inertia = compose_inertial_properties(
+            total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
+        )
+
+    return total_mass, total_com, total_inertia
+
+
 @ti.data_oriented
 class RigidEntity(Entity):
     """
@@ -152,47 +214,13 @@ class RigidEntity(Entity):
             gs.raise_exception(f"Unsupported morph: {morph}.")
 
     def _compute_inertial_from_g_infos(self, cg_infos, vg_infos):
-        """Compute inertial properties from collision or visual geometry infos."""
-        from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
+        """Compute inertial properties from collision or visual geometry infos.
 
-        total_mass = gs.EPS
-        total_com = np.zeros(3, dtype=gs.np_float)
-        total_inertia = np.zeros((3, 3), dtype=gs.np_float)
+        This method delegates to the standalone compute_inertial_from_geom_infos function.
+        """
+        return compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
 
-        # Use collision geoms if available, otherwise fall back to visual geoms
-        g_infos = cg_infos if cg_infos else vg_infos
-        mesh_key = "mesh" if cg_infos else "vmesh"
-
-        for g_info in g_infos:
-            mesh = g_info.get(mesh_key)
-            if mesh is None:
-                continue
-            geom_pos = g_info.get("pos", gu.zero_pos())
-            geom_quat = g_info.get("quat", gu.identity_quat())
-
-            inertia_mesh = mesh.trimesh
-            if not inertia_mesh.is_watertight:
-                inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
-
-            if inertia_mesh.volume < -gs.EPS:
-                inertia_mesh.invert()
-
-            geom_mass = inertia_mesh.volume * self.material.rho
-            geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
-            geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
-
-            # Transform geom properties to link frame
-            geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
-            geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
-
-            # Compose with existing properties
-            total_mass, total_com, total_inertia = compose_inertial_properties(
-                total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
-            )
-
-        return total_mass, total_com, total_inertia
-
-    def _load_heterogeneous(self):
+    def _load_heterogeneous_morphs(self):
         """
         Load heterogeneous morphs (additional geometry variants for parallel environments).
         Each variant is loaded as additional geoms/vgeoms attached to the single link.
@@ -311,7 +339,7 @@ class RigidEntity(Entity):
         self._load_morph(self._morph)
 
         # Load heterogeneous variants (if any)
-        self._load_heterogeneous()
+        self._load_heterogeneous_morphs()
 
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
         self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
@@ -3231,6 +3259,18 @@ class RigidEntity(Entity):
     def n_links(self):
         """The number of `RigidLink` in the entity."""
         return len(self._links)
+
+    @property
+    def main_morph(self):
+        """The main morph of the entity (first morph for heterogeneous entities)."""
+        return self._morph
+
+    @property
+    def morphs(self):
+        """All morphs of the entity (main morph + heterogeneous variants if any)."""
+        if self._morph_heterogeneous:
+            return (self._morph,) + tuple(self._morph_heterogeneous)
+        return (self._morph,)
 
     @property
     def n_joints(self):

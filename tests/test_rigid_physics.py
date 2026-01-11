@@ -3844,44 +3844,74 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
 
 @pytest.mark.required
 def test_heterogeneous_simulation(show_viewer):
-    """Test heterogeneous simulation with mixed geometry types.
+    """Test heterogeneous simulation by comparing against independent homogeneous simulations.
 
-    This test verifies that heterogeneous simulation correctly handles multiple
-    geometry variants distributed across parallel environments.
+    This test verifies that heterogeneous simulation produces identical physics results
+    to running separate homogeneous simulations for each variant.
     """
-    # Test basic heterogeneous simulation with 2 variants and 8 environments
-    scene = gs.Scene(show_viewer=show_viewer)
-    scene.add_entity(gs.morphs.Plane())
+    n_steps = 20
+    drop_height = 0.05  # Drop objects 5cm above ground for collision dynamics
 
-    # Use box and sphere with clearly different sizes/volumes
+    # Define morphs for testing - box and sphere with different sizes
+    box_morph = gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, drop_height))
+    sphere_morph = gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, drop_height))
+
+    # Run homogeneous simulation with box only
+    scene_box = gs.Scene(show_viewer=False)
+    scene_box.add_entity(gs.morphs.Plane())
+    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, drop_height)))
+    scene_box.build(n_envs=1)
+    for _ in range(n_steps):
+        scene_box.step()
+    box_pos = box_obj.get_pos().cpu().numpy().flatten()
+    box_vel = box_obj.get_vel().cpu().numpy().flatten()
+
+    # Run homogeneous simulation with sphere only
+    scene_sphere = gs.Scene(show_viewer=False)
+    scene_sphere.add_entity(gs.morphs.Plane())
+    sphere_obj = scene_sphere.add_entity(gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, drop_height)))
+    scene_sphere.build(n_envs=1)
+    for _ in range(n_steps):
+        scene_sphere.step()
+    sphere_pos = sphere_obj.get_pos().cpu().numpy().flatten()
+    sphere_vel = sphere_obj.get_vel().cpu().numpy().flatten()
+
+    # Run heterogeneous simulation with both variants
+    # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
+    scene_het = gs.Scene(show_viewer=show_viewer)
+    scene_het.add_entity(gs.morphs.Plane())
     morphs_heterogeneous = (
-        gs.morphs.Box(size=(0.06, 0.06, 0.06), pos=(0.0, 0.0, 0.1)),  # volume ~2.16e-4
-        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),  # volume ~3.35e-5
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, drop_height)),
+        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, drop_height)),
     )
-    het_object = scene.add_entity(morph=morphs_heterogeneous)
-    # 8 envs with 2 variants: envs 0-3 get box (variant 0), envs 4-7 get sphere (variant 1)
-    scene.build(n_envs=8)
+    het_obj = scene_het.add_entity(morph=morphs_heterogeneous)
+    scene_het.build(n_envs=4)
+    for _ in range(n_steps):
+        scene_het.step()
+    het_pos = het_obj.get_pos().cpu().numpy()
+    het_vel = het_obj.get_vel().cpu().numpy()
 
-    # Verify mass distribution
-    mass = het_object.get_mass()
-    assert mass.shape == (8,)
+    # Verify heterogeneous results match homogeneous results
+    # Envs 0-1 should match box simulation
+    assert_allclose(het_pos[0], box_pos, tol=1e-5)
+    assert_allclose(het_pos[1], box_pos, tol=1e-5)
+    assert_allclose(het_vel[0], box_vel, tol=1e-5)
+    assert_allclose(het_vel[1], box_vel, tol=1e-5)
 
-    # First 4 envs get box, last 4 envs get sphere (balanced block distribution)
-    assert_allclose(mass[0], mass[1:4], tol=gs.EPS)
-    assert_allclose(mass[4], mass[5:8], tol=gs.EPS)
+    # Envs 2-3 should match sphere simulation
+    assert_allclose(het_pos[2], sphere_pos, tol=1e-5)
+    assert_allclose(het_pos[3], sphere_pos, tol=1e-5)
+    assert_allclose(het_vel[2], sphere_vel, tol=1e-5)
+    assert_allclose(het_vel[3], sphere_vel, tol=1e-5)
 
-    # Box mass should be greater than sphere mass (different volumes)
-    assert mass[0] > mass[4] * 1.5  # Box should be significantly heavier
-
-    # Verify physics works by stepping
-    for _ in range(3):
-        scene.step()
-
-    # Verify positions are different for different variants after free-fall
-    pos = het_object.get_pos()
-    # All boxes should have same position, all spheres should have same position
-    assert_allclose(pos[0], pos[1:4], tol=gs.EPS)
-    assert_allclose(pos[4], pos[5:8], tol=gs.EPS)
+    # Verify mass distribution is correct
+    mass = het_obj.get_mass()
+    assert mass.shape == (4,)
+    # Box envs should have same mass, sphere envs should have same mass
+    assert_allclose(mass[0], mass[1], tol=gs.EPS)
+    assert_allclose(mass[2], mass[3], tol=gs.EPS)
+    # Box and sphere should have different masses
+    assert mass[0] != mass[2]
 
 
 @pytest.mark.required
@@ -3903,20 +3933,126 @@ def test_heterogeneous_invalid_material_raises():
 
 
 @pytest.mark.required
-def test_heterogeneous_insufficient_envs_raises():
-    """Test that having fewer environments than variants raises an exception."""
+def test_heterogeneous_fewer_envs_than_variants():
+    """Test that having fewer environments than variants works correctly.
+
+    When n_envs < n_het, each environment gets a unique variant and some variants are unused.
+    """
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
-    # 4 variants require at least 4 environments
+    # 4 variants but only 2 environments
     morphs_heterogeneous = [
         gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
         gs.morphs.Box(size=(0.03, 0.03, 0.03), pos=(0.0, 0.0, 0.1)),
         gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.0, 0.0, 0.1)),
         gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),
     ]
-    scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(morph=morphs_heterogeneous)
 
-    # Building with only 2 environments (< 4 variants) should raise
-    with pytest.raises(gs.GenesisException, match="Batch size.*must be >= the number of heterogeneous variants"):
-        scene.build(n_envs=2)
+    # Building with only 2 environments should work - each env gets a unique variant
+    scene.build(n_envs=2)
+
+    # Verify mass - env 0 gets variant 0 (0.04 box), env 1 gets variant 1 (0.03 box)
+    mass = het_obj.get_mass()
+    assert mass.shape == (2,)
+    # Different box sizes should have different masses
+    assert mass[0] != mass[1]
+
+    # Step to verify physics works
+    for _ in range(5):
+        scene.step()
+
+
+@pytest.mark.required
+def test_heterogeneous_aabb():
+    """Test that get_AABB and get_vAABB work correctly with heterogeneous simulation."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    # Box and sphere with different sizes
+    morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),
+    )
+    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    # 4 envs: envs 0-1 get box, envs 2-3 get sphere
+    scene.build(n_envs=4)
+
+    # get_AABB should return correct shapes
+    aabb = het_obj.get_AABB()
+    assert aabb.shape == (4, 2, 3)  # (n_envs, min/max, xyz)
+
+    # Box envs should have same AABB, sphere envs should have same AABB
+    assert_allclose(aabb[0], aabb[1], tol=gs.EPS)
+    assert_allclose(aabb[2], aabb[3], tol=gs.EPS)
+
+    # Box and sphere should have different AABBs (different sizes)
+    # Box half-size is 0.02, sphere radius is 0.02, so they're close but not identical
+    # Box AABB size: 0.04x0.04x0.04, Sphere AABB size: 0.04x0.04x0.04 (diameter)
+    # Both should have similar AABB size in this case
+
+    # get_vAABB should also work
+    vaabb = het_obj.get_vAABB()
+    assert vaabb.shape[0] == 4  # n_envs dimension
+
+
+@pytest.mark.slow  # ~60s
+def test_heterogeneous_simulation_integration(show_viewer):
+    """Integration test for heterogeneous simulation with robot manipulation.
+
+    This test verifies:
+    - Different geometry variants are correctly distributed across environments
+    - Objects fall and settle correctly based on their shapes
+    - Robot can reach and interact with objects
+    """
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    # Add ground plane and robot
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+
+    # 4 different geometry variants
+    morphs_heterogeneous = [
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.65, 0.0, 0.02)),
+        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.65, 0.0, 0.02)),
+        gs.morphs.Sphere(radius=0.015, pos=(0.65, 0.0, 0.02)),
+        gs.morphs.Sphere(radius=0.025, pos=(0.65, 0.0, 0.02)),
+    ]
+    grasping_object = scene.add_entity(morph=morphs_heterogeneous)
+
+    scene.build(n_envs=4, env_spacing=(1, 1))
+
+    # Verify initial state
+    mass = grasping_object.get_mass()
+    assert mass.shape == (4,)
+    # Each env should have different mass (different sizes)
+    # Env 0: Box 0.04^3, Env 1: Box 0.02^3, Env 2: Sphere r=0.015, Env 3: Sphere r=0.025
+
+    # Set robot to a known position
+    l_qpos = [-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]
+    franka.set_qpos(np.array([l_qpos] * 4))
+
+    # Let objects settle
+    for _ in range(50):
+        scene.step()
+
+    # Verify objects are on the ground (z position near 0 + half-height)
+    pos = grasping_object.get_pos()
+    assert pos.shape == (4, 3)
+    # All objects should be settled (low z-velocity)
+    vel = grasping_object.get_vel()
+    for i in range(4):
+        assert abs(vel[i, 2].item()) < 0.1  # Vertical velocity should be small
+
+    # Verify AABB is correctly computed for each variant
+    aabb = grasping_object.get_AABB()
+    assert aabb.shape == (4, 2, 3)

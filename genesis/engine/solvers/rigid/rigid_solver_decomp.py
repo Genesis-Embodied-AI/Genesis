@@ -687,19 +687,17 @@ class RigidSolver(Solver):
             # Get the number of variants for this entity
             n_het = len(entity.het_geom_start)
 
-            # Validate batch size before computing distribution
-            if self._B < n_het:
-                gs.raise_exception(
-                    f"Entity (idx={entity._idx}): Batch size {self._B} must be >= the number of heterogeneous variants {n_het}."
-                )
-
             # Distribute variants across environments using balanced block assignment:
-            # first B/n_het environments get variant 0, next B/n_het get variant 1, etc.
-            # With uneven division, extra environments are distributed to earlier variants.
-            base = self._B // n_het
-            extra = self._B % n_het  # first `extra` chunks get one more
-            sizes = np.r_[np.full(extra, base + 1), np.full(n_het - extra, base)]
-            variant_idx = np.repeat(np.arange(n_het), sizes)
+            # - If B >= n_het: first B/n_het environments get variant 0, next get variant 1, etc.
+            # - If B < n_het: each environment gets a different variant (some variants unused)
+            if self._B >= n_het:
+                base = self._B // n_het
+                extra = self._B % n_het  # first `extra` chunks get one more
+                sizes = np.r_[np.full(extra, base + 1), np.full(n_het - extra, base)]
+                variant_idx = np.repeat(np.arange(n_het), sizes)
+            else:
+                # Each environment gets a unique variant; variants beyond B are unused
+                variant_idx = np.arange(self._B)
 
             # Get arrays from entity
             np_geom_start = np.array(entity.het_geom_start, dtype=gs.np_int)
