@@ -151,6 +151,7 @@ class BatchRendererCameraOptions(BaseCameraOptions):
         Whether to use rasterizer mode. Default is True.
     """
 
+    model: str = "pinhole"
     near: float = 0.01
     far: float = 100.0
     use_rasterizer: bool = True
