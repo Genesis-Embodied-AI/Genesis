@@ -1,6 +1,7 @@
 import functools
 
 import gstaichi as ti
+import torch
 
 import genesis as gs
 from genesis.engine.states.entities import MPMEntityState
