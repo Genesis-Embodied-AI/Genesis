@@ -1,9 +1,7 @@
 import os
 import subprocess
 import tempfile
-from traceback import TracebackException
 
-import pytest
 
 START_REF = "v0.2.1"
 END_REF = "upstream/main"

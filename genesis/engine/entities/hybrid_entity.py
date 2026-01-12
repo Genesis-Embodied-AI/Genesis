@@ -120,7 +120,7 @@ class HybridEntity(Entity):
             )
 
         else:
-            raise ValueError(f"`morph` in hybrid entity should be either URDF or Mesh")
+            raise ValueError("`morph` in hybrid entity should be either URDF or Mesh")
 
         if not material.use_default_coupling:
             # get rigid-soft association function

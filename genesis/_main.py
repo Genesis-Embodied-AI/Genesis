@@ -1,7 +1,5 @@
 import argparse
 import multiprocessing
-import os
-import threading
 from functools import partial
 
 import tkinter as tk
@@ -9,8 +7,6 @@ from tkinter import ttk
 
 import numpy as np
 import torch
-from gstaichi._lib import core as _ti_core
-from gstaichi.lang import impl
 
 import genesis as gs
 
@@ -234,7 +230,7 @@ def main():
         view(args.filename, args.collision, args.rotate, args.scale, args.link_frame)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
-    elif args.command == None:
+    elif args.command is None:
         parser.print_help()
 
 

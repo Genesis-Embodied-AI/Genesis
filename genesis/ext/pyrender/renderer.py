@@ -4,7 +4,6 @@ Author: Matthew Matl
 """
 
 import sys
-from time import time
 
 import PIL
 import pyglet
@@ -24,7 +23,6 @@ from .constants import (
     TextAlign,
 )
 from .font import FontCache
-from .jit_render import JITRenderer
 from .light import DirectionalLight, PointLight, SpotLight
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
 from .shader_program import ShaderProgramCache

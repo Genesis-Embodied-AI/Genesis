@@ -12,6 +12,7 @@ from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
 
 if TYPE_CHECKING:
+    from genesis.options.sensors.options import SensorOptions
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.solvers import RigidSolver
     from genesis.recorders.base_recorder import Recorder, RecorderOptions

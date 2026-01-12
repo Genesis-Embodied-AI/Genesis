@@ -1,5 +1,4 @@
 import inspect
-import math
 import os
 import time
 from functools import cached_property
@@ -661,7 +660,7 @@ class Camera(RBC):
         if self._is_batched:
             for data in (transform, pos, lookat, up):
                 if data is not None and len(data) != n_envs:
-                    gs.raise_exception(f"Input data inconsistent with 'envs_idx'.")
+                    gs.raise_exception("Input data inconsistent with 'envs_idx'.")
 
         # Compute redundant quantities
         if transform is None:
