@@ -29,9 +29,8 @@ class HelpTextPlugin(ViewerPlugin):
         options: HelpTextPluginOptions,
         camera: "Node" = None,
         scene: "Scene" = None,
-        viewport_size: tuple[int, int] = None,
     ):
-        super().__init__(viewer, options, camera, scene, viewport_size)
+        super().__init__(viewer, options, camera, scene)
 
         if self.options.display_instructions:
             self.viewer.register_keybinds(
@@ -76,7 +75,7 @@ class HelpTextPlugin(ViewerPlugin):
         if self._message_text is not None:
             self.viewer._renderer.render_text(
                 self._message_text,
-                self.viewport_size[0] - TEXT_PADDING,
+                self.viewer._viewport_size[0] - TEXT_PADDING,
                 TEXT_PADDING,
                 font_pt=self.options.font_size,
                 color=np.array([0.1, 0.7, 0.2, np.clip(self._message_opac, 0.0, 1.0)]),
@@ -97,7 +96,7 @@ class HelpTextPlugin(ViewerPlugin):
                 self.viewer._renderer.render_texts(
                     self._instr_texts[0],
                     TEXT_PADDING,
-                    self.viewer.viewport_size[1] - TEXT_PADDING,
+                    self.viewer._viewport_size[1] - TEXT_PADDING,
                     font_pt=self.options.font_size,
                     color=np.array([1.0, 1.0, 1.0, 0.85]),
                 )
@@ -105,7 +104,7 @@ class HelpTextPlugin(ViewerPlugin):
                 self.viewer._renderer.render_texts(
                     self._instr_texts[1],
                     TEXT_PADDING,
-                    self.viewer.viewport_size[1] - TEXT_PADDING,
+                    self.viewer._viewport_size[1] - TEXT_PADDING,
                     font_pt=self.options.font_size,
                     color=np.array([1.0, 1.0, 1.0, 0.85]),
                 )

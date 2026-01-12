@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Literal, Type
 
 import numpy as np
 
-from .utils import Ray, Vec3
+from .raycaster import Ray
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -45,9 +45,6 @@ def register_viewer_plugin(options_cls: Type["ViewerPluginOptions"]):
     return _impl
 
 
-# Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
-
-
 class ViewerPlugin:
     """
     Base class for handling pyglet.window.Window events.
@@ -59,16 +56,14 @@ class ViewerPlugin:
         options: "ViewerPluginOptions",
         camera: "Node",
         scene: "Scene",
-        viewport_size: tuple[int, int],
     ):
         self.viewer = viewer
         self.options: "ViewerPluginOptions" = options
         self.camera: "Node" = camera
         self.scene: "Scene" = scene
-        self.viewport_size: tuple[int, int] = viewport_size
 
-        self.camera_yfov: float = camera.camera.yfov
-        self.tan_half_fov: float = np.tan(0.5 * self.camera_yfov)
+        self._camera_yfov: float = camera.camera.yfov
+        self._tan_half_fov: float = np.tan(0.5 * self._camera_yfov)
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         pass
@@ -82,6 +77,9 @@ class ViewerPlugin:
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         pass
 
+    def on_mouse_scroll(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
+        pass
+
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         pass
 
@@ -89,8 +87,7 @@ class ViewerPlugin:
         pass
 
     def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
-        self.viewport_size = (width, height)
-        self.tan_half_fov = np.tan(0.5 * self.camera_yfov)
+        pass
 
     def update_on_sim_step(self) -> None:
         pass
@@ -103,28 +100,17 @@ class ViewerPlugin:
 
     def _screen_position_to_ray(self, x: float, y: float) -> Ray:
         # convert screen position to ray
-        x = x - 0.5 * self.viewport_size[0]
-        y = y - 0.5 * self.viewport_size[1]
-        x = 2.0 * x / self.viewport_size[1] * self.tan_half_fov
-        y = 2.0 * y / self.viewport_size[1] * self.tan_half_fov
+        x = x - 0.5 * self.viewer._viewport_size[0]
+        y = y - 0.5 * self.viewer._viewport_size[1]
+        x = 2.0 * x / self.viewer._viewport_size[1] * self._tan_half_fov
+        y = 2.0 * y / self.viewer._viewport_size[1] * self._tan_half_fov
 
         # Note: ignoring pixel aspect ratio
-
         mtx = self.camera.matrix
-        position = Vec3.from_array(mtx[:3, 3])
-        forward = Vec3.from_array(-mtx[:3, 2])
-        right = Vec3.from_array(mtx[:3, 0])
-        up = Vec3.from_array(mtx[:3, 1])
+        position = mtx[:3, 3]
+        forward = -mtx[:3, 2]
+        right = mtx[:3, 0]
+        up = mtx[:3, 1]
 
         direction = forward + right * x + up * y
-        return Ray(position, direction)
-
-    def _get_camera_forward(self) -> Vec3:
-        mtx = self.camera.matrix
-        return Vec3.from_array(-mtx[:3, 2])
-
-    def _get_camera_ray(self) -> Ray:
-        mtx = self.camera.matrix
-        position = Vec3.from_array(mtx[:3, 3])
-        forward = Vec3.from_array(-mtx[:3, 2])
-        return Ray(position, forward)
+        return Ray(origin=position, direction=direction / np.linalg.norm(direction))
