@@ -55,8 +55,24 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
         super().__init__(viewer, options, camera, scene)
 
         self.prev_mouse_pos: tuple[int, int] = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)
-        self.selected_points: list[SelectedPoint] = []
+        self.selected_points: dict[int, SelectedPoint] = {}
         self.raycaster: ViewerRaycaster = ViewerRaycaster(self.scene)
+
+    def _get_pos_hash(self, pos: np.ndarray) -> int:
+        """
+        Generate a hash for a given position to use as a unique identifier.
+
+        Parameters
+        ----------
+        pos : np.ndarray, shape (3,)
+            The position to hash.
+
+        Returns
+        -------
+        int
+            The hash of the position.
+        """
+        return hash((round(pos[0], 6), round(pos[1], 6), round(pos[2], 6)))
 
     def _snap_to_grid(self, point: np.ndarray) -> np.ndarray:
         """
@@ -78,14 +94,11 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
-        super().on_mouse_motion(x, y, dx, dy)
         self.prev_mouse_pos = (x, y)
-        return None
 
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
-        super().on_mouse_press(x, y, button, modifiers)
-        if button == 1:  # left mouse button
+        if button == 1:  # left click
             ray = self._screen_position_to_ray(x, y)
             ray_hit = self.raycaster.cast_ray(ray.origin, ray.direction)
 
@@ -104,8 +117,13 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
                 # Apply grid snapping to local position
                 local_pos = self._snap_to_grid(local_pos)
 
-                selected_point = SelectedPoint(link=link, local_position=local_pos, local_normal=local_normal)
-                self.selected_points.append(selected_point)
+                pos_hash = self._get_pos_hash(local_pos)
+                if pos_hash in self.selected_points:
+                    # Deselect point if already selected
+                    del self.selected_points[pos_hash]
+                else:
+                    selected_point = SelectedPoint(link, local_pos, local_normal)
+                    self.selected_points[pos_hash] = selected_point
 
                 return EVENT_HANDLED
         return None
@@ -124,6 +142,7 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
             closest_hit = self.raycaster.cast_ray(mouse_ray.origin, mouse_ray.direction)
             if closest_hit is not None:
                 snap_pos = self._snap_to_grid(closest_hit.position)
+
                 # Draw hover preview
                 self.scene.draw_debug_sphere(
                     snap_pos,
@@ -139,7 +158,7 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
 
             if self.selected_points:
                 world_positions = []
-                for point in self.selected_points:
+                for point in self.selected_points.values():
                     link_pos = tensor_to_array(point.link.get_pos())
                     link_quat = tensor_to_array(point.link.get_quat())
                     local_pos_arr = np.array(point.local_position, dtype=np.float32)

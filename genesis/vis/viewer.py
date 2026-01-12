@@ -260,7 +260,7 @@ class Viewer(RBC):
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
-    def register_keybinds(self, keybinds: tuple[Keybind]) -> None:
+    def register_keybinds(self, *keybinds: tuple[Keybind]) -> None:
         """
         Register a callback function to be called when a key is pressed.
 

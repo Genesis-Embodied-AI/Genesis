@@ -154,29 +154,17 @@ if __name__ == "__main__":
     from pyglet.window import key
 
     scene.viewer.register_keybinds(
-        (
-            Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback_func=move_forward),
-            Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback_func=move_backward),
-            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback_func=move_left),
-            Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback_func=move_right),
-            Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="move_up", callback_func=move_up),
-            Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="move_down", callback_func=move_down),
-            Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="rotate_ccw", callback_func=rotate_ccw),
-            Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="rotate_cw", callback_func=rotate_cw),
-            Keybind(key_code=key.U, key_action=KeyAction.HOLD, name="reset_scene", callback_func=reset_robot),
-            Keybind(
-                key_code=key.SPACE,
-                name="close_gripper",
-                callback_func=close_gripper,
-                key_action=KeyAction.PRESS,
-            ),
-            Keybind(
-                key_code=key.SPACE,
-                name="open_gripper",
-                callback_func=open_gripper,
-                key_action=KeyAction.RELEASE,
-            ),
-        )
+        Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=move_forward),
+        Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback=move_backward),
+        Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=move_left),
+        Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=move_right),
+        Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="move_up", callback=move_up),
+        Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="move_down", callback=move_down),
+        Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="rotate_ccw", callback=rotate_ccw),
+        Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="rotate_cw", callback=rotate_cw),
+        Keybind(key_code=key.U, key_action=KeyAction.HOLD, name="reset_scene", callback=reset_robot),
+        Keybind(key_code=key.SPACE, key_action=KeyAction.PRESS, name="close_gripper", callback=close_gripper),
+        Keybind(key_code=key.SPACE, key_action=KeyAction.RELEASE, name="open_gripper", callback=open_gripper),
     )
 
     ########################## run simulation ##########################

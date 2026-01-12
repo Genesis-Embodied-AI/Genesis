@@ -108,25 +108,17 @@ def main():
 
     scene.viewer.register_keybinds(
         (
-            Keybind(
-                key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback_func=controller.move_forward
-            ),
+            Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=controller.move_forward),
             Keybind(
                 key_code=key.DOWN,
                 key_action=KeyAction.HOLD,
                 name="move_backward",
-                callback_func=controller.move_backward,
+                callback=controller.move_backward,
             ),
-            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback_func=controller.move_left),
-            Keybind(
-                key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback_func=controller.move_right
-            ),
-            Keybind(
-                key_code=key.SPACE, key_action=KeyAction.HOLD, name="accelerate", callback_func=controller.accelerate
-            ),
-            Keybind(
-                key_code=key.LSHIFT, key_action=KeyAction.HOLD, name="decelerate", callback_func=controller.decelerate
-            ),
+            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=controller.move_left),
+            Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=controller.move_right),
+            Keybind(key_code=key.SPACE, key_action=KeyAction.HOLD, name="accelerate", callback=controller.accelerate),
+            Keybind(key_code=key.LSHIFT, key_action=KeyAction.HOLD, name="decelerate", callback=controller.decelerate),
         )
     )
 

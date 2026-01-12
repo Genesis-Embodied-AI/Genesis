@@ -27,7 +27,26 @@ class DefaultControlsPlugin(HelpTextPlugin):
 class MouseSpringPlugin(HelpTextPlugin):
     """
     Options for the interactive viewer plugin that allows mouse-based object manipulation.
+
+    When dragging a rigid link using the mouse, the applied impulse force is
+    -(spring_const * displacement / dt + spring_damping * velocity).
+
+    Parameters
+    ----------
+    spring_const : float
+        Spring constant for the mouse spring. Higher values result in a stiffer spring.
+    spring_damping : float
+        Damping constant for the mouse spring. Higher values result in more damping.
+    spring_color : tuple[float, float, float, float]
+        Color of the spring line when dragging an object.
+    normal_color : tuple[float, float, float, float]
+        Color of the normal vector displayed when hovering over a mesh surface.
     """
+
+    spring_const: float = 1.0
+    spring_damping: float = 1.0
+    spring_color: tuple[float, float, float, float] = (1.0, 0.2, 0.0, 1.0)
+    normal_color: tuple[float, float, float, float] = (1.0, 0.5, 0.0, 0.5)
 
 
 class MeshPointSelectorPlugin(HelpTextPlugin):
