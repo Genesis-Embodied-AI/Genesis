@@ -16,12 +16,6 @@ class ContactIsland:
         self.solver: "RigidSolver" = collider._solver
         self.collider: "Collider" = collider
 
-        struct_agg_list = ti.types.struct(
-            curr=gs.ti_int,
-            n=gs.ti_int,
-            start=gs.ti_int,
-        )
-
         self.contact_island_state = array_class.get_contact_island_state(self.solver, collider)
 
         self.ci_edges = self.contact_island_state.ci_edges

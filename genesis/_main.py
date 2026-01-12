@@ -104,7 +104,8 @@ def _start_gui(motors_name, motors_position_limit, motors_position, stop_event):
         root.quit()
 
     root = tk.Tk()
-    app = JointControlGUI(root, motors_name, motors_position_limit, motors_position)
+    # Store joint control gui to make sure it does not get garbage collected, just in case, because it may break tkinter
+    _app = JointControlGUI(root, motors_name, motors_position_limit, motors_position)
     root.protocol("WM_DELETE_WINDOW", on_close)
 
     def check_event():
@@ -209,8 +210,6 @@ def animate(filename_pattern, fps):
 def main():
     parser = argparse.ArgumentParser(description="Genesis CLI")
     subparsers = parser.add_subparsers(dest="command")
-
-    parser_clean = subparsers.add_parser("clean", help="Clean all the files cached by genesis and gstaichi")
 
     parser_view = subparsers.add_parser("view", help="Visualize a given asset (mesh/URDF/MJCF)")
     parser_view.add_argument("filename", type=str, help="File to visualize")
