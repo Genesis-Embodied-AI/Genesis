@@ -96,7 +96,7 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
         self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
         self.debug = False
         # Camera model attribute for BatchRenderer.build() compatibility
-        self.model = getattr(sensor._options, "model", "pinhole")
+        self.model = sensor._options.model
 
         # Initial pose
         pos = torch.tensor(sensor._options.pos, dtype=gs.tc_float, device=gs.device)

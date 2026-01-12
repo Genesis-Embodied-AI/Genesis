@@ -2,7 +2,7 @@
 Camera sensor options for Rasterizer, Raytracer, and Batch Renderer backends.
 """
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import genesis as gs
@@ -147,10 +147,13 @@ class BatchRendererCameraOptions(BaseCameraOptions):
 
     Parameters
     ----------
+    model : Literal["pinhole", "fisheye"]
+        Camera model. Default is "pinhole".
     use_rasterizer : bool
         Whether to use rasterizer mode. Default is True.
     """
 
+    model: Literal["pinhole", "fisheye"] = "pinhole"
     near: float = 0.01
     far: float = 100.0
     use_rasterizer: bool = True
