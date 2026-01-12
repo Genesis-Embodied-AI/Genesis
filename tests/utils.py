@@ -915,11 +915,13 @@ def check_mujoco_data_consistency(
             # In practice, this only makes a difference if frictionloss is enabled.
             gs_nactive = sum(gs_sim.rigid_solver.constraint_solver.active.to_numpy()[:gs_n_constraints, 0])
             mj_native = mj_sim.data.solver.nactive[mj_iter]
+            if not (gs_sim.rigid_solver.dofs_info.frictionloss.to_numpy() > gs.EPS).any():
+                assert mj_native == gs_nactive
 
             # FIXME: For some reason, mujoco is sometimes (seemingful) wrongly reporting 0...
             if mj_improvement > gs.EPS:
                 # Must relax tolerance because of compounding of errors.
-                assert_allclose(gs_improvement, mj_improvement, tol=tol * 1e3)
+                assert_allclose(gs_improvement, mj_improvement, tol=tol * 1e2)
 
         if qvel_prev is not None:
             gs_efc_vel = gs_jac @ qvel_prev
