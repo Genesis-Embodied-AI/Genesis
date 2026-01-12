@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import gstaichi as ti
 import numpy as np
@@ -7,15 +7,28 @@ import genesis as gs
 from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
 from genesis.utils.raycast import kernel_update_aabbs, ray_aabb_intersection, ray_triangle_intersection
 
-from .ray import RayHit
-from .vec3 import Vec3
-
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
     from genesis.engine.scene import Scene
 
 
-# Constant to indicate no hit occurred
 NO_HIT_DISTANCE = -1.0
+
+
+class Ray(NamedTuple):
+    """Ray represented as origin and direction tuples."""
+
+    origin: np.ndarray  # (3,)
+    direction: np.ndarray  # (3,)
+
+
+class RayHit(NamedTuple):
+    """Ray hit result with distance, position, normal, and optional geometry."""
+
+    distance: float
+    position: np.ndarray  # (3,)
+    normal: np.ndarray  # (3,)
+    geom: "RigidGeom | None"
 
 
 @ti.kernel
@@ -26,13 +39,13 @@ def kernel_cast_single_ray_for_viewer(
     faces_info: ti.template(),
     bvh_nodes: ti.template(),
     bvh_morton_codes: ti.template(),
-    ray_start: ti.types.ndarray(ndim=1),  # [3]
-    ray_direction: ti.types.ndarray(ndim=1),  # [3]
+    ray_start: ti.types.ndarray(ndim=1),  # (3,)
+    ray_direction: ti.types.ndarray(ndim=1),  # (3,)
     max_range: ti.f32,
     envs_idx: ti.types.ndarray(ndim=1),  # [n_envs]
     result: ti.types.ndarray(
         ndim=1
-    ),  # [9]: [distance, geom_idx, hit_x, hit_y, hit_z, normal_x, normal_y, normal_z, env_idx]
+    ),  # (9,): [distance, geom_idx, hit_x, hit_y, hit_z, normal_x, normal_y, normal_z, env_idx]
 ):
     """
     Taichi kernel for casting a single ray for viewer interaction.
@@ -175,9 +188,7 @@ class ViewerRaycaster:
         self.solver = scene.sim.rigid_solver
 
         # Store rendered_envs_idx as numpy array for Taichi kernel
-
-        # self.rendered_envs_idx = np.asarray(scene.vis_options.rendered_envs_idx or [0], dtype=gs.np_int)
-        self.rendered_envs_idx = np.asarray([0], dtype=gs.np_int)
+        self.rendered_envs_idx = np.asarray(scene.vis_options.rendered_envs_idx or [0], dtype=gs.np_int)
 
         # Build the BVH structure for rendered environments.
         n_faces = self.solver.faces_info.geom_idx.shape[0]
@@ -231,7 +242,7 @@ class ViewerRaycaster:
         ray_origin: np.ndarray,
         ray_direction: np.ndarray,
         max_range: float = 1000.0,
-    ) -> RayHit:
+    ) -> RayHit | None:
         """
         Cast a single ray against all rendered environments and return the closest hit.
 
@@ -246,14 +257,10 @@ class ViewerRaycaster:
 
         Returns
         -------
-        RayHit
+        RayHit | None
             A RayHit object containing distance, position, normal, and geom.
-            If no hit, returns RayHit.no_hit().
         """
         ray_direction = ray_direction / (np.linalg.norm(ray_direction) + gs.EPS)
-
-        ray_start_np = np.asarray(ray_origin, dtype=gs.np_float)
-        ray_dir_np = np.asarray(ray_direction, dtype=gs.np_float)
         result_np = np.zeros(9, dtype=gs.np_float)
 
         kernel_cast_single_ray_for_viewer(
@@ -263,20 +270,20 @@ class ViewerRaycaster:
             faces_info=self.solver.faces_info,
             bvh_nodes=self.bvh.nodes,
             bvh_morton_codes=self.bvh.morton_codes,
-            ray_start=ray_start_np,
-            ray_direction=ray_dir_np,
+            ray_start=np.ascontiguousarray(ray_origin, dtype=gs.np_float),
+            ray_direction=np.ascontiguousarray(ray_direction, dtype=gs.np_float),
             max_range=max_range,
             envs_idx=self.rendered_envs_idx,
             result=result_np,
         )
 
         distance = float(result_np[0])
-        if distance < NO_HIT_DISTANCE + gs.EPS:  # NO_HIT_DISTANCE
-            return RayHit.no_hit()
+        if distance < NO_HIT_DISTANCE + gs.EPS:
+            return None
 
         geom_idx = int(result_np[1])
-        position = Vec3(result_np[2:5])
-        normal = Vec3(result_np[5:8])
+        position = result_np[2:5]
+        normal = result_np[5:8]
         geom = self.solver.geoms[geom_idx]
 
-        return RayHit(distance=distance, position=position, normal=normal, geom=geom)
+        return RayHit(distance, position, normal, geom)

@@ -350,7 +350,7 @@ class Viewer(pyglet.window.Window):
                 f"Viewer plugin type {type(plugin_options).__name__} is not registered. "
                 f"Available plugins: {list(VIEWER_PLUGIN_MAP.keys())}"
             )
-        self.interaction_plugin = plugin_cls(self, plugin_options, self._camera_node, context.scene, viewport_size)
+        self.plugin = plugin_cls(self, plugin_options, self._camera_node, context.scene)
 
         #######################################################################
         # Initialize OpenGL context and renderer
@@ -545,7 +545,7 @@ class Viewer(pyglet.window.Window):
         # Do not consider the viewer as active anymore
         self._is_active = False
 
-        self.interaction_plugin.on_close()
+        self.plugin.on_close()
 
         # Remove our camera and restore the prior one
         try:
@@ -690,7 +690,7 @@ class Viewer(pyglet.window.Window):
             self.clear()
             self._render()
 
-            self.interaction_plugin.on_draw()
+            self.plugin.on_draw()
 
         if self.viewer_flags["caption"] is not None:
             for caption in self.viewer_flags["caption"]:
@@ -718,19 +718,19 @@ class Viewer(pyglet.window.Window):
         self._trackball.resize(self._viewport_size)
         self._renderer.viewport_width = self._viewport_size[0]
         self._renderer.viewport_height = self._viewport_size[1]
-        self.interaction_plugin.on_resize(width, height)
+        self.plugin.on_resize(width, height)
         self.on_draw()
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with no buttons held down."""
-        return self.interaction_plugin.on_mouse_motion(x, y, dx, dy)
+        return self.plugin.on_mouse_motion(x, y, dx, dy)
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record an initial mouse press."""
         # Stop animating while using the mouse
         self.viewer_flags["mouse_pressed"] = True
 
-        result = self.interaction_plugin.on_mouse_press(x, y, button, modifiers)
+        result = self.plugin.on_mouse_press(x, y, button, modifiers)
         if result is EVENT_HANDLED:
             return result
 
@@ -754,7 +754,7 @@ class Viewer(pyglet.window.Window):
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """The mouse was moved with one or more buttons held down."""
-        result = self.interaction_plugin.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
+        result = self.plugin.on_mouse_drag(x, y, dx, dy, buttons, modifiers)
         if result is EVENT_HANDLED:
             return result
 
@@ -764,11 +764,11 @@ class Viewer(pyglet.window.Window):
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a mouse release."""
         self.viewer_flags["mouse_pressed"] = False
-        return self.interaction_plugin.on_mouse_release(x, y, button, modifiers)
+        return self.plugin.on_mouse_release(x, y, button, modifiers)
 
     def on_mouse_scroll(self, x, y, dx, dy) -> EVENT_HANDLE_STATE:
         """Record a mouse scroll."""
-        if self.interaction_plugin.on_mouse_scroll(x, y, dx, dy) == EVENT_HANDLED:
+        if self.plugin.on_mouse_scroll(x, y, dx, dy) == EVENT_HANDLED:
             return EVENT_HANDLED
 
         if self.viewer_flags["use_perspective_cam"]:
@@ -801,14 +801,14 @@ class Viewer(pyglet.window.Window):
         self._held_keys[(symbol, modifiers)] = True
 
         self._call_keybind_callback(symbol, modifiers, KeyAction.PRESS)
-        return self.interaction_plugin.on_key_press(symbol, modifiers)
+        return self.plugin.on_key_press(symbol, modifiers)
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key release."""
         self._held_keys.pop((symbol, modifiers), None)
 
         self._call_keybind_callback(symbol, modifiers, KeyAction.RELEASE)
-        return self.interaction_plugin.on_key_release(symbol, modifiers)
+        return self.plugin.on_key_release(symbol, modifiers)
 
     def on_deactivate(self) -> EVENT_HANDLE_STATE:
         """Clear held keys when window loses focus."""
@@ -1180,7 +1180,7 @@ class Viewer(pyglet.window.Window):
         # Call HOLD callbacks for all currently held keys
         for symbol, modifiers in list(self._held_keys.keys()):
             self._call_keybind_callback(symbol, modifiers, KeyAction.HOLD)
-        self.interaction_plugin.update_on_sim_step()
+        self.plugin.update_on_sim_step()
 
     def _compute_initial_camera_pose(self):
         centroid = self.scene.centroid

@@ -26,8 +26,8 @@ if __name__ == "__main__":
             radius=0.1,
         ),
     )
-    for i in range(20):
-        angle = i * (2 * math.pi / 20)
+    for i in range(6):
+        angle = i * (2 * math.pi / 6)
         radius = 0.5 + i * 0.1
         cube = scene.add_entity(
             morph=gs.morphs.Box(

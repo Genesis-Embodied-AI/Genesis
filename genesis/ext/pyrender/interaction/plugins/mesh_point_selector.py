@@ -1,12 +1,15 @@
 import csv
 from typing import TYPE_CHECKING, NamedTuple
 
+import numpy as np
 from typing_extensions import override
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.options.viewer_plugins import MeshPointSelectorPlugin as MeshPointSelectorPluginOptions
+from genesis.utils.misc import tensor_to_array
 
-from ..utils import Pose, Ray, Vec3, ViewerRaycaster
+from ..raycaster import Ray, ViewerRaycaster
 from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, register_viewer_plugin
 from .help_text import HelpTextPlugin
 
@@ -24,15 +27,15 @@ class SelectedPoint(NamedTuple):
     ----------
     link : RigidLink
         The rigid link that the point belongs to.
-    local_position : Vec3
+    local_position : np.ndarray, shape (3,)
         The position of the point in the link's local coordinate frame.
-    local_normal : Vec3
+    local_normal : np.ndarray, shape (3,)
         The surface normal at the point in the link's local coordinate frame.
     """
 
     link: "RigidLink"
-    local_position: Vec3
-    local_normal: Vec3
+    local_position: np.ndarray  # shape (3,)
+    local_normal: np.ndarray  # shape (3,)
 
 
 @register_viewer_plugin(MeshPointSelectorPluginOptions)
@@ -48,38 +51,30 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
         options: MeshPointSelectorPluginOptions,
         camera: "Node",
         scene: "Scene",
-        viewport_size: tuple[int, int],
     ) -> None:
-        super().__init__(viewer, options, camera, scene, viewport_size)
-        self.prev_mouse_pos: tuple[int, int] = (viewport_size[0] // 2, viewport_size[1] // 2)
+        super().__init__(viewer, options, camera, scene)
 
-        # List of selected points with link, local position, and local normal
+        self.prev_mouse_pos: tuple[int, int] = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)
         self.selected_points: list[SelectedPoint] = []
-
         self.raycaster: ViewerRaycaster = ViewerRaycaster(self.scene)
 
-    def _snap_to_grid(self, position: Vec3) -> Vec3:
+    def _snap_to_grid(self, point: np.ndarray) -> np.ndarray:
         """
-        Snap a position to the grid based on grid_snap settings.
+        Snap a point to the grid based on grid_snap settings.
 
         Parameters
         ----------
-        position : Vec3
-            The position to snap.
+        point : np.ndarray, shape (3,)
+            The point to snap.
 
         Returns
         -------
-        Vec3
-            The snapped position.
+        np.ndarray, shape (3,)
+            The point snapped to the grid.
         """
-        snap_x, snap_y, snap_z = self.options.grid_snap
-
+        grid_snap = np.array(self.options.grid_snap)
         # Snap each axis if the snap value is non-negative
-        x = round(position.x / snap_x) * snap_x if snap_x >= 0 else position.x
-        y = round(position.y / snap_y) * snap_y if snap_y >= 0 else position.y
-        z = round(position.z / snap_z) * snap_z if snap_z >= 0 else position.z
-
-        return Vec3.from_xyz(x, y, z)
+        return np.where(grid_snap >= 0, np.round(point / grid_snap) * grid_snap, point)
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -92,16 +87,19 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
         super().on_mouse_press(x, y, button, modifiers)
         if button == 1:  # left mouse button
             ray = self._screen_position_to_ray(x, y)
-            ray_hit = self.raycaster.cast_ray(ray.origin.v, ray.direction.v)
+            ray_hit = self.raycaster.cast_ray(ray.origin, ray.direction)
 
-            if ray_hit.is_hit and ray_hit.geom:
+            if ray_hit is not None and ray_hit.geom:
                 link = ray_hit.geom.link
                 world_pos = ray_hit.position
                 world_normal = ray_hit.normal
 
-                pose: Pose = Pose.from_link(link)
-                local_pos = pose.inverse_transform_point(world_pos)
-                local_normal = pose.inverse_transform_direction(world_normal)
+                # Get link pose
+                link_pos = tensor_to_array(link.get_pos())
+                link_quat = tensor_to_array(link.get_quat())
+
+                local_pos = gu.inv_transform_by_trans_quat(world_pos, link_pos, link_quat)
+                local_normal = gu.inv_transform_by_quat(world_normal, link_quat)
 
                 # Apply grid snapping to local position
                 local_pos = self._snap_to_grid(local_pos)
@@ -123,18 +121,18 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
             self.scene.clear_debug_objects()
             mouse_ray: Ray = self._screen_position_to_ray(*self.prev_mouse_pos)
 
-            closest_hit = self.raycaster.cast_ray(mouse_ray.origin.v, mouse_ray.direction.v)
-            if closest_hit.is_hit:
+            closest_hit = self.raycaster.cast_ray(mouse_ray.origin, mouse_ray.direction)
+            if closest_hit is not None:
                 snap_pos = self._snap_to_grid(closest_hit.position)
                 # Draw hover preview
                 self.scene.draw_debug_sphere(
-                    snap_pos.v,
+                    snap_pos,
                     self.options.sphere_radius,
                     self.options.hover_color,
                 )
                 self.scene.draw_debug_arrow(
-                    snap_pos.v,
-                    closest_hit.normal.v * 0.1,
+                    snap_pos,
+                    tuple(n * 0.1 for n in closest_hit.normal),
                     self.options.sphere_radius / 2,
                     self.options.hover_color,
                 )
@@ -142,9 +140,11 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
             if self.selected_points:
                 world_positions = []
                 for point in self.selected_points:
-                    pose = Pose.from_link(point.link)
-                    current_world_pos = pose.transform_point(point.local_position)
-                    world_positions.append(current_world_pos.v)
+                    link_pos = tensor_to_array(point.link.get_pos())
+                    link_quat = tensor_to_array(point.link.get_quat())
+                    local_pos_arr = np.array(point.local_position, dtype=np.float32)
+                    current_world_pos = gu.transform_by_trans_quat(local_pos_arr, link_pos, link_quat)
+                    world_positions.append(current_world_pos)
 
                 if len(world_positions) == 1:
                     self.scene.draw_debug_sphere(
@@ -153,8 +153,6 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
                         self.options.sphere_color,
                     )
                 else:
-                    import numpy as np
-
                     positions_array = np.array(world_positions)
                     self.scene.draw_debug_spheres(
                         positions_array, self.options.sphere_radius, self.options.sphere_color
@@ -191,12 +189,12 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
                         [
                             i,
                             point.link.idx,
-                            point.local_position.x,
-                            point.local_position.y,
-                            point.local_position.z,
-                            point.local_normal.x,
-                            point.local_normal.y,
-                            point.local_normal.z,
+                            point.local_position[0],
+                            point.local_position[1],
+                            point.local_position[2],
+                            point.local_normal[0],
+                            point.local_normal[1],
+                            point.local_normal[2],
                         ]
                     )
 
