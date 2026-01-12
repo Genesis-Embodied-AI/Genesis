@@ -566,9 +566,6 @@ def default_func_instantiate_soft_from_rigid(
         euler = gu.quat_to_xyz(quat, rpy=True, degrees=True)
 
         # can also do link.init_verts here and it seems to have more indices than geom.init_verts (but there is no idx_offset_vert)
-        lower = geom.init_verts.min(axis=0)
-        upper = geom.init_verts.max(axis=0)
-        center = (upper + lower) / 2.0
         verts = geom.init_verts
         assert hasattr(geom, "init_normals")
         inner_mesh = trimesh.Trimesh(
@@ -582,7 +579,7 @@ def default_func_instantiate_soft_from_rigid(
             faces=geom.init_faces,
         )
         # mesh = trimesh.boolean.difference([outer_mesh, inner_mesh]) # wrap around the rigid link
-        mesh = outer_mesh  # HACK to avoid `ValueError: No backends available for boolean operations!`
+        mesh = outer_mesh  # FIXME: hack to avoid `ValueError: No backends available for boolean operations!`
 
         meshes.append(mesh)
         trans_local_to_global.append(trans)

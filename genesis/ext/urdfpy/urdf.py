@@ -672,8 +672,8 @@ class Mesh(URDFType):
         return Mesh(**kwargs)
 
     def _to_xml(self, parent, path):
-        # Get the filename
-        fn = get_filename(path, self.filename, makedirs=True)
+        # Make sure that parent directory exists
+        get_filename(path, self.filename, makedirs=True)
 
         # Export the meshes as a single file
         # meshes = self.meshes

@@ -1286,7 +1286,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
 
     sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
     assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
-    assert_allclose(sphere.get_AABB(), sphere.geoms[0].get_AABB(), tol=tol)
+    assert_allclose(sphere_aabb, sphere_base_aabb, tol=tol)
 
     # Simulate for a while to check if the dynamic object is colliding with the static one
     if batch_fixed_verts:

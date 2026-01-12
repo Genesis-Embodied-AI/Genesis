@@ -1875,6 +1875,7 @@ def func_update_constraint(
     cost_i = gs.ti_float(0.0)
     gauss_i = gs.ti_float(0.0)
 
+    # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active
     for i_c in range(constraint_state.n_constraints[i_b]):
         if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
