@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class SelectedPoint(NamedTuple):
     """
     Represents a selected point on a rigid mesh surface.
-    
+
     Attributes
     ----------
     link : RigidLink
@@ -29,6 +29,7 @@ class SelectedPoint(NamedTuple):
     local_normal : Vec3
         The surface normal at the point in the link's local coordinate frame.
     """
+
     link: "RigidLink"
     local_position: Vec3
     local_normal: Vec3
@@ -60,24 +61,24 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
     def _snap_to_grid(self, position: Vec3) -> Vec3:
         """
         Snap a position to the grid based on grid_snap settings.
-        
+
         Parameters
         ----------
         position : Vec3
             The position to snap.
-            
+
         Returns
         -------
         Vec3
             The snapped position.
         """
         snap_x, snap_y, snap_z = self.options.grid_snap
-        
+
         # Snap each axis if the snap value is non-negative
         x = round(position.x / snap_x) * snap_x if snap_x >= 0 else position.x
         y = round(position.y / snap_y) * snap_y if snap_y >= 0 else position.y
         z = round(position.z / snap_z) * snap_z if snap_z >= 0 else position.z
-            
+
         return Vec3.from_xyz(x, y, z)
 
     @override
@@ -97,7 +98,7 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
                 link = ray_hit.geom.link
                 world_pos = ray_hit.position
                 world_normal = ray_hit.normal
-                
+
                 pose: Pose = Pose.from_link(link)
                 local_pos = pose.inverse_transform_point(world_pos)
                 local_normal = pose.inverse_transform_direction(world_normal)
@@ -105,11 +106,7 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
                 # Apply grid snapping to local position
                 local_pos = self._snap_to_grid(local_pos)
 
-                selected_point = SelectedPoint(
-                    link=link,
-                    local_position=local_pos,
-                    local_normal=local_normal
-                )
+                selected_point = SelectedPoint(link=link, local_position=local_pos, local_normal=local_normal)
                 self.selected_points.append(selected_point)
 
                 return EVENT_HANDLED
@@ -170,36 +167,42 @@ class MeshPointSelectorPlugin(HelpTextPlugin):
         if not self.selected_points:
             print("[MeshPointSelectorPlugin] No points selected.")
             return
-        
+
         output_file = self.options.output_file
         try:
-            with open(output_file, 'w', newline='') as csvfile:
+            with open(output_file, "w", newline="") as csvfile:
                 writer = csv.writer(csvfile)
-                
-                writer.writerow([
-                    'point_idx',
-                    'link_idx',
-                    'local_pos_x',
-                    'local_pos_y',
-                    'local_pos_z',
-                    'local_normal_x',
-                    'local_normal_y',
-                    'local_normal_z'
-                ])
-                
-                for i, point in enumerate(self.selected_points, 1):
-                    writer.writerow([
-                        i,
-                        point.link.idx,
-                        point.local_position.x,
-                        point.local_position.y,
-                        point.local_position.z,
-                        point.local_normal.x,
-                        point.local_normal.y,
-                        point.local_normal.z,
-                    ])
 
-            gs.logger.info(f"[MeshPointSelectorPlugin] Wrote {len(self.selected_points)} selected points to '{output_file}'")
+                writer.writerow(
+                    [
+                        "point_idx",
+                        "link_idx",
+                        "local_pos_x",
+                        "local_pos_y",
+                        "local_pos_z",
+                        "local_normal_x",
+                        "local_normal_y",
+                        "local_normal_z",
+                    ]
+                )
+
+                for i, point in enumerate(self.selected_points, 1):
+                    writer.writerow(
+                        [
+                            i,
+                            point.link.idx,
+                            point.local_position.x,
+                            point.local_position.y,
+                            point.local_position.z,
+                            point.local_normal.x,
+                            point.local_normal.y,
+                            point.local_normal.z,
+                        ]
+                    )
+
+            gs.logger.info(
+                f"[MeshPointSelectorPlugin] Wrote {len(self.selected_points)} selected points to '{output_file}'"
+            )
 
         except Exception as e:
             gs.logger.error(f"[MeshPointSelectorPlugin] Error writing to '{output_file}': {e}")
