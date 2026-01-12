@@ -63,7 +63,6 @@ def _sanitize_rays_to_tensor(rays: Sequence[float]) -> torch.Tensor:
 
 
 class RaycastCustomPattern(RaycastPattern):
-
     def __init__(self, ray_dirs: Sequence[float], ray_starts: Sequence[float]):
         self._ray_dirs = _sanitize_rays_to_tensor(ray_dirs)
         self._ray_starts = _sanitize_rays_to_tensor(ray_starts)

@@ -3,7 +3,6 @@ import math
 import genesis as gs
 
 if __name__ == "__main__":
-
     gs.init(backend=gs.gpu)
 
     scene = gs.Scene(

@@ -339,7 +339,7 @@ class Viewer(pyglet.window.Window):
 
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
-        
+
         # Setup viewer interaction
         if plugin_options is None:
             plugin_options = gs.options.viewer_plugins.ViewerDefaultControls()
@@ -350,9 +350,7 @@ class Viewer(pyglet.window.Window):
                 f"Viewer plugin type {type(plugin_options).__name__} is not registered. "
                 f"Available plugins: {list(VIEWER_PLUGIN_MAP.keys())}"
             )
-        self.interaction_plugin = plugin_cls(
-            self, plugin_options, self._camera_node, context.scene, viewport_size
-        )
+        self.interaction_plugin = plugin_cls(self, plugin_options, self._camera_node, context.scene, viewport_size)
 
         #######################################################################
         # Initialize OpenGL context and renderer
@@ -485,7 +483,7 @@ class Viewer(pyglet.window.Window):
     @viewer_flags.setter
     def viewer_flags(self, value):
         self._viewer_flags = value
-    
+
     def register_keybinds(self, keybinds: tuple[Keybind]) -> None:
         """
         Add a key handler to call a function when the given key is pressed.
@@ -497,7 +495,6 @@ class Viewer(pyglet.window.Window):
         """
         for keybind in keybinds:
             self._keybindings.register(keybind)
-    
 
     def close(self):
         """Close the viewer.
@@ -790,9 +787,9 @@ class Viewer(pyglet.window.Window):
             ymag = max(c.ymag * sf, 1e-8 * c.ymag / c.xmag)
             c.xmag = xmag
             c.ymag = ymag
-        
+
         return EVENT_HANDLED
-    
+
     def _call_keybind_callback(self, symbol: int, modifiers: int, action: KeyAction) -> None:
         """Call registered keybind callbacks for the given key event."""
         keybind: Keybind = self._keybindings.get(symbol, modifiers, action)
@@ -1128,7 +1125,7 @@ class Viewer(pyglet.window.Window):
         # The viewer can be considered as fully initialized at this point
         if not self._initialized_event.is_set():
             self._initialized_event.set()
- 
+
         if auto_refresh:
             while self._is_active:
                 try:
@@ -1181,7 +1178,7 @@ class Viewer(pyglet.window.Window):
 
     def update_on_sim_step(self):
         # Call HOLD callbacks for all currently held keys
-        for (symbol, modifiers) in list(self._held_keys.keys()):
+        for symbol, modifiers in list(self._held_keys.keys()):
             self._call_keybind_callback(symbol, modifiers, KeyAction.HOLD)
         self.interaction_plugin.update_on_sim_step()
 

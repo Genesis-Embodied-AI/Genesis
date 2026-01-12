@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 MOUSE_SPRING_POSITION_CORRECTION_FACTOR = 1.0
 MOUSE_SPRING_VELOCITY_CORRECTION_FACTOR = 1.0
 
+
 class MouseSpring:
     def __init__(self) -> None:
         self.held_link: "RigidLink | None" = None
@@ -55,7 +56,9 @@ class MouseSpring:
         link_T_principal: Pose = Pose(Vec3.from_arraylike(link.inertial_pos), Quat.from_arraylike(link.inertial_quat))
         world_T_principal: Pose = link_pose * link_T_principal
 
-        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(self.held_point_in_local)   # for non-spherical inertia
+        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(
+            self.held_point_in_local
+        )  # for non-spherical inertia
         arm_in_world: Vec3 = world_T_principal.rot * arm_in_principal  # for spherical inertia
 
         pos_err_v: Vec3 = control_point - held_point_in_world
@@ -69,7 +72,7 @@ class MouseSpring:
         total_impulse: Vec3 = Vec3.zero()
         total_torque_impulse: Vec3 = Vec3.zero()
 
-        for i in range(3*4):
+        for i in range(3 * 4):
             body_point_vel: Vec3 = lin_vel + ang_vel.cross(arm_in_world)
             vel_err_v: Vec3 = Vec3.zero() - body_point_vel
 
@@ -93,8 +96,8 @@ class MouseSpring:
         total_torque = total_torque_impulse * inv_dt
         force_tensor: torch.Tensor = total_force.as_tensor()[None]
         torque_tensor: torch.Tensor = total_torque.as_tensor()[None]
-        link.solver.apply_links_external_force(force_tensor, (link.idx,), ref='link_com', local=False)
-        link.solver.apply_links_external_torque(torque_tensor, (link.idx,), ref='link_com', local=False)
+        link.solver.apply_links_external_force(force_tensor, (link.idx,), ref="link_com", local=False)
+        link.solver.apply_links_external_torque(torque_tensor, (link.idx,), ref="link_com", local=False)
 
     @property
     def is_attached(self) -> bool:
@@ -145,9 +148,10 @@ class MouseSpringPlugin(ViewerPlugin):
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         super().on_mouse_press(x, y, button, modifiers)
-        if button == 1: # left mouse button
-
-            ray_hit = self.raycaster.cast_ray(self._screen_position_to_ray(x, y).origin.v, self._screen_position_to_ray(x, y).direction.v)
+        if button == 1:  # left mouse button
+            ray_hit = self.raycaster.cast_ray(
+                self._screen_position_to_ray(x, y).origin.v, self._screen_position_to_ray(x, y).direction.v
+            )
             with self.lock:
                 if ray_hit.geom:
                     self.picked_link = ray_hit.geom.link
@@ -228,7 +232,6 @@ class MouseSpringPlugin(ViewerPlugin):
                         self._draw_arrow(closest_hit.position, 0.25 * closest_hit.normal, (0, 1, 0, 1))
                     if closest_hit.geom:
                         self._draw_entity_unrotated_obb(closest_hit.geom)
-
 
     def _get_box_obb(self, box_entity: "RigidEntity") -> OBB:
         box: gs.morphs.Box = box_entity.morph

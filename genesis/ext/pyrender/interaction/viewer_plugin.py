@@ -20,31 +20,35 @@ VIEWER_PLUGIN_MAP: dict[Type["ViewerPluginOptions"], Type["ViewerPlugin"]] = {}
 def register_viewer_plugin(options_cls: Type["ViewerPluginOptions"]):
     """
     Decorator to register a viewer plugin class with its corresponding options class.
-    
+
     Parameters
     ----------
     options_cls : Type[ViewerPluginOptions]
         The options class that configures this viewer plugin.
-        
+
     Returns
     -------
     Callable
         The decorator function that registers the plugin class.
-        
+
     Example
     -------
     @register_viewer_plugin(ViewerInteractionOptions)
     class ViewerInteraction(ViewerInteractionBase):
         ...
     """
+
     def _impl(plugin_cls: Type["ViewerPlugin"]):
         VIEWER_PLUGIN_MAP[options_cls] = plugin_cls
         return plugin_cls
+
     return _impl
+
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 
-class ViewerPlugin():
+
+class ViewerPlugin:
     """
     Base class for handling pyglet.window.Window events.
     """
@@ -59,8 +63,8 @@ class ViewerPlugin():
     ):
         self.viewer = viewer
         self.options: "ViewerPluginOptions" = options
-        self.camera: 'Node' = camera
-        self.scene: 'Scene' = scene
+        self.camera: "Node" = camera
+        self.scene: "Scene" = scene
         self.viewport_size: tuple[int, int] = viewport_size
 
         self.camera_yfov: float = camera.camera.yfov
