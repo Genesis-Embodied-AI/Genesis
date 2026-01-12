@@ -1,10 +1,9 @@
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
 from pydantic import Field
 
 import genesis as gs
-from genesis.engine.scene import Scene
 
 from ..options import Options
 from .raycaster import DepthCameraPattern, RaycastPattern
@@ -13,6 +12,9 @@ Tuple3FType = tuple[float, float, float]
 MaybeTuple3FType = float | Tuple3FType
 Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
+
+if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
 
 
 class SensorOptions(Options):
@@ -71,7 +73,7 @@ class RigidSensorOptionsMixin:
     pos_offset: Tuple3FType = (0.0, 0.0, 0.0)
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
-    def validate(self, scene: Scene):
+    def validate(self, scene: "Scene"):
         from genesis.engine.entities import RigidEntity
 
         super().validate(scene)
