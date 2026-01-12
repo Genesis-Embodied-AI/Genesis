@@ -50,7 +50,7 @@ def main():
             friction=1.0,
         ),
     )
-    scene.add_entity(
+    sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
             radius=0.02,
             pos=(0.65, 0.0, 0.02),

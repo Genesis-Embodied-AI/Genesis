@@ -32,7 +32,7 @@ def main():
 
     ########################## entities ##########################
     # floor
-    scene.add_entity(
+    plane = scene.add_entity(
         morph=gs.morphs.Plane(
             pos=(0.0, 0.0, -0.5),
         ),

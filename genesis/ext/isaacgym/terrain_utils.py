@@ -135,9 +135,9 @@ def pyramid_sloped_terrain(terrain, slope=1, platform_size=1.0):
 
     platform_size = int(platform_size / terrain.horizontal_scale / 2)
     x1 = terrain.width // 2 - platform_size
-    terrain.width // 2 + platform_size
+    x2 = terrain.width // 2 + platform_size
     y1 = terrain.length // 2 - platform_size
-    terrain.length // 2 + platform_size
+    y2 = terrain.length // 2 + platform_size
 
     min_h = min(terrain.height_field_raw[x1, y1], 0)
     max_h = max(terrain.height_field_raw[x1, y1], 0)

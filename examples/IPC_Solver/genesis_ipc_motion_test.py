@@ -134,7 +134,7 @@ def main():
                                     fem_vertex_masses = np.ones(n_vertices) * (fem_total_mass / n_vertices)
 
                                 break
-                    except Exception:
+                    except Exception as e:
                         continue
 
         # Compute FEM linear momentum using finite difference on vertex positions

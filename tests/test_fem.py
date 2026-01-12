@@ -205,7 +205,7 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
             model=material_model,
         ),
     )
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(BOX_SIZE * 2, BOX_SIZE * 2, BOX_SIZE * 2),
             pos=BOX_POS,
@@ -284,7 +284,7 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(0.0, 0.0, SPHERE_RADIUS),
             radius=SPHERE_RADIUS,
@@ -295,7 +295,7 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
         ),
     )
     asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/meshes/cube8.obj",
             pos=(0.0, 0.0, 2 * SPHERE_RADIUS + BOX_SIZE),

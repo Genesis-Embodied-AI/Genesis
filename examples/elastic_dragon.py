@@ -34,7 +34,7 @@ def main():
 
     ########################## entities ##########################
 
-    scene.add_entity(
+    bunny = scene.add_entity(
         material=mat_elastic,
         morph=gs.morphs.Mesh(
             file="meshes/dragon/dragon.obj",

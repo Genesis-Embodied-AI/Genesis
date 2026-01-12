@@ -473,7 +473,7 @@ def test_dynamic_weld(show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     cube = scene.add_entity(
@@ -898,7 +898,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         ),
         show_viewer=show_viewer,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     for n in range(5**3):
@@ -1064,7 +1064,7 @@ def test_robot_scaling_primitive_collision(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     asset_path = get_hf_dataset(pattern="cross.xml")
@@ -1100,7 +1100,7 @@ def test_info_batching(tol):
         show_viewer=False,
         show_FPS=False,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     robot = scene.add_entity(
@@ -1224,7 +1224,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     robot = scene.add_entity(
@@ -1280,7 +1280,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     if show_viewer:
         scene.visualizer.update()
 
-    sphere_aabb, _sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
+    sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
     assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
     assert_allclose(sphere.get_AABB(), sphere.geoms[0].get_AABB(), tol=tol)
 
@@ -1420,7 +1420,7 @@ def test_multilink_inverse_kinematics(show_viewer):
             file="urdf/shadow_hand/shadow_hand.urdf",
         ),
     )
-    scene.add_entity(
+    cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.05, 0.05, 0.05),
             pos=(0.0, 0.2, 0.05),
@@ -1635,7 +1635,7 @@ def test_contact_forces(show_viewer, tol):
         show_FPS=False,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
@@ -1709,7 +1709,7 @@ def test_apply_external_forces(xml_path, show_viewer):
         show_FPS=False,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     robot = scene.add_entity(
@@ -1791,7 +1791,7 @@ def test_mass_mat(show_viewer, tol):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     franka1 = scene.add_entity(
@@ -1910,7 +1910,7 @@ def test_nonconvex_collision(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
             scale=5.0,
@@ -1957,7 +1957,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         show_FPS=False,
     )
     asset_path = get_hf_dataset(pattern="work_table.glb")
-    scene.add_entity(
+    table = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
@@ -2030,7 +2030,7 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
         ),
         vis_mode="collision",
     )
-    scene.add_entity(
+    tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
             scale=5.0,
@@ -2334,7 +2334,7 @@ def test_mesh_to_heightfield(tmp_path, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(
+    terrain_heightfield = scene.add_entity(
         morph=gs.morphs.Terrain(
             horizontal_scale=horizontal_scale,
             vertical_scale=1.0,
@@ -2649,7 +2649,7 @@ def test_urdf_mimic(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-    scene.add_entity(
+    hand = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/panda_bullet/hand.urdf",
             fixed=True,
@@ -2830,7 +2830,7 @@ def test_drone_advanced(show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(gs.morphs.Plane())
+    plane = scene.add_entity(gs.morphs.Plane())
     asset_path = get_hf_dataset(pattern="drone_sus/*")
     drones = []
     for offset, merge_fixed_links in ((-0.3, False), (0.3, True)):
@@ -2945,7 +2945,7 @@ def test_cholesky_tiling(monkeypatch, tol):
             show_FPS=False,
         )
         scene.add_entity(gs.morphs.Plane())
-        scene.add_entity(
+        gs_robot = scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/go2/urdf/go2.urdf",
             ),
@@ -3435,7 +3435,7 @@ def test_contype_conaffinity(show_viewer, tol):
         show_viewer=show_viewer,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(
             pos=(0.0, 0.0, 0.0),
         )
@@ -3503,7 +3503,7 @@ def test_mesh_primitive_COM(show_viewer, tol):
         ),
         show_viewer=show_viewer,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     bunny = scene.add_entity(

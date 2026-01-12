@@ -38,7 +38,7 @@ def test_differentiable_push(show_viewer):
         show_viewer=show_viewer,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/plane/plane.urdf",
             fixed=True,

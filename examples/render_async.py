@@ -33,8 +33,8 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(gs.morphs.Plane())
-    scene.add_entity(
+    plane = scene.add_entity(gs.morphs.Plane())
+    r0 = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 

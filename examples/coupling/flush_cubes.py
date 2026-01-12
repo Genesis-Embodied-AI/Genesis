@@ -37,8 +37,8 @@ def main():
         ),
     )
 
-    scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_entity(
+    plane = scene.add_entity(morph=gs.morphs.Plane())
+    cube0 = scene.add_entity(
         material=gs.materials.MPM.Elastic(rho=400),
         morph=gs.morphs.Box(
             pos=(0.0, 0.25, 0.4),
@@ -50,7 +50,7 @@ def main():
         ),
     )
 
-    scene.add_entity(
+    cube0 = scene.add_entity(
         material=gs.materials.MPM.Elastic(rho=400),
         morph=gs.morphs.Sphere(
             pos=(0.15, 0.45, 0.5),
@@ -62,7 +62,7 @@ def main():
         ),
     )
 
-    scene.add_entity(
+    cube0 = scene.add_entity(
         material=gs.materials.MPM.Elastic(rho=400),
         morph=gs.morphs.Cylinder(
             pos=(-0.15, 0.45, 0.6),

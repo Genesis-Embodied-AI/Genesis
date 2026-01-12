@@ -14,7 +14,7 @@ def main_equality_connect(args):
         ),
         show_viewer=args.vis,
     )
-    scene.add_entity(
+    franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/four_bar_linkage.xml",
         ),
@@ -31,7 +31,7 @@ def main_equality_weld(args):
         show_viewer=args.vis,
     )
     ########################## entities ##########################
-    scene.add_entity(
+    robot1 = scene.add_entity(
         gs.morphs.MJCF(file="xml/four_bar_linkage_weld.xml"),
     )
 

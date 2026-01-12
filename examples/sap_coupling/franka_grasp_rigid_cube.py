@@ -45,7 +45,7 @@ def main():
             friction=1.0,
         ),
     )
-    scene.add_entity(
+    cube = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),

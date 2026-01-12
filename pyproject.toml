@@ -147,6 +147,7 @@ line-length = 120
 ignore = [
     "F405", # undefined-local-with-import-star-usage
     "F401", # unused-import
+    "F841", # unused-variable
     "E741", # ambiguous-variable-name
     "E402", # module-import-not-at-top-of-file
     "F403", # undefined-local-with-import-star

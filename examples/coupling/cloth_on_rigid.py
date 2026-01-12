@@ -38,12 +38,12 @@ def main():
         coup_friction=0.0,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         morph=gs.morphs.Plane(),
         material=frictionless_rigid,
     )
 
-    scene.add_entity(
+    obj = scene.add_entity(
         morph=gs.morphs.Sphere(
             radius=0.2,
             pos=(0.0, 0.0, 0.0),
@@ -52,7 +52,7 @@ def main():
         material=frictionless_rigid,
     )
 
-    scene.add_entity(
+    cloth = scene.add_entity(
         material=gs.materials.PBD.Cloth(),
         morph=gs.morphs.Mesh(
             file="meshes/cloth.obj",

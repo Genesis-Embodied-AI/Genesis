@@ -44,7 +44,7 @@ def main():
 
     ########################## entities ##########################
 
-    scene.add_entity(
+    water = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.4, 0.5, 0.25),
             size=(0.7, 0.9, 0.5),
@@ -55,7 +55,7 @@ def main():
             vis_mode="particle",
         ),
     )
-    scene.add_entity(
+    duck = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
             pos=(0.5, 0.5, 0.7),

@@ -35,7 +35,7 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(

@@ -37,11 +37,11 @@ def main():
         show_viewer=args.vis,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         morph=gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
         material=gs.materials.Rigid(),
     )
-    scene.add_entity(
+    cutter = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/cross_cutter.obj",
             scale=0.8,
@@ -52,7 +52,7 @@ def main():
         ),
         surface=gs.surfaces.Iron(),
     )
-    scene.add_entity(
+    dragon = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/dragon/dragon.obj",
             scale=0.007,

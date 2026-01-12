@@ -31,10 +31,10 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
     )
-    scene.add_entity(
+    bottle = scene.add_entity(
         material=gs.materials.Rigid(rho=300),
         morph=gs.morphs.URDF(
             file="urdf/3763/mobility_vhacd.urdf",

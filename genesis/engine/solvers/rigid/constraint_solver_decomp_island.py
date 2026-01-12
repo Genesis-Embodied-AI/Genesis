@@ -668,7 +668,7 @@ class ConstraintSolverIsland:
 
         self.ls_it[i_b] = 0
         self.ls_result[i_b] = 0
-        gs.ti_float(1.0)
+        ls_slope = gs.ti_float(1.0)
 
         res_alpha = gs.ti_float(0.0)
         done = False
@@ -693,7 +693,7 @@ class ConstraintSolverIsland:
                     self.ls_result[i_b] = 2
                 else:
                     self.ls_result[i_b] = 0
-                ti.abs(p1_deriv_0) * slopescl
+                ls_slope = ti.abs(p1_deriv_0) * slopescl
                 res_alpha = p1_alpha
             else:
                 direction = (p1_deriv_0 < 0) * 2 - 1
@@ -707,20 +707,20 @@ class ConstraintSolverIsland:
                         i_b, p1_alpha - p1_deriv_0 / p1_deriv_1
                     )
                     if ti.abs(p1_deriv_0) < gtol:
-                        ti.abs(p1_deriv_0) * slopescl
+                        ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
                         done = True
                         break
                 if not done:
                     if self.ls_it[i_b] >= self.ls_iterations:
                         self.ls_result[i_b] = 3
-                        ti.abs(p1_deriv_0) * slopescl
+                        ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
                         done = True
 
                     if not p2update and not done:
                         self.ls_result[i_b] = 6
-                        ti.abs(p1_deriv_0) * slopescl
+                        ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
                         done = True
 
@@ -772,7 +772,7 @@ class ConstraintSolverIsland:
                                     best_cost = self.candidates[4 * ii + 1, i_b]
                                     best_i = ii
                             if best_i >= 0:
-                                ti.abs(self.candidates[4 * i + 2, i_b]) * slopescl
+                                ls_slope = ti.abs(self.candidates[4 * i + 2, i_b]) * slopescl
                                 res_alpha = self.candidates[4 * best_i + 0, i_b]
                                 done = True
                             else:
@@ -805,7 +805,7 @@ class ConstraintSolverIsland:
                                     else:
                                         self.ls_result[i_b] = 7
 
-                                    ti.abs(pmid_deriv_0) * slopescl
+                                    ls_slope = ti.abs(pmid_deriv_0) * slopescl
 
                                     res_alpha = pmid_alpha
                                     done = True
@@ -813,11 +813,11 @@ class ConstraintSolverIsland:
                         if not done:
                             if p1_cost <= p2_cost and p1_cost < p0_cost:
                                 self.ls_result[i_b] = 4
-                                ti.abs(p1_deriv_0) * slopescl
+                                ls_slope = ti.abs(p1_deriv_0) * slopescl
                                 res_alpha = p1_alpha
                             elif p2_cost <= p1_cost and p2_cost < p1_cost:
                                 self.ls_result[i_b] = 4
-                                ti.abs(p2_deriv_0) * slopescl
+                                ls_slope = ti.abs(p2_deriv_0) * slopescl
                                 res_alpha = p2_alpha
                             else:
                                 self.ls_result[i_b] = 5

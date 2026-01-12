@@ -31,7 +31,7 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     robot = scene.add_entity(

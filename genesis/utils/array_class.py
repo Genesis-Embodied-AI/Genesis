@@ -929,6 +929,7 @@ class StructGJKState(metaclass=BASE_METACLASS):
 
 def get_gjk_state(solver, static_rigid_sim_config, gjk_info, is_active):
     _B = solver._B
+    enable_mujoco_compatibility = static_rigid_sim_config.enable_mujoco_compatibility
     polytope_max_faces = gjk_info.polytope_max_faces[None]
     max_contacts_per_pair = gjk_info.max_contacts_per_pair[None]
     max_contact_polygon_verts = gjk_info.max_contact_polygon_verts[None]

@@ -851,7 +851,7 @@ class SAPCoupler(RBC):
         for i_b in range(self._B):
             if not self.batch_active[i_b]:
                 continue
-            self._sap_convergence_atol + self._sap_convergence_rtol * ti.max(
+            norm_thr = self._sap_convergence_atol + self._sap_convergence_rtol * ti.max(
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
             self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= norm_thr
@@ -3551,7 +3551,7 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
         for i_c in range(result_count):
             i_b = self.contact_candidates[i_c].batch_idx
             i_e = self.contact_candidates[i_c].geom_idx0
-            self.contact_candidates[i_c].geom_idx1
+            i_f = self.contact_candidates[i_c].geom_idx1
 
             tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)  # 3 vertices of the triangle
             tet_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 0

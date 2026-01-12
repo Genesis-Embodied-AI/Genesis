@@ -568,7 +568,7 @@ def default_func_instantiate_soft_from_rigid(
         # can also do link.init_verts here and it seems to have more indices than geom.init_verts (but there is no idx_offset_vert)
         lower = geom.init_verts.min(axis=0)
         upper = geom.init_verts.max(axis=0)
-        (upper + lower) / 2.0
+        center = (upper + lower) / 2.0
         verts = geom.init_verts
         assert hasattr(geom, "init_normals")
         inner_mesh = trimesh.Trimesh(

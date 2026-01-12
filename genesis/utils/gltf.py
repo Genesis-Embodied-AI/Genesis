@@ -122,7 +122,7 @@ def parse_glb_material(glb, material_index, surface):
             uvs_used = material.occlusionTexture.texCoord
         occlusion_image = get_glb_image(glb, texture.source)
         if occlusion_image is not None:
-            mu.create_texture(occlusion_image, None, "linear")
+            occlusion_texture = mu.create_texture(occlusion_image, None, "linear")
 
     # parse alpha mode
     alpha_cutoff = mu.adjust_alpha_cutoff(alpha_cutoff, alpha_modes[material.alphaMode])
@@ -227,18 +227,18 @@ def parse_glb_material(glb, material_index, surface):
     for extension_name, extension_material in material.extensions.items():
         if extension_name == "KHR_materials_specular":
             # https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_specular/README.md
-            extension_material.get("specularFactor", 1.0)
-            np.array(extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=np.float32)
+            specular_weight = extension_material.get("specularFactor", 1.0)
+            specular_color = np.array(extension_material.get("specularColorFactor", [1.0, 1.0, 1.0]), dtype=np.float32)
         elif extension_name == "KHR_materials_clearcoat":
             # https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_clearcoat/README.md
-            extension_material.get("clearcoatFactor", 0.0)
-            extension_material.get("clearcoatRoughnessFactor", 0.0)
+            clearcoat_weight = extension_material.get("clearcoatFactor", 0.0)
+            clearcoat_roughness_factor = extension_material.get("clearcoatRoughnessFactor", 0.0)
         elif extension_name == "KHR_materials_volume":
             # https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_volume/README.md
-            extension_material.get("attenuationDistance", float("inf"))
+            attenuation_distance = extension_material.get("attenuationDistance", float("inf"))
         elif extension_name == "KHR_materials_transmission":
             # https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_transmission/README.md
-            extension_material.get("transmissionFactor", 0.0)
+            specular_trans_factor = extension_material.get("transmissionFactor", 0.0)
         elif extension_name == "KHR_materials_ior":
             # https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_ior/README.md
             ior = extension_material.get("ior", 1.5)

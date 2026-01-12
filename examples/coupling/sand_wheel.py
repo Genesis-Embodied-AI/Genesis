@@ -38,7 +38,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    scene.add_entity(
+    plane = scene.add_entity(
         material=gs.materials.Rigid(
             needs_coup=True,
             coup_friction=0.2,
@@ -49,7 +49,7 @@ def main():
         needs_coup=True,
         coup_softness=0.0,
     )
-    scene.add_entity(
+    wheel_0 = scene.add_entity(
         material=mat_wheel,
         morph=gs.morphs.URDF(
             file="urdf/wheel/wheel.urdf",
@@ -61,7 +61,7 @@ def main():
         ),
     )
 
-    scene.add_entity(
+    wheel_0 = scene.add_entity(
         material=mat_wheel,
         morph=gs.morphs.URDF(
             file="urdf/wheel/wheel.urdf",
@@ -73,7 +73,7 @@ def main():
         ),
     )
 
-    scene.add_entity(
+    wheel_0 = scene.add_entity(
         material=mat_wheel,
         morph=gs.morphs.URDF(
             file="urdf/wheel/wheel.urdf",
@@ -85,7 +85,7 @@ def main():
         ),
     )
 
-    scene.add_entity(
+    wheel_0 = scene.add_entity(
         material=mat_wheel,
         morph=gs.morphs.URDF(
             file="urdf/wheel/wheel.urdf",

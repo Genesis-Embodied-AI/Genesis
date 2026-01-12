@@ -66,7 +66,7 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
         ),
         show_viewer=show_viewer,
     )
-    scene.add_entity(
+    plane = scene.add_entity(
         morph=gs.morphs.Plane(),
     )
     cloth_1 = scene.add_entity(

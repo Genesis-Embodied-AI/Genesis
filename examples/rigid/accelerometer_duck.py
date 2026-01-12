@@ -32,7 +32,7 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(
+    plane = scene.add_entity(
         morph=gs.morphs.Plane(),
     )
     duck = scene.add_entity(

@@ -34,7 +34,7 @@ def main():
     # translate to the center of the mesh
     translation = np.array([np.nanmin(xs), np.nanmin(ys), 0])
 
-    scene.add_entity(
+    terrain_heightfield = scene.add_entity(
         morph=gs.morphs.Terrain(
             horizontal_scale=horizontal_scale,
             vertical_scale=1.0,
@@ -44,7 +44,7 @@ def main():
         vis_mode="collision",
     )
 
-    scene.add_entity(
+    ball = scene.add_entity(
         gs.morphs.Sphere(
             pos=(10, 15, 10),
             radius=1,

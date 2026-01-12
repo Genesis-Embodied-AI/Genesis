@@ -26,10 +26,10 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(
+    plane = scene.add_entity(
         gs.morphs.Plane(),
     )
-    scene.add_entity(
+    cube = scene.add_entity(
         gs.morphs.Box(
             pos=(0, 0, 1.0),
             size=(0.2, 0.2, 0.2),

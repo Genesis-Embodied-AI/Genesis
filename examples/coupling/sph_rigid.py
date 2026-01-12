@@ -38,10 +38,10 @@ def main():
 
     ########################## entities ##########################
     frictionless_rigid = gs.materials.Rigid(needs_coup=True, coup_friction=0.0)
-    scene.add_entity(
+    plane = scene.add_entity(
         morph=gs.morphs.Plane(),
     )
-    scene.add_entity(
+    water = scene.add_entity(
         material=gs.materials.SPH.Liquid(mu=0.01, sampler="regular"),
         morph=gs.morphs.Box(
             pos=(0.5, 0.0, 0.6),
@@ -52,7 +52,7 @@ def main():
         ),
     )
 
-    scene.add_entity(
+    cube = scene.add_entity(
         material=frictionless_rigid,
         morph=gs.morphs.Box(
             pos=(0.5, 0.0, 2.4),
