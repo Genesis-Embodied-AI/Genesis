@@ -34,11 +34,7 @@ class HelpTextPlugin(ViewerPlugin):
 
         if self.options.display_instructions:
             self.viewer.register_keybinds(
-                (
-                    Keybind(
-                        key_code=pyglet.window.key.I, name=INSTR_KEYBIND_NAME, callback_func=self._toggle_instructions
-                    ),
-                )
+                (Keybind(key_code=pyglet.window.key.I, name=INSTR_KEYBIND_NAME, callback=self._toggle_instructions),)
             )
             self._collapse_instructions = True
             self._instr_texts: tuple[list[str], list[str]] = ([], [])
@@ -49,16 +45,17 @@ class HelpTextPlugin(ViewerPlugin):
         self._message_opac = 1.0 + self._ticks_till_fade
 
     def _update_instr_texts(self):
-        self.instr_key_str = get_keycode_string(self.viewer._keybindings.get_by_name(INSTR_KEYBIND_NAME).key_code)
-        kb_texts = [
-            f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
-            for kb in self.viewer._keybindings.keybinds
-            if kb.name != INSTR_KEYBIND_NAME
-        ]
-        self._instr_texts = (
-            [f"> [{self.instr_key_str}]: show keyboard instructions"],
-            [f"< [{self.instr_key_str}]: hide keyboard instructions"] + kb_texts,
-        )
+        if len(self.viewer._keybindings) != len(self._instr_texts[1]) - 1:
+            self.instr_key_str = get_keycode_string(self.viewer._keybindings.get_by_name(INSTR_KEYBIND_NAME).key_code)
+            kb_texts = [
+                f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
+                for kb in self.viewer._keybindings.keybinds
+                if kb.name != INSTR_KEYBIND_NAME
+            ]
+            self._instr_texts = (
+                [f"> [{self.instr_key_str}]: show keyboard instructions"],
+                [f"< [{self.instr_key_str}]: hide keyboard instructions"] + kb_texts,
+            )
 
     def _toggle_instructions(self):
         if not self.options.display_instructions:

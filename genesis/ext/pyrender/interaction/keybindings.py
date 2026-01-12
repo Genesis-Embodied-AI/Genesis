@@ -53,7 +53,7 @@ class Keybind(NamedTuple):
     key_code: int
     name: str = ""
     key_action: KeyAction = KeyAction.PRESS
-    callback_func: Callable[[], None] | None = None
+    callback: Callable[[], None] | None = None
     modifiers: int | None = None
     args: tuple = ()
     kwargs: dict = {}
@@ -89,7 +89,7 @@ class Keybindings:
                     key_code=new_key_code or kb.key_code,
                     key_action=new_key_action or kb.key_action,
                     modifiers=new_modifiers or kb.modifiers,
-                    callback_func=kb.callback_func,
+                    callback=kb.callback,
                     args=kb.args,
                     kwargs=kb.kwargs,
                 )
@@ -115,6 +115,9 @@ class Keybindings:
             if kb.name == name:
                 return kb
         return None
+
+    def __len__(self) -> int:
+        return len(self._keybinds_map)
 
     @property
     def keys(self) -> tuple[str]:

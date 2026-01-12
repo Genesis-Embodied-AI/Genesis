@@ -31,31 +31,28 @@ class DefaultControls(HelpTextPlugin):
         options=None,
         camera: "Node" = None,
         scene: "Scene" = None,
-        viewport_size: tuple[int, int] = None,
     ):
-        super().__init__(viewer, options, camera, scene, viewport_size)
+        super().__init__(viewer, options, camera, scene)
 
         self.viewer.register_keybinds(
             (
-                Keybind(key_code=pyglet.window.key.R, name="record_video", callback_func=self._toggle_record_video),
-                Keybind(key_code=pyglet.window.key.S, name="save_image", callback_func=self._save_image),
-                Keybind(key_code=pyglet.window.key.Z, name="reset_camera", callback_func=self._reset_camera),
-                Keybind(
-                    key_code=pyglet.window.key.A, name="camera_rotation", callback_func=self._toggle_camera_rotation
-                ),
-                Keybind(key_code=pyglet.window.key.H, name="shadow", callback_func=self._toggle_shadow),
-                Keybind(key_code=pyglet.window.key.F, name="face_normals", callback_func=self._toggle_face_normals),
-                Keybind(key_code=pyglet.window.key.V, name="vertex_normals", callback_func=self._toggle_vertex_normals),
-                Keybind(key_code=pyglet.window.key.W, name="world_frame", callback_func=self._toggle_world_frame),
-                Keybind(key_code=pyglet.window.key.L, name="link_frame", callback_func=self._toggle_link_frame),
-                Keybind(key_code=pyglet.window.key.D, name="wireframe", callback_func=self._toggle_wireframe),
-                Keybind(key_code=pyglet.window.key.C, name="camera_frustum", callback_func=self._toggle_camera_frustum),
-                Keybind(key_code=pyglet.window.key.P, name="reload_shader", callback_func=self._reload_shader),
-                Keybind(key_code=pyglet.window.key.F11, name="fullscreen_mode", callback_func=self._toggle_fullscreen),
+                Keybind(key_code=pyglet.window.key.R, name="record_video", callback=self._toggle_record_video),
+                Keybind(key_code=pyglet.window.key.S, name="save_image", callback=self._save_image),
+                Keybind(key_code=pyglet.window.key.Z, name="reset_camera", callback=self._reset_camera),
+                Keybind(key_code=pyglet.window.key.A, name="camera_rotation", callback=self._toggle_cam_rotation),
+                Keybind(key_code=pyglet.window.key.H, name="shadow", callback=self._toggle_shadow),
+                Keybind(key_code=pyglet.window.key.F, name="face_normals", callback=self._toggle_face_normals),
+                Keybind(key_code=pyglet.window.key.V, name="vertex_normals", callback=self._toggle_vertex_normals),
+                Keybind(key_code=pyglet.window.key.W, name="world_frame", callback=self._toggle_world_frame),
+                Keybind(key_code=pyglet.window.key.L, name="link_frame", callback=self._toggle_link_frame),
+                Keybind(key_code=pyglet.window.key.D, name="wireframe", callback=self._toggle_wireframe),
+                Keybind(key_code=pyglet.window.key.C, name="camera_frustum", callback=self._toggle_camera_frustum),
+                Keybind(key_code=pyglet.window.key.P, name="reload_shader", callback=self._reload_shader),
+                Keybind(key_code=pyglet.window.key.F11, name="fullscreen_mode", callback=self._toggle_fullscreen),
             )
         )
 
-    def _toggle_camera_rotation(self):
+    def _toggle_cam_rotation(self):
         self.viewer.viewer_flags["rotate"] = not self.viewer.viewer_flags["rotate"]
         if self.viewer.viewer_flags["rotate"]:
             self.set_message_text("Rotation On")

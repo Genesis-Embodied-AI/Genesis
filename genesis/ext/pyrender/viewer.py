@@ -793,8 +793,8 @@ class Viewer(pyglet.window.Window):
     def _call_keybind_callback(self, symbol: int, modifiers: int, action: KeyAction) -> None:
         """Call registered keybind callbacks for the given key event."""
         keybind: Keybind = self._keybindings.get(symbol, modifiers, action)
-        if keybind is not None and keybind.callback_func is not None:
-            keybind.callback_func(*keybind.args, **keybind.kwargs)
+        if keybind is not None and keybind.callback is not None:
+            keybind.callback(*keybind.args, **keybind.kwargs)
 
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
