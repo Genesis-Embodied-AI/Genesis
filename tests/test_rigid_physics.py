@@ -3973,7 +3973,7 @@ def test_heterogeneous_aabb():
     # Box and sphere with different sizes
     morphs_heterogeneous = (
         gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.01, pos=(0.0, 0.0, 0.1)),
     )
     het_obj = scene.add_entity(morph=morphs_heterogeneous)
     # 4 envs: envs 0-1 get box, envs 2-3 get sphere
@@ -3988,13 +3988,25 @@ def test_heterogeneous_aabb():
     assert_allclose(aabb[2], aabb[3], tol=gs.EPS)
 
     # Box and sphere should have different AABBs (different sizes)
-    # Box half-size is 0.02, sphere radius is 0.02, so they're close but not identical
-    # Box AABB size: 0.04x0.04x0.04, Sphere AABB size: 0.04x0.04x0.04 (diameter)
-    # Both should have similar AABB size in this case
+    assert not np.allclose(aabb[0], aabb[2], atol=gs.EPS)
 
     # get_vAABB should also work
     vaabb = het_obj.get_vAABB()
-    assert vaabb.shape[0] == 4  # n_envs dimension
+    assert vaabb.shape == (4, 2, 3)  # (n_envs, min/max, xyz) - same as AABB
+
+    # vAABB should have same structure as AABB (box envs same, sphere envs same)
+    assert_allclose(vaabb[0], vaabb[1], tol=gs.EPS)
+    assert_allclose(vaabb[2], vaabb[3], tol=gs.EPS)
+    assert not np.allclose(vaabb[0], vaabb[2], atol=gs.EPS)
+
+    # AABB and vAABB sizes should be approximately equal for each environment
+    aabb_size_box = aabb[0, 1] - aabb[0, 0]
+    vaabb_size_box = vaabb[0, 1] - vaabb[0, 0]
+    assert_allclose(aabb_size_box, vaabb_size_box, tol=1e-3)  # Allow small tolerance for decimation
+
+    aabb_size_sphere = aabb[2, 1] - aabb[2, 0]
+    vaabb_size_sphere = vaabb[2, 1] - vaabb[2, 0]
+    assert_allclose(aabb_size_sphere, vaabb_size_sphere, tol=1e-3)
 
 
 @pytest.mark.slow  # ~60s

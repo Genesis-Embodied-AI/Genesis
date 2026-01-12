@@ -2275,6 +2275,27 @@ class RigidEntity(Entity):
         if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
             return self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx)[..., 0, :]
 
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
+        if self._enable_heterogeneous and self._solver.n_envs > 0:
+            n_envs = self._solver.n_envs
+            # Initialize with extreme values
+            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+
+            for geom in self.geoms:
+                geom_aabb = geom.get_AABB()  # shape: (n_envs, 2, 3)
+                active_envs = geom.active_envs_idx
+                if active_envs is not None:
+                    aabb_min[active_envs] = torch.minimum(aabb_min[active_envs], geom_aabb[active_envs, 0])
+                    aabb_max[active_envs] = torch.maximum(aabb_max[active_envs], geom_aabb[active_envs, 1])
+                else:
+                    # Non-heterogeneous geom, active in all environments
+                    aabb_min = torch.minimum(aabb_min, geom_aabb[:, 0])
+                    aabb_max = torch.maximum(aabb_max, geom_aabb[:, 1])
+
+            result = torch.stack((aabb_min, aabb_max), dim=-2)
+            return result[envs_idx] if envs_idx is not None else result
+
         # Compute the AABB on-the-fly based on the positions of all the vertices
         verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
@@ -2298,6 +2319,28 @@ class RigidEntity(Entity):
         """
         if self.n_vgeoms == 0:
             gs.raise_exception("Entity has no visual geometries.")
+
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
+        if self._enable_heterogeneous and self._solver.n_envs > 0:
+            n_envs = self._solver.n_envs
+            # Initialize with extreme values
+            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+
+            for vgeom in self._vgeoms:
+                vgeom_aabb = vgeom.get_vAABB()  # shape: (n_envs, 2, 3) or (2, 3)
+                active_envs = vgeom.active_envs_idx
+                if active_envs is not None:
+                    aabb_min[active_envs] = torch.minimum(aabb_min[active_envs], vgeom_aabb[active_envs, 0])
+                    aabb_max[active_envs] = torch.maximum(aabb_max[active_envs], vgeom_aabb[active_envs, 1])
+                else:
+                    # Non-heterogeneous vgeom, active in all environments
+                    aabb_min = torch.minimum(aabb_min, vgeom_aabb[:, 0])
+                    aabb_max = torch.maximum(aabb_max, vgeom_aabb[:, 1])
+
+            result = torch.stack((aabb_min, aabb_max), dim=-2)
+            return result[envs_idx] if envs_idx is not None else result
+
         aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
