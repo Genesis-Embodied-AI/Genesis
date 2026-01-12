@@ -177,9 +177,9 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
 
-        # Heterogeneous simulation support
-        self._morph_heterogeneous = morph_heterogeneous
-        self._enable_heterogeneous = bool(morph_heterogeneous)
+        # Heterogeneous simulation support (convert None to [] for consistency)
+        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
+        self._enable_heterogeneous = bool(self._morph_heterogeneous)
 
         self._load_model()
 
@@ -202,12 +202,14 @@ class RigidEntity(Entity):
 
     def _load_morph(self, morph: Morph):
         """Load a single morph into the entity."""
+        # Store g_infos for heterogeneous inertial computation
+        self._first_g_infos = None
         if isinstance(morph, gs.morphs.Mesh):
-            self._load_mesh(morph, self._surface)
+            self._first_g_infos = self._load_mesh(morph, self._surface)
         elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
             self._load_scene(morph, self._surface)
         elif isinstance(morph, gs.morphs.Primitive):
-            self._load_primitive(morph, self._surface)
+            self._first_g_infos = self._load_primitive(morph, self._surface)
         elif isinstance(morph, gs.morphs.Terrain):
             self._load_terrain(morph, self._surface)
         else:
@@ -221,6 +223,9 @@ class RigidEntity(Entity):
         Load heterogeneous morphs (additional geometry variants for parallel environments).
         Each variant is loaded as additional geoms/vgeoms attached to the single link.
         """
+        if not self._enable_heterogeneous:
+            return
+
         # Initialize tracking lists for geom/vgeom ranges per variant.
         # These store the start/end indices for each variant's geoms and vgeoms,
         # enabling per-environment dispatch during simulation.
@@ -248,86 +253,72 @@ class RigidEntity(Entity):
         self._first_variant_n_geoms = len(self.geoms)
         self._first_variant_n_vgeoms = len(self.vgeoms)
 
-        # Compute first variant's inertial properties from the link's current geoms.
-        # Single-link entities need manual inertial computation from their geoms.
-        if self._enable_heterogeneous and len(self._links) == 1:
-            link = self._links[0]
-            # Build cg_infos and vg_infos from link's current geoms
-            first_cg_infos = []
-            for geom in link.geoms:
-                first_cg_infos.append({"mesh": geom._mesh, "pos": geom._init_pos, "quat": geom._init_quat})
-            first_vg_infos = []
-            for vgeom in link.vgeoms:
-                first_vg_infos.append({"vmesh": vgeom._vmesh, "pos": vgeom._init_pos, "quat": vgeom._init_quat})
-            het_mass, het_pos, het_i = compute_inertial_from_geom_infos(
-                first_cg_infos, first_vg_infos, self.material.rho
-            )
+        # Heterogeneous simulation only supports single-link entities.
+        if len(self._links) != 1:
+            gs.raise_exception("morph_heterogeneous only supports single-link entities.")
+
+        link = self._links[0]
+
+        # Compute first variant's inertial properties using stored g_infos
+        cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(self._morph, self._first_g_infos, False)
+        het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
+        self.het_inertial_mass.append(het_mass)
+        self.het_inertial_pos.append(het_pos)
+        self.het_inertial_i.append(het_i)
+
+        # Load additional heterogeneous variants
+        for morph in self._morph_heterogeneous:
+            if isinstance(morph, gs.morphs.Mesh):
+                g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+            elif isinstance(morph, gs.morphs.Primitive):
+                g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+            else:
+                gs.raise_exception(
+                    f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
+                )
+
+            cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
+
+            # Compute inertial properties for this variant from collision or visual geometries
+            het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
             self.het_inertial_mass.append(het_mass)
             self.het_inertial_pos.append(het_pos)
             self.het_inertial_i.append(het_i)
-        else:
-            # Placeholder for first variant inertial - multi-link entities compute inertial during link build
-            self.het_inertial_mass.append(None)
-            self.het_inertial_pos.append(None)
-            self.het_inertial_i.append(None)
 
-        if self._enable_heterogeneous:
-            for morph in self._morph_heterogeneous:
-                if isinstance(morph, gs.morphs.Mesh):
-                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                elif isinstance(morph, gs.morphs.Primitive):
-                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                else:
-                    gs.raise_exception(
-                        f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
-                    )
+            # Add visual geometries
+            for g_info in vg_infos:
+                link._add_vgeom(
+                    vmesh=g_info["vmesh"],
+                    init_pos=g_info.get("pos", gu.zero_pos()),
+                    init_quat=g_info.get("quat", gu.identity_quat()),
+                )
 
-                if len(self._links) != 1:
-                    gs.raise_exception("morph_heterogeneous only supports single-link entities.")
+            # Add collision geometries
+            for g_info in cg_infos:
+                friction = self.material.friction
+                if friction is None:
+                    friction = g_info.get("friction", gu.default_friction())
+                link._add_geom(
+                    mesh=g_info["mesh"],
+                    init_pos=g_info.get("pos", gu.zero_pos()),
+                    init_quat=g_info.get("quat", gu.identity_quat()),
+                    type=g_info["type"],
+                    friction=friction,
+                    sol_params=g_info["sol_params"],
+                    data=g_info.get("data"),
+                    needs_coup=self.material.needs_coup,
+                    contype=g_info["contype"],
+                    conaffinity=g_info["conaffinity"],
+                )
 
-                link = self._links[0]
-                cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
-
-                # Compute inertial properties for this variant from collision or visual geometries
-                het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
-                self.het_inertial_mass.append(het_mass)
-                self.het_inertial_pos.append(het_pos)
-                self.het_inertial_i.append(het_i)
-
-                # Add visual geometries
-                for g_info in vg_infos:
-                    link._add_vgeom(
-                        vmesh=g_info["vmesh"],
-                        init_pos=g_info.get("pos", gu.zero_pos()),
-                        init_quat=g_info.get("quat", gu.identity_quat()),
-                    )
-
-                # Add collision geometries
-                for g_info in cg_infos:
-                    friction = self.material.friction
-                    if friction is None:
-                        friction = g_info.get("friction", gu.default_friction())
-                    link._add_geom(
-                        mesh=g_info["mesh"],
-                        init_pos=g_info.get("pos", gu.zero_pos()),
-                        init_quat=g_info.get("quat", gu.identity_quat()),
-                        type=g_info["type"],
-                        friction=friction,
-                        sol_params=g_info["sol_params"],
-                        data=g_info.get("data"),
-                        needs_coup=self.material.needs_coup,
-                        contype=g_info["contype"],
-                        conaffinity=g_info["conaffinity"],
-                    )
-
-                # Record ranges for this variant
-                self.het_link_start.append(self.het_link_end[-1])
-                self.het_link_end.append(self._link_start + len(self._links))
-                self.het_n_links.append(self.het_link_end[-1] - self.het_link_start[-1])
-                self.het_geom_start.append(self.het_geom_end[-1])
-                self.het_geom_end.append(self.het_geom_end[-1] + len(cg_infos))
-                self.het_vgeom_start.append(self.het_vgeom_end[-1])
-                self.het_vgeom_end.append(self.het_vgeom_end[-1] + len(vg_infos))
+            # Record ranges for this variant
+            self.het_link_start.append(self.het_link_end[-1])
+            self.het_link_end.append(self._link_start + len(self._links))
+            self.het_n_links.append(self.het_link_end[-1] - self.het_link_start[-1])
+            self.het_geom_start.append(self.het_geom_end[-1])
+            self.het_geom_end.append(self.het_geom_end[-1] + len(cg_infos))
+            self.het_vgeom_start.append(self.het_vgeom_end[-1])
+            self.het_vgeom_end.append(self.het_vgeom_end[-1] + len(vg_infos))
 
     def _load_model(self):
         self._links = gs.List()
@@ -431,6 +422,7 @@ class RigidEntity(Entity):
             morph=morph,
             surface=surface,
         )
+        return g_infos
 
     def _load_mesh(self, morph, surface, load_geom_only_for_heterogeneous=False):
         if morph.fixed:
@@ -507,6 +499,7 @@ class RigidEntity(Entity):
             morph=morph,
             surface=surface,
         )
+        return g_infos
 
     def _load_terrain(self, morph, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
@@ -3306,9 +3299,7 @@ class RigidEntity(Entity):
     @property
     def morphs(self):
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
-        if self._morph_heterogeneous:
-            return (self._morph,) + tuple(self._morph_heterogeneous)
-        return (self._morph,)
+        return (self._morph,) + tuple(self._morph_heterogeneous)
 
     @property
     def n_joints(self):
