@@ -33,7 +33,6 @@ from genesis.options import (
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, RendererOptions
-from genesis.options.sensors import SensorOptions
 from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
@@ -45,6 +44,7 @@ from genesis.utils.warnings import warn_once
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
     from genesis.recorders import Recorder
+    from genesis.options.sensors import SensorOptions
 
 
 @gs.assert_initialized
