@@ -15,6 +15,7 @@ from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
+    from .rigid_joint import RigidJoint
     from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
     from genesis.ext.pyrender.interaction.vec3 import Pose
 
@@ -412,7 +413,7 @@ class RigidLink(RBC):
         return self._visualize_contact
 
     @property
-    def joints(self):
+    def joints(self) -> list["RigidJoint"]:
         """
         The sequence of joints that connects the link to its parent link.
         """
