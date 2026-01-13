@@ -15,8 +15,8 @@ This package provides an extendable USD parser system with:
 # Check if USD support is available before importing modules that depend on it
 try:
     from pxr import Usd
-except ImportError:
-    gs.raise_exception_from("pxr module not found. Please install it with `pip install genesis-world[usd]`.")
+except ImportError as e:
+    gs.raise_exception_from("pxr module not found. Please install it with `pip install genesis-world[usd]`.", e)
 else:
     # USD support is available - import the parser modules
     from .usd_parser import import_from_stage

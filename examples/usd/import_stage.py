@@ -47,12 +47,9 @@ class JointAnimator:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--num_steps", type=int, default=1000)
+    parser.add_argument("-n", "--num_steps", type=int, default=1)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
-
-    args.num_steps = 1 if "PYTEST_VERSION" in os.environ else args.num_steps
-    args.vis = False if "PYTEST_VERSION" in os.environ else args.vis
 
     gs.init(backend=gs.cpu)
 

@@ -77,6 +77,8 @@ jobs:
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
       TI_DEBUG: "0"
+      OMNI_KIT_ACCEPT_EULA: "yes"
+      OMNI_KIT_ALLOW_ROOT: "1"
 
     runs-on: ${{ matrix.OS }}
     if: github.event_name != 'release'
