@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+import os
 
 import gstaichi as ti
 import numpy as np
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
+# Check environment variable for decomposed solver usage
+USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
 
 
 class ConstraintSolver:
@@ -172,7 +176,17 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-    def resolve(self):
+    def resolve(self, use_decomposed_kernels=None):
+        """
+        Resolve constraints using either monolithic or decomposed solver kernels.
+        
+        Args:
+            use_decomposed_kernels: If True, use decomposed kernels. If False, use monolithic kernel.
+                                   If None (default), uses the GS_SOLVER_DECOMPOSE environment variable.
+        """
+        if use_decomposed_kernels is None:
+            use_decomposed_kernels = USE_DECOMPOSED_SOLVER
+            
         func_init_solver(
             self._solver.dofs_info,
             self._solver.dofs_state,
@@ -181,13 +195,23 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        func_solve(
-            self._solver.entities_info,
-            self._solver.dofs_state,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-        )
+        
+        if use_decomposed_kernels:
+            func_solve_decomposed(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        else:
+            func_solve(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         func_update_qacc(
             self._solver.dofs_state,
