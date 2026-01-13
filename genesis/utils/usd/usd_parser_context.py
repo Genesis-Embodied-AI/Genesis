@@ -35,6 +35,7 @@ class UsdParserContext:
         self._articulation_root_prims: dict[str, Usd.Prim] = {}  # prim_path -> articulation_root_prim
         self._rigid_body_prims: dict[str, Usd.Prim] = {}  # prim_path -> rigid_body_top_prim
         self._vis_mode: Literal["visual", "collision"] = "visual"
+        self._link_prims: Set[Usd.Prim] = set()
 
     @property
     def stage(self) -> Usd.Stage:
@@ -84,6 +85,29 @@ class UsdParserContext:
             Value: articulation_root_prim
         """
         return self._articulation_root_prims
+
+    @property
+    def link_prims(self) -> Set[Usd.Prim]:
+        """
+        Get the link prims set.
+
+        Returns
+        -------
+        Set[Usd.Prim]
+            Set of link prims.
+        """
+        return self._link_prims
+
+    def add_link_prim(self, prim: Usd.Prim):
+        """
+        Add a link prim.
+
+        Parameters
+        ----------
+        prim : Usd.Prim
+            The link prim to add.
+        """
+        self._link_prims.add(prim)
 
     def find_material(self, mesh_prim: Usd.Prim):
         mesh_material = gs.surfaces.Default()

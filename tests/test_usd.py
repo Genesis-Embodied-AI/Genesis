@@ -181,6 +181,10 @@ def compare_joints(mjcf_joints, usd_joints, tol):
             assert_allclose(mjcf_joint.dofs_motion_vel, usd_joint.dofs_motion_vel, tol=tol)
             assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
             assert_allclose(mjcf_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol)
+            assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
+            assert_allclose(mjcf_joint.dofs_kp, usd_joint.dofs_kp, tol=tol)
+            assert_allclose(mjcf_joint.dofs_kv, usd_joint.dofs_kv, tol=tol)
+            assert_allclose(mjcf_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
             assert_allclose(mjcf_joint.dofs_damping, usd_joint.dofs_damping, tol=tol)
             assert_allclose(mjcf_joint.dofs_armature, usd_joint.dofs_armature, tol=tol)
 
@@ -410,9 +414,24 @@ def prismatic_joint_mjcf():
         type="slide",
         axis="0. 0. 1.",
         range="-0.1 0.4",
-        stiffness="120.0",
-        damping="12.0",
+        stiffness="50.0",
+        damping="5.0",
     )
+
+    # Add actuator for PD controller (maps to dofs_kp and dofs_kv)
+    # The parser uses: dofs_kp = -gear * biasprm[1] * scale^3
+    # So to get dofs_kp=120.0, we need biasprm[1] = -120.0 (with gear=1, scale=1)
+    actuator = ET.SubElement(mjcf, "actuator")
+    ET.SubElement(
+        actuator,
+        "general",
+        name="/worldbody/base/box_joint_actuator",
+        joint="/worldbody/base/box_joint",
+        biastype="affine",
+        gainprm="120.0 0 0",  # gainprm[0] must equal -biasprm[1] to avoid warning
+        biasprm="0 -120.0 -12.0",  # biasprm format: [b0, b1, b2] where b1=kp, b2=kv (negated)
+    )
+
     return mjcf
 
 
@@ -497,6 +516,10 @@ def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
     joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
     joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
 
+    # Add stiffness and damping attributes (using last candidate name)
+    joint_prim.GetPrim().CreateAttribute("linear:stiffness", Sdf.ValueTypeNames.Float).Set(50.0)
+    joint_prim.GetPrim().CreateAttribute("linear:damping", Sdf.ValueTypeNames.Float).Set(5.0)
+
     # Create drive API
     drive_api = UsdPhysics.DriveAPI.Apply(joint_prim.GetPrim(), "linear")
     drive_api.CreateStiffnessAttr().Set(120.0)
@@ -544,9 +567,24 @@ def revolute_joint_mjcf():
         type="hinge",
         axis="0. 0. 1.",
         range="-45 45",
-        stiffness="120.0",
-        damping="12.0",
+        stiffness="50.0",
+        damping="5.0",
     )
+
+    # Add actuator for PD controller (maps to dofs_kp and dofs_kv)
+    # The parser uses: dofs_kp = -gear * biasprm[1] * scale^3
+    # So to get dofs_kp=120.0, we need biasprm[1] = -120.0 (with gear=1, scale=1)
+    actuator = ET.SubElement(mjcf, "actuator")
+    ET.SubElement(
+        actuator,
+        "general",
+        name="/worldbody/base/box_joint_actuator",
+        joint="/worldbody/base/box_joint",
+        biastype="affine",
+        gainprm="120.0 0 0",  # gainprm[0] must equal -biasprm[1] to avoid warning
+        biasprm="0 -120.0 -12.0",  # biasprm format: [b0, b1, b2] where b1=kp, b2=kv (negated)
+    )
+
     return mjcf
 
 
@@ -631,6 +669,10 @@ def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
     joint_prim.CreateUpperLimitAttr().Set(upper_limit_deg)
     joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
     joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+
+    # Add stiffness and damping attributes (using last candidate name)
+    joint_prim.GetPrim().CreateAttribute("stiffness", Sdf.ValueTypeNames.Float).Set(50.0)
+    joint_prim.GetPrim().CreateAttribute("angular:damping", Sdf.ValueTypeNames.Float).Set(5.0)
 
     # Create drive API (use "angular" for revolute joints)
     drive_api = UsdPhysics.DriveAPI.Apply(joint_prim.GetPrim(), "angular")

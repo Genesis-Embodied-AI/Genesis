@@ -1340,8 +1340,41 @@ class USD(FileMorph):
     decimate_face_num: int = 500
     decimate_aggressiveness: int = 2
     prim_path: Optional[str] = None
-    parsing_type: Optional[Literal["articulation", "rigid_body"]] = None
     parser_ctx: Any = None
+    silent_on_mismatching_attributes: bool = True
+    joint_friction_attr_candidates: List[str] = [
+        "physxJoint:jointFriction",  # Isaac-Sim assets compatibility
+        "physics:jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
+        "jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
+        "friction",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    joint_armature_attr_candidates: List[str] = [
+        "physxJoint:armature",  # Isaac-Sim assets compatibility
+        "physics:armature",  # unoffical USD attribute, some assets may adapt to this attribute
+        "armature",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    revolute_joint_stiffness_attr_candidates: List[str] = [
+        "physxLimit:angular:stiffness",  # Isaac-Sim assets compatibility
+        "physics:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+        "stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    revolute_joint_damping_attr_candidates: List[str] = [
+        "physxLimit:angular:damping",  # Isaac-Sim assets compatibility
+        "physics:angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+        "angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    prismatic_joint_stiffness_attr_candidates: List[str] = [
+        "physxLimit:linear:stiffness",  # Isaac-Sim assets compatibility
+        "physics:linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+        "linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    prismatic_joint_damping_attr_candidates: List[str] = [
+        "physxLimit:linear:damping",  # Isaac-Sim assets compatibility
+        "physics:linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+        "linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*", r"^.*"]
+    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
 
     def __init__(self, **data):
         super().__init__(**data)

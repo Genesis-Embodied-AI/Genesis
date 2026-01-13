@@ -17,6 +17,7 @@ class JointAnimator:
 
     def __init__(self, scene: gs.Scene):
         self.rigid = scene.sim.rigid_solver
+        n_dofs = self.rigid.n_dofs
         joint_limits = ti_to_numpy(self.rigid.dofs_info.limit)
         joint_limits = np.clip(joint_limits, -np.pi, np.pi)
 
@@ -33,6 +34,11 @@ class JointAnimator:
             0.0,
         )
         self.init_phase = np.arcsin(normalized_init_pos)
+
+        # hard code some joint dynamics parameters to make the control more sensitive
+        self.rigid.set_dofs_frictionloss(np.zeros(n_dofs))
+        self.rigid.set_dofs_kp(np.full(n_dofs, 100.0))
+        self.rigid.set_dofs_armature(np.zeros(n_dofs))
 
     def animate(self, scene: gs.Scene):
         """Calculate target positions using sin function to interpolate between lower and upper limits"""
@@ -74,13 +80,13 @@ def main():
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
         revision="main",
-        allow_patterns="usd/Lightwheel_Kitchen001/Kitchen001/*",
+        allow_patterns="usd/Refrigerator055/*",
         max_workers=1,
     )
 
     entities = scene.add_stage(
         morph=gs.morphs.USD(
-            file=f"{asset_path}/usd/Lightwheel_Kitchen001/Kitchen001/Kitchen001.usd",
+            file=f"{asset_path}/usd/Refrigerator055/Refrigerator055.usd",
         ),
         # vis_mode="collision",
         # visualize_contact=True,
