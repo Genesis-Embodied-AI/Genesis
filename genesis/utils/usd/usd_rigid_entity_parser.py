@@ -1032,63 +1032,6 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
 
     has_joints = len(joints) > 0
 
-    # if has_joints:
-    #     links = _collect_links(stage, joints)
-
-    #     if len(links) == 0:
-    #         gs.raise_exception(f"Articulation at {root_prim.GetPath()} has joints but no links found.")
-
-    #     link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(links)}
-    #     n_links = len(links)
-
-    #     l_infos = []
-    #     links_j_infos = [[] for _ in range(n_links)]
-    #     links_g_infos = [[] for _ in range(n_links)]
-
-    #     for link, link_g_infos in zip(links, links_g_infos):
-    #         l_info = _parse_link(link)
-    #         l_infos.append(l_info)
-    #         visual_g_infos = _create_visual_geo_infos(link, context)
-    #         collision_g_infos = _create_collision_geo_infos(link, context)
-    #         if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
-    #             gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
-    #             continue
-    #         if len(collision_g_infos) == 0:
-    #             gs.logger.warning(
-    #                 f"No collision geometries found for link {link.GetPath()}, using visual geometries instead."
-    #             )
-    #         link_g_infos.extend(visual_g_infos)
-    #         link_g_infos.extend(collision_g_infos)
-
-    #     _parse_joints(stage, joints, l_infos, links_j_infos, link_name_to_idx)
-
-    #     for l_info, link_j_infos in zip(l_infos, links_j_infos):
-    #         if l_info["parent_idx"] == -1 and len(link_j_infos) == 0:
-    #             j_info = _create_joint_info_for_base_link(l_info)
-    #             link_j_infos.append(j_info)
-
-    #     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
-    # else:
-    #     link_prim = root_prim
-    #     l_info = _parse_link(link_prim)
-    #     j_info = _create_joint_info_for_base_link(l_info)
-    #     links_g_infos = [[]]
-    #     visual_g_infos = _create_visual_geo_infos(link_prim, context)
-    #     collision_g_infos = _create_collision_geo_infos(link_prim, context)
-    #     if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
-    #         gs.logger.warning(
-    #             f"No visual or collision geometries found for rigid body {link_prim.GetPath()}, skipping."
-    #         )
-    #     if len(collision_g_infos) == 0:
-    #         gs.logger.warning(
-    #             f"No collision geometries found for rigid body {link_prim.GetPath()}, using visual geometries instead."
-    #         )
-    #     links_g_infos[0].extend(visual_g_infos)
-    #     links_g_infos[0].extend(collision_g_infos)
-
-    #     l_infos = [l_info]
-    #     links_j_infos = [[j_info]]
-
     if has_joints:
         links = _collect_links(stage, joints)
         link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(links)}
@@ -1119,7 +1062,6 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
         _parse_joints(stage, joints, l_infos, links_j_infos, link_name_to_idx)
 
     for l_info, link_j_infos in zip(l_infos, links_j_infos):
-        print("l_info:", l_info)
         if l_info["parent_idx"] == -1 and len(link_j_infos) == 0:
             j_info = _create_joint_info_for_base_link(l_info)
             link_j_infos.append(j_info)
