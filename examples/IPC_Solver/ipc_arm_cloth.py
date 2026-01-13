@@ -183,71 +183,36 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
         # entities["cube"].set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
         # entities["cube"].set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
 
-    # Define movement callbacks
-    def move_forward():
-        target_pos[0][0] -= dpos
-
-    def move_backward():
-        target_pos[0][0] += dpos
-
-    def move_left():
-        target_pos[0][1] -= dpos
-
-    def move_right():
-        target_pos[0][1] += dpos
-
-    def move_up():
-        target_pos[0][2] += dpos
-
-    def move_down():
-        target_pos[0][2] -= dpos
-
-    def yaw_left():
-        target_R[0] = R.from_euler("z", drot) * target_R[0]
-
-    def yaw_right():
-        target_R[0] = R.from_euler("z", -drot) * target_R[0]
-
-    def pitch_up():
-        target_R[0] = R.from_euler("y", drot) * target_R[0]
-
-    def pitch_down():
-        target_R[0] = R.from_euler("y", -drot) * target_R[0]
-
-    def roll_left():
-        target_R[0] = R.from_euler("x", drot) * target_R[0]
-
-    def roll_right():
-        target_R[0] = R.from_euler("x", -drot) * target_R[0]
-
-    def close_gripper():
-        gripper_closed[0] = True
-
-    def open_gripper():
-        gripper_closed[0] = False
-
     # Register keybindings (only for interactive and record modes)
     if mode in ["interactive", "record"]:
+
+        def move(dpos_delta: tuple[float, float, float]):
+            target_pos[0] += np.array(dpos_delta, dtype=gs.np_float)
+
+        def rotate(axis: str, angle: float):
+            target_R[0] = R.from_euler(axis, angle) * target_R[0]
+
+        def toggle_gripper(close: bool = True):
+            gripper_closed[0] = close
+
         from pyglet.window import key
 
         scene.viewer.register_keybinds(
-            (
-                Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=move_forward),
-                Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback=move_backward),
-                Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=move_left),
-                Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=move_right),
-                Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="move_up", callback=move_up),
-                Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="move_down", callback=move_down),
-                Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="yaw_left", callback=yaw_left),
-                Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="yaw_right", callback=yaw_right),
-                Keybind(key_code=key.I, key_action=KeyAction.HOLD, name="pitch_up", callback=pitch_up),
-                Keybind(key_code=key.O, key_action=KeyAction.HOLD, name="pitch_down", callback=pitch_down),
-                Keybind(key_code=key.L, key_action=KeyAction.HOLD, name="roll_left", callback=roll_left),
-                Keybind(key_code=key.SEMICOLON, key_action=KeyAction.HOLD, name="roll_right", callback=roll_right),
-                Keybind(key_code=key.U, key_action=KeyAction.HOLD, name="reset_scene", callback=reset_scene),
-                Keybind(key_code=key.SPACE, key_action=KeyAction.PRESS, name="close_gripper", callback=close_gripper),
-                Keybind(key_code=key.SPACE, key_action=KeyAction.RELEASE, name="open_gripper", callback=open_gripper),
-            )
+            Keybind(key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
+            Keybind(key.DOWN, KeyAction.HOLD, name="move_backward", callback=move, args=((dpos, 0, 0),)),
+            Keybind(key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
+            Keybind(key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
+            Keybind(key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
+            Keybind(key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
+            Keybind(key.J, KeyAction.HOLD, name="yaw_left", callback=rotate, args=("z", drot)),
+            Keybind(key.K, KeyAction.HOLD, name="yaw_right", callback=rotate, args=("z", -drot)),
+            Keybind(key.I, KeyAction.HOLD, name="pitch_up", callback=rotate, args=("y", drot)),
+            Keybind(key.O, KeyAction.HOLD, name="pitch_down", callback=rotate, args=("y", -drot)),
+            Keybind(key.L, KeyAction.HOLD, name="roll_left", callback=rotate, args=("x", drot)),
+            Keybind(key.SEMICOLON, KeyAction.HOLD, name="roll_right", callback=rotate, args=("x", -drot)),
+            Keybind(key.U, KeyAction.HOLD, name="reset_scene", callback=reset_scene),
+            Keybind(key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
+            Keybind(key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
         )
 
     # Load trajectory if in playback mode

@@ -120,51 +120,32 @@ if __name__ == "__main__":
     reset_robot()
 
     # Robot teleoperation callback functions
-    def move_forward():
-        target_pos[0] -= dpos
+    def move(dpos: tuple[float, float, float]):
+        global target_pos
+        target_pos += np.array(dpos, dtype=gs.np_float)
 
-    def move_backward():
-        target_pos[0] += dpos
-
-    def move_left():
-        target_pos[1] -= dpos
-
-    def move_right():
-        target_pos[1] += dpos
-
-    def move_up():
-        target_pos[2] += dpos
-
-    def move_down():
-        target_pos[2] -= dpos
-
-    def rotate_ccw():
+    def rotate(drot: float):
         target_R[0] = R.from_euler("z", drot) * target_R[0]
 
-    def rotate_cw():
-        target_R[0] = R.from_euler("z", -drot) * target_R[0]
-
-    def close_gripper():
-        robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
-
-    def open_gripper():
-        robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
+    def toggle_gripper(close: bool = True):
+        pos = -1.0 if close else 1.0
+        robot.control_dofs_force(np.array([pos, pos]), fingers_dof)
 
     # Register robot teleoperation keybindings
     from pyglet.window import key
 
     scene.viewer.register_keybinds(
-        Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=move_forward),
-        Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback=move_backward),
-        Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=move_left),
-        Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=move_right),
-        Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="move_up", callback=move_up),
-        Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="move_down", callback=move_down),
-        Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="rotate_ccw", callback=rotate_ccw),
-        Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="rotate_cw", callback=rotate_cw),
-        Keybind(key_code=key.U, key_action=KeyAction.HOLD, name="reset_scene", callback=reset_robot),
-        Keybind(key_code=key.SPACE, key_action=KeyAction.PRESS, name="close_gripper", callback=close_gripper),
-        Keybind(key_code=key.SPACE, key_action=KeyAction.RELEASE, name="open_gripper", callback=open_gripper),
+        Keybind(key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
+        Keybind(key.DOWN, KeyAction.HOLD, name="move_back", callback=move, args=((dpos, 0, 0),)),
+        Keybind(key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
+        Keybind(key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
+        Keybind(key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
+        Keybind(key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
+        Keybind(key.J, KeyAction.HOLD, name="rotate_ccw", callback=rotate, args=(drot,)),
+        Keybind(key.K, KeyAction.HOLD, name="rotate_cw", callback=rotate, args=(-drot,)),
+        Keybind(key.U, KeyAction.HOLD, name="reset_scene", callback=reset_robot),
+        Keybind(key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
+        Keybind(key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
     )
 
     ########################## run simulation ##########################

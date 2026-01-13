@@ -51,8 +51,8 @@ def get_keycode_string(key_code: int) -> str:
 
 class Keybind(NamedTuple):
     key_code: int
-    name: str = ""
     key_action: KeyAction = KeyAction.PRESS
+    name: str = ""
     callback: Callable[[], None] | None = None
     modifiers: int | None = None
     args: tuple = ()

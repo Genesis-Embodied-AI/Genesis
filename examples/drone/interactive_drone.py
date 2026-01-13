@@ -11,45 +11,19 @@ class DroneController:
         self.thrust = 14475.8  # Base hover RPM - constant hover
         self.rotation_delta = 200.0  # Differential RPM for rotation
         self.thrust_delta = 10.0  # Amount to change thrust by when accelerating/decelerating
-        self.rpms = [self.thrust] * 4
+        self.rpms = np.array([self.thrust] * 4)  # front left, front right, back left, back right
+        self.cur_dir = np.array([0.0, 0.0, 0.0, 0.0])  # rotor directions
 
-    def update_thrust(self):
-        # Reset RPMs to hover thrust
-        self.rpms = [self.thrust] * 4
+    def update_rpms(self):
+        """Update RPMs based on current direction and thrust"""
+        clipped_dir = np.clip(self.cur_dir, -1.0, 1.0)
+        self.rpms = self.thrust + clipped_dir * self.rotation_delta
+        self.rpms = np.clip(self.rpms, 0, 25000)
         return self.rpms
 
-    def move_forward(self):
-        """Front rotors spin faster"""
-        self.rpms[0] += self.rotation_delta  # Front left
-        self.rpms[1] += self.rotation_delta  # Front right
-        self.rpms[2] -= self.rotation_delta  # Back left
-        self.rpms[3] -= self.rotation_delta  # Back right
-        self.rpms = np.clip(self.rpms, 0, 25000)
-
-    def move_backward(self):
-        """Back rotors spin faster"""
-        self.rpms[0] -= self.rotation_delta  # Front left
-        self.rpms[1] -= self.rotation_delta  # Front right
-        self.rpms[2] += self.rotation_delta  # Back left
-        self.rpms[3] += self.rotation_delta  # Back right
-        self.rpms = np.clip(self.rpms, 0, 25000)
-
-    def move_left(self):
-        """Left rotors spin faster"""
-        self.rpms[0] -= self.rotation_delta  # Front left
-        self.rpms[2] -= self.rotation_delta  # Back left
-        self.rpms[1] += self.rotation_delta  # Front right
-        self.rpms[3] += self.rotation_delta  # Back right
-        self.rpms = np.clip(self.rpms, 0, 25000)
-
-    def move_right(self):
-        """Right rotors spin faster"""
-        print("move right")
-        self.rpms[0] += self.rotation_delta  # Front left
-        self.rpms[2] += self.rotation_delta  # Back left
-        self.rpms[1] -= self.rotation_delta  # Front right
-        self.rpms[3] -= self.rotation_delta  # Back right
-        self.rpms = np.clip(self.rpms, 0, 25000)
+    def add_direction(self, direction: np.ndarray):
+        """Add direction vector (on key press)"""
+        self.cur_dir += direction
 
     def accelerate(self):
         """All rotors spin faster"""
@@ -84,6 +58,7 @@ def main():
             show_world_frame=False,
         ),
         show_viewer=True,
+        show_FPS=False,
     )
 
     # Add entities
@@ -106,20 +81,33 @@ def main():
     # Register keybindings
     from pyglet.window import key
 
-    scene.viewer.register_keybinds(
-        (
-            Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=controller.move_forward),
+    def direction_keybinds(key_code, name: str, direction: tuple[float, float, float, float]):
+        """Helper to create press/release keybinds for a direction"""
+        dir_arr = np.array(direction)
+        return [
             Keybind(
-                key_code=key.DOWN,
-                key_action=KeyAction.HOLD,
-                name="move_backward",
-                callback=controller.move_backward,
+                key_code=key_code,
+                key_action=KeyAction.PRESS,
+                name=f"{name}_press",
+                callback=controller.add_direction,
+                args=(dir_arr,),
             ),
-            Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=controller.move_left),
-            Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=controller.move_right),
-            Keybind(key_code=key.SPACE, key_action=KeyAction.HOLD, name="accelerate", callback=controller.accelerate),
-            Keybind(key_code=key.LSHIFT, key_action=KeyAction.HOLD, name="decelerate", callback=controller.decelerate),
-        )
+            Keybind(
+                key_code=key_code,
+                key_action=KeyAction.RELEASE,
+                name=f"{name}_release",
+                callback=controller.add_direction,
+                args=(-dir_arr,),
+            ),
+        ]
+
+    scene.viewer.register_keybinds(
+        *direction_keybinds(key.UP, "move_forward", (1.0, 1.0, -1.0, -1.0)),
+        *direction_keybinds(key.DOWN, "move_backward", (-1.0, -1.0, 1.0, 1.0)),
+        *direction_keybinds(key.LEFT, "move_left", (-1.0, 1.0, -1.0, 1.0)),
+        *direction_keybinds(key.RIGHT, "move_right", (1.0, -1.0, 1.0, -1.0)),
+        Keybind(key.SPACE, KeyAction.HOLD, name="accelerate", callback=controller.accelerate),
+        Keybind(key.LSHIFT, KeyAction.HOLD, name="decelerate", callback=controller.decelerate),
     )
 
     # Print control instructions
@@ -136,11 +124,12 @@ def main():
     # Run simulation
     try:
         while True:
-            # Update drone with current RPMs
-            rpms = controller.update_thrust()
+            # Update and apply RPMs based on current direction
+            rpms = controller.update_rpms()
+            print("Current RPMs:", rpms)
             drone.set_propellels_rpm(rpms)
 
-            # Update physics
+            # Step simulation
             scene.step()
 
             if "PYTEST_VERSION" in os.environ:
