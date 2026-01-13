@@ -343,6 +343,9 @@ class Mesh(RBC):
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                if morph.parse_glb_with_zup:
+                    for mesh in meshes:
+                        mesh.convert_to_zup()
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
