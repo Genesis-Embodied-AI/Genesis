@@ -7,7 +7,7 @@ from typing_extensions import override
 from genesis.options.viewer_plugins import HelpTextPlugin as HelpTextPluginOptions
 
 from ...constants import TEXT_PADDING, TextAlign
-from ..keybindings import Keybind, get_keycode_string
+from ..keybindings import KeyAction, Keybind, get_keycode_string
 from ..viewer_plugin import ViewerPlugin, register_viewer_plugin
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ class HelpTextPlugin(ViewerPlugin):
             kb_texts = [
                 f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
                 for kb in self.viewer._keybindings.keybinds
-                if kb.name != INSTR_KEYBIND_NAME
+                if kb.name != INSTR_KEYBIND_NAME and kb.key_action != KeyAction.RELEASE
             ]
             self._instr_texts = (
                 [f"> [{self.instr_key_str}]: show keyboard instructions"],
