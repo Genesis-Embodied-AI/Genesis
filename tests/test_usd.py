@@ -5,8 +5,6 @@ This module tests that USD files can be parsed correctly and that scenes
 loaded from USD files match equivalent scenes loaded from MJCF files.
 """
 
-import os
-import tempfile
 import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
@@ -26,6 +24,21 @@ except ImportError:
     HAS_USD_SUPPORT = False
 
 
+def read_floats(s: str) -> np.ndarray:
+    return np.array([float(x) for x in s.split()])
+
+
+@pytest.fixture
+def tol():
+    """
+    Custom tolerance for USD tests.
+
+    USD Joint Limits use float32 (C++ float) precision, so we need a tolerance
+    that's appropriate for float32 rather than the default float64 tolerance.
+    """
+    return 1e-6
+
+
 def compare_links(mjcf_links, usd_links, tol):
     """
     Generic function to compare links between two scenes.
@@ -39,10 +52,10 @@ def compare_links(mjcf_links, usd_links, tol):
     usd_links : list
         List of links from USD scene
     tol : float, optional
-        Tolerance for numerical comparisons. Defaults to 1e-5.
+        Tolerance for numerical comparisons.
     """
     # Check number of links
-    assert len(mjcf_links) == len(usd_links), f"Number of links mismatch: MJCF={len(mjcf_links)}, USD={len(usd_links)}"
+    assert len(mjcf_links) == len(usd_links)
 
     # Create dictionaries keyed by link name for comparison
     mjcf_links_by_name = {link.name: link for link in mjcf_links}
@@ -55,7 +68,7 @@ def compare_links(mjcf_links, usd_links, tol):
     # Check that we have matching link names
     mjcf_link_names = set(mjcf_links_by_name.keys())
     usd_link_names = set(usd_links_by_name.keys())
-    assert mjcf_link_names == usd_link_names, f"Link names mismatch: MJCF={mjcf_link_names}, USD={usd_link_names}"
+    assert mjcf_link_names == usd_link_names
 
     # Compare all link properties by name
     for link_name in sorted(mjcf_link_names):
@@ -63,40 +76,22 @@ def compare_links(mjcf_links, usd_links, tol):
         usd_link = usd_links_by_name[link_name]
 
         # Compare position
-        assert_allclose(
-            mjcf_link.pos,
-            usd_link.pos,
-            tol=tol,
-            err_msg=f"Link '{link_name}' position mismatch: MJCF={mjcf_link.pos}, USD={usd_link.pos}",
-        )
+        assert_allclose(mjcf_link.pos, usd_link.pos, tol=tol)
 
         # Compare quaternion
-        assert_allclose(
-            mjcf_link.quat,
-            usd_link.quat,
-            tol=tol,
-            err_msg=f"Link '{link_name}' quat mismatch: MJCF={mjcf_link.quat}, USD={usd_link.quat}",
-        )
+        assert_allclose(mjcf_link.quat, usd_link.quat, tol=tol)
 
         # Compare is_fixed
-        assert mjcf_link.is_fixed == usd_link.is_fixed, (
-            f"Link '{link_name}' is_fixed mismatch: MJCF={mjcf_link.is_fixed}, USD={usd_link.is_fixed}"
-        )
+        assert mjcf_link.is_fixed == usd_link.is_fixed
 
         # Compare number of geoms
-        assert len(mjcf_link.geoms) == len(usd_link.geoms), (
-            f"Link '{link_name}' number of geoms mismatch: MJCF={len(mjcf_link.geoms)}, USD={len(usd_link.geoms)}"
-        )
+        assert len(mjcf_link.geoms) == len(usd_link.geoms)
 
         # Compare number of joints
-        assert mjcf_link.n_joints == usd_link.n_joints, (
-            f"Link '{link_name}' number of joints mismatch: MJCF={mjcf_link.n_joints}, USD={usd_link.n_joints}"
-        )
+        assert mjcf_link.n_joints == usd_link.n_joints
 
         # Compare number of visual geoms
-        assert len(mjcf_link.vgeoms) == len(usd_link.vgeoms), (
-            f"Link '{link_name}' number of vgeoms mismatch: MJCF={len(mjcf_link.vgeoms)}, USD={len(usd_link.vgeoms)}"
-        )
+        assert len(mjcf_link.vgeoms) == len(usd_link.vgeoms)
 
         # Compare parent link by name (mapping indices to names)
         mjcf_parent_idx = mjcf_link.parent_idx
@@ -112,50 +107,17 @@ def compare_links(mjcf_links, usd_links, tol):
         else:
             usd_parent_name = usd_idx_to_name.get(usd_parent_idx, f"<unknown idx {usd_parent_idx}>")
 
-        assert mjcf_parent_name == usd_parent_name, (
-            f"Link '{link_name}' parent mismatch: MJCF parent_idx={mjcf_parent_idx}, parent_name={mjcf_parent_name}, USD parent_idx={usd_parent_idx}, parent_name={usd_parent_name}"
-        )
+        assert mjcf_parent_name == usd_parent_name
 
         # Compare inertial properties if available
-        mjcf_inertial_pos = mjcf_link.inertial_pos
-        usd_inertial_pos = usd_link.inertial_pos
-        assert_allclose(
-            mjcf_inertial_pos,
-            usd_inertial_pos,
-            tol=tol,
-            err_msg=f"Link '{link_name}' inertial_pos mismatch: MJCF={mjcf_inertial_pos}, USD={usd_inertial_pos}",
-        )
-
-        mjcf_inertial_quat = mjcf_link.inertial_quat
-        usd_inertial_quat = usd_link.inertial_quat
-        assert_allclose(
-            mjcf_inertial_quat,
-            usd_inertial_quat,
-            tol=tol,
-            err_msg=f"Link '{link_name}' inertial_quat mismatch: MJCF={mjcf_inertial_quat}, USD={usd_inertial_quat}",
-        )
+        assert_allclose(mjcf_link.inertial_pos, usd_link.inertial_pos, tol=tol)
+        assert_allclose(mjcf_link.inertial_quat, usd_link.inertial_quat, tol=tol)
 
         # Skip mass and inertia checks for fixed links - they're not used in simulation
         if not mjcf_link.is_fixed:
-            mjcf_inertial_mass = mjcf_link.inertial_mass
-            usd_inertial_mass = usd_link.inertial_mass
             # Both scenes now use the same material density (1000 kg/m³), so values should match closely
-            assert_allclose(
-                mjcf_inertial_mass,
-                usd_inertial_mass,
-                atol=tol,
-                err_msg=f"Link '{link_name}' inertial_mass mismatch: MJCF={mjcf_inertial_mass}, USD={usd_inertial_mass}",
-            )
-
-            mjcf_inertial_i = mjcf_link.inertial_i
-            usd_inertial_i = usd_link.inertial_i
-            # Both scenes now use the same material density (1000 kg/m³), so values should match closely
-            assert_allclose(
-                mjcf_inertial_i,
-                usd_inertial_i,
-                atol=tol,
-                err_msg=f"Link '{link_name}' inertial_i mismatch: MJCF={mjcf_inertial_i}, USD={usd_inertial_i}",
-            )
+            assert_allclose(mjcf_link.inertial_mass, usd_link.inertial_mass, atol=tol)
+            assert_allclose(mjcf_link.inertial_i, usd_link.inertial_i, atol=tol)
 
 
 def compare_joints(mjcf_joints, usd_joints, tol):
@@ -171,7 +133,7 @@ def compare_joints(mjcf_joints, usd_joints, tol):
     usd_joints : list
         List of joints from USD scene
     tol : float, optional
-        Tolerance for numerical comparisons. Defaults to 1e-5.
+        Tolerance for numerical comparisons.
     """
     # Check number of joints
     assert len(mjcf_joints) == len(usd_joints), (
@@ -193,118 +155,41 @@ def compare_joints(mjcf_joints, usd_joints, tol):
         usd_joint = usd_joints_by_name[joint_name]
 
         # Compare joint type
-        assert mjcf_joint.type == usd_joint.type, (
-            f"Joint '{joint_name}' type mismatch: MJCF={mjcf_joint.type}, USD={usd_joint.type}"
-        )
+        assert mjcf_joint.type == usd_joint.type
 
         # Compare position
-        assert_allclose(
-            mjcf_joint.pos,
-            usd_joint.pos,
-            tol=tol,
-            err_msg=f"Joint '{joint_name}' position mismatch: MJCF={mjcf_joint.pos}, USD={usd_joint.pos}",
-        )
+        assert_allclose(mjcf_joint.pos, usd_joint.pos, tol=tol)
 
         # Compare quaternion
-        assert_allclose(
-            mjcf_joint.quat,
-            usd_joint.quat,
-            tol=tol,
-            err_msg=f"Joint '{joint_name}' quat mismatch: MJCF={mjcf_joint.quat}, USD={usd_joint.quat}",
-        )
+        assert_allclose(mjcf_joint.quat, usd_joint.quat, tol=tol)
 
         # Compare number of qs and dofs
-        assert mjcf_joint.n_qs == usd_joint.n_qs, (
-            f"Joint '{joint_name}' n_qs mismatch: MJCF={mjcf_joint.n_qs}, USD={usd_joint.n_qs}"
-        )
+        assert mjcf_joint.n_qs == usd_joint.n_qs
 
-        assert mjcf_joint.n_dofs == usd_joint.n_dofs, (
-            f"Joint '{joint_name}' n_dofs mismatch: MJCF={mjcf_joint.n_dofs}, USD={usd_joint.n_dofs}"
-        )
+        assert mjcf_joint.n_dofs == usd_joint.n_dofs
 
         # Compare initial qpos
-        assert_allclose(
-            mjcf_joint.init_qpos,
-            usd_joint.init_qpos,
-            tol=tol,
-            err_msg=f"Joint '{joint_name}' init_qpos mismatch: MJCF={mjcf_joint.init_qpos}, USD={usd_joint.init_qpos}",
-        )
+        assert_allclose(mjcf_joint.init_qpos, usd_joint.init_qpos, tol=tol)
 
         # Skip mass/inertia-dependent property checks for fixed joints - they're not used in simulation
         if mjcf_joint.type != gs.JOINT_TYPE.FIXED:
             # Compare dof limits
-            assert_allclose(
-                mjcf_joint.dofs_limit,
-                usd_joint.dofs_limit,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_limit mismatch: MJCF={mjcf_joint.dofs_limit}, USD={usd_joint.dofs_limit}",
-            )
+            assert_allclose(mjcf_joint.dofs_limit, usd_joint.dofs_limit, tol=tol)
 
             # Compare dof motion properties
-            assert_allclose(
-                mjcf_joint.dofs_motion_ang,
-                usd_joint.dofs_motion_ang,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_motion_ang mismatch: MJCF={mjcf_joint.dofs_motion_ang}, USD={usd_joint.dofs_motion_ang}",
-            )
-
-            assert_allclose(
-                mjcf_joint.dofs_motion_vel,
-                usd_joint.dofs_motion_vel,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_motion_vel mismatch: MJCF={mjcf_joint.dofs_motion_vel}, USD={usd_joint.dofs_motion_vel}",
-            )
-
-            assert_allclose(
-                mjcf_joint.dofs_frictionloss,
-                usd_joint.dofs_frictionloss,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_frictionloss mismatch: MJCF={mjcf_joint.dofs_frictionloss}, USD={usd_joint.dofs_frictionloss}",
-            )
-
-            assert_allclose(
-                mjcf_joint.dofs_stiffness,
-                usd_joint.dofs_stiffness,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_stiffness mismatch: MJCF={mjcf_joint.dofs_stiffness}, USD={usd_joint.dofs_stiffness}",
-            )
-
-            assert_allclose(
-                mjcf_joint.dofs_damping,
-                usd_joint.dofs_damping,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_damping mismatch: MJCF={mjcf_joint.dofs_damping}, USD={usd_joint.dofs_damping}",
-            )
-
-            assert_allclose(
-                mjcf_joint.dofs_armature,
-                usd_joint.dofs_armature,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_armature mismatch: MJCF={mjcf_joint.dofs_armature}, USD={usd_joint.dofs_armature}",
-            )
+            assert_allclose(mjcf_joint.dofs_motion_ang, usd_joint.dofs_motion_ang, tol=tol)
+            assert_allclose(mjcf_joint.dofs_motion_vel, usd_joint.dofs_motion_vel, tol=tol)
+            assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
+            assert_allclose(mjcf_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol)
+            assert_allclose(mjcf_joint.dofs_damping, usd_joint.dofs_damping, tol=tol)
+            assert_allclose(mjcf_joint.dofs_armature, usd_joint.dofs_armature, tol=tol)
 
             # Compare dof control properties
-            assert_allclose(
-                mjcf_joint.dofs_kp,
-                usd_joint.dofs_kp,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_kp mismatch: MJCF={mjcf_joint.dofs_kp}, USD={usd_joint.dofs_kp}",
-            )
-
-            assert_allclose(
-                mjcf_joint.dofs_kv,
-                usd_joint.dofs_kv,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_kv mismatch: MJCF={mjcf_joint.dofs_kv}, USD={usd_joint.dofs_kv}",
-            )
+            assert_allclose(mjcf_joint.dofs_kp, usd_joint.dofs_kp, tol=tol)
+            assert_allclose(mjcf_joint.dofs_kv, usd_joint.dofs_kv, tol=tol)
 
             # Compare dof force range
-            assert_allclose(
-                mjcf_joint.dofs_force_range,
-                usd_joint.dofs_force_range,
-                tol=tol,
-                err_msg=f"Joint '{joint_name}' dofs_force_range mismatch: MJCF={mjcf_joint.dofs_force_range}, USD={usd_joint.dofs_force_range}",
-            )
+            assert_allclose(mjcf_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
 
 
 def compare_geoms(mjcf_geoms, usd_geoms, tol):
@@ -320,9 +205,7 @@ def compare_geoms(mjcf_geoms, usd_geoms, tol):
     usd_geoms_sorted = sorted(usd_geoms, key=lambda g: (g.link.name, g._idx))
 
     for mjcf_geom, usd_geom in zip(mjcf_geoms_sorted, usd_geoms_sorted):
-        assert mjcf_geom.type == usd_geom.type, (
-            f"Geom type mismatch: MJCF={mjcf_geom.type}, USD={usd_geom.type}, link={mjcf_geom.link.name}"
-        )
+        assert mjcf_geom.type == usd_geom.type
 
 
 def compare_scene(mjcf_scene: gs.Scene, usd_scene: gs.Scene, tol):
@@ -361,13 +244,45 @@ def compare_scene(mjcf_scene: gs.Scene, usd_scene: gs.Scene, tol):
     compare_joints(mjcf_joints, usd_joints, tol=tol)
 
 
-@pytest.fixture(scope="session")
-def mjcf_file(box_plane_mjcf):
-    """Create a temporary MJCF file from the fixture."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
-        mjcf_file = f.name
-        ET.ElementTree(box_plane_mjcf).write(mjcf_file, encoding="utf-8", xml_declaration=True)
-    return mjcf_file
+def build_mjcf_and_usd_scenes(xml_path: str, usd_file: str):
+    """
+    Build both MJCF and USD scenes from their respective file paths.
+
+    Parameters
+    ----------
+    xml_path : str
+        Path to the MJCF/XML file
+    usd_file : str
+        Path to the USD file
+    Returns
+    -------
+    tuple[gs.Scene, gs.Scene]
+        A tuple containing (mjcf_scene, usd_scene)
+    """
+    # Create MJCF scene
+    mjcf_scene = gs.Scene()
+    mjcf_morph = gs.morphs.MJCF(file=xml_path)
+    mjcf_scene.add_entity(mjcf_morph)
+    mjcf_scene.build()
+
+    # Create USD scene
+    usd_scene = gs.Scene()
+    usd_morph = gs.morphs.USD(file=usd_file)
+    usd_scene.add_stage(usd_morph, vis_mode="collision")
+    usd_scene.build()
+
+    return mjcf_scene, usd_scene
+
+
+@pytest.fixture
+def xml_path(request, tmp_path, model_name):
+    """Create a temporary MJCF/XML file from the fixture."""
+    mjcf = request.getfixturevalue(model_name)
+    xml_tree = ET.ElementTree(mjcf)
+    file_name = f"{model_name}.xml"
+    file_path = str(tmp_path / file_name)
+    xml_tree.write(file_path, encoding="utf-8", xml_declaration=True)
+    return file_path
 
 
 @pytest.fixture(scope="session")
@@ -393,7 +308,7 @@ def box_plane_mjcf():
 
 
 @pytest.fixture(scope="session")
-def box_plane_usd(box_plane_mjcf: ET.ElementTree):
+def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     """Generate a USD file equivalent to the MJCF box_plane_mjcf fixture.
     Extracts data from the MJCF XML structure to build the USD file.
     """
@@ -404,21 +319,19 @@ def box_plane_usd(box_plane_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos", "0. 0. 0.")
-    floor_pos = [float(x) for x in floor_pos_str.split()]
-    floor_size_str = floor_geom.get("size", "40. 40. 40.")
-    floor_size = [float(x) for x in floor_size_str.split()]
+    floor_pos = read_floats(floor_pos_str)
+    floor_size = read_floats(floor_geom.get("size", "40. 40. 40."))
 
     # Box: body has pos, geom inside has size
     box_body = worldbody.find("body[@name='/worldbody/box']")
     box_pos_str = box_body.get("pos", "0. 0. 0.")
-    box_pos = [float(x) for x in box_pos_str.split()]
+    box_pos = read_floats(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size", "0.2 0.2 0.2")
-    box_size = [float(x) for x in box_size_str.split()]
+    box_size = read_floats(box_size_str)
 
     # Create temporary USD file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".usda", delete=False) as f:
-        usd_file = f.name
+    usd_file = str(asset_tmp_path / "box_plane.usda")
 
     # Create USD stage
     stage = Usd.Stage.CreateNew(usd_file)
@@ -461,28 +374,11 @@ def box_plane_usd(box_plane_mjcf: ET.ElementTree):
 
 
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_box_plane_mjcf_vs_usd(mjcf_file, box_plane_usd):
+@pytest.mark.parametrize("model_name", ["box_plane_mjcf"])
+def test_box_plane_mjcf_vs_usd(xml_path, box_plane_usd, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
-    # Create MJCF scene
-    mjcf_scene = gs.Scene()
-    mjcf_morph = gs.morphs.MJCF(file=mjcf_file, convexify=False)
-    mjcf_entity = mjcf_scene.add_entity(mjcf_morph)
-    mjcf_scene.build()
-
-    # Create USD scene
-    # USD parser now uses material with density=1000.0 to match MuJoCo's default
-    usd_scene = gs.Scene()
-    usd_morph = gs.morphs.USD(file=box_plane_usd, convexify=False)
-    usd_entities = usd_scene.add_stage(usd_morph, vis_mode="collision")
-    usd_scene.build()
-
-    compare_scene(mjcf_scene, usd_scene, tol=1e-5)
-
-    # Clean up
-    if os.path.exists(mjcf_file):
-        os.unlink(mjcf_file)
-    if os.path.exists(box_plane_usd):
-        os.unlink(box_plane_usd)
+    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, box_plane_usd)
+    compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
 # ==================== Prismatic Joint Tests ====================
@@ -513,7 +409,7 @@ def prismatic_joint_mjcf():
         name="/worldbody/base/box_joint",
         type="slide",
         axis="0. 0. 1.",
-        range="-0.1 0.3",
+        range="-0.1 0.4",
         stiffness="120.0",
         damping="12.0",
     )
@@ -521,7 +417,7 @@ def prismatic_joint_mjcf():
 
 
 @pytest.fixture(scope="session")
-def prismatic_joint_usd(prismatic_joint_mjcf: ET.ElementTree):
+def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
     """Generate a USD file equivalent to the prismatic joint MJCF fixture."""
     worldbody = prismatic_joint_mjcf.find("worldbody")
 
@@ -529,36 +425,34 @@ def prismatic_joint_usd(prismatic_joint_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos")
-    floor_pos = [float(x) for x in floor_pos_str.split()]
-    floor_size_str = floor_geom.get("size", "40. 40. 40.")
-    floor_size = [float(x) for x in floor_size_str.split()]
+    floor_pos = read_floats(floor_pos_str)
+    floor_size = read_floats(floor_geom.get("size", "40. 40. 40."))
 
     # Base
     base_body = worldbody.find("body[@name='/worldbody/base']")
     base_pos_str = base_body.get("pos")
-    base_pos = [float(x) for x in base_pos_str.split()]
+    base_pos = read_floats(base_pos_str)
     base_geom = base_body.find("geom[@type='box']")
     base_size_str = base_geom.get("size")
-    base_size = [float(x) for x in base_size_str.split()]
+    base_size = read_floats(base_size_str)
 
     # Box with prismatic joint
     box_body = base_body.find("body[@name='/worldbody/base/box']")
     box_pos_str = box_body.get("pos")
-    box_pos = [float(x) for x in box_pos_str.split()]
+    box_pos = read_floats(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size")
-    box_size = [float(x) for x in box_size_str.split()]
+    box_size = read_floats(box_size_str)
 
     # Joint limits
     joint = box_body.find("joint[@name='/worldbody/base/box_joint']")
     range_str = joint.get("range")
-    range_vals = [float(x) for x in range_str.split()]
+    range_vals = read_floats(range_str)
     lower_limit = range_vals[0]
     upper_limit = range_vals[1]
 
     # Create temporary USD file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".usda", delete=False) as f:
-        usd_file = f.name
+    usd_file = str(asset_tmp_path / "prismatic_joint.usda")
 
     # Create USD stage
     stage = Usd.Stage.CreateNew(usd_file)
@@ -604,7 +498,7 @@ def prismatic_joint_usd(prismatic_joint_mjcf: ET.ElementTree):
     joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
 
     # Create drive API
-    drive_api = UsdPhysics.DriveAPI.Apply(joint_prim, "linear")
+    drive_api = UsdPhysics.DriveAPI.Apply(joint_prim.GetPrim(), "linear")
     drive_api.CreateStiffnessAttr().Set(120.0)
     drive_api.CreateDampingAttr().Set(12.0)
 
@@ -612,37 +506,12 @@ def prismatic_joint_usd(prismatic_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.fixture(scope="session")
-def prismatic_joint_mjcf_file(prismatic_joint_mjcf):
-    """Create a temporary MJCF file from the prismatic joint fixture."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
-        mjcf_file = f.name
-        ET.ElementTree(prismatic_joint_mjcf).write(mjcf_file, encoding="utf-8", xml_declaration=True)
-    return mjcf_file
-
-
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_prismatic_joint_mjcf_vs_usd(prismatic_joint_mjcf_file, prismatic_joint_usd):
+@pytest.mark.parametrize("model_name", ["prismatic_joint_mjcf"])
+def test_prismatic_joint_mjcf_vs_usd(xml_path, prismatic_joint_usd, tol):
     """Test that MJCF and USD scenes with prismatic joints produce equivalent Genesis entities."""
-    # Create MJCF scene
-    mjcf_scene = gs.Scene()
-    mjcf_morph = gs.morphs.MJCF(file=prismatic_joint_mjcf_file, convexify=False)
-    mjcf_entity = mjcf_scene.add_entity(mjcf_morph)
-    mjcf_scene.build()
-
-    # Create USD scene
-    usd_scene = gs.Scene()
-    usd_morph = gs.morphs.USD(file=prismatic_joint_usd, convexify=False)
-    usd_entities = usd_scene.add_stage(usd_morph, vis_mode="collision")
-    usd_scene.build()
-
-    compare_scene(mjcf_scene, usd_scene, tol=1e-5)
-
-    # Clean up
-    if os.path.exists(prismatic_joint_mjcf_file):
-        os.unlink(prismatic_joint_mjcf_file)
-    if os.path.exists(prismatic_joint_usd):
-        os.unlink(prismatic_joint_usd)
+    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, prismatic_joint_usd)
+    compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
 # ==================== Revolute Joint Tests ====================
@@ -682,7 +551,7 @@ def revolute_joint_mjcf():
 
 
 @pytest.fixture(scope="session")
-def revolute_joint_usd(revolute_joint_mjcf: ET.ElementTree):
+def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
     """Generate a USD file equivalent to the revolute joint MJCF fixture."""
     worldbody = revolute_joint_mjcf.find("worldbody")
 
@@ -690,36 +559,35 @@ def revolute_joint_usd(revolute_joint_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos")
-    floor_pos = [float(x) for x in floor_pos_str.split()]
+    floor_pos = read_floats(floor_pos_str)
     floor_size_str = floor_geom.get("size", "40. 40. 40.")
-    floor_size = [float(x) for x in floor_size_str.split()]
+    floor_size = read_floats(floor_size_str)
 
     # Base
     base_body = worldbody.find("body[@name='/worldbody/base']")
     base_pos_str = base_body.get("pos")
-    base_pos = [float(x) for x in base_pos_str.split()]
+    base_pos = read_floats(base_pos_str)
     base_geom = base_body.find("geom[@type='box']")
     base_size_str = base_geom.get("size")
-    base_size = [float(x) for x in base_size_str.split()]
+    base_size = read_floats(base_size_str)
 
     # Box with revolute joint
     box_body = base_body.find("body[@name='/worldbody/base/box']")
     box_pos_str = box_body.get("pos")
-    box_pos = [float(x) for x in box_pos_str.split()]
+    box_pos = read_floats(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size")
-    box_size = [float(x) for x in box_size_str.split()]
+    box_size = read_floats(box_size_str)
 
     # Joint limits
     joint = box_body.find("joint[@name='/worldbody/base/box_joint']")
     range_str = joint.get("range")
-    range_vals = [float(x) for x in range_str.split()]
+    range_vals = read_floats(range_str)
     lower_limit_deg = range_vals[0]
     upper_limit_deg = range_vals[1]
 
     # Create temporary USD file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".usda", delete=False) as f:
-        usd_file = f.name
+    usd_file = str(asset_tmp_path / "revolute_joint.usda")
 
     # Create USD stage
     stage = Usd.Stage.CreateNew(usd_file)
@@ -773,37 +641,12 @@ def revolute_joint_usd(revolute_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.fixture(scope="session")
-def revolute_joint_mjcf_file(revolute_joint_mjcf):
-    """Create a temporary MJCF file from the revolute joint fixture."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
-        mjcf_file = f.name
-        ET.ElementTree(revolute_joint_mjcf).write(mjcf_file, encoding="utf-8", xml_declaration=True)
-    return mjcf_file
-
-
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_revolute_joint_mjcf_vs_usd(revolute_joint_mjcf_file, revolute_joint_usd):
+@pytest.mark.parametrize("model_name", ["revolute_joint_mjcf"])
+def test_revolute_joint_mjcf_vs_usd(xml_path, revolute_joint_usd, tol):
     """Test that MJCF and USD scenes with revolute joints produce equivalent Genesis entities."""
-    # Create MJCF scene
-    mjcf_scene = gs.Scene()
-    mjcf_morph = gs.morphs.MJCF(file=revolute_joint_mjcf_file, convexify=False)
-    mjcf_entity = mjcf_scene.add_entity(mjcf_morph)
-    mjcf_scene.build()
-
-    # Create USD scene
-    usd_scene = gs.Scene()
-    usd_morph = gs.morphs.USD(file=revolute_joint_usd, convexify=False)
-    usd_entities = usd_scene.add_stage(usd_morph, vis_mode="collision")
-    usd_scene.build()
-
-    compare_scene(mjcf_scene, usd_scene, tol=1e-5)
-
-    # Clean up
-    if os.path.exists(revolute_joint_mjcf_file):
-        os.unlink(revolute_joint_mjcf_file)
-    if os.path.exists(revolute_joint_usd):
-        os.unlink(revolute_joint_usd)
+    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, revolute_joint_usd)
+    compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
 # ==================== Spherical Joint Tests ====================
@@ -834,7 +677,7 @@ def spherical_joint_mjcf():
 
 
 @pytest.fixture(scope="session")
-def spherical_joint_usd(spherical_joint_mjcf: ET.ElementTree):
+def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
     """Generate a USD file equivalent to the spherical joint MJCF fixture."""
     worldbody = spherical_joint_mjcf.find("worldbody")
 
@@ -842,29 +685,28 @@ def spherical_joint_usd(spherical_joint_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos")
-    floor_pos = [float(x) for x in floor_pos_str.split()]
+    floor_pos = read_floats(floor_pos_str)
     floor_size_str = floor_geom.get("size", "40. 40. 40.")
-    floor_size = [float(x) for x in floor_size_str.split()]
+    floor_size = read_floats(floor_size_str)
 
     # Base
     base_body = worldbody.find("body[@name='/worldbody/base']")
     base_pos_str = base_body.get("pos")
-    base_pos = [float(x) for x in base_pos_str.split()]
+    base_pos = read_floats(base_pos_str)
     base_geom = base_body.find("geom[@type='box']")
     base_size_str = base_geom.get("size")
-    base_size = [float(x) for x in base_size_str.split()]
+    base_size = read_floats(base_size_str)
 
     # Box with spherical joint
     box_body = base_body.find("body[@name='/worldbody/base/box']")
     box_pos_str = box_body.get("pos")
-    box_pos = [float(x) for x in box_pos_str.split()]
+    box_pos = read_floats(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size")
-    box_size = [float(x) for x in box_size_str.split()]
+    box_size = read_floats(box_size_str)
 
     # Create temporary USD file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".usda", delete=False) as f:
-        usd_file = f.name
+    usd_file = str(asset_tmp_path / "spherical_joint.usda")
 
     # Create USD stage
     stage = Usd.Stage.CreateNew(usd_file)
@@ -910,34 +752,9 @@ def spherical_joint_usd(spherical_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.fixture(scope="session")
-def spherical_joint_mjcf_file(spherical_joint_mjcf):
-    """Create a temporary MJCF file from the spherical joint fixture."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as f:
-        mjcf_file = f.name
-        ET.ElementTree(spherical_joint_mjcf).write(mjcf_file, encoding="utf-8", xml_declaration=True)
-    return mjcf_file
-
-
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_spherical_joint_mjcf_vs_usd(spherical_joint_mjcf_file, spherical_joint_usd):
+@pytest.mark.parametrize("model_name", ["spherical_joint_mjcf"])
+def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, tol):
     """Test that MJCF and USD scenes with spherical joints produce equivalent Genesis entities."""
-    # Create MJCF scene
-    mjcf_scene = gs.Scene()
-    mjcf_morph = gs.morphs.MJCF(file=spherical_joint_mjcf_file, convexify=False)
-    mjcf_entity = mjcf_scene.add_entity(mjcf_morph)
-    mjcf_scene.build()
-
-    # Create USD scene
-    usd_scene = gs.Scene()
-    usd_morph = gs.morphs.USD(file=spherical_joint_usd, convexify=False)
-    usd_entities = usd_scene.add_stage(usd_morph, vis_mode="collision")
-    usd_scene.build()
-
-    compare_scene(mjcf_scene, usd_scene, tol=1e-5)
-
-    # Clean up
-    if os.path.exists(spherical_joint_mjcf_file):
-        os.unlink(spherical_joint_mjcf_file)
-    if os.path.exists(spherical_joint_usd):
-        os.unlink(spherical_joint_usd)
+    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, spherical_joint_usd)
+    compare_scene(mjcf_scene, usd_scene, tol=tol)
