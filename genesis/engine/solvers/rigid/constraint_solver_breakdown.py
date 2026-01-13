@@ -431,6 +431,7 @@ def create_nt_chol_solve_kernel(func_nt_chol_solve):
     @ti.kernel(fastcache=gs.use_fastcache)
     def kernel_nt_chol_solve(
         constraint_state: array_class.ConstraintState,
+        static_rigid_sim_config: ti.template(),
     ):
         """Newton Cholesky solve for Mgrad. Per-batch operation."""
         _B = constraint_state.grad.shape[1]
@@ -557,7 +558,7 @@ def func_solve_decomposed(
                 static_rigid_sim_config,
             )
         else:  # Newton
-            kernel_nt_chol_solve(constraint_state)
+            kernel_nt_chol_solve(constraint_state, static_rigid_sim_config)
 
         # 12. Check convergence
         kernel_check_convergence(
