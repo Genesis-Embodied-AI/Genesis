@@ -510,6 +510,28 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
         )
     )
 
+@pytest.mark.required
+def test_plane_texture_path_preservation(show_viewer):
+    """Test that plane primitives preserve texture paths through the mesh pipeline."""
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    plane = scene.add_entity(gs.morphs.Plane())
+    scene.build()
+
+    # Check that the plane's vgeom has a texture with a path
+    assert len(plane.vgeoms) > 0
+    vgeom = plane.vgeoms[0]
+    assert vgeom.vmesh is not None
+    assert vgeom.vmesh.surface is not None
+
+    texture = vgeom.vmesh.surface.diffuse_texture
+    assert texture is not None
+    assert isinstance(texture, gs.textures.ImageTexture)
+
+    # The texture should have both image_path and image_array
+    assert texture.image_path is not None
+    assert texture.image_array is not None
+    assert "checker.png" in texture.image_path
+
 
 @pytest.mark.required
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
