@@ -14,45 +14,21 @@ l	- Roll Left (Rotate around X)
 ;	- Roll Right (Rotate around X)
 u	- Reset Scene
 space	- Press to close gripper, release to open gripper
-esc	- Quit
+
+Plus all default viewer controls (press 'i' to see them)
 """
 
-import threading
 import argparse
-import numpy as np
 import csv
 import os
 from datetime import datetime
-from pynput import keyboard
-from scipy.spatial.transform import Rotation as R
+
+import numpy as np
 from huggingface_hub import snapshot_download
+from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
-
-
-class KeyboardDevice:
-    def __init__(self):
-        self.pressed_keys = set()
-        self.lock = threading.Lock()
-        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-
-    def start(self):
-        self.listener.start()
-
-    def stop(self):
-        self.listener.stop()
-        self.listener.join()
-
-    def on_press(self, key: keyboard.Key):
-        with self.lock:
-            self.pressed_keys.add(key)
-
-    def on_release(self, key: keyboard.Key):
-        with self.lock:
-            self.pressed_keys.discard(key)
-
-    def get_cmd(self):
-        return self.pressed_keys
+from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
 
 
 def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
@@ -171,14 +147,14 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     return scene, entities
 
 
-def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
+def run_sim(scene, entities, mode="interactive", trajectory_file=None):
     robot = entities["robot"]
     target_entity = entities["target"]
 
     robot_init_pos = np.array([0.5, 0, 0.55])
     robot_init_R = R.from_euler("y", np.pi)
-    target_pos = robot_init_pos.copy()
-    target_R = robot_init_R
+    target_pos = [robot_init_pos.copy()]  # Use list for mutability in closures
+    target_R = [robot_init_R]  # Use list for mutability in closures
 
     n_dofs = robot.n_dofs
     motors_dof = np.arange(n_dofs - 2)
@@ -189,17 +165,55 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
     trajectory = []
     recording = mode == "record"
 
+    # Gripper state (use list for mutability in closures)
+    gripper_closed = [False]
+
+    # Control parameters
+    dpos = 0.002
+    drot = 0.01
+
     def reset_scene():
-        nonlocal target_pos, target_R
-        target_pos = robot_init_pos.copy()
-        target_R = robot_init_R
-        target_quat = target_R.as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
-        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
+        target_pos[0] = robot_init_pos.copy()
+        target_R[0] = robot_init_R
+        target_quat = target_R[0].as_quat(scalar_first=True)
+        target_entity.set_qpos(np.concatenate([target_pos[0], target_quat]))
+        q = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat)
         robot.set_qpos(q[:-2], motors_dof)
 
         # entities["cube"].set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
         # entities["cube"].set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
+
+    # Register keybindings (only for interactive and record modes)
+    if mode in ["interactive", "record"]:
+
+        def move(dpos_delta: tuple[float, float, float]):
+            target_pos[0] += np.array(dpos_delta, dtype=gs.np_float)
+
+        def rotate(axis: str, angle: float):
+            target_R[0] = R.from_euler(axis, angle) * target_R[0]
+
+        def toggle_gripper(close: bool = True):
+            gripper_closed[0] = close
+
+        from pyglet.window import key
+
+        scene.viewer.register_keybinds(
+            Keybind(key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
+            Keybind(key.DOWN, KeyAction.HOLD, name="move_backward", callback=move, args=((dpos, 0, 0),)),
+            Keybind(key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
+            Keybind(key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
+            Keybind(key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
+            Keybind(key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
+            Keybind(key.J, KeyAction.HOLD, name="yaw_left", callback=rotate, args=("z", drot)),
+            Keybind(key.K, KeyAction.HOLD, name="yaw_right", callback=rotate, args=("z", -drot)),
+            Keybind(key.I, KeyAction.HOLD, name="pitch_up", callback=rotate, args=("y", drot)),
+            Keybind(key.O, KeyAction.HOLD, name="pitch_down", callback=rotate, args=("y", -drot)),
+            Keybind(key.L, KeyAction.HOLD, name="roll_left", callback=rotate, args=("x", drot)),
+            Keybind(key.SEMICOLON, KeyAction.HOLD, name="roll_right", callback=rotate, args=("x", -drot)),
+            Keybind(key.U, KeyAction.HOLD, name="reset_scene", callback=reset_scene),
+            Keybind(key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
+            Keybind(key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
+        )
 
     # Load trajectory if in playback mode
     if mode == "playback":
@@ -232,7 +246,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
 
     print(f"\nMode: {mode.upper()}")
     if mode == "record":
-        print("Recording trajectory... Press ESC to stop and save.")
+        print("Recording trajectory...")
     elif mode == "playback":
         print("Playing back trajectory...")
 
@@ -248,99 +262,57 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
     print("l/;\t- Roll Left/Right (Rotate around X axis)")
     print("u\t- Reset Scene")
     print("space\t- Press to close gripper, release to open gripper")
-    print("esc\t- Quit")
+    if mode in ["interactive", "record"]:
+        print("\nPlus all default viewer controls (press 'i' to see them)")
 
     # reset scene before starting teleoperation
     reset_scene()
 
     # start teleoperation or playback
-    stop = False
     step_count = 0
 
-    while not stop:
-        if mode == "playback":
-            # Playback mode: replay recorded trajectory
-            if step_count < len(trajectory):
-                step_data = trajectory[step_count]
-                target_pos = step_data["target_pos"]
-                target_R = R.from_quat(step_data["target_quat"])
-                is_close_gripper = step_data["gripper_closed"]
-                step_count += 1
-                print(f"\rPlayback step: {step_count}/{len(trajectory)}", end="")
-                # Check if user wants to stop playback
-                pressed_keys = clients["keyboard"].pressed_keys.copy()
-                stop = keyboard.Key.esc in pressed_keys
+    try:
+        while True:
+            if mode == "playback":
+                # Playback mode: replay recorded trajectory
+                if step_count < len(trajectory):
+                    step_data = trajectory[step_count]
+                    target_pos[0] = step_data["target_pos"]
+                    target_R[0] = R.from_quat(step_data["target_quat"])
+                    gripper_closed[0] = step_data["gripper_closed"]
+                    step_count += 1
+                    print(f"\rPlayback step: {step_count}/{len(trajectory)}", end="")
+                else:
+                    print("\nPlayback finished!")
+                    break
             else:
-                print("\nPlayback finished!")
-                break
-        else:
-            # Interactive or recording mode
-            pressed_keys = clients["keyboard"].pressed_keys.copy()
+                # Interactive or recording mode
+                # Movement is handled by keybinding callbacks
+                # Record current state if recording
+                if recording:
+                    step_data = {
+                        "target_pos": target_pos[0].copy(),
+                        "target_quat": target_R[0].as_quat(),  # x,y,z,w format
+                        "gripper_closed": gripper_closed[0],
+                        "step": step_count,
+                    }
+                    trajectory.append(step_data)
 
-            # reset scene:
-            reset_flag = False
-            reset_flag |= keyboard.KeyCode.from_char("u") in pressed_keys
-            if reset_flag:
-                reset_scene()
+            # control arm
+            target_quat = target_R[0].as_quat(scalar_first=True)
+            target_entity.set_qpos(np.concatenate([target_pos[0], target_quat]))
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat, return_error=True)
+            robot.control_dofs_position(q[:-2], motors_dof)
+            # control gripper
+            if gripper_closed[0]:
+                robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
+            else:
+                robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
 
-            # stop teleoperation
-            stop = keyboard.Key.esc in pressed_keys
-
-            # get ee target pose
-            is_close_gripper = False
-            dpos = 0.002
-            drot = 0.01
-            for key in pressed_keys:
-                if key == keyboard.Key.up:
-                    target_pos[0] -= dpos
-                elif key == keyboard.Key.down:
-                    target_pos[0] += dpos
-                elif key == keyboard.Key.right:
-                    target_pos[1] += dpos
-                elif key == keyboard.Key.left:
-                    target_pos[1] -= dpos
-                elif key == keyboard.KeyCode.from_char("n"):
-                    target_pos[2] += dpos
-                elif key == keyboard.KeyCode.from_char("m"):
-                    target_pos[2] -= dpos
-                elif key == keyboard.KeyCode.from_char("j"):
-                    target_R = R.from_euler("z", drot) * target_R
-                elif key == keyboard.KeyCode.from_char("k"):
-                    target_R = R.from_euler("z", -drot) * target_R
-                elif key == keyboard.KeyCode.from_char("i"):
-                    target_R = R.from_euler("y", drot) * target_R
-                elif key == keyboard.KeyCode.from_char("o"):
-                    target_R = R.from_euler("y", -drot) * target_R
-                elif key == keyboard.KeyCode.from_char("l"):
-                    target_R = R.from_euler("x", drot) * target_R
-                elif key == keyboard.KeyCode.from_char(";"):
-                    target_R = R.from_euler("x", -drot) * target_R
-                elif key == keyboard.Key.space:
-                    is_close_gripper = True
-
-            # Record current state if recording
-            if recording:
-                step_data = {
-                    "target_pos": target_pos.copy(),
-                    "target_quat": target_R.as_quat(),  # x,y,z,w format
-                    "gripper_closed": is_close_gripper,
-                    "step": step_count,
-                }
-                trajectory.append(step_data)
-
-        # control arm
-        target_quat = target_R.as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
-        q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
-        robot.control_dofs_position(q[:-2], motors_dof)
-        # control gripper
-        if is_close_gripper:
-            robot.control_dofs_force(np.array([-1.0, -1.0]), fingers_dof)
-        else:
-            robot.control_dofs_force(np.array([1.0, 1.0]), fingers_dof)
-
-        scene.step()
-        step_count += 1
+            scene.step()
+            step_count += 1
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
 
     # Save trajectory if recording
     if recording and len(trajectory) > 0:
@@ -436,12 +408,8 @@ def main():
         elif not os.path.isabs(trajectory_file):
             trajectory_file = os.path.join(traj_dir, os.path.basename(trajectory_file))
 
-    clients = dict()
-    clients["keyboard"] = KeyboardDevice()
-    clients["keyboard"].start()
-
     scene, entities = build_scene(use_ipc=args.ipc, show_viewer=args.vis, enable_ipc_gui=False)
-    run_sim(scene, entities, clients, mode=args.mode, trajectory_file=trajectory_file)
+    run_sim(scene, entities, mode=args.mode, trajectory_file=trajectory_file)
 
 
 if __name__ == "__main__":
