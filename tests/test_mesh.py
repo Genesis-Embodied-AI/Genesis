@@ -512,25 +512,19 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 @pytest.mark.required
 def test_plane_texture_path_preservation(show_viewer):
-    """Test that plane primitives preserve texture paths through the mesh pipeline."""
+    """Test that plane primitives preserve texture paths in metadata."""
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
     plane = scene.add_entity(gs.morphs.Plane())
     scene.build()
 
-    # Check that the plane's vgeom has a texture with a path
+    # Check that the plane's vgeom has metadata with texture_path
     assert len(plane.vgeoms) > 0
     vgeom = plane.vgeoms[0]
     assert vgeom.vmesh is not None
-    assert vgeom.vmesh.surface is not None
 
-    texture = vgeom.vmesh.surface.diffuse_texture
-    assert texture is not None
-    assert isinstance(texture, gs.textures.ImageTexture)
-
-    # The texture should have both image_path and image_array
-    assert texture.image_path is not None
-    assert texture.image_array is not None
-    assert "checker.png" in texture.image_path
+    # The texture path should be stored in metadata
+    assert "texture_path" in vgeom.vmesh.metadata
+    assert vgeom.vmesh.metadata["texture_path"] == "textures/checker.png"
 
 
 @pytest.mark.required

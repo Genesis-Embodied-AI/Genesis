@@ -232,7 +232,6 @@ class Mesh(RBC):
         must_update_surface = True
         roughness_factor = None
         color_image = None
-        color_image_path = None
         color_factor = None
         opacity = 1.0
 
@@ -255,8 +254,6 @@ class Mesh(RBC):
                 elif isinstance(material, trimesh.visual.material.SimpleMaterial):
                     if material.image is not None:
                         color_image = mu.PIL_to_array(material.image)
-                        # Check if the material has stored the original image path
-                        color_image_path = material.kwargs.get("image_path", None)
                     elif material.diffuse is not None:
                         color_factor = tuple(np.array(material.diffuse, dtype=np.float32) / 255.0)
 
@@ -287,7 +284,7 @@ class Mesh(RBC):
             color_factor = (1.0, 1.0, 1.0, 1.0)
 
         if must_update_surface:
-            color_texture = mu.create_texture(color_image, color_factor, "srgb", image_path=color_image_path)
+            color_texture = mu.create_texture(color_image, color_factor, "srgb")
             opacity_texture = None
             if color_texture is not None:
                 opacity_texture = color_texture.check_dim(3)

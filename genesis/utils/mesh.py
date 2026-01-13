@@ -207,12 +207,11 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
             uvs = uvs.copy()
             uvs[:, 1] = 1.0 - uvs[:, 1]
             assert texture.image_array.dtype == np.uint8
-            material_kwargs = {"image": Image.fromarray(texture.image_array), "diffuse": (1.0, 1.0, 1.0, 1.0)}
-            if texture.image_path is not None:
-                material_kwargs["image_path"] = texture.image_path
             visual = trimesh.visual.TextureVisuals(
                 uv=uvs,
-                material=trimesh.visual.material.SimpleMaterial(**material_kwargs),
+                material=trimesh.visual.material.SimpleMaterial(
+                    image=Image.fromarray(texture.image_array), diffuse=(1.0, 1.0, 1.0, 1.0)
+                ),
             )
         else:
             # fall back to color texture
@@ -500,14 +499,9 @@ def tonemapped(image):
     return (np.clip(np.power(image / 255 * np.power(2, exposure), 1 / 2.2), 0, 1) * 255).astype(np.uint8)
 
 
-def create_texture(image, factor, encoding, image_path=None):
+def create_texture(image, factor, encoding):
     if image is not None:
-        return gs.textures.ImageTexture(
-            image_array=image,
-            image_path=image_path,
-            image_color=factor,
-            encoding=encoding,
-        )
+        return gs.textures.ImageTexture(image_array=image, image_color=factor, encoding=encoding)
     if factor is not None:
         return gs.textures.ColorTexture(color=factor)
     return None
@@ -897,6 +891,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
 
 
 def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color=None):
+    DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
@@ -918,6 +913,8 @@ def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1)
     vmesh = trimesh.Trimesh(verts, faces, process=False)
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
+
+    metadata = {}
     if color is None:  # use checkerboard texture
         n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
         vmesh.visual = trimesh.visual.TextureVisuals(
@@ -933,16 +930,17 @@ def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1)
                 dtype=np.float32,
             ),
             material=trimesh.visual.material.SimpleMaterial(
-                image=Image.open(os.path.join(get_assets_dir(), "textures/checker.png")),
-                image_path="textures/checker.png",
+                image=Image.open(os.path.join(get_assets_dir(), DEFAULT_PLANE_TEXTURE_PATH)),
             ),
         )
+        # Store texture path in metadata since we applied a texture
+        metadata["texture_path"] = DEFAULT_PLANE_TEXTURE_PATH
     else:
         vmesh.visual = trimesh.visual.ColorVisuals(
             vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
         )
 
-    return vmesh, mesh
+    return vmesh, mesh, metadata
 
 
 def generate_tetgen_config_from_morph(morph):
