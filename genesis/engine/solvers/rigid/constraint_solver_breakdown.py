@@ -435,7 +435,7 @@ def create_nt_chol_solve_kernel(func_nt_chol_solve):
         """Newton Cholesky solve for Mgrad. Per-batch operation."""
         _B = constraint_state.grad.shape[1]
 
-        ti.loop_config(serialize=True)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 func_nt_chol_solve(i_b, constraint_state=constraint_state)
