@@ -187,7 +187,12 @@ class RigidEntity(Entity):
             link_name_prefix = "cylinder"
 
         elif isinstance(morph, gs.options.morphs.Plane):
-            tmesh, cmesh, plane_metadata = mu.create_plane(normal=morph.normal, plane_size=morph.plane_size, tile_size=morph.tile_size)
+            tmesh, cmesh = mu.create_plane(
+                normal=morph.normal,
+                plane_size=morph.plane_size,
+                tile_size=morph.tile_size,
+                texture_path=mu.DEFAULT_PLANE_TEXTURE_PATH
+            )
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
@@ -198,8 +203,12 @@ class RigidEntity(Entity):
         # contains one visual geom (vgeom) and one collision geom (geom)
         g_infos = []
         if morph.visualization:
-            # Use metadata from primitive creation (e.g., texture paths for Plane)
-            metadata = plane_metadata if isinstance(morph, gs.options.morphs.Plane) else {}
+            # For planes with textures, store the texture path in metadata
+            metadata = {}
+            if isinstance(morph, gs.options.morphs.Plane):
+                # Check if a texture was applied (not a solid color)
+                if hasattr(tmesh.visual, 'material') and tmesh.visual.material is not None:
+                    metadata["texture_path"] = mu.DEFAULT_PLANE_TEXTURE_PATH
 
             g_infos.append(
                 dict(

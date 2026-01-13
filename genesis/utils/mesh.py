@@ -37,6 +37,7 @@ CVX_PATH_QUANTIZE_FACTOR = 1e-6
 Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
     [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
 )
+DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"
 
 
 class MeshInfo:
@@ -890,8 +891,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
     return mesh
 
 
-def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color=None):
-    DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"
+def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color=None, texture_path=DEFAULT_PLANE_TEXTURE_PATH):
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
@@ -914,7 +914,6 @@ def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1)
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    metadata = {}
     if color is None:  # use checkerboard texture
         n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
         vmesh.visual = trimesh.visual.TextureVisuals(
@@ -930,17 +929,15 @@ def create_plane(normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1)
                 dtype=np.float32,
             ),
             material=trimesh.visual.material.SimpleMaterial(
-                image=Image.open(os.path.join(get_assets_dir(), DEFAULT_PLANE_TEXTURE_PATH)),
+                image=Image.open(os.path.join(get_assets_dir(), texture_path)),
             ),
         )
-        # Store texture path in metadata since we applied a texture
-        metadata["texture_path"] = DEFAULT_PLANE_TEXTURE_PATH
     else:
         vmesh.visual = trimesh.visual.ColorVisuals(
             vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
         )
 
-    return vmesh, mesh, metadata
+    return vmesh, mesh
 
 
 def generate_tetgen_config_from_morph(morph):

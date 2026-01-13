@@ -515,17 +515,9 @@ def test_plane_texture_path_preservation(show_viewer):
     """Test that plane primitives preserve texture paths in metadata."""
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
     plane = scene.add_entity(gs.morphs.Plane())
-    scene.build()
-
-    # Check that the plane's vgeom has metadata with texture_path
-    assert len(plane.vgeoms) > 0
-    vgeom = plane.vgeoms[0]
-    assert vgeom.vmesh is not None
 
     # The texture path should be stored in metadata
-    assert "texture_path" in vgeom.vmesh.metadata
-    assert vgeom.vmesh.metadata["texture_path"] == "textures/checker.png"
-
+    assert plane.vgeoms[0].vmesh.metadata["texture_path"] == "textures/checker.png"
 
 @pytest.mark.required
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
