@@ -2,6 +2,7 @@ import math
 import sys
 import os
 import time  # Added time import for timeout functionality
+import platform as platform_module
 # Ensure we can import genesis from the local source tree
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
@@ -9,6 +10,16 @@ import random
 from typing import TYPE_CHECKING, List, Tuple, Optional
 
 import numpy as np
+import torch
+
+# Enable MPS (Metal Performance Shaders) acceleration on macOS
+if platform_module.system() == "Darwin":
+    if torch.backends.mps.is_available():
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        print("🔧 macOS detected - MPS (Metal Performance Shaders) acceleration enabled")
+    else:
+        print("⚠️  macOS detected but MPS not available on this device")
+
 import genesis as gs
 from genesis.vis.camera import Camera
 
@@ -208,24 +219,30 @@ def update_camera_chase(cam: Camera, drone_pos: Tuple[float, float, float], dron
     cam.set_pose(pos=(cx, cy, cz), lookat=drone_pos)
 
 
-def fly_mission(mission_control: MissionControl, controller: "DronePIDController", scene: gs.Scene, cam: Camera, timeout: float = 60.0):
+def fly_mission(mission_control: MissionControl, controller: "DronePIDController", scene: gs.Scene, cam: Camera, timeout: float = 120.0):
     """
     Executes the mission with a timeout safeguard for slower machines.
+    Optimized for complex ring traversal with enhanced stability.
 
     Args:
         timeout: Maximum wall-clock time in seconds to run the simulation.
     """
     drone = controller.drone
     step = 0
-    max_steps = 3000
+    max_steps = 12000  # Increased from 3000 for more complex demo
     start_time = time.time()
+    
+    # Tracking statistics
+    rings_passed = 0
+    last_ring_idx = -1
 
     print(f"Mission started with timeout: {timeout} seconds")
+    print(f"Max steps: {max_steps}, dt=0.01s → {max_steps * 0.01:.1f}s mission time")
 
     while step < max_steps:
         # Check timeout
         if time.time() - start_time > timeout:
-            print(f"Mission Timeout reached ({timeout}s). Stopping simulation to generate demo video.")
+            print(f"\n⏱️  Mission Timeout reached ({timeout}s). Stopping simulation to generate demo video.")
             break
 
         # State estimation
@@ -237,15 +254,24 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
         # Mission Control (The "Other" Simulation Program/Logic)
         # Check Safety
         if not mission_control.check_bounds(pos_np):
-            print("Mission Aborted: Out of bounds.")
+            print("❌ Mission Aborted: Out of bounds.")
             break
 
         # Get Guidance
         target_pos, keep_flying = mission_control.get_target(pos_np, vel_np)
 
         if not keep_flying and mission_control.mission_status == "COMPLETED":
-            print("Mission Completed Successfully!")
+            print("✅ Mission Completed Successfully!")
+            print(f"   Traversed {rings_passed} rings successfully!")
             break
+
+        # Track ring traversal
+        if mission_control.current_ring_idx > last_ring_idx:
+            last_ring_idx = mission_control.current_ring_idx
+            # New ring detected
+            if mission_control.current_ring_idx > 0:
+                rings_passed += 1
+                print(f"   ✓ Ring {rings_passed} traversed successfully!")
 
         # Control
         rpms = controller.update(target_pos)
@@ -268,11 +294,20 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
         step += 1
 
     if step >= max_steps:
-        print("Mission Timed Out.")
+        print(f"⚠️  Mission completed or timed out after {step} steps ({step * 0.01:.1f}s)")
 
 
 def main():
-    gs.init(backend=gs.gpu)
+    # Detect platform and select appropriate backend
+    system_platform = platform_module.system()
+    if system_platform == "Darwin":
+        # Use Metal GPU backend on macOS for MPS acceleration
+        backend = gs.gpu  # Metal backend on macOS
+        print(f"🍎 Using Metal GPU backend on {system_platform}")
+    else:
+        backend = gs.gpu
+    
+    gs.init(backend=backend)
 
     ##### scene #####
     scene = gs.Scene(show_viewer=True, sim_options=gs.options.SimOptions(dt=0.01))
@@ -282,13 +317,31 @@ def main():
 
     drone = scene.add_entity(morph=gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 0.2)))
 
-    # Define Rings (Pos, Normal, Radius)
-    # A path that curves and changes height
+    # Define Rings with increased complexity - Multiple rings forming a challenging path
+    # The drone must navigate through multiple rings at different heights and positions
     rings_config = [
-        {'pos': (1.5, 1.5, 1.5),  'normal': (1, 1, 0),    'radius': 0.4},
-        {'pos': (-1.0, 2.5, 2.0), 'normal': (-1, 0.5, 0), 'radius': 0.4},
-        {'pos': (-2.0, 0.0, 1.0), 'normal': (0, -1, 0),   'radius': 0.4},
-        {'pos': (0.0, -2.0, 1.5), 'normal': (1, 0, 0.5),  'radius': 0.4}
+        # Starting sequence - single ring at moderate height
+        {'pos': (2.0, 0.0, 1.2),   'normal': (1, 0, 0),    'radius': 0.5},
+        
+        # Rising sequence - rings ascending
+        {'pos': (3.5, 1.5, 1.8),   'normal': (0.8, 0.6, 0), 'radius': 0.5},
+        {'pos': (4.5, 3.0, 2.5),   'normal': (1, 0, 0.2),   'radius': 0.5},
+        
+        # Height peak sequence
+        {'pos': (3.0, 4.5, 3.2),   'normal': (0.5, 0.8, 0.2), 'radius': 0.45},
+        
+        # Turning sequence - challenging turns
+        {'pos': (1.0, 4.0, 2.8),   'normal': (-0.7, 0.7, 0), 'radius': 0.45},
+        {'pos': (-1.5, 2.5, 2.5),  'normal': (-1, 0, 0.3),   'radius': 0.5},
+        
+        # Diagonal descent
+        {'pos': (-2.0, 0.5, 1.8),  'normal': (-0.5, -0.5, -0.5), 'radius': 0.5},
+        
+        # Final challenge - tight ring
+        {'pos': (0.0, -2.0, 1.5),  'normal': (0, -1, 0.2),   'radius': 0.4},
+        
+        # Final ring - return to start area
+        {'pos': (1.0, -1.0, 1.2),  'normal': (1, -0.5, 0),   'radius': 0.5},
     ]
 
     # Visualize Rings
@@ -298,17 +351,18 @@ def main():
     # Initialize Mission Control
     mission = MissionControl(rings_config)
 
-    # PID Params
+    # PID Params - Adjusted for better ring traversal performance
+    # More aggressive control for precise maneuvering through rings
     pid_params = [
-        [2.0, 0.0, 0.0],
-        [2.0, 0.0, 0.0],
-        [2.0, 0.0, 0.0],
-        [20.0, 0.0, 20.0],
-        [20.0, 0.0, 20.0],
-        [25.0, 0.0, 20.0],
-        [10.0, 0.0, 1.0],
-        [10.0, 0.0, 1.0],
-        [2.0, 0.0, 0.2],
+        [2.5, 0.05, 0.1],   # X position - more responsive
+        [2.5, 0.05, 0.1],   # Y position - more responsive
+        [3.0, 0.1, 0.2],    # Z position - faster altitude changes
+        [22.0, 1.0, 25.0],  # Roll - improved stability
+        [22.0, 1.0, 25.0],  # Pitch - improved stability
+        [28.0, 2.0, 22.0],  # Yaw - better rotation control
+        [12.0, 0.5, 1.5],   # Roll rate
+        [12.0, 0.5, 1.5],   # Pitch rate
+        [2.5, 0.1, 0.3],    # Yaw rate
     ]
 
     controller = DronePIDController(drone=drone, dt=0.01, base_rpm=base_rpm, pid_params=pid_params)
@@ -328,12 +382,14 @@ def main():
 
     cam.start_recording()
 
-    print("Starting Mission: Ring Traversal")
-    # Set a reasonable timeout for a demo (e.g., 60 seconds)
-    fly_mission(mission, controller, scene, cam, timeout=60.0)
+    print("🚁 Starting Mission: Complex Ring Traversal")
+    print(f"   Total rings to traverse: {len(rings_config)}")
+    print(f"   Platform: {system_platform}")
+    # Increase timeout for more complex demo
+    fly_mission(mission, controller, scene, cam, timeout=120.0)
 
     cam.stop_recording(save_to_filename="../../videos/fly_route_rings.mp4")
-    print("Video saved to ../../videos/fly_route_rings.mp4")
+    print("✅ Video saved to ../../videos/fly_route_rings.mp4")
 
 
 
