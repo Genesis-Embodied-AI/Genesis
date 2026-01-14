@@ -3,6 +3,8 @@ import sys
 import os
 import time  # Added time import for timeout functionality
 import platform as platform_module
+import threading
+from queue import Queue
 # Ensure we can import genesis from the local source tree
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
@@ -219,93 +221,194 @@ def update_camera_chase(cam: Camera, drone_pos: Tuple[float, float, float], dron
     cam.set_pose(pos=(cx, cy, cz), lookat=drone_pos)
 
 
-def fly_mission(mission_control: MissionControl, controller: "DronePIDController", scene: gs.Scene, cam: Camera, timeout: float = 120.0):
+def fly_mission(mission_control: MissionControl, controller: "DronePIDController", scene: gs.Scene, cam: Camera, timeout: float = 120.0, min_video_seconds: float = 10.0):
     """
-    Executes the mission with a timeout safeguard for slower machines.
-    Optimized for complex ring traversal with enhanced stability.
+    Executes the mission with distributed processing:
+    - Main thread: Physics simulation (drone flight dynamics)
+    - Render thread: Visualization and camera updates (async)
+    
+    Ensures minimum video length for demo purposes.
 
     Args:
         timeout: Maximum wall-clock time in seconds to run the simulation.
+        min_video_seconds: Minimum video duration in seconds (at least 10s for demo).
     """
     drone = controller.drone
     step = 0
-    max_steps = 12000  # Increased from 3000 for more complex demo
+    dt = 0.01  # Simulation timestep
+    
+    # Calculate minimum steps for video duration
+    # Video is recorded at render rate, need enough steps for min_video_seconds
+    min_steps_for_video = int(min_video_seconds / dt)  # At least 1000 steps for 10s
+    max_steps = max(12000, min_steps_for_video)  # Ensure at least min video length
+    
     start_time = time.time()
     
     # Tracking statistics
     rings_passed = 0
     last_ring_idx = -1
+    mission_done = False
+    
+    # Render queue for async processing
+    render_queue = Queue(maxsize=10)  # Buffer for render commands
+    render_done = threading.Event()
+    
+    # Statistics for performance monitoring
+    sim_times = []
+    render_times = []
 
-    print(f"Mission started with timeout: {timeout} seconds")
-    print(f"Max steps: {max_steps}, dt=0.01s → {max_steps * 0.01:.1f}s mission time")
+    print(f"🚀 Distributed Simulation Mode:")
+    print(f"   Main Thread: Physics simulation (drone dynamics)")  
+    print(f"   Async: Visualization & rendering")
+    print(f"   Minimum video length: {min_video_seconds}s ({min_steps_for_video} steps)")
+    print(f"   Max steps: {max_steps}, dt={dt}s → {max_steps * dt:.1f}s max mission time")
+    print(f"   Timeout: {timeout}s wall-clock time")
+    
+    def render_worker():
+        """Async render worker - handles visualization in separate thread context."""
+        nonlocal render_times
+        while not render_done.is_set() or not render_queue.empty():
+            try:
+                render_cmd = render_queue.get(timeout=0.1)
+                if render_cmd is None:
+                    break
+                    
+                render_start = time.perf_counter()
+                
+                pos_tuple, vel_tuple, target_tuple = render_cmd
+                
+                # Update camera chase view
+                update_camera_chase(cam, pos_tuple, vel_tuple, target_tuple)
+                
+                # Render frame
+                cam.render()
+                
+                render_times.append(time.perf_counter() - render_start)
+                render_queue.task_done()
+                
+            except Exception:
+                pass  # Timeout or error, continue
+    
+    # Start async render thread
+    render_thread = threading.Thread(target=render_worker, daemon=True)
+    render_thread.start()
 
     try:
         while step < max_steps:
-            # Check timeout
-            if time.time() - start_time > timeout:
-                print(f"\n⏱️  Mission Timeout reached ({timeout}s). Stopping simulation to generate demo video.")
-                break
-
+            sim_start = time.perf_counter()
+            
+            # Check timeout (wall-clock time)
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                # But ensure we have minimum video length
+                if step >= min_steps_for_video:
+                    print(f"\n⏱️  Timeout reached ({timeout}s). Video has {step * dt:.1f}s of content.")
+                    break
+                else:
+                    print(f"\n⏱️  Timeout but continuing for minimum video length...")
+            
+            # ===== PHYSICS SIMULATION (Main Thread / GPU Core 1) =====
             # State estimation
             pos_tensor = drone.get_pos()
             vel_tensor = drone.get_vel()
             pos_np = pos_tensor.cpu().numpy()
             vel_np = vel_tensor.cpu().numpy()
 
-            # Mission Control (The "Other" Simulation Program/Logic)
-            # Check Safety
+            # Mission Control - Safety check
             if not mission_control.check_bounds(pos_np):
-                print("❌ Mission Aborted: Out of bounds.")
-                break
+                if step >= min_steps_for_video:
+                    print("❌ Mission Aborted: Out of bounds.")
+                    break
+                # Continue for minimum video even if out of bounds (hover)
+                target_pos = pos_np
+                keep_flying = False
+            else:
+                # Get Guidance
+                target_pos, keep_flying = mission_control.get_target(pos_np, vel_np)
 
-            # Get Guidance
-            target_pos, keep_flying = mission_control.get_target(pos_np, vel_np)
-
-            if not keep_flying and mission_control.mission_status == "COMPLETED":
+            # Check mission completion
+            if not keep_flying and mission_control.mission_status == "COMPLETED" and not mission_done:
                 print("✅ Mission Completed Successfully!")
-                print(f"   Traversed {rings_passed} rings successfully!")
-                break
+                print(f"   Traversed {rings_passed} rings!")
+                mission_done = True
+                # Continue simulation for video length but mark done
 
             # Track ring traversal
             if mission_control.current_ring_idx > last_ring_idx:
                 last_ring_idx = mission_control.current_ring_idx
-                # New ring detected
                 if mission_control.current_ring_idx > 0:
                     rings_passed += 1
-                    print(f"   ✓ Ring {rings_passed} traversed successfully!")
+                    print(f"   ✓ Ring {rings_passed} traversed! (Step {step}, Time {step*dt:.2f}s)")
 
-            # Control
-            rpms = controller.update(target_pos)
-            rpms = [clamp(r) for r in rpms]
+            # PID Control - compute motor RPMs
+            if not mission_done or step < min_steps_for_video:
+                rpms = controller.update(target_pos)
+                rpms = [clamp(r) for r in rpms]
+            else:
+                # Hover in place after mission complete
+                rpms = [base_rpm] * 4
+            
             drone.set_propellels_rpm(rpms)
 
+            # Physics step (main GPU computation)
             scene.step()
+            
+            sim_times.append(time.perf_counter() - sim_start)
 
-            # Visualization & Tracking
+            # ===== ASYNC RENDERING (Render Thread / GPU Core 2) =====
+            # Queue render command - non-blocking
             target_tuple = tuple(target_pos)
             pos_tuple = tuple(pos_np)
-
-            # Draw line to target
+            vel_tuple = tuple(vel_np)
+            
+            # Draw debug line (must be in main thread)
             scene.draw_debug_line(pos_tuple, target_tuple, radius=0.005, color=(0.0, 1.0, 0.0, 0.5))
-
-            # Camera
-            update_camera_chase(cam, pos_tuple, tuple(vel_np), target_tuple)
-            cam.render()
+            
+            # Queue camera update for async rendering
+            try:
+                render_queue.put_nowait((pos_tuple, vel_tuple, target_tuple))
+            except:
+                pass  # Queue full, skip frame (maintains realtime feel)
 
             step += 1
+            
+            # Progress report every 500 steps
+            if step % 500 == 0:
+                video_time = step * dt
+                avg_sim = np.mean(sim_times[-100:]) * 1000 if sim_times else 0
+                avg_render = np.mean(render_times[-100:]) * 1000 if render_times else 0
+                print(f"   📊 Step {step}: Video={video_time:.1f}s, SimTime={avg_sim:.1f}ms, RenderTime={avg_render:.1f}ms")
 
     except gs.GenesisException as e:
         if "Viewer closed" in str(e):
-            print(f"\n🛑 Viewer closed by user after {step} steps ({step * 0.01:.1f}s)")
+            video_time = step * dt
+            print(f"\n🛑 Viewer closed at step {step} ({video_time:.1f}s video)")
             print(f"   Rings traversed: {rings_passed}")
+            if video_time < min_video_seconds:
+                print(f"   ⚠️  Video shorter than {min_video_seconds}s target")
         else:
             raise e
     except Exception as e:
         print(f"\n⚠️  Unexpected error: {e}")
         print(f"   Steps completed: {step}, Rings traversed: {rings_passed}")
-
-    if step >= max_steps:
-        print(f"⚠️  Mission completed or timed out after {step} steps ({step * 0.01:.1f}s)")
+    finally:
+        # Signal render thread to stop
+        render_done.set()
+        render_queue.put(None)
+        render_thread.join(timeout=2.0)
+    
+    # Final statistics
+    video_time = step * dt
+    print(f"\n📈 Simulation Statistics:")
+    print(f"   Total steps: {step}")
+    print(f"   Video duration: {video_time:.2f}s {'✅' if video_time >= min_video_seconds else '⚠️'}")
+    print(f"   Rings passed: {rings_passed}")
+    if sim_times:
+        print(f"   Avg sim time: {np.mean(sim_times)*1000:.2f}ms/step")
+    if render_times:
+        print(f"   Avg render time: {np.mean(render_times)*1000:.2f}ms/frame")
+    
+    return step >= min_steps_for_video  # Return True if minimum video length achieved
 
 
 def main():
