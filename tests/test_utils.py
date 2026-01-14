@@ -172,8 +172,8 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape, tol):
     for py_func, shapes_in, shapes_out in (
         (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
         (gu.pos_lookat_up_to_T, [[3], [3], [3]], [[4, 4]]),
-        # Note: polar decomposition doesn't support batching, so it's tested separately
-        # in test_polar_decomposition and test_utils_geom_numpy_vs_tensor_consistency with batch_shape=()
+        (lambda A: gu.polar(A, pure_rotation=False, side="right"), [[3, 3]], [[3, 3], [3, 3]]),
+        (lambda A: gu.polar(A, pure_rotation=False, side="left"), [[3, 3]], [[3, 3], [3, 3]]),
     ):
         num_inputs = len(shapes_in)
         shape_args = (*shapes_in, *shapes_out)
@@ -279,6 +279,8 @@ def test_utils_geom_taichi_identity(batch_shape):
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_tensor_identity(batch_shape):
+    import gstaichi as ti
+
     for py_funcs, shape_args in (
         ((gu.R_to_rot6d, gu.rot6d_to_R), ([3, 3], [6])),
         ((gu.R_to_quat, gu.quat_to_R), ([3, 3], [4])),
