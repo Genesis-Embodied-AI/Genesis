@@ -36,7 +36,7 @@ def kernel_solve_body_decomposed(
 ):
     """
     Single kernel containing all solver steps as separate top-level loops.
-    
+
     This reduces Python→C++ boundary crossing overhead (1 call per iteration instead of 6)
     while still allowing Taichi to launch each step as a separate GPU kernel internally
     for profiling purposes.
@@ -56,7 +56,7 @@ def kernel_solve_body_decomposed(
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
-            
+
             if ti.abs(alpha) < rigid_global_info.EPS[None]:
                 constraint_state.improved[i_b] = False
             else:
@@ -67,11 +67,15 @@ def kernel_solve_body_decomposed(
                     constraint_state.qacc[i_d, i_b] = (
                         constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
                     )
-                    constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+                    constraint_state.Ma[i_d, i_b] = (
+                        constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+                    )
 
                 # Update Jaref
                 for i_c in range(constraint_state.n_constraints[i_b]):
-                    constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+                    constraint_state.Jaref[i_c, i_b] = (
+                        constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+                    )
         else:
             constraint_state.improved[i_b] = False
 
@@ -83,7 +87,7 @@ def kernel_solve_body_decomposed(
                 for i_d in range(n_dofs):
                     constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
                     constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
-    
+
     # Step 3: Update constraints
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
@@ -97,7 +101,7 @@ def kernel_solve_body_decomposed(
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
-    
+
     # Step 4: Newton Hessian update (Newton only)
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
@@ -110,7 +114,7 @@ def kernel_solve_body_decomposed(
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
-    
+
     # Step 5: Update gradient
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
@@ -123,7 +127,7 @@ def kernel_solve_body_decomposed(
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
-    
+
     # Step 6: Check convergence and update search direction
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
@@ -183,13 +187,13 @@ def func_solve_decomposed(
 ):
     """
     Decomposed constraint solver maintaining original batch-level parallelization.
-    
+
     Uses a single kernel with multiple top-level for loops per iteration, reducing
     Python→C++ boundary crossing overhead from 6× to 1× per iteration.
-    
+
     This provides much better CPU performance (~3-6x faster than separate kernels)
     while still allowing profiling of individual steps on GPU.
-    
+
     Args:
         entities_info: Entity information array
         dofs_state: DOF state array
@@ -208,4 +212,3 @@ def func_solve_decomposed(
             rigid_global_info,
             static_rigid_sim_config,
         )
-

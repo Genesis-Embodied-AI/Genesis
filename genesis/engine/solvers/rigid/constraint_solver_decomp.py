@@ -179,14 +179,14 @@ class ConstraintSolver:
     def resolve(self, use_decomposed_kernels=None):
         """
         Resolve constraints using either monolithic or decomposed solver kernels.
-        
+
         Args:
             use_decomposed_kernels: If True, use decomposed kernels. If False, use monolithic kernel.
                                    If None (default), uses the GS_SOLVER_DECOMPOSE environment variable.
         """
         if use_decomposed_kernels is None:
             use_decomposed_kernels = USE_DECOMPOSED_SOLVER
-            
+
         func_init_solver(
             self._solver.dofs_info,
             self._solver.dofs_state,
@@ -195,11 +195,11 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        
+
         if use_decomposed_kernels:
             # Import here to avoid circular dependency and overhead when not needed
             from genesis.engine.solvers.rigid.constraint_solver_decomp_batch import func_solve_decomposed
-            
+
             func_solve_decomposed(
                 self._solver.entities_info,
                 self._solver.dofs_state,
