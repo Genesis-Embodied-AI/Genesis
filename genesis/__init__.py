@@ -112,19 +112,19 @@ def init(
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─' * (bar_width)}╯>~")
 
+    # Get concrete device and backend
+    global device
+    device, device_name, total_mem, backend = get_device(backend)
+    if backend != gs.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
+        device, device_name, total_mem, _ = get_device(gs_backend.cpu)
+
     # Deal with manually disabled backend early on to make sure backend-specific logic is valid
     if (
         (backend == gs_backend.metal and os.environ.get("TI_ENABLE_METAL") == "0")
         or (backend == gs_backend.vulkan and os.environ.get("TI_ENABLE_VULKAN") == "0")
         or (backend == gs_backend.cuda and os.environ.get("TI_ENABLE_CUDA") == "0")
     ):
-        backend = gs_backend.cpu
-
-    # Get concrete device and backend
-    global device
-    device, device_name, total_mem, backend = get_device(backend)
-    if backend != gs.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
-        device, device_name, total_mem, _ = get_device(gs_backend.cpu)
+        device, device_name, total_mem, backend = get_device(gs_backend.cpu)
 
     # Configure GsTaichi fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
