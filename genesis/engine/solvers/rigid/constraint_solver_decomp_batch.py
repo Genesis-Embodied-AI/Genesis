@@ -43,11 +43,11 @@ def kernel_solve_body_decomposed(
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.qacc.shape[0]
-    
+
     # Step 1: Linesearch and update qacc, Ma, Jaref
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0:
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             alpha = constraint_solver_decomp.func_linesearch(
                 i_b,
                 entities_info=entities_info,
@@ -61,6 +61,8 @@ def kernel_solve_body_decomposed(
                 constraint_state.improved[i_b] = False
             else:
                 # Update qacc and Ma
+                # we need alpha for this, so stay in same top level for loop
+                # (though we could store alpha in a new tensor of course, if we wanted to split this)
                 for i_d in range(n_dofs):
                     constraint_state.qacc[i_d, i_b] = (
                         constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
@@ -70,12 +72,14 @@ def kernel_solve_body_decomposed(
                 # Update Jaref
                 for i_c in range(constraint_state.n_constraints[i_b]):
                     constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
-    
+        else:
+            constraint_state.improved[i_b] = False
+
     # Step 2: Save prev_grad and prev_Mgrad (CG only)
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
-            if constraint_state.n_constraints[i_b] > 0:
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 for i_d in range(n_dofs):
                     constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
                     constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
@@ -83,7 +87,7 @@ def kernel_solve_body_decomposed(
     # Step 3: Update constraints
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0:
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             constraint_solver_decomp.func_update_constraint(
                 i_b,
                 qacc=constraint_state.qacc,
@@ -98,7 +102,7 @@ def kernel_solve_body_decomposed(
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
-            if constraint_state.n_constraints[i_b] > 0:
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 constraint_solver_decomp.func_nt_hessian_incremental(
                     i_b,
                     entities_info=entities_info,
@@ -110,7 +114,7 @@ def kernel_solve_body_decomposed(
     # Step 5: Update gradient
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0:
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             constraint_solver_decomp.func_update_gradient(
                 i_b,
                 dofs_state=dofs_state,
@@ -123,7 +127,7 @@ def kernel_solve_body_decomposed(
     # Step 6: Check convergence and update search direction
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0:
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             # Check convergence
             tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
             improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
