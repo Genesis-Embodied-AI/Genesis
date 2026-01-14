@@ -40,7 +40,6 @@ class JointAnimator:
         self.rigid.set_dofs_kp(gu.default_dofs_kp(n_dofs))
 
     def animate(self, scene: gs.Scene):
-        """Calculate target positions using sin function to interpolate between lower and upper limits"""
         t = scene.t * scene.dt
         theta = np.pi * t + self.init_phase
         theta = theta % (2 * np.pi)
@@ -86,13 +85,6 @@ def main():
     entities = scene.add_stage(
         morph=gs.morphs.USD(
             file=f"{asset_path}/usd/Refrigerator055/Refrigerator055.usd",
-            # Set default values for joint dynamics for missing attributes
-            joint_friction_attr_default=0.0,
-            joint_armature_attr_default=0.0,
-            revolute_joint_stiffness_attr_default=0.0,
-            revolute_joint_damping_attr_default=0.0,
-            prismatic_joint_stiffness_attr_default=0.0,
-            prismatic_joint_damping_attr_default=0.0,
         ),
         # vis_mode="collision",
         # visualize_contact=True,

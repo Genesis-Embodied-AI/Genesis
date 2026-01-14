@@ -334,33 +334,42 @@ def _parse_revolute_joint(
 
 def _parse_revolute_joint_dynamics(revolute_joint: UsdPhysics.RevoluteJoint, morph: gs.morphs.USD) -> Dict:
     """
-    Parse revolute joint dynamics properties from a joint prim.
+    Parse revolute joint dynamics properties (stiffness and damping) from a joint prim.
+
+    Parameters
+    ----------
+    revolute_joint : UsdPhysics.RevoluteJoint
+        The revolute joint API.
+    morph : gs.morphs.USD
+        USD morph configuration containing attribute candidate lists.
+
+    Returns
+    -------
+    dict
+        Dictionary with 'dofs_stiffness' and 'dofs_damping' as numpy arrays of shape (1,).
     """
     joint_prim = revolute_joint.GetPrim()
 
     # Parse stiffness attribute
     stiffness_value = _get_attr_value_by_candidates(
         joint_prim,
-        morph,
-        "revolute_joint_stiffness_attr_candidates",
-        "revolute_joint_stiffness_attr_default",
-        0.0,
+        candidates=morph.revolute_joint_stiffness_attr_candidates,
+        genesis_attr_name="dofs_stiffness",
+        genesis_default_value=0.0,
     )
-    dynamics_params = {
-        "dofs_stiffness": np.full((1,), stiffness_value, dtype=gs.np_float),
-    }
 
     # Parse damping attribute
     damping_value = _get_attr_value_by_candidates(
         joint_prim,
-        morph,
-        "revolute_joint_damping_attr_candidates",
-        "revolute_joint_damping_attr_default",
-        0.0,
+        candidates=morph.revolute_joint_damping_attr_candidates,
+        genesis_attr_name="dofs_damping",
+        genesis_default_value=0.0,
     )
-    dynamics_params["dofs_damping"] = np.full((1,), damping_value, dtype=gs.np_float)
 
-    return dynamics_params
+    return {
+        "dofs_stiffness": np.full((1,), stiffness_value, dtype=gs.np_float),
+        "dofs_damping": np.full((1,), damping_value, dtype=gs.np_float),
+    }
 
 
 def _parse_prismatic_joint(
@@ -414,33 +423,42 @@ def _parse_prismatic_joint(
 
 def _parse_prismatic_joint_dynamics(prismatic_joint: UsdPhysics.PrismaticJoint, morph: gs.morphs.USD) -> Dict:
     """
-    Parse prismatic joint dynamics properties from a joint prim.
+    Parse prismatic joint dynamics properties (stiffness and damping) from a joint prim.
+
+    Parameters
+    ----------
+    prismatic_joint : UsdPhysics.PrismaticJoint
+        The prismatic joint API.
+    morph : gs.morphs.USD
+        USD morph configuration containing attribute candidate lists.
+
+    Returns
+    -------
+    dict
+        Dictionary with 'dofs_stiffness' and 'dofs_damping' as numpy arrays of shape (1,).
     """
     joint_prim = prismatic_joint.GetPrim()
 
     # Parse stiffness attribute
     stiffness_value = _get_attr_value_by_candidates(
         joint_prim,
-        morph,
-        "prismatic_joint_stiffness_attr_candidates",
-        "prismatic_joint_stiffness_attr_default",
-        0.0,
+        candidates=morph.prismatic_joint_stiffness_attr_candidates,
+        genesis_attr_name="dofs_stiffness",
+        genesis_default_value=0.0,
     )
-    dynamics_params = {
-        "dofs_stiffness": np.full((1,), stiffness_value, dtype=gs.np_float),
-    }
 
     # Parse damping attribute
     damping_value = _get_attr_value_by_candidates(
         joint_prim,
-        morph,
-        "prismatic_joint_damping_attr_candidates",
-        "prismatic_joint_damping_attr_default",
-        0.0,
+        candidates=morph.prismatic_joint_damping_attr_candidates,
+        genesis_attr_name="dofs_damping",
+        genesis_default_value=0.0,
     )
-    dynamics_params["dofs_damping"] = np.full((1,), damping_value, dtype=gs.np_float)
 
-    return dynamics_params
+    return {
+        "dofs_stiffness": np.full((1,), stiffness_value, dtype=gs.np_float),
+        "dofs_damping": np.full((1,), damping_value, dtype=gs.np_float),
+    }
 
 
 def _parse_spherical_joint(
@@ -575,7 +593,19 @@ def _create_joint_info_for_base_link(l_info: Dict) -> Dict:
 
 def _find_attr_by_candidates(joint_prim: Usd.Prim, candidates: List[str]) -> Usd.Attribute:
     """
-    Find an attribute by candidates in the joint prim.
+    Find an attribute by trying candidate attribute names in order.
+
+    Parameters
+    ----------
+    joint_prim : Usd.Prim
+        The joint prim to search for attributes.
+    candidates : List[str]
+        List of candidate attribute names to try in order.
+
+    Returns
+    -------
+    Usd.Attribute
+        The first matching attribute found, or None if no matching attribute is found.
     """
     for candidate in candidates:
         attr = joint_prim.GetAttribute(candidate)
@@ -585,14 +615,10 @@ def _find_attr_by_candidates(joint_prim: Usd.Prim, candidates: List[str]) -> Usd
 
 
 def _get_attr_value_by_candidates(
-    joint_prim: Usd.Prim,
-    morph: gs.morphs.USD,
-    candidates_attr_name: str,
-    morph_option_default_name: str,
-    genesis_default_value,
+    joint_prim: Usd.Prim, candidates: List[str], genesis_attr_name: str, genesis_default_value
 ):
     """
-    Get attribute value by trying candidates, with fallback to user default or Genesis default.
+    Get attribute value by trying candidate attribute names in order.
 
     Parameters
     ----------
@@ -600,33 +626,26 @@ def _get_attr_value_by_candidates(
         The joint prim to search for attributes.
     candidates : List[str]
         List of candidate attribute names to try in order.
-    morph_option_name : str
-        The name of the USD morph option (for warning message).
-    morph_option_default_value : float | None
-        The name of the USD morph option default value (for warning message).
-    user_default_value : float | None
-        User-provided default value from morph options. If None, Genesis default is used with warning.
-    genesis_default_value : float
-        Genesis default value to use if attribute not found and user default is None.
+    genesis_attr_name : str
+        The name of the Genesis attribute (for logging purposes).
+    genesis_default_value
+        The default value to return if no matching attribute is found.
 
     Returns
     -------
     float
-        The attribute value, user default, or Genesis default.
+        The attribute value if found, otherwise the default value.
     """
-    candidates = morph.__dict__[candidates_attr_name]
     attr = _find_attr_by_candidates(joint_prim, candidates)
     if attr:
         return attr.Get()
-    morph_option_default_value = morph.__dict__[morph_option_default_name]
-    if morph_option_default_value is None:
-        gs.logger.warning(
-            f"No matching attribute found for {joint_prim.GetPath()}, given candidates: {candidates}. "
-            f"Using Genesis default value: {genesis_default_value}. "
-            f"To silence this warning, you can set '{morph_option_default_name}' in the USD morph options. "
-        )
-        return genesis_default_value
-    return morph_option_default_value
+
+    gs.logger.debug(
+        f"No matching attribute `{genesis_attr_name}` found in {joint_prim.GetPath()}, "
+        f"given candidates: {candidates}. "
+        f"Using Genesis default value: {genesis_default_value}."
+    )
+    return genesis_default_value
 
 
 def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int, morph: gs.morphs.USD) -> Dict:
@@ -648,29 +667,27 @@ def _parse_joint_dynamics(joint_prim: Usd.Prim, n_dofs: int, morph: gs.morphs.US
         Dictionary with joint dynamics parameters (dofs_frictionloss, dofs_armature).
         Always contains numpy arrays (either from USD or defaults).
     """
+
     # Parse friction attribute
     friction_value = _get_attr_value_by_candidates(
         joint_prim,
-        morph,
-        "joint_friction_attr_candidates",
-        "joint_friction_attr_default",
-        0.0,
+        candidates=morph.joint_friction_attr_candidates,
+        genesis_attr_name="dofs_frictionloss",
+        genesis_default_value=0.0,
     )
-    dynamics_params = {
-        "dofs_frictionloss": np.full((n_dofs,), friction_value, dtype=gs.np_float),
-    }
 
     # Parse armature attribute
     armature_value = _get_attr_value_by_candidates(
         joint_prim,
-        morph,
-        "joint_armature_attr_candidates",
-        "joint_armature_attr_default",
-        0.0,
+        candidates=morph.joint_armature_attr_candidates,
+        genesis_attr_name="dofs_armature",
+        genesis_default_value=0.0,
     )
-    dynamics_params["dofs_armature"] = np.full((n_dofs,), armature_value, dtype=gs.np_float)
 
-    return dynamics_params
+    return {
+        "dofs_frictionloss": np.full((n_dofs,), friction_value, dtype=gs.np_float),
+        "dofs_armature": np.full((n_dofs,), armature_value, dtype=gs.np_float),
+    }
 
 
 def _parse_drive_api(joint_prim: Usd.Prim, joint_type: str, n_dofs: int) -> Dict:
