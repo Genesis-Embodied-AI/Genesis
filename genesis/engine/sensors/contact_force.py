@@ -10,8 +10,8 @@ from genesis.options.sensors import (
     Contact as ContactSensorOptions,
     ContactForce as ContactForceSensorOptions,
 )
-from genesis.utils.geom import ti_inv_transform_by_quat, transform_by_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
+from genesis.utils.geom import inv_transform_by_quat, ti_inv_transform_by_quat, transform_by_quat
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array, ti_to_torch
 
 from .base_sensor import (
     NoisySensorMetadataMixin,
@@ -226,24 +226,42 @@ class ContactForceSensor(
         cls, shared_metadata: ContactForceSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         assert shared_metadata.solver is not None
+
+        if gs.use_zerocopy:
+            contact_data = shared_metadata.solver.collider._collider_state.contact_data
+            link_a = torch.clip(ti_to_torch(contact_data.link_a, transpose=True), min=0)
+            link_b = torch.clip(ti_to_torch(contact_data.link_b, transpose=True), min=0)
+            force = ti_to_torch(contact_data.force, transpose=True)
+            links_quat = ti_to_torch(shared_metadata.solver.links_state.quat, transpose=True)
+
+            output_forces = shared_ground_truth_cache.reshape((*shared_ground_truth_cache.shape[:-1], -1, 3))
+            quat_a = torch.gather(links_quat, index=link_a[..., None].expand((*link_a.shape, 4)), dim=1)
+            force_a = inv_transform_by_quat(-force, quat_a)
+            force_masked_a = (link_a[:, None] == shared_metadata.links_idx[None, :, None])[..., None] * force_a[:, None]
+            output_forces.copy_(force_masked_a.sum(dim=2))
+            quat_b = torch.gather(links_quat, index=link_b[..., None].expand((*link_b.shape, 4)), dim=1)
+            force_b = inv_transform_by_quat(+force, quat_b)
+            force_masked_b = (link_b[:, None] == shared_metadata.links_idx[None, :, None])[..., None] * force_b[:, None]
+            output_forces += force_masked_b.sum(dim=2)
+            return
+
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         force, link_a, link_b = all_contacts["force"], all_contacts["link_a"], all_contacts["link_b"]
 
-        shared_ground_truth_cache.fill_(0.0)
-
+        # Early return if no contacts for efficiency
         if link_a.shape[-1] == 0:
-            return  # no contacts
+            return
 
         links_quat = shared_metadata.solver.get_links_quat()
         if shared_metadata.solver.n_envs == 0:
             force, link_a, link_b, links_quat = force[None], link_a[None], link_b[None], links_quat[None]
 
-        output_forces = shared_ground_truth_cache.contiguous()
+        output_forces = torch.zeros_like(shared_ground_truth_cache)
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),
             link_b.contiguous(),
-            links_quat,
+            links_quat.contiguous(),
             shared_metadata.links_idx,
             output_forces,
         )
