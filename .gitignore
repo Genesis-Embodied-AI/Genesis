@@ -151,3 +151,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 examples/drone/CHANGES_SUMMARY.md
+examples/drone/CODE_CHANGES_DETAILED.md
+examples/drone/MPS_ACCELERATION_GUIDE.md
+examples/drone/QUICK_START.md
+examples/drone/docs
