@@ -1,8 +1,8 @@
+import inspect
 from copy import copy
 from itertools import chain
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
-import inspect
 
 import gstaichi as ti
 import numpy as np
@@ -164,6 +164,8 @@ class RigidEntity(Entity):
             n_dofs = 6
             init_qpos = np.concatenate([morph.pos, morph.quat])
 
+        metadata: dict[str, Any] = {"texture_path": None}
+
         if isinstance(morph, gs.options.morphs.Box):
             extents = np.array(morph.size)
             tmesh = mu.create_box(extents=extents)
@@ -171,27 +173,29 @@ class RigidEntity(Entity):
             geom_data = extents
             geom_type = gs.GEOM_TYPE.BOX
             link_name_prefix = "box"
-
         elif isinstance(morph, gs.options.morphs.Sphere):
             tmesh = mu.create_sphere(radius=morph.radius)
             cmesh = tmesh
             geom_data = np.array([morph.radius])
             geom_type = gs.GEOM_TYPE.SPHERE
             link_name_prefix = "sphere"
-
         elif isinstance(morph, gs.options.morphs.Cylinder):
             tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
             cmesh = tmesh
             geom_data = None
             geom_type = gs.GEOM_TYPE.MESH
             link_name_prefix = "cylinder"
-
         elif isinstance(morph, gs.options.morphs.Plane):
-            tmesh, cmesh = mu.create_plane(normal=morph.normal, plane_size=morph.plane_size, tile_size=morph.tile_size)
+            metadata["texture_path"] = mu.DEFAULT_PLANE_TEXTURE_PATH
+            tmesh, cmesh = mu.create_plane(
+                normal=morph.normal,
+                plane_size=morph.plane_size,
+                tile_size=morph.tile_size,
+                color_or_texture=metadata["texture_path"],
+            )
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
-
         else:
             gs.raise_exception("Unsupported primitive shape")
 
@@ -202,7 +206,7 @@ class RigidEntity(Entity):
                 dict(
                     contype=0,
                     conaffinity=0,
-                    vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface),
+                    vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface, metadata=metadata),
                 )
             )
         if (morph.contype or morph.conaffinity) and morph.collision:
