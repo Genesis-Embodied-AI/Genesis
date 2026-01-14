@@ -14,7 +14,6 @@ dependencies = [
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
-    "scipy>=1.14",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
@@ -139,6 +138,21 @@ force-exclude = '''
     genesis/ext
 )/
 '''
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Ignore the specific errors currently present in the codebase
+ignore = [
+    "F405", # undefined-local-with-import-star-usage
+    "F401", # unused-import
+    "F841", # unused-variable
+    "E741", # ambiguous-variable-name
+    "E402", # module-import-not-at-top-of-file
+    "F403", # undefined-local-with-import-star
+    "E712", # true-false-comparison
+]
 
 [tool.pytest.ini_options]
 addopts = [

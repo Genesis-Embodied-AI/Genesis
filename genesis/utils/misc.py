@@ -473,10 +473,6 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
-                # FIXME: DLPack still returns garbage data on Apple Metal for field if not calling sync first
-                if is_field and gs.backend == gs.metal:
-                    ti.sync()
-
                 # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:
@@ -486,6 +482,11 @@ def ti_to_python(
                 if gs.backend == gs.cpu:
                     value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
+
+        # FIXME: DLPack may return old values on Apple Metal for field if sync is not systematically called manually
+        if is_field and gs.backend == gs.metal:
+            ti.sync()
+
         if copy:
             if to_torch:
                 out = out.clone()
@@ -646,6 +647,9 @@ def ti_to_torch(
     if gs.use_zerocopy:
         try:
             tensor = value._T_tc if transpose else value._tc
+            # FIXME: DLPack may return old values on Apple Metal for field if sync is not systematically called manually
+            if isinstance(value, ti.Field) and gs.backend == gs.metal:
+                ti.sync()
             if copy:
                 tensor = tensor.clone()
         except AttributeError:
@@ -897,6 +901,8 @@ def assign_indexed_tensor(
     value: "np.typing.ArrayLike",
     dim_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
+    if isinstance(tensor, np.ndarray):
+        value = torch.as_tensor(value)
     try:
         tensor[indices] = value
     except (TypeError, RuntimeError):

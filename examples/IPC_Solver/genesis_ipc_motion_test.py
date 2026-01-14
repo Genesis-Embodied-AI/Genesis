@@ -187,8 +187,8 @@ def main():
     rigid_mass = scene.sim.rigid_solver.links_info.inertial_mass[1]
     print(f"Rigid cube mass: {rigid_mass:.4f} kg")
     print(f"FEM blob mass: {fem_total_mass:.4f} kg (estimated from V*ρ)")
-    print(f"Rigid initial velocity: [4.0, 0, 0, 0, 0, 0] m/s")
-    print(f"FEM initial velocity: [0, 0, 0] m/s")
+    print("Rigid initial velocity: [4.0, 0, 0, 0, 0, 0] m/s")
+    print("FEM initial velocity: [0, 0, 0] m/s")
     print(f"Expected total momentum: [{4.0 * rigid_mass:.4f}, 0, 0] kg·m/s")
 
     # Storage for plotting
@@ -223,17 +223,17 @@ def main():
             rigid_v = np.asarray(rigid_v).flatten()
             fem_v = np.asarray(fem_v).flatten()
 
-            print(f"\n{'='*70}")
+            print(f"\n{'=' * 70}")
             print(f"Step {i_step:4d}: t = {i_step * dt:.3f}s")
-            print(f"{'-'*70}")
+            print(f"{'-' * 70}")
             print(f"Rigid  mass: {rigid_m:8.4f} kg")
             print(f"Rigid  vel:  [{rigid_v[0]:9.5f}, {rigid_v[1]:9.5f}, {rigid_v[2]:9.5f}] m/s")
             print(f"Rigid  mom:  [{rigid_p[0]:9.5f}, {rigid_p[1]:9.5f}, {rigid_p[2]:9.5f}] kg·m/s")
-            print(f"")
+            print("")
             print(f"FEM    mass: {fem_m:8.4f} kg")
             print(f"FEM    vel:  [{fem_v[0]:9.5f}, {fem_v[1]:9.5f}, {fem_v[2]:9.5f}] m/s")
             print(f"FEM    mom:  [{fem_p[0]:9.5f}, {fem_p[1]:9.5f}, {fem_p[2]:9.5f}] kg·m/s")
-            print(f"")
+            print("")
             print(f"TOTAL  mom:  [{total_p[0]:9.5f}, {total_p[1]:9.5f}, {total_p[2]:9.5f}] kg·m/s")
             print(f"|p_total|: {np.linalg.norm(total_p):.6f} kg·m/s")
 
@@ -297,9 +297,9 @@ def main():
 
     plt.tight_layout()
     plt.savefig("momentum_conservation_test.png", dpi=150)
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Plot saved to: momentum_conservation_test.png")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     plt.show()
 
 

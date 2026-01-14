@@ -22,6 +22,7 @@ def _compute_bounds(positions):
             bounds[1, i] = np.max(positions[:, i])
     return bounds
 
+
 class Primitive(object):
     """A primitive object which can be rendered.
 
@@ -272,7 +273,7 @@ class Primitive(object):
             if value.ndim == 2:
                 value = value[np.newaxis, :, :]
             if value.shape[1] != 4 or value.shape[2] != 4:
-                raise ValueError("Pose matrices must be of shape (n,4,4), " "got {}".format(value.shape))
+                raise ValueError("Pose matrices must be of shape (n,4,4), got {}".format(value.shape))
         self._poses = value
         self._bounds = None
 
@@ -498,7 +499,7 @@ class Primitive(object):
 
     def _bind(self):
         if self._vaid is None:
-            raise ValueError("Cannot bind a Mesh that has not been added " "to a context")
+            raise ValueError("Cannot bind a Mesh that has not been added to a context")
         glBindVertexArray(self._vaid)
 
     def _unbind(self):

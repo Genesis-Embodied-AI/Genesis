@@ -108,19 +108,23 @@ def init(
     wave_width = max(0, min(38, wave_width))
     bar_width = wave_width * 2 + 9
     wave = ("┈┉" * wave_width)[:wave_width]
-    logger.info(f"~<╭{'─'*(bar_width)}╮>~")
+    logger.info(f"~<╭{'─' * (bar_width)}╮>~")
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
-    logger.info(f"~<╰{'─'*(bar_width)}╯>~")
+    logger.info(f"~<╰{'─' * (bar_width)}╯>~")
+
+    # Deal with manually disabled backend early on to make sure backend-specific logic is valid
+    if (
+        (backend == gs_backend.metal and os.environ.get("TI_ENABLE_METAL") == "0")
+        or (backend == gs_backend.vulkan and os.environ.get("TI_ENABLE_VULKAN") == "0")
+        or (backend == gs_backend.cuda and os.environ.get("TI_ENABLE_CUDA") == "0")
+    ):
+        backend = gs_backend.cpu
 
     # Get concrete device and backend
     global device
     device, device_name, total_mem, backend = get_device(backend)
     if backend != gs.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
         device, device_name, total_mem, _ = get_device(gs_backend.cpu)
-
-    # It is necessary to disable Metal backend manually because it is not working at taichi-level due to a bug
-    if backend == gs_backend.metal and os.environ.get("TI_ENABLE_METAL") == "0":
-        backend = gs_backend.cpu
 
     # Configure GsTaichi fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
@@ -130,9 +134,9 @@ def init(
     else:
         _use_ndarray = use_ndarray
         if _use_ndarray and is_ndarray_disabled:
-            raise_exception("Genesis previous initialized. GsTaichi dynamic array type cannot be disabled anymore.")
+            raise_exception("Genesis previous initialized. GsTaichi dynamic array mode cannot be disabled anymore.")
     if _use_ndarray and backend == gs_backend.metal:
-        raise_exception("GsTaichi dynamic array type is not supported on Apple Metal GPU backend.")
+        raise_exception("GsTaichi dynamic array mode is not supported on Apple Metal GPU backend.")
     is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
     if use_fastcache is None:
         _use_fastcache = not is_fastcache_disabled and _use_ndarray
@@ -143,18 +147,29 @@ def init(
     use_ndarray, use_fastcache = _use_ndarray, _use_fastcache
 
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue
-    _use_zerocopy = int(os.environ["GS_ENABLE_ZEROCOPY"]) if "GS_ENABLE_ZEROCOPY" in os.environ else None
-    supported_arch = (gs_backend.cpu, gs_backend.cuda)
-    if _TORCH_MPS_SUPPORT_DLPACK_FIELD:
-        supported_arch = (*supported_arch, gs_backend.metal)
+    _use_zerocopy = bool(int(os.environ["GS_ENABLE_ZEROCOPY"])) if "GS_ENABLE_ZEROCOPY" in os.environ else None
+    if _use_zerocopy:
+        if backend == gs_backend.metal and not _use_ndarray and not _TORCH_MPS_SUPPORT_DLPACK_FIELD:
+            raise_exception("Zero-copy not supported for static array mode on Apple Metal if 'torch<=2.9.1'.")
+        if (backend == gs_backend.metal and torch.device.type != "mps") or (
+            backend == gs_backend.cuda and torch.device.type != "cuda"
+        ):
+            raise_exception(
+                f"Genesis backend '{backend}' not consistent with Torch device type '{torch.device.type}'. Zero-copy "
+                "not supported."
+            )
+    supported_arch = [gs_backend.cpu]
+    if backend == gs_backend.cuda and torch.device.type == "cuda":
+        supported_arch.append(gs_backend.cuda)
+    if backend == gs_backend.metal and torch.device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD):
+        supported_arch.append(gs_backend.metal)
     if backend in supported_arch:
         if _use_zerocopy is None:
             _use_zerocopy = True
     else:
         if _use_zerocopy:
             raise_exception(f"Zero-copy not supported on {backend} backend.")
-        _use_zerocopy = False
-    use_zerocopy = _use_zerocopy and (_TORCH_MPS_SUPPORT_DLPACK_FIELD or backend != gs_backend.metal or _use_ndarray)
+    use_zerocopy = bool(_use_zerocopy)
 
     # Define the right dtypes in accordance with selected backend and precision
     global ti_float, np_float, tc_float
@@ -333,6 +348,12 @@ def init(
         )
     )
     logger.info(f"🚀 Genesis initialized. {msg_options}")
+
+    if _use_zerocopy is None:
+        logger.warning(
+            "Zero-copy mode not enabled because Genesis backend is supported or Torch device is not consistent with "
+            "it. This will reduce performance."
+        )
 
     atexit.register(destroy)
     _initialized = True

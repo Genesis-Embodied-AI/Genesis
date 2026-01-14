@@ -147,9 +147,9 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
             err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
         )
     else:
-        assert (
-            gs_texture1 is None and gs_texture2 is None
-        ), f"Both textures should be None for material {material_name} in {texture_name}."
+        assert gs_texture1 is None and gs_texture2 is None, (
+            f"Both textures should be None for material {material_name} in {texture_name}."
+        )
 
 
 @pytest.mark.required
@@ -512,12 +512,22 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 
 @pytest.mark.required
+def test_plane_texture_path_preservation(show_viewer):
+    """Test that plane primitives preserve texture paths in metadata."""
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    plane = scene.add_entity(gs.morphs.Plane())
+
+    # The texture path should be stored in metadata
+    assert plane.vgeoms[0].vmesh.metadata["texture_path"] == "textures/checker.png"
+
+
+@pytest.mark.required
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-    water = scene.add_entity(
+    scene.add_entity(
         material=gs.materials.SPH.Liquid(),
         morph=gs.morphs.Box(
             pos=(0.15, 0.15, 0.22),

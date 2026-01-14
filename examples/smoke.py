@@ -131,7 +131,6 @@ def main():
     scene.build()
 
     for i in range(args.num_steps):
-
         scalars = scene.sim.solvers[-1].grid.q.to_numpy().astype(np.float32)  # (res, res, res, 3)
         scalars[scalars < 1e-4] = 0
         layer = scalars[:, res // 2, :]

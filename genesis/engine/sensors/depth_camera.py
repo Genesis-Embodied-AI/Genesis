@@ -8,7 +8,6 @@ from .sensor_manager import register_sensor
 
 @register_sensor(DepthCameraOptions, RaycasterSharedMetadata, RaycasterData)
 class DepthCameraSensor(RaycasterSensor):
-
     def build(self):
         super().build()
         batch_shape = (self._manager._sim._B,) if self._manager._sim.n_envs > 0 else ()

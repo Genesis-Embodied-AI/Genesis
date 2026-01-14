@@ -6,7 +6,7 @@ rigid object / MPM object / FEM object.
 """
 
 import os
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union, Literal
 
 import numpy as np
 
@@ -165,7 +165,7 @@ class Primitive(Morph):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics.
         Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+        Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
@@ -218,7 +218,7 @@ class Box(Primitive, TetGenMixin):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+        Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
@@ -303,7 +303,7 @@ class Cylinder(Primitive, TetGenMixin):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+        Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
@@ -368,7 +368,7 @@ class Sphere(Primitive, TetGenMixin):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+        Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
@@ -434,7 +434,8 @@ class Plane(Primitive):
         Whether the entity needs to be considered for collision checking. Defaults to True.
         `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+        Whether the plane is fixed in world. The mass of a plane being ill-defined, this parameter is kept only for
+        consistency but must be True, otherwise it will raise an exception.
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to false. **This is only used for RigidEntity.**
@@ -450,7 +451,7 @@ class Plane(Primitive):
         The size of each texture tile. Defaults to (1, 1).
     """
 
-    fixed: bool = True
+    fixed: Literal[True] = True
     batch_fixed_verts: bool = False
     normal: tuple = (0, 0, 1)
     plane_size: tuple = (1e3, 1e3)
@@ -669,7 +670,7 @@ class Mesh(FileMorph, TetGenMixin):
     parse_glb_with_zup : bool, optional
         Whether to use zup to load glb files. Defaults to False.
     fixed : bool, optional
-        Whether the baselink of the entity should be fixed. Defaults to False. **This is only used for RigidEntity.**
+        Whether the object should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to false. **This is only used for RigidEntity.**
@@ -1195,7 +1196,7 @@ class Terrain(Morph):
             try:
                 if np.array(self.height_field).ndim != 2:
                     gs.raise_exception("`height_field` should be a 2D array.")
-            except:
+            except Exception:
                 gs.raise_exception("`height_field` should be array-like to be converted to np.ndarray.")
 
             return

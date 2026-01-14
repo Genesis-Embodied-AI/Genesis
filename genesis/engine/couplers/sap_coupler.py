@@ -9,7 +9,7 @@ import genesis as gs
 import genesis.utils.element as eu
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.constants import IntEnum, EQUALITY_TYPE
+from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
 from genesis.options.solvers import SAPCouplerOptions
@@ -213,8 +213,7 @@ class SAPCoupler(RBC):
             self._rigid_rigid_contact_type = RigidRigidContactType.NONE
         else:
             gs.raise_exception(
-                f"Invalid rigid-rigid contact type: {options.rigid_rigid_contact_type}. "
-                "Must be one of 'tet' or 'none'."
+                f"Invalid rigid-rigid contact type: {options.rigid_rigid_contact_type}. Must be one of 'tet' or 'none'."
             )
 
         self._rigid_compliant = False
@@ -855,6 +854,7 @@ class SAPCoupler(RBC):
             norm_thr = self._sap_convergence_atol + self._sap_convergence_rtol * ti.max(
                 self.sap_state[i_b].momentum_norm, self.sap_state[i_b].impulse_norm
             )
+            self.batch_active[i_b] = self.sap_state[i_b].gradient_norm >= norm_thr
 
     @ti.kernel
     def compute_regularization(
@@ -3551,7 +3551,6 @@ class RigidFemTriTetContactHandler(RigidFEMContactHandler):
         for i_c in range(result_count):
             i_b = self.contact_candidates[i_c].batch_idx
             i_e = self.contact_candidates[i_c].geom_idx0
-            i_f = self.contact_candidates[i_c].geom_idx1
 
             tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)  # 3 vertices of the triangle
             tet_vertices = ti.Matrix.zero(gs.ti_float, 3, 4)  # 4 vertices of tet 0

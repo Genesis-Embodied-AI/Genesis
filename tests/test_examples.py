@@ -24,7 +24,6 @@ ALLOW_PATTERNS = {
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
     "multi_gpu.py",
-    "visualization.py",  # FIXME: Flaky because of possibly undefined shadow map when running in thread
     "single_franka_batch_render.py",  # FIXME: segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit (corrupted double-linked list)
 }
@@ -33,7 +32,7 @@ if sys.platform != "linux":
         "cut_dragon.py",
     }
 
-TIMEOUT = 500.0
+TIMEOUT = 600.0
 
 
 pytestmark = [

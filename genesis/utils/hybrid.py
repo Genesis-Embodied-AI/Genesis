@@ -1,6 +1,5 @@
 import hashlib
 import os
-import pickle as pkl
 import time
 from itertools import combinations
 
@@ -9,7 +8,6 @@ import numpy as np
 from matplotlib.patches import FancyArrowPatch
 
 import genesis as gs
-from genesis.utils.misc import redirect_libc_stderr
 
 from .misc import get_gel_cache_dir
 
@@ -35,7 +33,7 @@ def get_gel_path(positions, nodes, sampling):
 
 
 def skeletonization(mesh, sampling=True, verbose=False):
-    from pygel3d import graph
+    from pygel3d import hmesh, graph
 
     assert isinstance(mesh, hmesh.Manifold), "The input mesh of skeletonization should be pygel3d.hmesh.Manifold"
     g = graph.from_mesh(mesh)
@@ -46,14 +44,14 @@ def skeletonization(mesh, sampling=True, verbose=False):
         gs.logger.debug("Skeleton (`.gel`) found in cache.")
         graph_gel = graph.load(gel_file_path)
     else:
-        with gs.logger.timer(f"Convert mesh to skeleton:"):
+        with gs.logger.timer("Convert mesh to skeleton:"):
             graph_gel = graph.LS_skeleton(g, sampling=sampling)
 
         os.makedirs(os.path.dirname(gel_file_path), exist_ok=True)
         graph.save(gel_file_path, graph_gel)
     if verbose:
         toc = time.time()
-        print(f"Skeletonization time {toc-tic}")
+        print(f"Skeletonization time {toc - tic}")
 
     return graph_gel
 

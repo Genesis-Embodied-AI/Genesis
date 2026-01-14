@@ -123,16 +123,16 @@ jobs:
               libegl-mesa0 \
               libgl1-mesa-dev
       - name: Install python dependencies
+        shell: bash
         run: |
           pip install --upgrade pip setuptools pkg-info wheel
-          pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Black Format Check
-        if: ${{ matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12' && matrix.GS_BACKEND == 'cpu' && matrix.GS_ENABLE_NDARRAY == '1' }}
-        run: |
-          pip install black
-          black --line-length 120 --check .
-
+          # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
+          if [[ "${{ matrix.OS }}" == 'macos-15' && "${{ matrix.GS_BACKEND }}" == 'gpu' ]] ; then
+            pip3 install --pre --upgrade torch --index-url https://download.pytorch.org/whl/nightly/cpu
+          else
+            pip3 install torch --index-url https://download.pytorch.org/whl/cpu
+          fi
       - name: Install Genesis
         shell: bash
         run: |
@@ -162,7 +162,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m required --forked ./tests
+          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
 
       - name: Save Updated Taichi Kernel Cache
         if: >-

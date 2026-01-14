@@ -1,6 +1,4 @@
-import numpy as np
 import gstaichi as ti
-import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -93,7 +91,6 @@ def mpr_point_tri_depth(mpr_info: array_class.MPRInfo, P, x0, B, C):
     d1 = B - x0
     d2 = C - x0
     a = x0 - P
-    u = a.dot(a)
     v = d1.dot(d1)
     w = d2.dot(d2)
     p = a.dot(d1)

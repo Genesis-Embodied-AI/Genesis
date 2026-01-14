@@ -773,6 +773,7 @@ def func_contact_sphere_sdf(
     i_b,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
 ):
@@ -862,7 +863,6 @@ def func_contact_edge_sdf(
     for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
         cur_length = edges_info.length[i_e]
         if cur_length > ga_sdf_cell_size:
-
             i_v0 = edges_info.v0[i_e]
             i_v1 = edges_info.v1[i_e]
 
@@ -892,10 +892,8 @@ def func_contact_edge_sdf(
             normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
 
             if normal_edge_0.dot(sdf_grad_0_b) < 0 or normal_edge_1.dot(sdf_grad_1_b) < 0:
-
                 # check if closest point is between the two points
                 if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
-
                     while cur_length > ga_sdf_cell_size:
                         p_mid = 0.5 * (p_0 + p_1)
                         if (

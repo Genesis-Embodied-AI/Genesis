@@ -1,4 +1,5 @@
 """OpenGL shader program wrapper."""
+
 import numbers
 import os
 import re
@@ -7,9 +8,7 @@ import numpy as np
 
 import OpenGL
 from OpenGL.GL import *
-from OpenGL.platform import ctypesloader
 from OpenGL.GL import shaders as gl_shader_utils
-from time import time
 
 func = None
 
@@ -91,7 +90,6 @@ class ShaderProgram(object):
     """
 
     def __init__(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
-
         self.vertex_shader = vertex_shader
         self.fragment_shader = fragment_shader
         self.geometry_shader = geometry_shader

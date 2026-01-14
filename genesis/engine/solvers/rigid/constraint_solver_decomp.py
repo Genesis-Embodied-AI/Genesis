@@ -1384,10 +1384,10 @@ def func_solve(
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        # t0_start = ti.simt.timer.cuda_clock_i64()
+        # t0_start = ti.clock_counter()
         if constraint_state.n_constraints[i_b] > 0:
             for _ in range(rigid_global_info.iterations[None]):
-                func_solve_body(
+                func_solve_iter(
                     i_b,
                     entities_info=entities_info,
                     dofs_state=dofs_state,
@@ -1399,7 +1399,7 @@ def func_solve(
                     break
         else:
             constraint_state.improved[i_b] = False
-        # t0_end = ti.simt.timer.cuda_clock_i64()
+        # t0_end = ti.clock_counter()
         # constraint_state.timers[0, i_b_] = t0_end - t0_start
 
 
@@ -1412,7 +1412,6 @@ def func_ls_init(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-
     n_dofs = constraint_state.search.shape[0]
     n_entities = entities_info.dof_start.shape[0]
     # mv and jv
@@ -1759,7 +1758,7 @@ def update_bracket(
 
 
 @ti.func
-def func_solve_body(
+def func_solve_iter(
     i_b,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -1876,6 +1875,7 @@ def func_update_constraint(
     cost_i = gs.ti_float(0.0)
     gauss_i = gs.ti_float(0.0)
 
+    # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active
     for i_c in range(constraint_state.n_constraints[i_b]):
         if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]

@@ -364,7 +364,7 @@ class RigidGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)
+        tensor = ti_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -372,7 +372,7 @@ class RigidGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)
+        tensor = ti_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -880,7 +880,7 @@ class RigidVisGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)
+        tensor = ti_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -888,7 +888,7 @@ class RigidVisGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)
+        tensor = ti_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built

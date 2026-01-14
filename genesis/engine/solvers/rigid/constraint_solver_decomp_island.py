@@ -238,7 +238,6 @@ class ConstraintSolverIsland:
     @ti.func
     def add_joint_limit_constraints(self, i_island: int, i_b: int):
         for i_island_entity in range(self.contact_island.island_entity[i_island, i_b].n):
-
             i_e_ = self.contact_island.island_entity[i_island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
 
@@ -448,7 +447,6 @@ class ConstraintSolverIsland:
                     for j_d in range(
                         ti.max(i_d + 1, self.entities_info.dof_start[j_e]), self.entities_info.dof_end[j_e]
                     ):
-
                         dot = gs.ti_float(0.0)
 
                         for k_island_entity in range(i_island_entity + 1):
@@ -473,7 +471,6 @@ class ConstraintSolverIsland:
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
             for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-
                 for j_island_entity in range(i_island_entity + 1):
                     j_e_ = self.contact_island.island_entity[island, i_b].start + j_island_entity
                     j_e = self.contact_island.entity_id[j_e_, i_b]
@@ -671,7 +668,6 @@ class ConstraintSolverIsland:
 
         self.ls_it[i_b] = 0
         self.ls_result[i_b] = 0
-        ls_slope = gs.ti_float(1.0)
 
         res_alpha = gs.ti_float(0.0)
         done = False
@@ -696,7 +692,6 @@ class ConstraintSolverIsland:
                     self.ls_result[i_b] = 2
                 else:
                     self.ls_result[i_b] = 0
-                ls_slope = ti.abs(p1_deriv_0) * slopescl
                 res_alpha = p1_alpha
             else:
                 direction = (p1_deriv_0 < 0) * 2 - 1
@@ -710,21 +705,17 @@ class ConstraintSolverIsland:
                         i_b, p1_alpha - p1_deriv_0 / p1_deriv_1
                     )
                     if ti.abs(p1_deriv_0) < gtol:
-                        ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
                         done = True
                         break
                 if not done:
-
                     if self.ls_it[i_b] >= self.ls_iterations:
                         self.ls_result[i_b] = 3
-                        ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
                         done = True
 
                     if not p2update and not done:
                         self.ls_result[i_b] = 6
-                        ls_slope = ti.abs(p1_deriv_0) * slopescl
                         res_alpha = p1_alpha
                         done = True
 
@@ -776,11 +767,9 @@ class ConstraintSolverIsland:
                                     best_cost = self.candidates[4 * ii + 1, i_b]
                                     best_i = ii
                             if best_i >= 0:
-                                ls_slope = ti.abs(self.candidates[4 * i + 2, i_b]) * slopescl
                                 res_alpha = self.candidates[4 * best_i + 0, i_b]
                                 done = True
                             else:
-
                                 (
                                     b1,
                                     p1_alpha,
@@ -810,20 +799,15 @@ class ConstraintSolverIsland:
                                     else:
                                         self.ls_result[i_b] = 7
 
-                                    ls_slope = ti.abs(pmid_deriv_0) * slopescl
-
                                     res_alpha = pmid_alpha
                                     done = True
 
                         if not done:
-
                             if p1_cost <= p2_cost and p1_cost < p0_cost:
                                 self.ls_result[i_b] = 4
-                                ls_slope = ti.abs(p1_deriv_0) * slopescl
                                 res_alpha = p1_alpha
                             elif p2_cost <= p1_cost and p2_cost < p1_cost:
                                 self.ls_result[i_b] = 4
-                                ls_slope = ti.abs(p2_deriv_0) * slopescl
                                 res_alpha = p2_alpha
                             else:
                                 self.ls_result[i_b] = 5
@@ -958,7 +942,6 @@ class ConstraintSolverIsland:
             i_e_ = self.contact_island.island_entity[island, i_b].start + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
             for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-
                 v = (
                     0.5
                     * (Ma[i_d, i_b] - self._solver.dofs_state.force[i_d, i_b])
@@ -995,9 +978,9 @@ class ConstraintSolverIsland:
                 self.grad,
                 self.Mgrad,
                 array_class.PLACEHOLDER,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
+                entities_info=self.entities_info,
+                rigid_global_info=self._solver.data_manager.rigid_global_info,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
                 is_backward=False,
             )
             for i_e in range(self._solver.n_entities):

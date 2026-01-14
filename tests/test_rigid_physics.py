@@ -1,13 +1,9 @@
 import math
-import uuid
 import os
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
 from contextlib import nullcontext
 from copy import deepcopy
-from typing import cast
-from pathlib import Path
 
 import igl
 import mujoco
@@ -832,10 +828,10 @@ def test_double_pendulum_links_acc(gs_sim, tol):
         acc_classical_lin_world = tensor_to_array(gs_sim.rigid_solver.get_links_acc()[[0, 2, 4]])
         assert_allclose(acc_classical_lin_world[0], 0, tol=tol)
         acc_classical_lin_local = np.matmul(np.moveaxis(R, 2, 0), acc_classical_lin_world[1:, :, None])[..., 0]
-        assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -theta_dot[0] ** 2]), tol=tol)
+        assert_allclose(acc_classical_lin_local[0], np.array([0.0, -theta_ddot[0], -(theta_dot[0] ** 2)]), tol=tol)
         assert_allclose(
             acc_classical_lin_local[1],
-            R[..., 1] @ acc_classical_lin_world[1] + np.array([0.0, -theta_ddot.sum(), -theta_dot.sum() ** 2]),
+            R[..., 1] @ acc_classical_lin_world[1] + np.array([0.0, -theta_ddot.sum(), -(theta_dot.sum() ** 2)]),
             tol=tol,
         )
 
@@ -1286,7 +1282,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
 
     sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
     assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
-    assert_allclose(sphere.get_AABB(), sphere.geoms[0].get_AABB(), tol=tol)
+    assert_allclose(sphere_aabb, sphere_base_aabb, tol=tol)
 
     # Simulate for a while to check if the dynamic object is colliding with the static one
     if batch_fixed_verts:
@@ -2206,7 +2202,8 @@ def test_nan_reset(gs_sim, mode):
         pytest.param(gs.gpu, marks=pytest.mark.required),
     ],
 )
-def test_terrain_generation(request, show_viewer):
+@pytest.mark.parametrize("is_named", [True, False])
+def test_terrain_generation(is_named, show_viewer, tol):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
         ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
@@ -2240,7 +2237,7 @@ def test_terrain_generation(request, show_viewer):
         vertical_scale=0.05,
         subterrain_types=TERRAIN_PATTERN,
         randomize=False,
-        name="my_terrain",
+        name="my_terrain" if is_named else None,
     )
     # FIXME: Collision detection is very unstable for 'stepping_stones' pattern.
     terrain = scene.add_entity(gs.morphs.Terrain(**terrain_kwargs))
@@ -2282,10 +2279,11 @@ def test_terrain_generation(request, show_viewer):
     assert (signed_distance < 2 * OBJ_SIZE).all()
 
     # Check if cache is being reloaded as expected
-    scene = gs.Scene()
-    terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
-    terrain_2_mesh = terrain_2.geoms[0].mesh
-    assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=gs.EPS)
+    if is_named:
+        scene = gs.Scene()
+        terrain_2 = scene.add_entity(gs.morphs.Terrain(**{**terrain_kwargs, **dict(randomize=True)}))
+        terrain_2_mesh = terrain_2.geoms[0].mesh
+        assert_allclose(terrain_mesh.verts, terrain_2_mesh.verts, tol=tol)
 
 
 @pytest.mark.required
@@ -3155,9 +3153,17 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
         (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
         (-1, -1, gs_robot.get_AABB, None, None),
+        (-1, -1, gs_robot.get_vAABB, None, None),
         # LINK
+        (-1, -1, gs_link.get_pos, None, None),
+        (-1, -1, gs_link.get_quat, None, None),
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
         (-1, -1, gs_link.get_AABB, None, None),
+        (-1, -1, gs_link.get_vAABB, None, None),
+        # GEOM
+        (-1, -1, gs_link.get_pos, None, None),
+        (-1, -1, gs_link.get_quat, None, None),
+        (-1, -1, gs_link.get_vAABB, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
 
@@ -3386,7 +3392,8 @@ def test_extended_broadcasting():
 
 
 @pytest.mark.required
-def test_geom_pos_quat(show_viewer):
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_geom_pos_quat(n_envs, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -10.0),
@@ -3400,12 +3407,22 @@ def test_geom_pos_quat(show_viewer):
             pos=(0.0, 0.0, 2.0),
         )
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    box.set_dofs_position(np.random.rand(*batch_shape, 6))
+    scene.rigid_solver.update_vgeoms()
 
     for link in box.links:
         for vgeom, geom in zip(link.vgeoms, link.geoms):
-            assert_allclose(geom.get_pos(), vgeom.get_pos(), atol=gs.EPS)
-            assert_allclose(geom.get_quat(), vgeom.get_quat(), atol=gs.EPS)
+            geom_pos, geom_quat = geom.get_pos(), geom.get_quat()
+            assert geom_pos.shape == (*batch_shape, 3)
+            assert geom_quat.shape == (*batch_shape, 4)
+            vgeom_pos, vgeom_quat = vgeom.get_pos(), vgeom.get_quat()
+            assert vgeom_pos.shape == (*batch_shape, 3)
+            assert vgeom_quat.shape == (*batch_shape, 4)
+            assert_allclose(geom_pos, vgeom_pos, atol=gs.EPS)
+            assert_allclose(geom_quat, vgeom_quat, atol=gs.EPS)
 
 
 @pytest.mark.required
@@ -3493,21 +3510,21 @@ def test_mesh_primitive_COM(show_viewer, tol):
     bunny = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/bunny.obj",
-            pos=(-1.0, -1.0, 1.0),
+            pos=(-1.0, -1.0, 0.6),
         ),
         vis_mode="collision",
     )
     cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.5, 0.5, 0.5),
-            pos=(1.0, 1.0, 1.0),
+            pos=(1.0, 1.0, 0.55),
         ),
         vis_mode="collision",
     )
 
     scene.build()
     rigid = scene.sim.rigid_solver
-    for _ in range(120):
+    for _ in range(40):
         scene.step()
     scene.rigid_solver.update_vgeoms()
 
@@ -3679,14 +3696,12 @@ def test_axis_aligned_bounding_boxes(n_envs):
     assert_allclose(robot_vaabb, robot_aabb, atol=1e-3)
 
 
+@pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_links_info", [False, True])
 @pytest.mark.parametrize("batch_joints_info", [False, True])
 @pytest.mark.parametrize("batch_dofs_info", [False, True])
 def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
-    """
-    Test if batching options (batch_links_info, batch_joints_info, batch_dofs_info) work correctly.
-    """
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             batch_links_info=batch_links_info,

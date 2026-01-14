@@ -36,7 +36,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "701f78c1465f0a98f6540bae6c9daacaa551b7bf"
-HUGGINGFACE_SNAPSHOT_REVISION = "ea6ae70386c2b2fbae1387f93ba0e4de1ed7abf7"
+HUGGINGFACE_SNAPSHOT_REVISION = "17d79e7627479ef836524d14449e2fdc4282973d"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -714,16 +714,20 @@ def check_mujoco_model_consistency(
     mj_dof_armature = mj_sim.model.dof_armature
     assert_allclose(gs_dof_armature[gs_dofs_idx], mj_dof_armature[mj_dofs_idx], tol=tol)
 
-    # FIXME: 1 stiffness per joint in Mujoco, 1 stiffness per DoF in Genesis
+    # TODO: 1 stiffness per joint in Mujoco, 1 stiffness per DoF in Genesis
     gs_dof_stiffness = gs_sim.rigid_solver.dofs_info.stiffness.to_numpy()
     mj_dof_stiffness = mj_sim.model.jnt_stiffness
-    # assert_allclose(gs_dof_stiffness[gs_dofs_idx], mj_dof_stiffness[mj_joints_idx], tol=tol)
+    if all(joint.n_dofs == 1 for joint in gs_sim.rigid_solver.joints):
+        assert_allclose(gs_dof_stiffness[gs_dofs_idx], mj_dof_stiffness[mj_joints_idx], tol=tol)
 
     gs_dof_invweight0 = gs_sim.rigid_solver.dofs_info.invweight.to_numpy()
     mj_dof_invweight0 = mj_sim.model.dof_invweight0
     assert_allclose(gs_dof_invweight0[gs_dofs_idx], mj_dof_invweight0[mj_dofs_idx], tol=tol)
 
-    # TODO: Genesis does not support frictionloss contraint at dof level for now
+    gs_dof_dof_frictionloss = gs_sim.rigid_solver.dofs_info.frictionloss.to_numpy()
+    mj_dof_dof_frictionloss = mj_sim.model.dof_frictionloss
+    assert_allclose(gs_dof_dof_frictionloss[gs_dofs_idx], mj_dof_dof_frictionloss[mj_dofs_idx], tol=tol)
+
     gs_joint_solparams = np.array([joint.sol_params.cpu() for entity in gs_sim.entities for joint in entity.joints])
     mj_joint_solparams = np.concatenate((mj_sim.model.jnt_solref, mj_sim.model.jnt_solimp), axis=-1)
     _sanitize_sol_params(
@@ -905,8 +909,19 @@ def check_mujoco_data_consistency(
                 gs_sim.rigid_solver.constraint_solver.prev_cost[0] - gs_sim.rigid_solver.constraint_solver.cost[0]
             )
             mj_improvement = mj_sim.data.solver.improvement[mj_iter]
-            # FIXME: This is too challenging to match because of compounding of errors
-            # assert_allclose(gs_improvement, mj_improvement, tol=tol)
+
+            # Note that 'constraint_solver.active' refers to whether the quadratic part of a constraint is active,
+            # unlike Mujoco that defines 'nactive' as the number of active constraints regardless of its type.
+            # In practice, this only makes a difference if frictionloss is enabled.
+            gs_nactive = sum(gs_sim.rigid_solver.constraint_solver.active.to_numpy()[:gs_n_constraints, 0])
+            mj_native = mj_sim.data.solver.nactive[mj_iter]
+            if not (gs_sim.rigid_solver.dofs_info.frictionloss.to_numpy() > gs.EPS).any():
+                assert mj_native == gs_nactive
+
+            # FIXME: For some reason, mujoco is sometimes (seemingful) wrongly reporting 0...
+            if mj_improvement > gs.EPS:
+                # Must relax tolerance because of compounding of errors.
+                assert_allclose(gs_improvement, mj_improvement, tol=tol * 1e2)
 
         if qvel_prev is not None:
             gs_efc_vel = gs_jac @ qvel_prev
