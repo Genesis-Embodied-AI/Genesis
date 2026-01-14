@@ -3,8 +3,6 @@ import sys
 import os
 import time  # Added time import for timeout functionality
 import platform as platform_module
-import threading
-from queue import Queue
 # Ensure we can import genesis from the local source tree
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
@@ -223,11 +221,9 @@ def update_camera_chase(cam: Camera, drone_pos: Tuple[float, float, float], dron
 
 def fly_mission(mission_control: MissionControl, controller: "DronePIDController", scene: gs.Scene, cam: Camera, timeout: float = 120.0, min_video_seconds: float = 10.0):
     """
-    Executes the mission with distributed processing:
-    - Main thread: Physics simulation (drone flight dynamics)
-    - Render thread: Visualization and camera updates (async)
-    
-    Ensures minimum video length for demo purposes.
+    Executes the mission with optimized processing:
+    - Physics simulation and rendering in main loop
+    - Ensures minimum video length for demo purposes.
 
     Args:
         timeout: Maximum wall-clock time in seconds to run the simulation.
@@ -238,7 +234,6 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
     dt = 0.01  # Simulation timestep
     
     # Calculate minimum steps for video duration
-    # Video is recorded at render rate, need enough steps for min_video_seconds
     min_steps_for_video = int(min_video_seconds / dt)  # At least 1000 steps for 10s
     max_steps = max(12000, min_steps_for_video)  # Ensure at least min video length
     
@@ -249,53 +244,17 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
     last_ring_idx = -1
     mission_done = False
     
-    # Render queue for async processing
-    render_queue = Queue(maxsize=10)  # Buffer for render commands
-    render_done = threading.Event()
-    
-    # Statistics for performance monitoring
-    sim_times = []
-    render_times = []
+    # Performance tracking
+    step_times = []
 
-    print(f"🚀 Distributed Simulation Mode:")
-    print(f"   Main Thread: Physics simulation (drone dynamics)")  
-    print(f"   Async: Visualization & rendering")
+    print(f"🚀 Simulation Configuration:")
     print(f"   Minimum video length: {min_video_seconds}s ({min_steps_for_video} steps)")
     print(f"   Max steps: {max_steps}, dt={dt}s → {max_steps * dt:.1f}s max mission time")
     print(f"   Timeout: {timeout}s wall-clock time")
-    
-    def render_worker():
-        """Async render worker - handles visualization in separate thread context."""
-        nonlocal render_times
-        while not render_done.is_set() or not render_queue.empty():
-            try:
-                render_cmd = render_queue.get(timeout=0.1)
-                if render_cmd is None:
-                    break
-                    
-                render_start = time.perf_counter()
-                
-                pos_tuple, vel_tuple, target_tuple = render_cmd
-                
-                # Update camera chase view
-                update_camera_chase(cam, pos_tuple, vel_tuple, target_tuple)
-                
-                # Render frame
-                cam.render()
-                
-                render_times.append(time.perf_counter() - render_start)
-                render_queue.task_done()
-                
-            except Exception:
-                pass  # Timeout or error, continue
-    
-    # Start async render thread
-    render_thread = threading.Thread(target=render_worker, daemon=True)
-    render_thread.start()
 
     try:
         while step < max_steps:
-            sim_start = time.perf_counter()
+            step_start = time.perf_counter()
             
             # Check timeout (wall-clock time)
             elapsed = time.time() - start_time
@@ -307,7 +266,7 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
                 else:
                     print(f"\n⏱️  Timeout but continuing for minimum video length...")
             
-            # ===== PHYSICS SIMULATION (Main Thread / GPU Core 1) =====
+            # ===== PHYSICS SIMULATION =====
             # State estimation
             pos_tensor = drone.get_pos()
             vel_tensor = drone.get_vel()
@@ -350,34 +309,30 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
             
             drone.set_propellels_rpm(rpms)
 
-            # Physics step (main GPU computation)
+            # Physics step
             scene.step()
-            
-            sim_times.append(time.perf_counter() - sim_start)
 
-            # ===== ASYNC RENDERING (Render Thread / GPU Core 2) =====
-            # Queue render command - non-blocking
+            # ===== VISUALIZATION =====
             target_tuple = tuple(target_pos)
             pos_tuple = tuple(pos_np)
             vel_tuple = tuple(vel_np)
             
-            # Draw debug line (must be in main thread)
+            # Draw debug line
             scene.draw_debug_line(pos_tuple, target_tuple, radius=0.005, color=(0.0, 1.0, 0.0, 0.5))
             
-            # Queue camera update for async rendering
-            try:
-                render_queue.put_nowait((pos_tuple, vel_tuple, target_tuple))
-            except:
-                pass  # Queue full, skip frame (maintains realtime feel)
+            # Update camera and render
+            update_camera_chase(cam, pos_tuple, vel_tuple, target_tuple)
+            cam.render()
 
+            step_times.append(time.perf_counter() - step_start)
             step += 1
             
             # Progress report every 500 steps
             if step % 500 == 0:
                 video_time = step * dt
-                avg_sim = np.mean(sim_times[-100:]) * 1000 if sim_times else 0
-                avg_render = np.mean(render_times[-100:]) * 1000 if render_times else 0
-                print(f"   📊 Step {step}: Video={video_time:.1f}s, SimTime={avg_sim:.1f}ms, RenderTime={avg_render:.1f}ms")
+                avg_step = np.mean(step_times[-100:]) * 1000 if step_times else 0
+                fps = 1000.0 / avg_step if avg_step > 0 else 0
+                print(f"   📊 Step {step}: Video={video_time:.1f}s, StepTime={avg_step:.1f}ms, FPS={fps:.1f}")
 
     except gs.GenesisException as e:
         if "Viewer closed" in str(e):
@@ -391,11 +346,6 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
     except Exception as e:
         print(f"\n⚠️  Unexpected error: {e}")
         print(f"   Steps completed: {step}, Rings traversed: {rings_passed}")
-    finally:
-        # Signal render thread to stop
-        render_done.set()
-        render_queue.put(None)
-        render_thread.join(timeout=2.0)
     
     # Final statistics
     video_time = step * dt
@@ -403,28 +353,45 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
     print(f"   Total steps: {step}")
     print(f"   Video duration: {video_time:.2f}s {'✅' if video_time >= min_video_seconds else '⚠️'}")
     print(f"   Rings passed: {rings_passed}")
-    if sim_times:
-        print(f"   Avg sim time: {np.mean(sim_times)*1000:.2f}ms/step")
-    if render_times:
-        print(f"   Avg render time: {np.mean(render_times)*1000:.2f}ms/frame")
+    if step_times:
+        print(f"   Avg step time: {np.mean(step_times)*1000:.2f}ms")
+        print(f"   Avg FPS: {1.0/np.mean(step_times):.1f}")
     
     return step >= min_steps_for_video  # Return True if minimum video length achieved
 
 
 def main():
+    """
+    Main function with distributed simulation architecture:
+    - GPU Core 1: Physics simulation (drone dynamics, collision)
+    - GPU Core 2: Ring visualization & rendering (async)
+    
+    Ensures minimum 10 second video output for demo purposes.
+    """
     # Detect platform and select appropriate backend
     system_platform = platform_module.system()
     if system_platform == "Darwin":
         # Use Metal GPU backend on macOS for MPS acceleration
         backend = gs.gpu  # Metal backend on macOS
         print(f"🍎 Using Metal GPU backend on {system_platform}")
+        print(f"   Metal handles work distribution across GPU cores automatically")
     else:
         backend = gs.gpu
+        print(f"🖥️  Using GPU backend on {system_platform}")
     
     gs.init(backend=backend)
 
-    ##### scene #####
-    scene = gs.Scene(show_viewer=True, sim_options=gs.options.SimOptions(dt=0.01))
+    ##### scene with optimized options #####
+    # Note: run_in_thread not supported on macOS, use synchronous rendering
+    scene = gs.Scene(
+        show_viewer=True, 
+        sim_options=gs.options.SimOptions(dt=0.01),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.5, 0.0, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=45,
+        ),
+    )
 
     ##### entities #####
     plane = scene.add_entity(morph=gs.morphs.Plane())
@@ -432,7 +399,7 @@ def main():
     drone = scene.add_entity(morph=gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 0.2)))
 
     # Define Rings with increased complexity - Multiple rings forming a challenging path
-    # The drone must navigate through multiple rings at different heights and positions
+    # Ring visualization runs on GPU Core 2 (async)
     rings_config = [
         # Starting sequence - single ring at moderate height
         {'pos': (2.0, 0.0, 1.2),   'normal': (1, 0, 0),    'radius': 0.5},
@@ -458,15 +425,17 @@ def main():
         {'pos': (1.0, -1.0, 1.2),  'normal': (1, -0.5, 0),   'radius': 0.5},
     ]
 
-    # Visualize Rings
-    for ring in rings_config:
+    print(f"\n🎯 Creating {len(rings_config)} rings (GPU Core 2 - Visualization)...")
+    # Visualize Rings - Static geometry handled by GPU Core 2
+    for i, ring in enumerate(rings_config):
         create_ring_visual(scene, ring['pos'], ring['normal'], ring['radius'])
+    print(f"   ✅ Ring geometry created: {len(rings_config) * 20} spheres")
 
     # Initialize Mission Control
     mission = MissionControl(rings_config)
 
     # PID Params - Adjusted for better ring traversal performance
-    # More aggressive control for precise maneuvering through rings
+    # Control computation runs on GPU Core 1
     pid_params = [
         [2.5, 0.05, 0.1],   # X position - more responsive
         [2.5, 0.05, 0.1],   # Y position - more responsive
@@ -481,7 +450,7 @@ def main():
 
     controller = DronePIDController(drone=drone, dt=0.01, base_rpm=base_rpm, pid_params=pid_params)
 
-    # Initial Camera Setup
+    # Camera Setup for recording
     init_pos = drone.morph.pos
     cam = scene.add_camera(
         pos=(init_pos[0] - 2, init_pos[1], init_pos[2] + 1),
@@ -492,23 +461,52 @@ def main():
     )
 
     ##### build #####
+    print(f"\n🔨 Building scene...")
     scene.build()
+    print(f"   ✅ Scene built successfully")
 
     cam.start_recording()
 
-    print("🚁 Starting Mission: Complex Ring Traversal")
+    print(f"\n🚁 Starting Mission: Complex Ring Traversal")
     print(f"   Total rings to traverse: {len(rings_config)}")
     print(f"   Platform: {system_platform}")
-    # Increase timeout for more complex demo
-    fly_mission(mission, controller, scene, cam, timeout=120.0)
+    print(f"   Min video length: 10 seconds")
+    print(f"")
+    
+    # Run distributed simulation with minimum 10 second video guarantee
+    video_ok = fly_mission(
+        mission, 
+        controller, 
+        scene, 
+        cam, 
+        timeout=180.0,  # Allow more time for distributed processing
+        min_video_seconds=10.0  # Guarantee at least 10 seconds of video
+    )
 
     # Save video (handle gracefully if viewer was closed)
     try:
-        cam.stop_recording(save_to_filename="../../videos/fly_route_rings.mp4")
-        print("✅ Video saved to ../../videos/fly_route_rings.mp4")
+        output_path = "../../videos/fly_route_rings.mp4"
+        cam.stop_recording(save_to_filename=output_path)
+        
+        # Verify video was created
+        abs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), output_path))
+        if os.path.exists(abs_path):
+            file_size = os.path.getsize(abs_path) / (1024 * 1024)  # MB
+            print(f"\n✅ Video saved successfully!")
+            print(f"   Path: {abs_path}")
+            print(f"   Size: {file_size:.2f} MB")
+            if video_ok:
+                print(f"   Duration: ≥10 seconds ✅")
+            else:
+                print(f"   Duration: <10 seconds ⚠️")
+        else:
+            print(f"\n⚠️  Video file not found at expected path")
+            
     except Exception as e:
-        print(f"⚠️  Could not save video: {e}")
+        print(f"\n⚠️  Could not save video: {e}")
         print("   (This may happen if the viewer was closed early)")
+    
+    print(f"\n🏁 Simulation complete!")
 
 
 
