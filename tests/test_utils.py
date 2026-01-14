@@ -166,13 +166,13 @@ def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
             np.testing.assert_allclose(np_out, tc_out, atol=1e2 * gs.EPS)
 
 
-def polar(A, pure_rotation: bool, side):
+def polar(A, pure_rotation: bool, side, tol):
     # filter out singular A (which is not invertible)
     # non-invertible matrix makes non-unique SVD which may break the consistency.
     N = A.shape[-1]
     if isinstance(A, np.ndarray):
         dets = np.linalg.det(A)
-        mask = np.abs(dets) < gs.EPS
+        mask = np.abs(dets) < tol
         if A.ndim > 2:
             if mask.any():
                 I = np.eye(N, dtype=A.dtype)
@@ -182,7 +182,7 @@ def polar(A, pure_rotation: bool, side):
                 A = np.eye(N, dtype=A.dtype)
     elif isinstance(A, torch.Tensor):
         dets = torch.linalg.det(A)
-        mask = torch.abs(dets) < gs.EPS
+        mask = torch.abs(dets) < tol
         if A.ndim > 2:
             if mask.any():
                 I = torch.eye(N, dtype=A.dtype, device=A.device)
@@ -199,8 +199,8 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape, tol):
     for py_func, shapes_in, shapes_out in (
         (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
         (gu.pos_lookat_up_to_T, [[3], [3], [3]], [[4, 4]]),
-        (lambda A: polar(A, pure_rotation=False, side="left"), [[3, 3]], [[3, 3], [3, 3]]),
-        (lambda A: polar(A, pure_rotation=False, side="right"), [[3, 3]], [[3, 3], [3, 3]]),
+        (lambda A: polar(A, pure_rotation=False, side="left", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
+        (lambda A: polar(A, pure_rotation=False, side="right", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
     ):
         num_inputs = len(shapes_in)
         shape_args = (*shapes_in, *shapes_out)
