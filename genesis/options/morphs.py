@@ -1298,6 +1298,59 @@ class USD(FileMorph):
     ----------
     file : str
         The path to the USD file.
+
+    Joint Dynamics Options
+    ----------------------
+    joint_friction_attr_candidates : List[str], optional
+        List of candidate attribute names for joint friction. The parser will try these in order.
+        Defaults to ["physxJoint:jointFriction", "physics:jointFriction", "jointFriction", "friction"].
+    joint_friction_attr_default : float | None, optional
+        Default value for joint friction if attribute is not found. If None, Genesis default (0.0) is used with a warning.
+        Defaults to None.
+    joint_armature_attr_candidates : List[str], optional
+        List of candidate attribute names for joint armature. The parser will try these in order.
+        Defaults to ["physxJoint:armature", "physics:armature", "armature"].
+    joint_armature_attr_default : float | None, optional
+        Default value for joint armature if attribute is not found. If None, Genesis default (0.0) is used with a warning.
+        Defaults to None.
+    revolute_joint_stiffness_attr_candidates : List[str], optional
+        List of candidate attribute names for revolute joint stiffness. The parser will try these in order.
+        Defaults to ["physxLimit:angular:stiffness", "physics:stiffness", "stiffness"].
+    revolute_joint_stiffness_attr_default : float | None, optional
+        Default value for revolute joint stiffness if attribute is not found. If None, Genesis default (0.0) is used with a warning.
+        Defaults to None.
+    revolute_joint_damping_attr_candidates : List[str], optional
+        List of candidate attribute names for revolute joint damping. The parser will try these in order.
+        Defaults to ["physxLimit:angular:damping", "physics:angular:damping", "angular:damping"].
+    revolute_joint_damping_attr_default : float | None, optional
+        Default value for revolute joint damping if attribute is not found. If None, Genesis default (0.0) is used with a warning.
+        Defaults to None.
+    prismatic_joint_stiffness_attr_candidates : List[str], optional
+        List of candidate attribute names for prismatic joint stiffness. The parser will try these in order.
+        Defaults to ["physxLimit:linear:stiffness", "physxLimit:X:stiffness", "physxLimit:Y:stiffness", "physxLimit:Z:stiffness",
+        "physics:linear:stiffness", "linear:stiffness"].
+    prismatic_joint_stiffness_attr_default : float | None, optional
+        Default value for prismatic joint stiffness if attribute is not found. If None, Genesis default (0.0) is used with a warning.
+        Defaults to None.
+    prismatic_joint_damping_attr_candidates : List[str], optional
+        List of candidate attribute names for prismatic joint damping. The parser will try these in order.
+        Defaults to ["physxLimit:linear:damping", "physxLimit:X:damping", "physxLimit:Y:damping", "physxLimit:Z:damping",
+        "physics:linear:damping", "linear:damping"].
+    prismatic_joint_damping_attr_default : float | None, optional
+        Default value for prismatic joint damping if attribute is not found. If None, Genesis default (0.0) is used with a warning.
+        Defaults to None.
+
+    Geometry Parsing Options
+    -------------------------
+    collision_mesh_prim_patterns : List[str], optional
+        List of regex patterns to match collision mesh prim names. Patterns are tried in order.
+        Defaults to [r"^([cC]ollision).*", r"^.*"].
+    visual_mesh_prim_patterns : List[str], optional
+        List of regex patterns to match visual mesh prim names. Patterns are tried in order.
+        Defaults to [r"^([vV]isual).*", r"^.*"].
+
+    Geometry Decomposition Options
+    -------------------------------
     convexify : bool, optional
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
         to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
@@ -1322,16 +1375,67 @@ class USD(FileMorph):
         0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the original
         geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
         **This is only used for RigidEntity.**
-    _prim_path : str, optional
+
+    Internal Options
+    ----------------
+    prim_path : str, optional
         The parsing target prim path. Defaults to None.
-    _parsing_type : str, optional
-        The parsing type.
-        'articulation' for articulated body parsing, ArticulationRootAPI is required.
-        'rigid_body' for rigid body parsing, CollisionAPI|RigidBodyAPI is required.
-        Defaults to None, no parsing will be performed.
+    parser_ctx : Any, optional
+        The parser context. Defaults to None.
     """
 
     file: str
+
+    # Joint Dynamics Options
+    joint_friction_attr_candidates: List[str] = [
+        "physxJoint:jointFriction",  # Isaac-Sim assets compatibility
+        "physics:jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
+        "jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
+        "friction",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    joint_friction_attr_default: float | None = None
+    joint_armature_attr_candidates: List[str] = [
+        "physxJoint:armature",  # Isaac-Sim assets compatibility
+        "physics:armature",  # unoffical USD attribute, some assets may adapt to this attribute
+        "armature",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    joint_armature_attr_default: float | None = None
+    revolute_joint_stiffness_attr_candidates: List[str] = [
+        "physxLimit:angular:stiffness",  # Isaac-Sim assets compatibility
+        "physics:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+        "stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    revolute_joint_stiffness_attr_default: float | None = None
+    revolute_joint_damping_attr_candidates: List[str] = [
+        "physxLimit:angular:damping",  # Isaac-Sim assets compatibility
+        "physics:angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+        "angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    revolute_joint_damping_attr_default: float | None = None
+    prismatic_joint_stiffness_attr_candidates: List[str] = [
+        "physxLimit:linear:stiffness",  # Isaac-Sim assets compatibility
+        "physxLimit:X:stiffness",  # Isaac-Sim assets compatibility
+        "physxLimit:Y:stiffness",  # Isaac-Sim assets compatibility
+        "physxLimit:Z:stiffness",  # Isaac-Sim assets compatibility
+        "physics:linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+        "linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    prismatic_joint_stiffness_attr_default: float | None = None
+    prismatic_joint_damping_attr_candidates: List[str] = [
+        "physxLimit:linear:damping",  # Isaac-Sim assets compatibility
+        "physxLimit:X:damping",  # Isaac-Sim assets compatibility
+        "physxLimit:Y:damping",  # Isaac-Sim assets compatibility
+        "physxLimit:Z:damping",  # Isaac-Sim assets compatibility
+        "physics:linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+        "linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    prismatic_joint_damping_attr_default: float | None = None
+
+    # Geometry Parsing Options
+    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*", r"^.*"]
+    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
+
+    # Geometry Decomposition Options
     convexify: Optional[bool] = None
     decompose_object_error_threshold: float = 0.15
     decompose_robot_error_threshold: float = float("inf")
@@ -1339,42 +1443,10 @@ class USD(FileMorph):
     decimate: bool = True
     decimate_face_num: int = 500
     decimate_aggressiveness: int = 2
+
+    # Internal Options
     prim_path: Optional[str] = None
     parser_ctx: Any = None
-    silent_on_mismatching_attributes: bool = True
-    joint_friction_attr_candidates: List[str] = [
-        "physxJoint:jointFriction",  # Isaac-Sim assets compatibility
-        "physics:jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
-        "jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
-        "friction",  # unoffical USD attribute, some assets may adapt to this attribute
-    ]
-    joint_armature_attr_candidates: List[str] = [
-        "physxJoint:armature",  # Isaac-Sim assets compatibility
-        "physics:armature",  # unoffical USD attribute, some assets may adapt to this attribute
-        "armature",  # unoffical USD attribute, some assets may adapt to this attribute
-    ]
-    revolute_joint_stiffness_attr_candidates: List[str] = [
-        "physxLimit:angular:stiffness",  # Isaac-Sim assets compatibility
-        "physics:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
-        "stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
-    ]
-    revolute_joint_damping_attr_candidates: List[str] = [
-        "physxLimit:angular:damping",  # Isaac-Sim assets compatibility
-        "physics:angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
-        "angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
-    ]
-    prismatic_joint_stiffness_attr_candidates: List[str] = [
-        "physxLimit:linear:stiffness",  # Isaac-Sim assets compatibility
-        "physics:linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
-        "linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
-    ]
-    prismatic_joint_damping_attr_candidates: List[str] = [
-        "physxLimit:linear:damping",  # Isaac-Sim assets compatibility
-        "physics:linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
-        "linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
-    ]
-    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*", r"^.*"]
-    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
 
     def __init__(self, **data):
         super().__init__(**data)

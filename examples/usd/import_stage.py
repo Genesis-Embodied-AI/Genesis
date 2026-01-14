@@ -1,11 +1,11 @@
 import argparse
-import os
 
 import numpy as np
 from huggingface_hub import snapshot_download
 
 import genesis as gs
 from genesis.utils.misc import ti_to_numpy
+import genesis.utils.geom as gu
 
 
 class JointAnimator:
@@ -35,10 +35,9 @@ class JointAnimator:
         )
         self.init_phase = np.arcsin(normalized_init_pos)
 
-        # hard code some joint dynamics parameters to make the control more sensitive
-        self.rigid.set_dofs_frictionloss(np.zeros(n_dofs))
-        self.rigid.set_dofs_kp(np.full(n_dofs, 100.0))
-        self.rigid.set_dofs_armature(np.zeros(n_dofs))
+        # make the control more sensitive
+        self.rigid.set_dofs_frictionloss(gu.default_dofs_kp(n_dofs))
+        self.rigid.set_dofs_kp(gu.default_dofs_kp(n_dofs))
 
     def animate(self, scene: gs.Scene):
         """Calculate target positions using sin function to interpolate between lower and upper limits"""
@@ -87,6 +86,13 @@ def main():
     entities = scene.add_stage(
         morph=gs.morphs.USD(
             file=f"{asset_path}/usd/Refrigerator055/Refrigerator055.usd",
+            # Set default values for joint dynamics for missing attributes
+            joint_friction_attr_default=0.0,
+            joint_armature_attr_default=0.0,
+            revolute_joint_stiffness_attr_default=0.0,
+            revolute_joint_damping_attr_default=0.0,
+            prismatic_joint_stiffness_attr_default=0.0,
+            prismatic_joint_damping_attr_default=0.0,
         ),
         # vis_mode="collision",
         # visualize_contact=True,

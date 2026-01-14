@@ -62,20 +62,27 @@ class UsdGeometryAdapter:
 
         return g_info
 
-    def _extract_mesh_geometry(self, mesh_prim: UsdGeom.Mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _extract_mesh_geometry(
+        self, mesh_prim: UsdGeom.Mesh
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray]:
         """
         Extract basic mesh geometry (points, face_vertex_indices, face_vertex_counts, triangles).
-        Parameters:
-            mesh_prim: UsdGeom.Mesh
-                The USD mesh to extract geometry from.
-        Returns:
-            tuple: (Q_rel, points, triangles)
-                - Q_rel: np.ndarray, shape (4, 4) - The Genesis transformation matrix (rotation and translation)
-                  relative to ref_prim. This is the Q transform without scaling.
-                - points: np.ndarray, shape (n, 3) - The points of the mesh.
-                - normals: np.ndarray, shape (n, 3) - The normals of the mesh.
-                - uvs: np.ndarray, shape (n, 2) - The UVs of the mesh.
-                - triangles: np.ndarray, shape (m, 3) - The triangles of the mesh.
+
+        Parameters
+        ----------
+        mesh_prim : UsdGeom.Mesh
+            The USD mesh to extract geometry from.
+
+        Returns
+        -------
+        tuple
+            A tuple of (Q_rel, points, normals, uvs, triangles) where:
+            - Q_rel: np.ndarray, shape (4, 4) - The Genesis transformation matrix (rotation and translation)
+              relative to ref_prim. This is the Q transform without scaling.
+            - points: np.ndarray, shape (n, 3) - The points of the mesh.
+            - normals: np.ndarray | None, shape (n, 3) if not None - The normals of the mesh. None if not available.
+            - uvs: np.ndarray | None, shape (n, 2) if not None - The UVs of the mesh. None if not available.
+            - triangles: np.ndarray, shape (m, 3) - The triangles of the mesh.
         """
         # Compute Genesis transform relative to ref_prim (Q^i_j)
         Q_rel, S = compute_gs_relative_transform(mesh_prim.GetPrim(), self._ref_prim)

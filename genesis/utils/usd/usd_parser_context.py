@@ -74,7 +74,7 @@ class UsdParserContext:
         return self._rigid_body_prims
 
     @property
-    def articulation_root_prim(self) -> dict[str, Usd.Prim]:
+    def articulation_root_prims(self) -> dict[str, Usd.Prim]:
         """
         Get the articulation root prims dictionary.
 

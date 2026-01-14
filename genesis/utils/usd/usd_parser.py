@@ -28,10 +28,8 @@ def import_from_stage(
     Import all entities from a USD stage or file into the scene.
 
     Parse Pipeline:
-    1. Find all rendering materials, record them in UsdParserContext, return created gs Entity
-    2. Find all articulations, record in UsdParserContext, return created gs Entity
-    3. Find all rigid bodies (not in articulation), record in UsdParserContext, return created gs Entity
-    4. Collect all gs Entity, return them to Users
+    1. Parse all rendering materials and record them in UsdParserContext
+    2. Parse all rigid entities (articulations and rigid bodies) and return created gs Entities
 
     Parameters
     ----------

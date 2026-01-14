@@ -58,7 +58,6 @@ def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) ->
         A tuple of (Q, trimesh) where:
         - Q: np.ndarray, shape (4, 4) - The Genesis transformation matrix (rotation and translation)
           relative to ref_prim. This is the Q transform without scaling.
-        - S: np.ndarray, shape (3,) - The scaling factors extracted from the prim's USD global transform.
         - trimesh: trimesh.Trimesh - The converted trimesh object with scaling applied to vertices.
     """
 

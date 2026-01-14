@@ -1174,7 +1174,7 @@ def inv_transform_by_T(pos, T):
     return transform_by_R(pos - trans, R_inv)
 
 
-def _polar_torch(A, pure_rotation: bool, side: Literal["right", "left"]):
+def _tc_polar(A: torch.Tensor, pure_rotation: bool, side: Literal["right", "left"]):
     """Torch implementation of polar decomposition."""
     if A.ndim != 2:
         gs.raise_exception(f"Input must be a 2D matrix. got: {A.ndim=} dimensions")
@@ -1286,7 +1286,7 @@ def _np_polar_core(A, pure_rotation: bool, side_int: int):
     return U, P
 
 
-def _polar_numpy(A, pure_rotation: bool, side: Literal["right", "left"]):
+def _np_polar(A: np.ndarray, pure_rotation: bool, side: Literal["right", "left"]):
     """Numpy implementation of polar decomposition with numba acceleration."""
     if A.ndim != 2:
         gs.raise_exception(f"Input must be a 2D matrix. got: {A.ndim=} dimensions")
@@ -1321,11 +1321,10 @@ def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right
           P has shape (N, N). For 'left' decomposition, P has shape (M, M).
     """
     if isinstance(A, torch.Tensor):
-        return _polar_torch(A, pure_rotation, side)
-    elif isinstance(A, np.ndarray):
-        return _polar_numpy(A, pure_rotation, side)
-    else:
-        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(A)=}")
+        return _tc_polar(A, pure_rotation, side)
+    if isinstance(A, np.ndarray):
+        return _np_polar(A, pure_rotation, side)
+    gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(A)=}")
 
 
 # ------------------------------------------------------------------------------------

@@ -24,19 +24,25 @@ except ImportError:
     HAS_USD_SUPPORT = False
 
 
-def read_floats(s: str) -> np.ndarray:
+def to_array(s: str) -> np.ndarray:
+    """
+    Convert a string of space-separated floats to a numpy array.
+    """
     return np.array([float(x) for x in s.split()])
 
 
 @pytest.fixture
-def tol():
+def tol(precision):
     """
     Custom tolerance for USD tests.
 
-    USD Joint Limits use float32 (C++ float) precision, so we need a tolerance
-    that's appropriate for float32 rather than the default float64 tolerance.
+    USD Joint Limits use float32 (C++ float) precision, so we use
+    np.finfo(np.float32).eps for float32 precision.
     """
-    return 1e-6
+    if precision == "32":
+        return np.finfo(np.float32).eps
+    else:
+        return np.finfo(np.float64).eps
 
 
 def compare_links(mjcf_links, usd_links, tol):
@@ -182,8 +188,6 @@ def compare_joints(mjcf_joints, usd_joints, tol):
             assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
             assert_allclose(mjcf_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol)
             assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
-            assert_allclose(mjcf_joint.dofs_kp, usd_joint.dofs_kp, tol=tol)
-            assert_allclose(mjcf_joint.dofs_kv, usd_joint.dofs_kv, tol=tol)
             assert_allclose(mjcf_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
             assert_allclose(mjcf_joint.dofs_damping, usd_joint.dofs_damping, tol=tol)
             assert_allclose(mjcf_joint.dofs_armature, usd_joint.dofs_armature, tol=tol)
@@ -191,8 +195,6 @@ def compare_joints(mjcf_joints, usd_joints, tol):
             # Compare dof control properties
             assert_allclose(mjcf_joint.dofs_kp, usd_joint.dofs_kp, tol=tol)
             assert_allclose(mjcf_joint.dofs_kv, usd_joint.dofs_kv, tol=tol)
-
-            # Compare dof force range
             assert_allclose(mjcf_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
 
 
@@ -323,16 +325,16 @@ def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos", "0. 0. 0.")
-    floor_pos = read_floats(floor_pos_str)
-    floor_size = read_floats(floor_geom.get("size", "40. 40. 40."))
+    floor_pos = to_array(floor_pos_str)
+    floor_size = to_array(floor_geom.get("size", "40. 40. 40."))
 
     # Box: body has pos, geom inside has size
     box_body = worldbody.find("body[@name='/worldbody/box']")
     box_pos_str = box_body.get("pos", "0. 0. 0.")
-    box_pos = read_floats(box_pos_str)
+    box_pos = to_array(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size", "0.2 0.2 0.2")
-    box_size = read_floats(box_size_str)
+    box_size = to_array(box_size_str)
 
     # Create temporary USD file
     usd_file = str(asset_tmp_path / "box_plane.usda")
@@ -378,6 +380,7 @@ def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
 
 
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["box_plane_mjcf"])
 def test_box_plane_mjcf_vs_usd(xml_path, box_plane_usd, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
@@ -444,29 +447,29 @@ def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos")
-    floor_pos = read_floats(floor_pos_str)
-    floor_size = read_floats(floor_geom.get("size", "40. 40. 40."))
+    floor_pos = to_array(floor_pos_str)
+    floor_size = to_array(floor_geom.get("size", "40. 40. 40."))
 
     # Base
     base_body = worldbody.find("body[@name='/worldbody/base']")
     base_pos_str = base_body.get("pos")
-    base_pos = read_floats(base_pos_str)
+    base_pos = to_array(base_pos_str)
     base_geom = base_body.find("geom[@type='box']")
     base_size_str = base_geom.get("size")
-    base_size = read_floats(base_size_str)
+    base_size = to_array(base_size_str)
 
     # Box with prismatic joint
     box_body = base_body.find("body[@name='/worldbody/base/box']")
     box_pos_str = box_body.get("pos")
-    box_pos = read_floats(box_pos_str)
+    box_pos = to_array(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size")
-    box_size = read_floats(box_size_str)
+    box_size = to_array(box_size_str)
 
     # Joint limits
     joint = box_body.find("joint[@name='/worldbody/base/box_joint']")
     range_str = joint.get("range")
-    range_vals = read_floats(range_str)
+    range_vals = to_array(range_str)
     lower_limit = range_vals[0]
     upper_limit = range_vals[1]
 
@@ -530,6 +533,7 @@ def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
 
 
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["prismatic_joint_mjcf"])
 def test_prismatic_joint_mjcf_vs_usd(xml_path, prismatic_joint_usd, tol):
     """Test that MJCF and USD scenes with prismatic joints produce equivalent Genesis entities."""
@@ -597,30 +601,30 @@ def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos")
-    floor_pos = read_floats(floor_pos_str)
+    floor_pos = to_array(floor_pos_str)
     floor_size_str = floor_geom.get("size", "40. 40. 40.")
-    floor_size = read_floats(floor_size_str)
+    floor_size = to_array(floor_size_str)
 
     # Base
     base_body = worldbody.find("body[@name='/worldbody/base']")
     base_pos_str = base_body.get("pos")
-    base_pos = read_floats(base_pos_str)
+    base_pos = to_array(base_pos_str)
     base_geom = base_body.find("geom[@type='box']")
     base_size_str = base_geom.get("size")
-    base_size = read_floats(base_size_str)
+    base_size = to_array(base_size_str)
 
     # Box with revolute joint
     box_body = base_body.find("body[@name='/worldbody/base/box']")
     box_pos_str = box_body.get("pos")
-    box_pos = read_floats(box_pos_str)
+    box_pos = to_array(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size")
-    box_size = read_floats(box_size_str)
+    box_size = to_array(box_size_str)
 
     # Joint limits
     joint = box_body.find("joint[@name='/worldbody/base/box_joint']")
     range_str = joint.get("range")
-    range_vals = read_floats(range_str)
+    range_vals = to_array(range_str)
     lower_limit_deg = range_vals[0]
     upper_limit_deg = range_vals[1]
 
@@ -684,6 +688,7 @@ def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
 
 
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["revolute_joint_mjcf"])
 def test_revolute_joint_mjcf_vs_usd(xml_path, revolute_joint_usd, tol):
     """Test that MJCF and USD scenes with revolute joints produce equivalent Genesis entities."""
@@ -727,25 +732,25 @@ def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
     floor_body = worldbody.find("body[@name='/worldbody/floor']")
     floor_geom = floor_body.find("geom[@type='plane']")
     floor_pos_str = floor_geom.get("pos")
-    floor_pos = read_floats(floor_pos_str)
+    floor_pos = to_array(floor_pos_str)
     floor_size_str = floor_geom.get("size", "40. 40. 40.")
-    floor_size = read_floats(floor_size_str)
+    floor_size = to_array(floor_size_str)
 
     # Base
     base_body = worldbody.find("body[@name='/worldbody/base']")
     base_pos_str = base_body.get("pos")
-    base_pos = read_floats(base_pos_str)
+    base_pos = to_array(base_pos_str)
     base_geom = base_body.find("geom[@type='box']")
     base_size_str = base_geom.get("size")
-    base_size = read_floats(base_size_str)
+    base_size = to_array(base_size_str)
 
     # Box with spherical joint
     box_body = base_body.find("body[@name='/worldbody/base/box']")
     box_pos_str = box_body.get("pos")
-    box_pos = read_floats(box_pos_str)
+    box_pos = to_array(box_pos_str)
     box_geom = box_body.find("geom[@type='box']")
     box_size_str = box_geom.get("size")
-    box_size = read_floats(box_size_str)
+    box_size = to_array(box_size_str)
 
     # Create temporary USD file
     usd_file = str(asset_tmp_path / "spherical_joint.usda")
@@ -795,6 +800,7 @@ def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
 
 
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["spherical_joint_mjcf"])
 def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, tol):
     """Test that MJCF and USD scenes with spherical joints produce equivalent Genesis entities."""
