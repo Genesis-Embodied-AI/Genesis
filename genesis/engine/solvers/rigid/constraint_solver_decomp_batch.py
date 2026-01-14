@@ -197,9 +197,14 @@ def func_solve_decomposed(
         rigid_global_info: Global rigid body info
         static_rigid_sim_config: Static configuration
     """
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    for i_b in range(_B):
+        constraint_state.improved[i_b] = (constraint_state.n_constraints[i_b] > 0)
+
     iterations = rigid_global_info.iterations[None]
-    
-    for _ in range(iterations):
+    # print('iterations', iterations)
+    for _it in range(iterations):
+        # print('it', _it)
         # Single kernel call containing all 6 steps as separate top-level loops
         # This reduces overhead: 1 Python→C++ crossing instead of 6
         kernel_solve_body_decomposed(
