@@ -151,17 +151,17 @@ def init(
     if _use_zerocopy:
         if backend == gs_backend.metal and not _use_ndarray and not _TORCH_MPS_SUPPORT_DLPACK_FIELD:
             raise_exception("Zero-copy not supported for static array mode on Apple Metal if 'torch<=2.9.1'.")
-        if (backend == gs_backend.metal and torch.device.type != "mps") or (
-            backend == gs_backend.cuda and torch.device.type != "cuda"
+        if (backend == gs_backend.metal and gs.device.type != "mps") or (
+            backend == gs_backend.cuda and gs.device.type != "cuda"
         ):
             raise_exception(
-                f"Genesis backend '{backend}' not consistent with Torch device type '{torch.device.type}'. Zero-copy "
+                f"Genesis backend '{backend}' not consistent with Torch device type '{gs.device.type}'. Zero-copy "
                 "not supported."
             )
     supported_arch = [gs_backend.cpu]
-    if backend == gs_backend.cuda and torch.device.type == "cuda":
+    if backend == gs_backend.cuda and gs.device.type == "cuda":
         supported_arch.append(gs_backend.cuda)
-    if backend == gs_backend.metal and torch.device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD):
+    if backend == gs_backend.metal and gs.device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD):
         supported_arch.append(gs_backend.metal)
     if backend in supported_arch:
         if _use_zerocopy is None:
