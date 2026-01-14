@@ -174,7 +174,6 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
 
     min_force: torch.Tensor = make_tensor_field((0, 3))
     max_force: torch.Tensor = make_tensor_field((0, 3))
-    output_forces: torch.Tensor = make_tensor_field((0, 0))  # FIXME: remove once we have contiguous cache slices
 
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
@@ -215,13 +214,6 @@ class ContactForceSensor(
             self._shared_metadata.max_force, self._options.max_force, expand=(1, 3)
         )
 
-        if self._shared_metadata.output_forces.numel() == 0:
-            self._shared_metadata.output_forces.reshape(self._manager._sim._B, 0)
-        self._shared_metadata.output_forces = concat_with_tensor(
-            self._shared_metadata.output_forces,
-            torch.empty((self._manager._sim._B, 3), dtype=gs.tc_float, device=gs.device),
-        )
-
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
 
@@ -237,10 +229,7 @@ class ContactForceSensor(
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         force, link_a, link_b = all_contacts["force"], all_contacts["link_a"], all_contacts["link_b"]
 
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_metadata.output_forces.fill_(0.0)
-        else:
-            shared_ground_truth_cache.fill_(0.0)
+        shared_ground_truth_cache.fill_(0.0)
 
         if link_a.shape[-1] == 0:
             return  # no contacts
@@ -249,17 +238,17 @@ class ContactForceSensor(
         if shared_metadata.solver.n_envs == 0:
             force, link_a, link_b, links_quat = force[None], link_a[None], link_b[None], links_quat[None]
 
-        # FIXME: Refactor memory layout to ensure contiguity by design
+        output_forces = shared_ground_truth_cache.contiguous()
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),
             link_b.contiguous(),
-            links_quat.contiguous(),
+            links_quat,
             shared_metadata.links_idx,
-            shared_ground_truth_cache if shared_ground_truth_cache.is_contiguous() else shared_metadata.output_forces,
+            output_forces,
         )
         if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache[:] = shared_metadata.output_forces
+            shared_ground_truth_cache.copy_(output_forces)
 
     @classmethod
     def _update_shared_cache(
