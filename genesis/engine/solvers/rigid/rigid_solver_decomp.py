@@ -682,25 +682,25 @@ class RigidSolver(Solver):
                 continue
 
             # Get the number of variants for this entity
-            n_het = len(entity.het_geom_start)
+            n_variants = len(entity.variants_geom_start)
 
             # Distribute variants across environments using balanced block assignment:
-            # - If B >= n_het: first B/n_het environments get variant 0, next get variant 1, etc.
-            # - If B < n_het: each environment gets a different variant (some variants unused)
-            if self._B >= n_het:
-                base = self._B // n_het
-                extra = self._B % n_het  # first `extra` chunks get one more
-                sizes = np.r_[np.full(extra, base + 1), np.full(n_het - extra, base)]
-                variant_idx = np.repeat(np.arange(n_het), sizes)
+            # - If B >= n_variants: first B/n_variants environments get variant 0, next get variant 1, etc.
+            # - If B < n_variants: each environment gets a different variant (some variants unused)
+            if self._B >= n_variants:
+                base = self._B // n_variants
+                extra = self._B % n_variants  # first `extra` chunks get one more
+                sizes = np.r_[np.full(extra, base + 1), np.full(n_variants - extra, base)]
+                variant_idx = np.repeat(np.arange(n_variants), sizes)
             else:
                 # Each environment gets a unique variant; variants beyond B are unused
                 variant_idx = np.arange(self._B)
 
             # Get arrays from entity
-            np_geom_start = np.array(entity.het_geom_start, dtype=gs.np_int)
-            np_geom_end = np.array(entity.het_geom_end, dtype=gs.np_int)
-            np_vgeom_start = np.array(entity.het_vgeom_start, dtype=gs.np_int)
-            np_vgeom_end = np.array(entity.het_vgeom_end, dtype=gs.np_int)
+            np_geom_start = np.array(entity.variants_geom_start, dtype=gs.np_int)
+            np_geom_end = np.array(entity.variants_geom_end, dtype=gs.np_int)
+            np_vgeom_start = np.array(entity.variants_vgeom_start, dtype=gs.np_int)
+            np_vgeom_end = np.array(entity.variants_vgeom_end, dtype=gs.np_int)
 
             # Process each link in this heterogeneous entity (currently only single-link supported)
             for link in entity.links:
@@ -713,9 +713,11 @@ class RigidSolver(Solver):
                 links_vgeom_end = np_vgeom_end[variant_idx]
 
                 # Build per-env arrays for inertial properties
-                links_inertial_mass = np.array([entity.het_inertial_mass[v] for v in variant_idx], dtype=gs.np_float)
-                links_inertial_pos = np.array([entity.het_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
-                links_inertial_i = np.array([entity.het_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_mass = np.array(
+                    [entity.variants_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
+                )
+                links_inertial_pos = np.array([entity.variants_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_i = np.array([entity.variants_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
 
                 # Update links_info with per-environment values
                 # Note: when batch_links_info is True, the shape is (n_links, B)
@@ -3100,9 +3102,8 @@ def kernel_init_link_fields(
             links_info.inertial_pos[I_l][j] = links_inertial_pos[i_l, j]
 
         links_info.inertial_mass[I_l] = links_inertial_mass[i_l]
-        for j1 in ti.static(range(3)):
-            for j2 in ti.static(range(3)):
-                links_info.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
 
     for i_l, i_b in ti.ndrange(n_links, _B):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -3156,9 +3157,8 @@ def kernel_update_heterogeneous_link_info(
         for j in ti.static(range(3)):
             links_info.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
 
-        for j1 in ti.static(range(3)):
-            for j2 in ti.static(range(3)):
-                links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)

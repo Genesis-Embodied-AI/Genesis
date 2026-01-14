@@ -391,7 +391,7 @@ class RasterizerContext:
                 for geom in geoms:
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
                     geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-                    if not len(geom_envs_idx):
+                    if len(geom_envs_idx) == 0:
                         continue
 
                     if "sdf" in rigid_entity.surface.vis_mode:
@@ -433,7 +433,7 @@ class RasterizerContext:
 
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
                     geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-                    if not len(geom_envs_idx):
+                    if len(geom_envs_idx) == 0:
                         continue
 
                     geom_T = geoms_T[geom.idx][geom_envs_idx]

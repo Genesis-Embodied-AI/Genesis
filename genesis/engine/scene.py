@@ -350,7 +350,7 @@ class Scene(RBC):
             surface = gs.surfaces.Default()
 
         # Handle heterogeneous morphs (any iterable of morphs, excluding strings and Morph objects)
-        is_heterogeneous = isinstance(morph, collections.abc.Iterable) and not isinstance(morph, (str, Morph))
+        is_heterogeneous = isinstance(morph, collections.abc.Iterable) and not isinstance(morph, (Morph))
         if is_heterogeneous:
             morphs = tuple(morph)
             morph_for_checks = morphs[0]

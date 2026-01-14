@@ -1,3 +1,35 @@
+"""
+Heterogeneous Simulation Example
+================================
+
+This example demonstrates heterogeneous simulation, where different parallel
+environments can have different geometry variants for the same entity.
+
+Variant Assignment Rules:
+    When passing a list of morphs to scene.add_entity(), variants are distributed
+    across environments using the following rules:
+
+    1. When n_envs >= n_variants:
+       Balanced block assignment. Environments are divided into blocks, with each
+       block assigned to one variant. For example, with 4 variants and 8 environments:
+       - Environments 0-1 -> Variant 0
+       - Environments 2-3 -> Variant 1
+       - Environments 4-5 -> Variant 2
+       - Environments 6-7 -> Variant 3
+
+    2. When n_envs < n_variants:
+       Each environment i gets variant i (0-indexed). Variants beyond n_envs are
+       unused. For example, with 4 variants and 2 environments:
+       - Environment 0 -> Variant 0 (first morph in list)
+       - Environment 1 -> Variant 1 (second morph in list)
+       - Variants 2 and 3 are unused
+
+Usage:
+    python heterogeneous_simulation.py -v -n 4  # 4 environments (matches 4 variants)
+    python heterogeneous_simulation.py -v -n 8  # 8 environments (2 per variant)
+    python heterogeneous_simulation.py -v -n 2  # 2 environments (only first 2 variants used)
+"""
+
 import argparse
 
 import numpy as np
@@ -29,23 +61,12 @@ def main():
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
+    # Define 4 geometry variants - see module docstring for variant assignment rules
     morphs_heterogeneous = [
-        gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
-        ),
-        gs.morphs.Box(
-            size=(0.02, 0.02, 0.02),
-            pos=(0.65, 0.0, 0.02),
-        ),
-        gs.morphs.Sphere(
-            radius=0.015,
-            pos=(0.65, 0.0, 0.02),
-        ),
-        gs.morphs.Sphere(
-            radius=0.025,
-            pos=(0.65, 0.0, 0.02),
-        ),
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.65, 0.0, 0.02)),  # Variant 0
+        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.65, 0.0, 0.02)),  # Variant 1
+        gs.morphs.Sphere(radius=0.015, pos=(0.65, 0.0, 0.02)),  # Variant 2
+        gs.morphs.Sphere(radius=0.025, pos=(0.65, 0.0, 0.02)),  # Variant 3
     ]
     grasping_object = scene.add_entity(
         morph=morphs_heterogeneous,
@@ -81,7 +102,7 @@ def main():
         scene.step()
 
     # grasp
-    finder_pos = -0.0
+    finder_pos = 0.0
     for i in range(100):
         print("grasp", i)
         franka.control_dofs_position(qpos[..., :-2], motors_dof)
