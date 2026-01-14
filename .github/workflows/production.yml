@@ -38,6 +38,7 @@ jobs:
       max-parallel: 1
       matrix:
         GS_ENABLE_NDARRAY: ["0", "1"]
+        GS_SOLVER_DECOMPOSE: ["0", "1"]
 
     env:
       GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
@@ -110,6 +111,7 @@ jobs:
     strategy:
       matrix:
         GS_ENABLE_NDARRAY: ["0", "1"]
+        GS_SOLVER_DECOMPOSE: ["0", "1"]
 
     env:
       # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
