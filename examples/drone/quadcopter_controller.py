@@ -3,8 +3,6 @@ from typing import TYPE_CHECKING
 import torch
 import numpy as np
 
-from genesis.utils.geom import quat_to_xyz
-
 if TYPE_CHECKING:
     from genesis.engine.entities.drone_entity import DroneEntity
 
@@ -51,7 +49,38 @@ class DronePIDController:
 
     def __get_drone_att(self) -> torch.Tensor:
         quat = self.drone.get_quat()
-        return quat_to_xyz(quat, rpy=True, degrees=True)
+        # Custom implementation to avoid library version issues
+        if isinstance(quat, torch.Tensor):
+            q = quat.cpu().numpy()
+        else:
+            q = quat
+
+        # q is [w, x, y, z] convention in genesis usually (or x,y,z,w? check utils).
+        # Genesis standard is often [w, x, y, z].
+        # Let's assume w, x, y, z for now or check usage.
+        # Actually genesis/utils/geom.py typically uses w, x, y, z.
+
+        w, x, y, z = q[0], q[1], q[2], q[3]
+
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        # Pitch (y-axis rotation)
+        sinp = 2 * (w * y - z * x)
+        if abs(sinp) >= 1:
+            pitch = np.copysign(np.pi / 2, sinp) # use 90 degrees if out of range
+        else:
+            pitch = np.arcsin(sinp)
+
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+        rpy_deg = np.degrees(np.array([roll, pitch, yaw]))
+        return torch.tensor(rpy_deg, dtype=torch.float32, device=self.drone.get_pos().device)
 
     def __mixer(self, thrust, roll, pitch, yaw, x_vel, y_vel) -> torch.Tensor:
         M1 = self.__base_rpm + (thrust - roll - pitch - yaw - x_vel + y_vel)
