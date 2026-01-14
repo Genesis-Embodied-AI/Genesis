@@ -279,11 +279,11 @@ class ContactForceSensor(
             shared_metadata.interpolate,
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        shared_cache_per_sensor = shared_cache.reshape(shared_cache.shape[0], -1, 3)  # B, n_sensors * 3
+        shared_cache_per_sensor = shared_cache.reshape((shared_cache.shape[0], -1, 3))  # B, n_sensors * 3
         # clip for max force
         shared_cache_per_sensor.clamp_(min=-shared_metadata.max_force, max=shared_metadata.max_force)
         # set to 0 for undetectable force
-        shared_cache_per_sensor[torch.abs(shared_cache_per_sensor) < shared_metadata.min_force] = 0.0
+        shared_cache_per_sensor.masked_fill_(torch.abs(shared_cache_per_sensor) < shared_metadata.min_force, 0.0)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
