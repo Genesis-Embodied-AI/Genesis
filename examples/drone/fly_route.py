@@ -239,59 +239,70 @@ def fly_mission(mission_control: MissionControl, controller: "DronePIDController
     print(f"Mission started with timeout: {timeout} seconds")
     print(f"Max steps: {max_steps}, dt=0.01s → {max_steps * 0.01:.1f}s mission time")
 
-    while step < max_steps:
-        # Check timeout
-        if time.time() - start_time > timeout:
-            print(f"\n⏱️  Mission Timeout reached ({timeout}s). Stopping simulation to generate demo video.")
-            break
+    try:
+        while step < max_steps:
+            # Check timeout
+            if time.time() - start_time > timeout:
+                print(f"\n⏱️  Mission Timeout reached ({timeout}s). Stopping simulation to generate demo video.")
+                break
 
-        # State estimation
-        pos_tensor = drone.get_pos()
-        vel_tensor = drone.get_vel()
-        pos_np = pos_tensor.cpu().numpy()
-        vel_np = vel_tensor.cpu().numpy()
+            # State estimation
+            pos_tensor = drone.get_pos()
+            vel_tensor = drone.get_vel()
+            pos_np = pos_tensor.cpu().numpy()
+            vel_np = vel_tensor.cpu().numpy()
 
-        # Mission Control (The "Other" Simulation Program/Logic)
-        # Check Safety
-        if not mission_control.check_bounds(pos_np):
-            print("❌ Mission Aborted: Out of bounds.")
-            break
+            # Mission Control (The "Other" Simulation Program/Logic)
+            # Check Safety
+            if not mission_control.check_bounds(pos_np):
+                print("❌ Mission Aborted: Out of bounds.")
+                break
 
-        # Get Guidance
-        target_pos, keep_flying = mission_control.get_target(pos_np, vel_np)
+            # Get Guidance
+            target_pos, keep_flying = mission_control.get_target(pos_np, vel_np)
 
-        if not keep_flying and mission_control.mission_status == "COMPLETED":
-            print("✅ Mission Completed Successfully!")
-            print(f"   Traversed {rings_passed} rings successfully!")
-            break
+            if not keep_flying and mission_control.mission_status == "COMPLETED":
+                print("✅ Mission Completed Successfully!")
+                print(f"   Traversed {rings_passed} rings successfully!")
+                break
 
-        # Track ring traversal
-        if mission_control.current_ring_idx > last_ring_idx:
-            last_ring_idx = mission_control.current_ring_idx
-            # New ring detected
-            if mission_control.current_ring_idx > 0:
-                rings_passed += 1
-                print(f"   ✓ Ring {rings_passed} traversed successfully!")
+            # Track ring traversal
+            if mission_control.current_ring_idx > last_ring_idx:
+                last_ring_idx = mission_control.current_ring_idx
+                # New ring detected
+                if mission_control.current_ring_idx > 0:
+                    rings_passed += 1
+                    print(f"   ✓ Ring {rings_passed} traversed successfully!")
 
-        # Control
-        rpms = controller.update(target_pos)
-        rpms = [clamp(r) for r in rpms]
-        drone.set_propellels_rpm(rpms)
+            # Control
+            rpms = controller.update(target_pos)
+            rpms = [clamp(r) for r in rpms]
+            drone.set_propellels_rpm(rpms)
 
-        scene.step()
+            scene.step()
 
-        # Visualization & Tracking
-        target_tuple = tuple(target_pos)
-        pos_tuple = tuple(pos_np)
+            # Visualization & Tracking
+            target_tuple = tuple(target_pos)
+            pos_tuple = tuple(pos_np)
 
-        # Draw line to target
-        scene.draw_debug_line(pos_tuple, target_tuple, radius=0.005, color=(0.0, 1.0, 0.0, 0.5))
+            # Draw line to target
+            scene.draw_debug_line(pos_tuple, target_tuple, radius=0.005, color=(0.0, 1.0, 0.0, 0.5))
 
-        # Camera
-        update_camera_chase(cam, pos_tuple, tuple(vel_np), target_tuple)
-        cam.render()
+            # Camera
+            update_camera_chase(cam, pos_tuple, tuple(vel_np), target_tuple)
+            cam.render()
 
-        step += 1
+            step += 1
+
+    except gs.GenesisException as e:
+        if "Viewer closed" in str(e):
+            print(f"\n🛑 Viewer closed by user after {step} steps ({step * 0.01:.1f}s)")
+            print(f"   Rings traversed: {rings_passed}")
+        else:
+            raise e
+    except Exception as e:
+        print(f"\n⚠️  Unexpected error: {e}")
+        print(f"   Steps completed: {step}, Rings traversed: {rings_passed}")
 
     if step >= max_steps:
         print(f"⚠️  Mission completed or timed out after {step} steps ({step * 0.01:.1f}s)")
@@ -388,8 +399,13 @@ def main():
     # Increase timeout for more complex demo
     fly_mission(mission, controller, scene, cam, timeout=120.0)
 
-    cam.stop_recording(save_to_filename="../../videos/fly_route_rings.mp4")
-    print("✅ Video saved to ../../videos/fly_route_rings.mp4")
+    # Save video (handle gracefully if viewer was closed)
+    try:
+        cam.stop_recording(save_to_filename="../../videos/fly_route_rings.mp4")
+        print("✅ Video saved to ../../videos/fly_route_rings.mp4")
+    except Exception as e:
+        print(f"⚠️  Could not save video: {e}")
+        print("   (This may happen if the viewer was closed early)")
 
 
 
