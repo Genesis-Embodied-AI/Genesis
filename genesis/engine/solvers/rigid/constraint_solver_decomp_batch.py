@@ -169,17 +169,6 @@ def kernel_solve_body_decomposed(
                         )
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
-def init_improved(
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
-):
-    _B = constraint_state.grad.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
-        constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
-
-
 # =============================================================================
 # Decomposed Solver Orchestration
 # =============================================================================
@@ -208,11 +197,8 @@ def func_solve_decomposed(
         rigid_global_info: Global rigid body info
         static_rigid_sim_config: Static configuration
     """
-    init_improved(constraint_state=constraint_state, static_rigid_sim_config=static_rigid_sim_config)
     iterations = rigid_global_info.iterations[None]
-    # print('iterations', iterations)
     for _it in range(iterations):
-        # print('it', _it)
         # Single kernel call containing all 6 steps as separate top-level loops
         # This reduces overhead: 1 Python→C++ crossing instead of 6
         kernel_solve_body_decomposed(

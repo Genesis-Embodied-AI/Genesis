@@ -2426,6 +2426,10 @@ def func_init_solver(
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in ti.ndrange(_B):
+        constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
+
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_add_weld_constraint(
