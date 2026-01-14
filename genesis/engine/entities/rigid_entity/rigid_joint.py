@@ -2,7 +2,6 @@ import gstaichi as ti
 import torch
 
 import genesis as gs
-import genesis.utils.geom as gu
 from genesis.utils import array_class
 from genesis.utils.misc import DeprecationError
 from genesis.repr_base import RBC

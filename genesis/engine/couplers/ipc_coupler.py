@@ -730,7 +730,6 @@ class IPCCoupler(RBC):
             return
 
         # Gather FEM states (both volumetric and cloth) using metadata filtering
-        from uipc import builtin
         from uipc.backend import SceneVisitor
         from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
         import numpy as np
@@ -757,7 +756,7 @@ class IPCCoupler(RBC):
                                     solver_type = str(solver_type_view[0])
                                 else:
                                     continue
-                            except:
+                            except Exception:
                                 continue
 
                             # Accept both "fem" and "cloth" (both are FEM entities)
@@ -813,11 +812,9 @@ class IPCCoupler(RBC):
         if not hasattr(self, "_ipc_scene") or not hasattr(self.rigid_solver, "list_env_mesh"):
             return
 
-        from uipc import builtin, view
+        from uipc import view
         from uipc.backend import SceneVisitor
         from uipc.geometry import SimplicialComplexSlot
-        import numpy as np
-        import genesis.utils.geom as gu
 
         rigid_solver = self.rigid_solver
         visitor = SceneVisitor(self._ipc_scene)
@@ -842,7 +839,7 @@ class IPCCoupler(RBC):
                                     solver_type = str(solver_type_view[0])
                                 else:
                                     continue
-                            except:
+                            except Exception:
                                 continue
 
                             if solver_type == "rigid":
@@ -911,7 +908,6 @@ class IPCCoupler(RBC):
             4x4 transformation matrix
         """
         from uipc import Transform, Vector3, Quaternion
-        import numpy as np
 
         rigid_solver = self.rigid_solver
 
@@ -957,8 +953,6 @@ class IPCCoupler(RBC):
         - G is 12D: [linear_force(3), rotational_force(9)]
         - We extract linear force and convert rotational force to 3D torque
         """
-        import numpy as np
-        import genesis.utils.geom as gu
 
         rigid_solver = self.rigid_solver
         strength_tuple = self.options.ipc_constraint_strength

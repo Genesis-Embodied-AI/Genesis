@@ -64,7 +64,7 @@ class RBC:
             # content example: <gs.List>(len=0, [])
             try:
                 content = ru.brief(getattr(self, attr))
-            except:
+            except Exception:
                 continue
             idx = content.find(">")
             # format with italic and color

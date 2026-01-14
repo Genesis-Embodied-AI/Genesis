@@ -1,5 +1,4 @@
 import math
-from collections import defaultdict
 from typing import TYPE_CHECKING, Literal
 
 import gstaichi as ti
@@ -13,7 +12,6 @@ from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
 from genesis.options.solvers import RigidOptions
-from genesis.utils import linalg as lu
 from genesis.utils.misc import (
     DeprecationError,
     ti_to_torch,
@@ -1962,33 +1960,29 @@ class RigidSolver(Solver):
                 tensor = tensor[None]
             tensor_list[j] = tensor
         if name == "kp":
-            kernel_set_dofs_kp(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_kp(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "kv":
-            kernel_set_dofs_kv(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_kv(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "force_range":
             kernel_set_dofs_force_range(
-                tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                *tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
             )
         elif name == "stiffness":
-            kernel_set_dofs_stiffness(
-                tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
-            )
+            kernel_set_dofs_stiffness(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "armature":
-            kernel_set_dofs_armature(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_armature(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
             qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
             qpos_cur = self.get_qpos(qs_idx=qs_idx, envs_idx=envs_idx)
             self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True)
             self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx)
         elif name == "damping":
-            kernel_set_dofs_damping(tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+            kernel_set_dofs_damping(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         elif name == "frictionloss":
             kernel_set_dofs_frictionloss(
-                tensor_list[0], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
+                *tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
             )
         elif name == "limit":
-            kernel_set_dofs_limit(
-                tensor_list[0], tensor_list[1], dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config
-            )
+            kernel_set_dofs_limit(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
 
@@ -2876,7 +2870,6 @@ def kernel_init_meaninertia(
             rigid_global_info.meaninertia[i_b] = 0.0
             for i_e in range(n_entities):
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
                     rigid_global_info.meaninertia[i_b] = (
                         rigid_global_info.meaninertia[i_b] + rigid_global_info.mass_mat[i_d, i_d, i_b]
                     )
@@ -5647,7 +5640,6 @@ def func_forward_velocity_entity(
                 if func_check_index_range(i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], BW):
                     I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
                     joint_type = joints_info.type[I_j]
-                    q_start = joints_info.q_start[I_j]
                     dof_start = joints_info.dof_start[I_j]
 
                     curr_I = (i_l, 0 if ti.static(not BW) else i_j_, i_b)
@@ -5960,7 +5952,6 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
 ):
-    n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
 
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -6389,7 +6380,6 @@ def func_torque_and_passive_force(
                     joint_type = joints_info.type[I_j]
 
                     if joint_type != gs.JOINT_TYPE.FREE and joint_type != gs.JOINT_TYPE.FIXED:
-                        q_start = links_info.q_start[I_l]
                         dof_start = links_info.dof_start[I_l]
                         dof_end = links_info.dof_end[I_l]
 
@@ -6404,12 +6394,11 @@ def func_torque_and_passive_force(
                                     if ti.static(static_rigid_sim_config.batch_dofs_info)
                                     else dof_start + j_d
                                 )
+                                # Note that using dofs_state instead of qpos here allows qpos to be pulled into qpos0
+                                # instead 0: dofs_state.pos = qpos - qpos0
                                 func_add_safe_backward(
                                     dofs_state.qf_passive,
                                     [dof_start + j_d, i_b],
-                                    # dofs_state.pos = qpos - qpos0
-                                    # using dofs_state instead of qpos here allows
-                                    # qpos to be pulled into qpos0 instead 0
                                     -dofs_state.pos[dof_start + j_d, i_b] * dofs_info.stiffness[I_d],
                                     BW,
                                 )

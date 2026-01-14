@@ -5,7 +5,7 @@ import torch
 import gstaichi as ti
 
 import genesis as gs
-from genesis.utils.misc import get_assets_dir, broadcast_tensor
+from genesis.utils.misc import get_assets_dir
 
 from .rigid_entity import RigidEntity
 

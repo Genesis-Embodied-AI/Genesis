@@ -314,7 +314,7 @@ class Mesh(RBC):
     @classmethod
     def from_attrs(cls, verts, faces, normals=None, surface=None, uvs=None, scale=None):
         """
-        Create a genesis.Mesh from mesh attribtues including vertices, faces, and normals.
+        Create a genesis.Mesh from mesh attributes including vertices, faces, and normals.
         """
         if surface is None:
             surface = gs.surfaces.Default()

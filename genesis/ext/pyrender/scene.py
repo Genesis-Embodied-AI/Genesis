@@ -6,7 +6,6 @@ Author: Matthew Matl
 
 import networkx as nx
 import numpy as np
-import trimesh
 
 from .camera import Camera
 from .light import DirectionalLight, Light, PointLight, SpotLight
@@ -296,11 +295,11 @@ class Scene(object):
             try:
                 (parent_node,) = self.get_nodes(name=parent_name)
             except ValueError:
+                parent_nodes = self.get_nodes(name=parent_name)
                 if len(parent_nodes) == 0:
                     raise ValueError(f"No parent node with name '{parent_name}' found")
                 elif len(parent_nodes) > 1:
                     raise ValueError(f"More than one parent node with name '{parent_name}' found")
-                raise
 
         self.add_node(node, parent_node=parent_node)
 

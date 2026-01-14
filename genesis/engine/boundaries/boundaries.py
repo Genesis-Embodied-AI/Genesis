@@ -1,5 +1,3 @@
-import copy
-
 import numpy as np
 import gstaichi as ti
 
