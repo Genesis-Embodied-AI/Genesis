@@ -1444,7 +1444,7 @@ def test_multilink_inverse_kinematics(show_viewer):
         rot_tol=TOL,
         return_error=True,
     )
-    assert qpos.shape == (scene.n_envs, robot.n_qs)
+    assert qpos.shape == (1, robot.n_qs)
     assert err.shape == (1, 3, 6)
     assert err.abs().max() < TOL
     if show_viewer:
@@ -3208,7 +3208,6 @@ def test_data_accessor(n_envs, batched, tol):
                     val /= torch.linalg.norm(val, dim=-1, keepdims=True)
             setter(*datas_tp)
             if getter is not None:
-                # tol = 1e-7  # increased tolerance to pass tests
                 assert_allclose(getter(), datas, tol=tol)
 
         # Early return if neither rows or columns can be masked
