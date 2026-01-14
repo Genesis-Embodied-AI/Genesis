@@ -463,7 +463,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        buffered_data.append(shared_ground_truth_cache)
+        buffered_data.set(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
