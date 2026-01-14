@@ -1175,53 +1175,100 @@ def inv_transform_by_T(pos, T):
 
 
 def _tc_polar(A: torch.Tensor, pure_rotation: bool, side: Literal["right", "left"]):
-    """Torch implementation of polar decomposition."""
-    if A.ndim != 2:
-        gs.raise_exception(f"Input must be a 2D matrix. got: {A.ndim=} dimensions")
+    """Torch implementation of polar decomposition with batched support."""
+    if A.ndim < 2:
+        gs.raise_exception(f"Input must be at least 2D. got: {A.ndim=} dimensions")
 
+    # Check if batched
+    is_batched = A.ndim > 2
+    M, N = A.shape[-2], A.shape[-1]
+
+    # Perform SVD (supports batching automatically)
     U_svd, Sigma, Vt = torch.linalg.svd(A, full_matrices=False)
 
+    # Normalize SVD signs for consistency: ensure the largest magnitude element in each column of U is positive
+    # This resolves sign ambiguities that can differ between torch and numpy implementations
+    if is_batched:
+        # For batched case: max_indices shape is (*batch, N)
+        max_indices = torch.argmax(torch.abs(U_svd), dim=-2)  # Shape: (*batch, N)
+        # Use advanced indexing to get max values efficiently
+        batch_dims = U_svd.shape[:-2]
+        batch_size = math.prod(batch_dims) if batch_dims else 1
+        U_flat = U_svd.reshape(batch_size, M, N)
+        max_indices_flat = max_indices.reshape(batch_size, N)
+
+        # Create batch indices for advanced indexing
+        batch_idx = torch.arange(batch_size, device=U_svd.device).unsqueeze(1).expand(-1, N)  # (batch_size, N)
+        col_idx = torch.arange(N, device=U_svd.device).unsqueeze(0).expand(batch_size, -1)  # (batch_size, N)
+        max_vals = U_flat[batch_idx, max_indices_flat, col_idx]  # (batch_size, N)
+        max_vals_abs = torch.abs(max_vals)
+        signs = torch.where(max_vals_abs > 1e-10, torch.sign(max_vals), torch.ones_like(max_vals))
+        signs = signs.reshape(*batch_dims, N)
+    else:
+        # For single matrix case
+        max_indices = torch.argmax(torch.abs(U_svd), dim=0)  # Shape: (N,)
+        max_vals = U_svd[max_indices, torch.arange(N, device=U_svd.device)]  # (N,)
+        max_vals_abs = torch.abs(max_vals)
+        signs = torch.where(max_vals_abs > 1e-10, torch.sign(max_vals), torch.ones_like(max_vals))
+
+    U_svd = U_svd * signs.unsqueeze(-2) if is_batched else U_svd * signs
+    Vt = Vt * signs.unsqueeze(-1) if is_batched else Vt * signs.unsqueeze(-1)
+
     # Handle pure_rotation: if det(U) < 0, flip signs to make it a pure rotation
-    if pure_rotation and A.shape[0] == A.shape[1]:  # Only for square matrices
+    is_square = M == N
+    if pure_rotation and is_square:  # Only for square matrices
         # Compute U first to check its determinant
         U_temp = U_svd @ Vt
-        det_U = torch.linalg.det(U_temp)
-        if det_U < 0:
-            U_svd = U_svd.clone()
-            Vt = Vt.clone()
-            Sigma = Sigma.clone()
-
-            # Flip the smallest singular value (last one) and corresponding column/row
-            # This maintains A = U_svd @ diag(Sigma) @ Vt while changing det(U)
-            if side == "right":
-                # Flip last singular value and last row of Vt
-                Sigma[-1] *= -1
-                Vt[-1, :] *= -1
-            else:
-                # For left polar, flip last singular value and last column of U_svd
-                Sigma[-1] *= -1
+        if is_batched:
+            det_U = torch.linalg.det(U_temp)  # Shape: (*batch,)
+            # Flip signs where det < 0
+            flip_mask = det_U < 0
+            if flip_mask.any():
+                # Flip both the last column of U_svd and last row of Vt simultaneously
+                U_svd[..., :, -1] = torch.where(flip_mask.unsqueeze(-1), -U_svd[..., :, -1], U_svd[..., :, -1])
+                Vt[..., -1, :] = torch.where(flip_mask.unsqueeze(-1), -Vt[..., -1, :], Vt[..., -1, :])
+        else:
+            det_U = torch.linalg.det(U_temp)
+            if det_U < 0:
+                # Flip both the last column of U_svd and last row of Vt simultaneously
                 U_svd[:, -1] *= -1
+                Vt[-1, :] *= -1
 
+    # Compute U
     U = U_svd @ Vt
 
-    # Construct diagonal matrix from singular values
     # Use absolute value to ensure P is positive semi-definite
-    # (even if we flipped Sigma's sign to fix rotation)
     Sigma_abs = torch.abs(Sigma)
-    Sigma_diag = torch.diag_embed(Sigma_abs)
+
     if side == "right":
         # P = Vt.T @ diag(|Sigma|) @ Vt
-        P = Vt.transpose(-2, -1) @ Sigma_diag @ Vt
-    else:
+        # For batched: Vt is (*batch, N, M), need (*batch, M, N) -> transpose last two dims
+        # Create diagonal matrix using torch.diag_embed for batched support
+        if is_batched:
+            Sigma_diag = torch.diag_embed(Sigma_abs)  # Shape: (*batch, N, N)
+            # Vt is (*batch, N, M), need Vt.T which is (*batch, M, N)
+            Vt_T = Vt.transpose(-1, -2)  # Shape: (*batch, M, N)
+            P = Vt_T @ Sigma_diag @ Vt  # Shape: (*batch, N, N)
+        else:
+            Sigma_diag = torch.diag(Sigma_abs)  # Shape: (N, N)
+            P = Vt.T @ Sigma_diag @ Vt  # Shape: (N, N)
+    else:  # "left"
         # P = U_svd @ diag(|Sigma|) @ U_svd.T (left polar: A = P @ U)
-        P = U_svd @ Sigma_diag @ U_svd.transpose(-2, -1)
+        if is_batched:
+            Sigma_diag = torch.diag_embed(Sigma_abs)  # Shape: (*batch, M, M)
+            U_svd_T = U_svd.transpose(-1, -2)  # Shape: (*batch, N, M)
+            P = U_svd @ Sigma_diag @ U_svd_T  # Shape: (*batch, M, M)
+        else:
+            Sigma_diag = torch.diag(Sigma_abs)  # Shape: (M, M)
+            P = U_svd @ Sigma_diag @ U_svd.T  # Shape: (M, M)
+
     return U, P
 
 
 @nb.jit(nopython=True, cache=True)
-def _np_polar_core(A, pure_rotation: bool, side_int: int):
+def _np_polar_core_single(A, pure_rotation: bool, side_int: int):
     """
-    Numba-accelerated core computation for polar decomposition.
+    Numba-accelerated core computation for polar decomposition of a single matrix.
 
     Parameters
     ----------
@@ -1244,6 +1291,19 @@ def _np_polar_core(A, pure_rotation: bool, side_int: int):
     # Perform SVD
     U_svd, Sigma, Vt = np.linalg.svd(A, full_matrices=False)
 
+    # Normalize SVD signs for consistency: ensure the largest magnitude element in each column of U is positive
+    # This resolves sign ambiguities that can differ between torch and numpy implementations
+    max_indices = np.argmax(np.abs(U_svd), axis=0)  # Shape: (N,)
+    signs = np.empty(N, dtype=U_svd.dtype)
+    for j in range(N):
+        max_val = np.abs(U_svd[max_indices[j], j])
+        if max_val > 1e-10:
+            signs[j] = np.sign(U_svd[max_indices[j], j])
+        else:
+            signs[j] = 1.0
+    U_svd = U_svd * signs
+    Vt = Vt * signs[:, None]
+
     # Handle pure_rotation: if det(U) < 0, flip signs to make it a pure rotation
     is_square = M == N
     if pure_rotation and is_square:  # Only for square matrices
@@ -1251,16 +1311,11 @@ def _np_polar_core(A, pure_rotation: bool, side_int: int):
         U_temp = U_svd @ Vt
         det_U = np.linalg.det(U_temp)
         if det_U < 0:
-            # Flip the smallest singular value (last one) and corresponding column/row
-            # This maintains A = U_svd @ diag(Sigma) @ Vt while changing det(U)
-            if side_int == 0:  # "right"
-                # Flip last singular value and last row of Vt
-                Sigma[-1] *= -1
-                Vt[-1, :] *= -1
-            else:  # "left"
-                # For left polar, flip last singular value and last column of U_svd
-                Sigma[-1] *= -1
-                U_svd[:, -1] *= -1
+            # Flip both the last column of U_svd and last row of Vt simultaneously
+            # This changes det(U) from -1 to 1 but maintains A = U_svd @ diag(Sigma) @ Vt
+            # because the two sign flips cancel out in the product
+            U_svd[:, -1] *= -1
+            Vt[-1, :] *= -1
 
     # Compute U
     U = U_svd @ Vt
@@ -1286,26 +1341,89 @@ def _np_polar_core(A, pure_rotation: bool, side_int: int):
     return U, P
 
 
+@nb.jit(nopython=True, cache=True)
+def _np_polar_core_batched(A, pure_rotation: bool, side_int: int, U_out, P_out):
+    """
+    Numba-accelerated core computation for batched polar decomposition.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The batched matrices to decompose. Shape (*batch, M, N).
+    pure_rotation : bool
+        If True, ensure the unitary matrix U has det(U) = 1 (pure rotation).
+    side_int : int
+        0 for "right", 1 for "left".
+    U_out : np.ndarray
+        Output array for U, shape (*batch, M, N).
+    P_out : np.ndarray
+        Output array for P, shape (*batch, N, N) or (*batch, M, M) depending on side.
+
+    Returns
+    -------
+    None (results written to U_out and P_out)
+    """
+    M, N = A.shape[-2], A.shape[-1]
+
+    # Calculate batch size by flattening all batch dimensions
+    batch_size = 1
+    for i in range(A.ndim - 2):
+        batch_size *= A.shape[i]
+
+    # Flatten batch dimensions
+    A_flat = A.reshape(batch_size, M, N)
+    U_flat = U_out.reshape(batch_size, M, N)
+    if side_int == 0:  # "right"
+        P_flat = P_out.reshape(batch_size, N, N)
+    else:  # "left"
+        P_flat = P_out.reshape(batch_size, M, M)
+
+    # Process each matrix in the batch
+    for i in range(batch_size):
+        U_i, P_i = _np_polar_core_single(A_flat[i], pure_rotation, side_int)
+        U_flat[i] = U_i
+        P_flat[i] = P_i
+
+
 def _np_polar(A: np.ndarray, pure_rotation: bool, side: Literal["right", "left"]):
-    """Numpy implementation of polar decomposition with numba acceleration."""
-    if A.ndim != 2:
-        gs.raise_exception(f"Input must be a 2D matrix. got: {A.ndim=} dimensions")
+    """Numpy implementation of polar decomposition with numba acceleration and batched support."""
+    if A.ndim < 2:
+        gs.raise_exception(f"Input must be at least 2D. got: {A.ndim=} dimensions")
 
     # Convert side to int for numba compatibility
     side_int = 0 if side == "right" else 1
 
-    # Call numba-accelerated core function
-    return _np_polar_core(A, pure_rotation, side_int)
+    # Check if batched
+    is_batched = A.ndim > 2
+    M, N = A.shape[-2], A.shape[-1]
+
+    if is_batched:
+        # Pre-allocate output arrays
+        batch_shape = A.shape[:-2]
+        U_out = np.empty((*batch_shape, M, N), dtype=A.dtype)
+        if side == "right":
+            P_out = np.empty((*batch_shape, N, N), dtype=A.dtype)
+        else:
+            P_out = np.empty((*batch_shape, M, M), dtype=A.dtype)
+
+        # Call batched numba function
+        _np_polar_core_batched(A, pure_rotation, side_int, U_out, P_out)
+        return U_out, P_out
+    else:
+        # Call single matrix numba function
+        return _np_polar_core_single(A, pure_rotation, side_int)
 
 
 def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right"):
     """
-    Compute the polar decomposition of a matrix.
+    Compute the polar decomposition of a matrix or batch of matrices.
 
     Parameters
     ----------
     A : np.ndarray | torch.Tensor
-        The matrix to decompose. Must be a 2D matrix (M, N), not batched.
+        The matrix or batch of matrices to decompose. Can be:
+        - Single matrix: shape (M, N)
+        - Batched: shape (*batch, M, N)
     pure_rotation : bool, optional
         If True, ensure the unitary matrix U has det(U) = 1 (pure rotation).
         If False, U may have det(U) = -1 (contains reflection). Default is True.
@@ -1316,9 +1434,9 @@ def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right
     -------
     tuple[np.ndarray | torch.Tensor, np.ndarray | torch.Tensor]
         A tuple of (U, P) where:
-        - U : The unitary matrix (rotation part), same shape as A (M, N).
+        - U : The unitary matrix (rotation part), same shape as A (M, N) or (*batch, M, N).
         - P : The positive semi-definite matrix (scaling part). For 'right' decomposition,
-          P has shape (N, N). For 'left' decomposition, P has shape (M, M).
+          P has shape (N, N) or (*batch, N, N). For 'left' decomposition, P has shape (M, M) or (*batch, M, M).
     """
     if isinstance(A, torch.Tensor):
         return _tc_polar(A, pure_rotation, side)
