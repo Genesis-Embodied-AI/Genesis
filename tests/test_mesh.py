@@ -510,6 +510,7 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
         )
     )
 
+
 @pytest.mark.required
 def test_plane_texture_path_preservation(show_viewer):
     """Test that plane primitives preserve texture paths in metadata."""
@@ -518,6 +519,7 @@ def test_plane_texture_path_preservation(show_viewer):
 
     # The texture path should be stored in metadata
     assert plane.vgeoms[0].vmesh.metadata["texture_path"] == "textures/checker.png"
+
 
 @pytest.mark.required
 @pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
