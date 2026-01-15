@@ -46,6 +46,7 @@ def kernel_solve_body_decomposed(
 
     # Step 1: Linesearch and update qacc, Ma, Jaref
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    # Index: 0
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             alpha = constraint_solver_decomp.func_linesearch(
@@ -82,6 +83,7 @@ def kernel_solve_body_decomposed(
     # Step 2: Save prev_grad and prev_Mgrad (CG only)
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        # Index: 1 if CG
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 for i_d in range(n_dofs):
@@ -90,6 +92,7 @@ def kernel_solve_body_decomposed(
 
     # Step 3: Update constraints
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    # Index: 1 if Newton else 2
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             constraint_solver_decomp.func_update_constraint(
@@ -105,6 +108,7 @@ def kernel_solve_body_decomposed(
     # Step 4: Newton Hessian update (Newton only)
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        # Index: 2 if Newton
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 constraint_solver_decomp.func_nt_hessian_incremental(
@@ -117,6 +121,7 @@ def kernel_solve_body_decomposed(
 
     # Step 5: Update gradient
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    # Index: 3
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             constraint_solver_decomp.func_update_gradient(
@@ -130,6 +135,7 @@ def kernel_solve_body_decomposed(
 
     # Step 6: Check convergence and update search direction
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    # Index: 4
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             # Check convergence
