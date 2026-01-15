@@ -1,4 +1,5 @@
 import math
+from functools import partial
 from unittest.mock import patch
 
 import pytest
@@ -199,8 +200,8 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape, tol):
     for py_func, shapes_in, shapes_out in (
         (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
         (gu.pos_lookat_up_to_T, [[3], [3], [3]], [[4, 4]]),
-        (lambda A: polar(A, pure_rotation=False, side="left", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
-        (lambda A: polar(A, pure_rotation=False, side="right", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
+        (partial(polar, pure_rotation=False, side="left", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
+        (partial(polar, pure_rotation=False, side="right", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
     ):
         num_inputs = len(shapes_in)
         shape_args = (*shapes_in, *shapes_out)
@@ -306,8 +307,6 @@ def test_utils_geom_taichi_identity(batch_shape):
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
 def test_utils_geom_tensor_identity(batch_shape):
-    import gstaichi as ti
-
     for py_funcs, shape_args in (
         ((gu.R_to_rot6d, gu.rot6d_to_R), ([3, 3], [6])),
         ((gu.R_to_quat, gu.quat_to_R), ([3, 3], [4])),
@@ -535,36 +534,26 @@ def test_polar_decomposition(side, tol):
 
 
 @pytest.mark.required
-def test_polar_pure_rotation(tol):
+@pytest.mark.parametrize("is_pure", [False, True])
+def test_polar_pure_rotation(is_pure, tol):
     """Test that pure_rotation parameter ensures det(U) = 1 for square matrices."""
     M, N = 3, 3  # Square matrices only
+
     # Create a matrix that will have det(U) = -1 by using a reflection
     np_A = np.random.randn(M, N).astype(gs.np_float) @ np.diag([1, 1, -1])
 
-    # Test without pure_rotation
-    np_U1, np_P1 = gu.polar(np_A, pure_rotation=False)
-
-    # Test with pure_rotation
-    np_U2, np_P2 = gu.polar(np_A, pure_rotation=True)
+    np_U, np_P = gu.polar(np_A, pure_rotation=is_pure)
 
     # Check determinants
-    np_det1 = np.linalg.det(np_U1)
-    np_det2 = np.linalg.det(np_U2)
-
-    # Without pure_rotation, det might be -1 (reflection)
-    # With pure_rotation, det should be 1 (pure rotation)
-    assert abs(np_det2 - 1.0) < tol, "With pure_rotation, det(U) should be 1"
-
-    # If the original had a reflection (det = -1), it should be fixed to rotation (det = 1)
-    if abs(np_det1 + 1) < tol:
-        assert abs(np_det2 - 1.0) < tol, "Reflection should be fixed to rotation"
+    np_det = np.linalg.det(np_U)
+    if is_pure:
+        assert (np_det - 1.0) < tol, "With pure_rotation, det should be 1 (pure rotation)"
+    else:
+        assert abs(np_det - 1.0) < tol, "Without pure_rotation, det might be -1 (reflection)"
 
     # Reconstruction should still work
-    np_recon1 = np_U1 @ np_P1
-    np_recon2 = np_U2 @ np_P2
-
-    assert_allclose(np_A, np_recon1, tol=tol)
-    assert_allclose(np_A, np_recon2, tol=tol)
+    np_recon = np_U @ np_P
+    assert_allclose(np_A, np_recon, tol=tol)
 
 
 @pytest.mark.required

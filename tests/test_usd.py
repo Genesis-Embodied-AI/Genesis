@@ -31,20 +31,6 @@ def to_array(s: str) -> np.ndarray:
     return np.array([float(x) for x in s.split()])
 
 
-@pytest.fixture
-def tol(precision):
-    """
-    Custom tolerance for USD tests.
-
-    USD Joint Limits use float32 (C++ float) precision, so we use
-    np.finfo(np.float32).eps for float32 precision.
-    """
-    if precision == "32":
-        return np.finfo(np.float32).eps
-    else:
-        return np.finfo(np.float64).eps
-
-
 def compare_links(mjcf_links, usd_links, tol):
     """
     Generic function to compare links between two scenes.
@@ -316,6 +302,7 @@ def box_plane_mjcf():
 @pytest.fixture(scope="session")
 def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     """Generate a USD file equivalent to the MJCF box_plane_mjcf fixture.
+
     Extracts data from the MJCF XML structure to build the USD file.
     """
     # Extract data from MJCF XML structure

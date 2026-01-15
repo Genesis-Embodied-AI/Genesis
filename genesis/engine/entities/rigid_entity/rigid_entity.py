@@ -2807,7 +2807,7 @@ class RigidEntity(Entity):
         contact_info : dict
             The contact information.
         """
-        contacts_info = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
+        contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
         if with_entity is not None and self.idx == with_entity.idx:
@@ -2817,12 +2817,12 @@ class RigidEntity(Entity):
 
         valid_mask = logical_operation(
             torch.logical_and(
-                contacts_info["geom_a"] >= self.geom_start,
-                contacts_info["geom_a"] < self.geom_end,
+                contact_data["geom_a"] >= self.geom_start,
+                contact_data["geom_a"] < self.geom_end,
             ),
             torch.logical_and(
-                contacts_info["geom_b"] >= self.geom_start,
-                contacts_info["geom_b"] < self.geom_end,
+                contact_data["geom_b"] >= self.geom_start,
+                contact_data["geom_b"] < self.geom_end,
             ),
         )
         if with_entity is not None and self.idx != with_entity.idx:
@@ -2830,26 +2830,26 @@ class RigidEntity(Entity):
                 valid_mask,
                 torch.logical_or(
                     torch.logical_and(
-                        contacts_info["geom_a"] >= with_entity.geom_start,
-                        contacts_info["geom_a"] < with_entity.geom_end,
+                        contact_data["geom_a"] >= with_entity.geom_start,
+                        contact_data["geom_a"] < with_entity.geom_end,
                     ),
                     torch.logical_and(
-                        contacts_info["geom_b"] >= with_entity.geom_start,
-                        contacts_info["geom_b"] < with_entity.geom_end,
+                        contact_data["geom_b"] >= with_entity.geom_start,
+                        contact_data["geom_b"] < with_entity.geom_end,
                     ),
                 ),
             )
 
         if self._solver.n_envs == 0:
-            contacts_info = {key: value[valid_mask] for key, value in contacts_info.items()}
+            contact_data = {key: value[valid_mask] for key, value in contact_data.items()}
         else:
-            contacts_info["valid_mask"] = valid_mask
+            contact_data["valid_mask"] = valid_mask
 
-        contacts_info["force_a"] = -contacts_info["force"]
-        contacts_info["force_b"] = +contacts_info["force"]
-        del contacts_info["force"]
+        contact_data["force_a"] = -contact_data["force"]
+        contact_data["force_b"] = +contact_data["force"]
+        del contact_data["force"]
 
-        return contacts_info
+        return contact_data
 
     def get_links_net_contact_force(self, envs_idx=None):
         """
