@@ -1985,6 +1985,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
+            quat=(0.707, -0.707, 0, 0),
             fixed=True,
         ),
         vis_mode="collision",
@@ -1994,7 +1995,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
             pos=(0.3, 0, 0.015),
-            quat=(0.707, 0.707, 0, 0),
             convexify=convexify,
             scale=1.0,
         ),

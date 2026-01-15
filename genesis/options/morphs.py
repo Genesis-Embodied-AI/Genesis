@@ -522,7 +522,12 @@ class FileMorph(Morph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     parse_glb_with_zup : bool, optional
-        Whether to use zup to load glb files. Defaults to False.
+        This parameter is deprecated, see file_meshes_are_zup.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
+        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -549,7 +554,8 @@ class FileMorph(Morph):
     decompose_robot_error_threshold: float = float("inf")
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
-    parse_glb_with_zup: bool = False
+    parse_glb_with_zup: Optional[bool] = None
+    file_meshes_are_zup: bool = True
     batch_fixed_verts: bool = False
 
     def __init__(self, **data):
@@ -567,6 +573,13 @@ class FileMorph(Morph):
             gs.logger.warning(
                 "FileMorph option 'decompose_nonconvex' is deprecated and will be removed in future release. Please use "
                 "'convexify' and 'decompose_(robot|object)_error_threshold' instead."
+            )
+
+        if self.parse_glb_with_zup is not None:
+            self.file_meshes_are_zup = not self.parse_glb_with_zup
+            gs.logger.warning(
+                "FileMorph option 'parse_glb_with_zup' is deprecated and will be removed in future release. Please use "
+                "'file_meshes_are_zup'instead."
             )
 
         # Make sure that this threshold is positive to avoid decomposition of convex and primitive shapes
@@ -668,7 +681,12 @@ class Mesh(FileMorph, TetGenMixin):
     parse_glb_with_trimesh : bool, optional
         Whether to use trimesh to load glb files. Defaults to False, in which case pygltflib will be used.
     parse_glb_with_zup : bool, optional
-        Whether to use zup to load glb files. Defaults to False.
+        This parameter is deprecated, see file_meshes_are_zup.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
+        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
     fixed : bool, optional
         Whether the object should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -799,7 +817,12 @@ class MJCF(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     parse_glb_with_zup : bool, optional
-        Whether to use zup to load glb files. Defaults to False.
+        This parameter is deprecated, see file_meshes_are_zup.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
+        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -905,7 +928,12 @@ class URDF(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     parse_glb_with_zup : bool, optional
-        Whether to use zup to load glb files. Defaults to False.
+        This parameter is deprecated, see file_meshes_are_zup.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
+        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -1003,7 +1031,12 @@ class Drone(FileMorph):
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     parse_glb_with_zup : bool, optional
-        Whether to use zup to load glb files. Defaults to False.
+        This parameter is deprecated, see file_meshes_are_zup.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
+        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
