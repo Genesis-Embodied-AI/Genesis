@@ -208,7 +208,7 @@ class TestAlarmWorkflowCompileRegression:
             reader = csv.DictReader(f)
             rows = list(reader)
             for row in rows:
-                assert row["status"] == "regression", f"Compile time status should be 'regression'"
+                assert row["status"] == "regression", "Compile time status should be 'regression'"
 
     def test_compile_regression_threshold(self, temp_workspace, mock_wandb_api, alarm_yml_path):
         """Test that compile regression uses 16% threshold"""
@@ -387,8 +387,8 @@ class TestAlarmWorkflowMemoryTracking:
                 # Check that baseline values are populated (not None or empty)
                 assert row.get("baseline_last"), f"baseline_last should be populated, got: {row.get('baseline_last')}"
                 assert row.get("baseline_mean"), f"baseline_mean should be populated, got: {row.get('baseline_mean')}"
-                assert row.get("baseline_min"), f"baseline_min should be populated"
-                assert row.get("baseline_max"), f"baseline_max should be populated"
+                assert row.get("baseline_min"), "baseline_min should be populated"
+                assert row.get("baseline_max"), "baseline_max should be populated"
                 assert row.get("status") == "ok", f"Status should be 'ok', got: {row.get('status')}"
 
     def test_memory_delta_calculated(self, temp_workspace, mock_wandb_api, alarm_yml_path):

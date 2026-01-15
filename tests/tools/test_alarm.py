@@ -222,12 +222,12 @@ def mock_github_checks_create(*args, **kwargs):
     print(f"Check Name: {kwargs.get('name')}")
     print(f"Status: {kwargs.get('status')}")
     print(f"Conclusion: {kwargs.get('conclusion')}")
-    print(f"\nOutput:")
+    print("\nOutput:")
     output = kwargs.get("output", {})
     print(f"  Title: {output.get('title')}")
     print(f"  Summary: {output.get('summary')}")
     if output.get("text"):
-        print(f"\n  Text (Report Body):")
+        print("\n  Text (Report Body):")
         print("  " + "-" * 76)
         for line in output.get("text", "").split("\n"):
             print(f"  {line}")
@@ -250,7 +250,7 @@ def mock_github_issues_create_comment(*args, **kwargs):
     print("=" * 80)
     print(f"Repository: {kwargs.get('owner')}/{kwargs.get('repo')}")
     print(f"Issue/PR Number: {kwargs.get('issue_number')}")
-    print(f"\nComment Body:")
+    print("\nComment Body:")
     print("-" * 80)
     print(kwargs.get("body", ""))
     print("-" * 80)
