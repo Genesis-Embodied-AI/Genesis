@@ -139,10 +139,7 @@ def load_obj(
         # maxsplit=1 means that it can stop working
         # after it finds the first newline
         # passed as arg as it's not a kwarg in python2
-        face_lines = [
-            i.split("\n", 1)[0].strip()
-            for i in re.split("^f", chunk, flags=re.MULTILINE)[1:]
-        ]
+        face_lines = [i.split("\n", 1)[0].strip() for i in re.split("^f", chunk, flags=re.MULTILINE)[1:]]
 
         # check every face for mixed tri-quad-ngon
         columns = len(face_lines[0].replace("/", " ").split())
@@ -152,9 +149,7 @@ def load_obj(
         if flat_array:
             # the fastest way to get to a numpy array
             # processes the whole string at once into a 1D array
-            array = np.fromstring(
-                " ".join(face_lines).replace("/", " "), sep=" ", dtype=np.int64
-            )
+            array = np.fromstring(" ".join(face_lines).replace("/", " "), sep=" ", dtype=np.int64)
             # also wavefront is 1-indexed (vs 0-indexed) so offset
             # only applies to positive indices
             array[array > 0] -= 1
@@ -193,9 +188,7 @@ def load_obj(
             else:
                 mask_vn = None
                 # no face normals but face texturre
-                new_faces, mask_v, mask_vt = unmerge_faces(
-                    faces, faces_tex, maintain_faces=maintain_order
-                )
+                new_faces, mask_v, mask_vt = unmerge_faces(faces, faces_tex, maintain_faces=maintain_order)
 
             if tol.strict:
                 # we should NOT have messed up the faces
@@ -223,9 +216,7 @@ def load_obj(
                 assert faces.max() < len(v)
             if vn is not None and np.shape(faces_norm) == faces.shape:
                 # do the crazy unmerging logic for split indices
-                new_faces, mask_v, mask_vn = unmerge_faces(
-                    faces, faces_norm, maintain_faces=maintain_order
-                )
+                new_faces, mask_v, mask_vn = unmerge_faces(faces, faces_norm, maintain_faces=maintain_order)
             else:
                 # generate the mask so we only include
                 # referenced vertices in every new mesh
@@ -255,9 +246,7 @@ def load_obj(
                 normals = vn[mask_vn]
                 if normals.shape != mesh["vertices"].shape:
                     raise ValueError(
-                        "incorrect normals {} != {}".format(
-                            str(normals.shape), str(mesh["vertices"].shape)
-                        )
+                        "incorrect normals {} != {}".format(str(normals.shape), str(mesh["vertices"].shape))
                     )
                 mesh["vertex_normals"] = normals
             except BaseException:
@@ -571,11 +560,7 @@ def _parse_vertices(text):
         return None, None, None, None
 
     # find the last position of each valid value
-    ends = {
-        k: text.find("\n", text.rfind(f"\n{k} ") + 2 + len(k))
-        for k, v in starts.items()
-        if v >= 0
-    }
+    ends = {k: text.find("\n", text.rfind(f"\n{k} ") + 2 + len(k)) for k, v in starts.items() if v >= 0}
 
     # take the first and last position of any vertex property
     start = min(s for s in starts.values() if s >= 0)
@@ -584,11 +569,7 @@ def _parse_vertices(text):
     chunk = text[start:end].replace("+e", "e").replace("-e", "e")
 
     # get the clean-ish data from the file as python lists
-    data = {
-        k: [i.split("\n", 1)[0] for i in chunk.split(f"\n{k} ")[1:]]
-        for k, v in starts.items()
-        if v >= 0
-    }
+    data = {k: [i.split("\n", 1)[0] for i in chunk.split(f"\n{k} ")[1:]] for k, v in starts.items() if v >= 0}
 
     # count the number of data values per row on a sample row
     per_row = {k: len(v[0].split()) for k, v in data.items()}
@@ -842,29 +823,16 @@ def export_obj(
         # we are going to reference face_formats with this
         face_type = ["v"]
         # OBJ includes vertex color as RGB elements on the same line
-        if (
-            include_color
-            and current.visual.kind in ["vertex", "face"]
-            and len(current.visual.vertex_colors)
-        ):
+        if include_color and current.visual.kind in ["vertex", "face"] and len(current.visual.vertex_colors):
             # create a stacked blob with position and color
-            v_blob = np.column_stack(
-                (current.vertices, to_float(current.visual.vertex_colors[:, :3]))
-            )
+            v_blob = np.column_stack((current.vertices, to_float(current.visual.vertex_colors[:, :3])))
         else:
             # otherwise just export vertices
             v_blob = current.vertices
 
             # add the first vertex key and convert the array
         # add the vertices
-        export = deque(
-            [
-                "v "
-                + util.array_to_string(
-                    v_blob, col_delim=" ", row_delim="\nv ", digits=digits
-                )
-            ]
-        )
+        export = deque(["v " + util.array_to_string(v_blob, col_delim=" ", row_delim="\nv ", digits=digits)])
 
         # if include_normals is None then
         # only include if they're already stored
@@ -908,9 +876,7 @@ def export_obj(
 
                 # export the UV coordinates
                 if len(np.shape(getattr(current.visual, "uv", None))) == 2:
-                    converted = util.array_to_string(
-                        current.visual.uv, col_delim=" ", row_delim="\nvt ", digits=digits
-                    )
+                    converted = util.array_to_string(current.visual.uv, col_delim=" ", row_delim="\nvt ", digits=digits)
                     # if vertex texture exists and is the right shape
                     face_type.append("vt")
                     # add the uv coordinates

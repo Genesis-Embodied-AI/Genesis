@@ -7,7 +7,6 @@ import igl
 
 import genesis as gs
 
-from . import geom as gu
 from . import mesh as mu
 
 

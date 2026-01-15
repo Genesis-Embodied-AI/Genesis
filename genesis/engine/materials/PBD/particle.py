@@ -1,3 +1,5 @@
+import platform
+
 import gstaichi as ti
 
 import genesis as gs
@@ -21,8 +23,8 @@ class Particle(Base):
     rho: float, optional
         The rest density. Default is 1000.0.
     sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
-        'pbs' on supported platforms, 'random' otherwise.
+        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux x86 for now. Defaults
+        to 'pbs' on supported platforms, 'random' otherwise.
     """
 
     def __init__(
@@ -31,7 +33,7 @@ class Particle(Base):
         sampler=None,
     ):
         if sampler is None:
-            sampler = "pbs" if gs.platform == "Linux" else "random"
+            sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
 
         super().__init__()
 

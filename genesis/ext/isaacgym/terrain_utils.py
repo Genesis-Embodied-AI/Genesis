@@ -352,7 +352,6 @@ def convert_heightfield_to_trimesh(height_field_raw, horizontal_scale, vertical_
     yy, xx = np.meshgrid(y, x)
 
     if slope_threshold is not None:
-
         slope_threshold *= horizontal_scale / vertical_scale
         move_x = np.zeros((num_rows, num_cols))
         move_y = np.zeros((num_rows, num_cols))

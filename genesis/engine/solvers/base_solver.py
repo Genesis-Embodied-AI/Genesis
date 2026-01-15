@@ -6,7 +6,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import ti_to_torch, tensor_to_array
+from genesis.utils.misc import ti_to_torch
 from genesis.engine.entities.base_entity import Entity
 from genesis.repr_base import RBC
 

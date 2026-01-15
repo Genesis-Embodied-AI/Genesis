@@ -367,7 +367,7 @@ class FEMEntity(Entity):
         init_positions = (verts - verts_COM) @ R.T + verts_COM
 
         if not init_positions.shape[0] > 0:
-            gs.raise_exception(f"Entity has zero vertices.")
+            gs.raise_exception("Entity has zero vertices.")
 
         self.init_positions = gs.tensor(init_positions)
         self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM)
@@ -555,7 +555,7 @@ class FEMEntity(Entity):
         After saving, the internal target buffers are cleared to prepare for new input.
         """
 
-        if not ckpt_name in self._ckpt:
+        if ckpt_name not in self._ckpt:
             self._ckpt[ckpt_name] = {
                 "_tgt_buffer": dict(),
             }

@@ -1,5 +1,3 @@
-import copy
-
 import numpy as np
 import gstaichi as ti
 
@@ -70,4 +68,4 @@ class FloorBoundary:
         return pos
 
     def __repr__(self):
-        return f"{brief(self)}\n" f"height      : {brief(self.height)}\n" f"restitution : {brief(self.restitution)}"
+        return f"{brief(self)}\nheight      : {brief(self.height)}\nrestitution : {brief(self.restitution)}"

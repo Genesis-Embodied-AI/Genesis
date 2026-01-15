@@ -1,5 +1,4 @@
 import platform
-import sys
 
 import numpy as np
 import pytest
@@ -83,8 +82,11 @@ def test_rigid_mpm_muscle(show_viewer):
     assert_allclose(ball_pos_delta[..., 2], 0.0, tol=1e-3)
 
 
+@pytest.mark.slow  # ~700s
 @pytest.mark.required
 def test_mesh_mpm_build(show_viewer):
+    # FIXME: This test is crashing on Linux (x86 & aarch64) Github-hosted runners
+
     scene = gs.Scene(
         mpm_options=gs.options.MPMOptions(
             lower_bound=(-0.5, -0.5, -0.5),

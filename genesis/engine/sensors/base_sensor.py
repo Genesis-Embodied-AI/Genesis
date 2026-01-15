@@ -12,6 +12,7 @@ from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
 
 if TYPE_CHECKING:
+    from genesis.options.sensors.options import SensorOptions
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.solvers import RigidSolver
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
@@ -247,6 +248,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
             interpolate = [False for _ in shared_metadata.cache_sizes]
 
         tensor_start = 0
+        envs_idx = shared_metadata.solver.scene._envs_idx
         for sensor_idx, (tensor_size, interp) in enumerate(zip(shared_metadata.cache_sizes, interpolate)):
             # Compute the current delay of the sensor, taking into account jitter if any
             cur_delay_ts = shared_metadata.delays_ts[:, sensor_idx]
@@ -257,7 +259,6 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
             cur_delay_ts_int = cur_delay_ts.to(dtype=torch.int64)
 
             # Update shared cached with left data (Zero Order Hold) or linearly interpolated data (First Order)
-            envs_idx = torch.arange(len(cur_delay_ts), device=gs.device)
             tensor_slice = slice(tensor_start, tensor_start + tensor_size)
             sensor_cache = shared_cache[:, tensor_slice]
             data_left = buffered_data.at(cur_delay_ts_int, envs_idx, tensor_slice)

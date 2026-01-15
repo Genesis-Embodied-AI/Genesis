@@ -1,7 +1,5 @@
 import argparse
 import multiprocessing
-import os
-import threading
 from functools import partial
 
 import tkinter as tk
@@ -9,8 +7,6 @@ from tkinter import ttk
 
 import numpy as np
 import torch
-from gstaichi._lib import core as _ti_core
-from gstaichi.lang import impl
 
 import genesis as gs
 
@@ -108,7 +104,8 @@ def _start_gui(motors_name, motors_position_limit, motors_position, stop_event):
         root.quit()
 
     root = tk.Tk()
-    app = JointControlGUI(root, motors_name, motors_position_limit, motors_position)
+    # Store joint control gui to make sure it does not get garbage collected, just in case, because it may break tkinter
+    _app = JointControlGUI(root, motors_name, motors_position_limit, motors_position)
     root.protocol("WM_DELETE_WINDOW", on_close)
 
     def check_event():
@@ -214,8 +211,6 @@ def main():
     parser = argparse.ArgumentParser(description="Genesis CLI")
     subparsers = parser.add_subparsers(dest="command")
 
-    parser_clean = subparsers.add_parser("clean", help="Clean all the files cached by genesis and gstaichi")
-
     parser_view = subparsers.add_parser("view", help="Visualize a given asset (mesh/URDF/MJCF)")
     parser_view.add_argument("filename", type=str, help="File to visualize")
     parser_view.add_argument(
@@ -235,7 +230,7 @@ def main():
         view(args.filename, args.collision, args.rotate, args.scale, args.link_frame)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
-    elif args.command == None:
+    elif args.command is None:
         parser.print_help()
 
 

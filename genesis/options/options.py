@@ -59,7 +59,7 @@ class Options(BaseModel, RBC):
 
             content = ru.brief(getattr(self, attr))
             idx = content.find(">")
-            formatted_content = f"{colors.MINT}{formats.ITALIC}{content[:idx + 1]}{formats.RESET}{colors.MINT}{content[idx + 1:]}{formats.RESET}"
+            formatted_content = f"{colors.MINT}{formats.ITALIC}{content[: idx + 1]}{formats.RESET}{colors.MINT}{content[idx + 1 :]}{formats.RESET}"
             # in case it's multi-line
             formatted_content = formatted_content.replace("\n", "\n" + " " * (max_attr_len + 4))
 

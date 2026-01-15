@@ -557,7 +557,7 @@ class RRT(PathPlanner):
                 break
             if timeout is not None:
                 if time.time() - time_start > timeout:
-                    gs.logger.info(f"RRT planning timeout.")
+                    gs.logger.info("RRT planning timeout.")
                     break
 
         gs.logger.debug(f"RRT planning time: {time.time() - time_start}")
@@ -949,7 +949,7 @@ class RRTConnect(PathPlanner):
                 break
             if timeout is not None:
                 if time.time() - time_start > timeout:
-                    gs.logger.info(f"RRTConnect planning timeout.")
+                    gs.logger.info("RRTConnect planning timeout.")
                     break
         else:
             gs.logger.info(f"RRTConnect planning exceeded maximum number of nodes ({self._rrt_max_nodes}).")

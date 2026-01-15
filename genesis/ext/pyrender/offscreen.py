@@ -10,8 +10,7 @@ from OpenGL.GL import *
 import genesis as gs
 
 from .constants import RenderFlags
-from .renderer import Renderer
-from .shader_program import ShaderProgram, ShaderProgramCache
+from .shader_program import ShaderProgram
 
 
 MODULE_DIR = os.path.dirname(__file__)
@@ -195,6 +194,7 @@ class OffscreenRenderer(object):
             retval = ()
 
         if normal:
+
             class CustomShaderCache:
                 def __init__(self):
                     self.program = None
@@ -269,7 +269,7 @@ class OffscreenRenderer(object):
             renderer = glGetString(GL_RENDERER).decode()
             gs.logger.debug(f"Using offscreen rendering OpenGL device: {renderer}")
             self._is_software = any(e in renderer for e in ("llvmpipe", "Apple Software Renderer"))
-        except:
+        except Exception:
             pass
         if self._is_software:
             gs.logger.info(

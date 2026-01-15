@@ -1,8 +1,6 @@
 import gstaichi as ti
-import torch
 
 import genesis as gs
-import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 
 

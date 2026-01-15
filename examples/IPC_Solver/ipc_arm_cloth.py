@@ -17,7 +17,6 @@ space	- Press to close gripper, release to open gripper
 esc	- Quit
 """
 
-import random
 import threading
 import argparse
 import numpy as np

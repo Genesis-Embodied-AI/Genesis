@@ -1,4 +1,3 @@
-import time
 import argparse
 import numpy as np
 import genesis as gs

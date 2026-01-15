@@ -1,7 +1,5 @@
 import argparse
-import time
 
-import numpy as np
 import torch
 
 import genesis as gs
