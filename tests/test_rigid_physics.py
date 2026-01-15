@@ -3854,3 +3854,26 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
 
     assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_weld_constraint_partial_reset():
+    """Test ti_n_equalities is reset after dynamic weld constraint + partial reset."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        rigid_options=gs.options.RigidOptions(max_dynamic_constraints=10),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
+    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.2, 0, 0.5)))
+    scene.build(n_envs=2)
+
+    solver = scene.rigid_solver
+    n_eq_base = solver._rigid_global_info.n_equalities[None]
+
+    solver.add_weld_constraint(box1.links[0].idx, box2.links[0].idx)
+    assert solver.constraint_solver.constraint_state.ti_n_equalities.to_numpy()[0] == n_eq_base + 1
+
+    scene.reset(state=scene.get_state(), envs_idx=np.array([0]))
+    assert solver.constraint_solver.constraint_state.ti_n_equalities.to_numpy()[0] == n_eq_base
