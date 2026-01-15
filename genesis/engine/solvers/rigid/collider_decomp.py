@@ -62,7 +62,7 @@ class Collider:
         self._support_field = SupportField(rigid_solver, is_active=self._mpr.is_active or self._gjk.is_active)
 
         if gs.use_zerocopy:
-            self._contacts_info: dict[str, torch.Tensor] = {}
+            self._contact_data: dict[str, torch.Tensor] = {}
             for key, name in (
                 ("link_a", "link_a"),
                 ("link_b", "link_b"),
@@ -73,7 +73,7 @@ class Collider:
                 ("normal", "normal"),
                 ("force", "force"),
             ):
-                self._contacts_info[key] = ti_to_torch(
+                self._contact_data[key] = ti_to_torch(
                     getattr(self._collider_state.contact_data, name), transpose=True, copy=False
                 )
 
@@ -176,8 +176,8 @@ class Collider:
             self._collider_static_config,
         )
 
-        # 'contacts_info_cache' is not used in Taichi kernels, so keep it outside of the collider state / info
-        self._contacts_info_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
+        # 'contact_data_cache' is not used in Taichi kernels, so keep it outside of the collider state / info
+        self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
         self.reset()
 
@@ -326,7 +326,7 @@ class Collider:
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
-        self._contacts_info_cache.clear()
+        self._contact_data_cache.clear()
         if gs.use_zerocopy:
             envs_idx = slice(None) if envs_idx is None else envs_idx
             if not cache_only:
@@ -375,7 +375,7 @@ class Collider:
         if self._n_possible_pairs == 0:
             return
 
-        self._contacts_info_cache.clear()
+        self._contact_data_cache.clear()
         func_broad_phase(
             self._solver.links_state,
             self._solver.links_info,
@@ -462,9 +462,9 @@ class Collider:
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
-        contacts_info = self._contacts_info_cache.setdefault((as_tensor, to_torch), {})
-        if contacts_info:
-            return contacts_info.copy()
+        contact_data = self._contact_data_cache.setdefault((as_tensor, to_torch), {})
+        if contact_data:
+            return contact_data.copy()
 
         n_envs = self._solver.n_envs
         if gs.use_zerocopy:
@@ -472,7 +472,7 @@ class Collider:
             if as_tensor or n_envs == 0:
                 n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()
 
-            for key, data in self._contacts_info.items():
+            for key, data in self._contact_data.items():
                 if n_envs == 0:
                     data = data[0, :n_contacts_max] if not keep_batch_dim else data[:, :n_contacts_max]
                 elif as_tensor:
@@ -490,9 +490,9 @@ class Collider:
                     else:
                         data = tuple([data[i, :j] for i, j in enumerate(n_contacts.tolist())])
 
-                contacts_info[key] = data
+                contact_data[key] = data
 
-            return contacts_info.copy()
+            return contact_data.copy()
 
         # Find out how much dynamic memory must be allocated
         n_contacts = ti_to_numpy(self._collider_state.n_contacts)
@@ -559,11 +559,11 @@ class Collider:
                     values = (*iout_chunks, *fout_chunks)
 
         # Store contact information in cache
-        contacts_info.update(
+        contact_data.update(
             zip(("link_a", "link_b", "geom_a", "geom_b", "penetration", "position", "normal", "force"), values)
         )
 
-        return contacts_info.copy()
+        return contact_data.copy()
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
         func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)

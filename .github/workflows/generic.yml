@@ -77,6 +77,8 @@ jobs:
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
       TI_DEBUG: "0"
+      OMNI_KIT_ACCEPT_EULA: "yes"
+      OMNI_KIT_ALLOW_ROOT: "1"
 
     runs-on: ${{ matrix.OS }}
     if: github.event_name != 'release'
@@ -137,6 +139,8 @@ jobs:
         shell: bash
         run: |
           PYTHON_DEPS="dev"
+          # Install USD for all platforms except ARM (usd-core doesn't support ARM)
+          # This is required for test_mesh.py which tests USD parsing functionality
           if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
             PYTHON_DEPS="${PYTHON_DEPS},usd"
           fi

@@ -58,6 +58,9 @@ class Mesh(RBC):
         self._metadata = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
 
+        # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False.
+        self._metadata["imported_as_zup"] = True
+
         if self._surface.requires_uv():  # check uvs here
             if self._uvs is None:
                 if "mesh_path" in metadata:
@@ -340,22 +343,21 @@ class Mesh(RBC):
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                if not morph.file_meshes_are_zup:
+                    for mesh in meshes:
+                        mesh.convert_to_zup()
+                    gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
             elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
                 if morph.parse_glb_with_trimesh:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
-                if morph.parse_glb_with_zup:
-                    for mesh in meshes:
-                        mesh.convert_to_zup()
-                else:
-                    gs.logger.warning(
-                        "GLTF is using y-up while Genesis uses z-up. Please set parse_glb_with_zup=True"
-                        " in morph options if you find the mesh is 90-degree rotated. We will set parse_glb_with_zup=True"
-                        " and rotate glb mesh by default later and gradually enforce this option."
-                    )
+                # The GLF spec defines that all meshes are Yup, ignoring the FileMorph.file_meshes_are_zup option.
+                for mesh in meshes:
+                    mesh.convert_to_zup()
+                gs.logger.debug(f"Converting the GLTF geometry to zup '{morph.file}'")
             elif morph.is_format(gs.options.morphs.USD_FORMATS):
-                import genesis.utils.usda as usda_utils
+                import genesis.utils.usd.usda as usda_utils
 
                 meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
             elif isinstance(morph, gs.options.morphs.MeshSet):
@@ -403,6 +405,7 @@ class Mesh(RBC):
         Convert the mesh to z-up.
         """
         self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
+        self._metadata["imported_as_zup"] = False
 
     def apply_transform(self, T):
         """

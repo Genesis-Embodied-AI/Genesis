@@ -144,6 +144,7 @@ class ConstraintSolver:
         constraint_solver_kernel_clear(
             envs_idx,
             self.constraint_state,
+            self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
 
@@ -432,6 +433,7 @@ def constraint_solver_kernel_reset(
 def constraint_solver_kernel_clear(
     envs_idx: ti.types.ndarray(),
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
     n_dofs = constraint_state.qacc_ws.shape[0]
@@ -443,6 +445,8 @@ def constraint_solver_kernel_clear(
         constraint_state.n_constraints[i_b] = 0
         constraint_state.n_constraints_equality[i_b] = 0
         constraint_state.n_constraints_frictionloss[i_b] = 0
+        # Reset dynamic equality count to static count to avoid stale constraints after partial reset
+        constraint_state.ti_n_equalities[i_b] = rigid_global_info.n_equalities[None]
         for i_d, i_c in ti.ndrange(n_dofs, len_constraints):
             constraint_state.jac[i_c, i_d, i_b] = 0.0
         if ti.static(static_rigid_sim_config.sparse_solve):

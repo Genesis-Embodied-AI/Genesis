@@ -2,7 +2,6 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-
 import pytest
 
 
@@ -20,6 +19,7 @@ ALLOW_PATTERNS = {
     "sap_coupling/**/*.py",
     "sensors/**/*.py",
     "tutorials/**/*.py",
+    "usd/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
@@ -32,7 +32,13 @@ if sys.platform != "linux":
         "cut_dragon.py",
     }
 
-TIMEOUT = 600.0
+# Map example scripts to their required optional dependencies
+# Empty list means no optional dependencies required
+EXAMPLE_DEPENDENCIES = {
+    "import_stage.py": ["pxr"],  # Requires usd-core package (provides pxr module)
+}
+
+TIMEOUT = 600
 
 
 pytestmark = [
@@ -57,6 +63,12 @@ def _discover_examples():
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("file", _discover_examples(), ids=lambda p: p.relative_to(EXAMPLES_DIR).as_posix())
 def test_example(file: Path):
+    # Check for required optional dependencies
+    script_name = file.name
+    module_deps = EXAMPLE_DEPENDENCIES.get(script_name, [])
+    for module_name in module_deps:
+        pytest.importorskip(module_name, reason=f"Python module '{module_name}' not installed.")
+
     # Disable keyboard control and monitoring when running the unit tests
     env = os.environ.copy()
     env["PYNPUT_BACKEND"] = "dummy"

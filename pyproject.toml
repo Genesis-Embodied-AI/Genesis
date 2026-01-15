@@ -87,6 +87,8 @@ dev = [
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
+    # Used for validating polar decomposition in unit tests
+    "scipy",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
@@ -114,6 +116,8 @@ render = [
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core<25.11",
+    # import stubs to static code analysis
+    "types-usd==24.5.2",
 ]
 
 [project.scripts]
