@@ -542,7 +542,7 @@ def test_dynamic_weld(show_viewer, tol):
 def test_dynamic_weld_scene_reset():
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            max_dynamic_constraints=10
+            max_dynamic_constraints=10,
         ),
         show_viewer=False,
     )
