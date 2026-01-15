@@ -65,7 +65,7 @@ def main():
             vis_mode="particle",
         ),
     )
-    scene.build(n_envs=2)
+    scene.build(n_envs=0)
 
     horizon = 400 if "PYTEST_VERSION" not in os.environ else 5
     for _ in range(horizon):
