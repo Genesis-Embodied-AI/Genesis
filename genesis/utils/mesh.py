@@ -256,7 +256,7 @@ def convex_decompose(mesh, coacd_options):
             else:
                 # if cached mesh scale is invalid, ignore cache
                 is_cached_loaded = False
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
             gs.logger.info("Ignoring corrupted cache.")
 
     if not is_cached_loaded:

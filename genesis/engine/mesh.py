@@ -123,7 +123,7 @@ class Mesh(RBC):
                 with open(rm_file_path, "rb") as file:
                     verts, faces = pkl.load(file)
                 is_cached_loaded = True
-            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
