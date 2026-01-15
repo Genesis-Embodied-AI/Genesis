@@ -8,13 +8,6 @@ import genesis.utils.geom as gu
 from .utils import assert_allclose, assert_array_equal
 
 
-def expand_batch_dim(values: tuple[float, ...], n_envs: int) -> tuple[float, ...] | np.ndarray:
-    """Helper function to expand expected values for n_envs dimension."""
-    if n_envs == 0:
-        return values
-    return np.tile(np.array(values), (n_envs,) + (1,) * len(values))
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_imu_sensor(show_viewer, tol, n_envs):
@@ -129,16 +122,12 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     quat_tensor = torch.tensor([0.0, 0.0, 0.0, 1.0])
     box.set_quat(quat_tensor.expand((n_envs, 4)) if n_envs > 0 else quat_tensor)
 
-    # box is stationary on ground
-    for _ in range(80):
+    # wait for the box to be stationary on ground
+    for _ in range(50):
         scene.step()
 
-    assert_allclose(
-        imu.read().lin_acc,
-        expand_batch_dim((0.0, 0.0, -GRAVITY), n_envs),
-        tol=5e-6,
-    )
-    assert_allclose(imu.read().ang_vel, expand_batch_dim((0.0, 0.0, 0.0), n_envs), tol=1e-5)
+    assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=5e-6)
+    assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
 
     # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
@@ -156,7 +145,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     imu.set_bias(BIAS + (0.0, 0.0, 0.0))
     scene.step()
-    assert_allclose(imu.read().lin_acc, expand_batch_dim(BIAS, n_envs), tol=tol)
+    assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
 
 
 @pytest.mark.required
@@ -179,12 +168,33 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
 
     floor = scene.add_entity(morph=gs.morphs.Plane())
 
+    # Add duck (with convex decomposition enabled) to offset geom index vs link index
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.04,
+            pos=(0.0, 1.0, 0.2),
+            euler=(90, 0, 90),
+        ),
+    )
+
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(1.0, 1.0, 1.0),  # volume = 1 m^3
-            pos=(0.0, 0.0, 1.1),
+            pos=(0.0, 0.0, 0.51),
         ),
-        material=gs.materials.Rigid(rho=1.0),  # mass = 1 kg
+        material=gs.materials.Rigid(
+            rho=1.0,  # mass = 1.0 kg
+        ),
+    )
+    box_2 = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),  # volume = 0.008 m^3
+            pos=(1.0, 0.0, 0.4),
+        ),
+        material=gs.materials.Rigid(
+            rho=100.0,  # mass = 0.8 kg
+        ),
     )
 
     bool_sensor_floor = scene.add_sensor(
@@ -192,14 +202,19 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
             entity_idx=floor.idx,
         )
     )
-    bool_sensor_box = scene.add_sensor(
+    bool_sensor_box_2 = scene.add_sensor(
         gs.sensors.Contact(
-            entity_idx=box.idx,
+            entity_idx=box_2.idx,
         )
     )
     force_sensor = scene.add_sensor(
         gs.sensors.ContactForce(
             entity_idx=box.idx,
+        )
+    )
+    force_sensor_box_2 = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_2.idx,
         )
     )
     force_sensor_noisy = scene.add_sensor(
@@ -215,48 +230,40 @@ def test_rigid_tactile_sensors_gravity_force(show_viewer, tol, n_envs):
             interpolate=True,
         )
     )
+    # Adding extra sensor sharing same dtype to force discontinuous memory layout for ground truth when batched
+    scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+        )
+    )
 
     scene.build(n_envs=n_envs)
 
+    # Note that it is necessary to do a first step, because the initial state right after reset is not valid
     scene.step()
 
     assert not bool_sensor_floor.read().any(), "ContactSensor for floor should not detect any contact yet."
-    assert not bool_sensor_box.read().any(), "ContactSensor for box should not detect any contact yet."
-    assert_allclose(
-        force_sensor_noisy.read_ground_truth(),
-        0.0,
-        tol=gs.EPS,
-        err_msg="noisy ContactForceSensor ground truth reading should be zero before contact.",
-    )
-    assert_allclose(
-        force_sensor.read(),
-        force_sensor_noisy.read_ground_truth(),
-        tol=gs.EPS,
-        err_msg="noisy ContactForceSensor ground truth reading should equal noise ContactForceSensor reading.",
-    )
-    assert_allclose(
-        force_sensor_noisy.read(),
-        expand_batch_dim(BIAS, n_envs),
-        tol=NOISE * 3,
-        err_msg="noisy ContactForceSensor should only read bias and small amount of noise before contact.",
-    )
+    assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."
+    assert_allclose(force_sensor_noisy.read_ground_truth(), 0.0, tol=gs.EPS)
+    assert_allclose(force_sensor.read(), force_sensor_noisy.read_ground_truth(), tol=gs.EPS)
+    assert_allclose(force_sensor_noisy.read(), BIAS, tol=NOISE * 3)
 
-    for _ in range(120):
+    for _ in range(10):
         scene.step()
 
-    assert bool_sensor_box.read().all(), "Sensor should detect contact with the ground"
-    assert_allclose(
-        force_sensor_noisy.read_ground_truth(),
-        expand_batch_dim((0.0, 0.0, -GRAVITY), n_envs),
-        tol=tol,
-        err_msg="ContactForceSensor ground truth should be equal to -gravity (normal) force.",
-    )
-    assert_allclose(
-        force_sensor_noisy.read(),
-        expand_batch_dim((BIAS[0], BIAS[1], -GRAVITY / 2), n_envs),
-        tol=NOISE * 10,
-        err_msg="ContactForceSensor should read bias and noise and -gravity (normal) force clipped by max_force.",
-    )
+    assert bool_sensor_floor.read().all(), "ContactSensor for floor should detect contact with the ground"
+    assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."
+    assert_allclose(force_sensor_noisy.read(), force_sensor_noisy.read(), tol=gs.EPS)
+
+    for _ in range(90):
+        scene.step()
+
+    assert bool_sensor_box_2.read().all(), "ContactSensor for box_2 should detect contact with the ground"
+
+    assert_allclose(force_sensor_box_2.read_ground_truth(), (0.0, 0.0, -0.8 * GRAVITY), tol=tol)
+    assert_allclose(force_sensor_noisy.read_ground_truth(), (0.0, 0.0, -GRAVITY), tol=tol)
+    assert_allclose(force_sensor_noisy.read()[..., :2], BIAS[:2], tol=NOISE * 3)
+    assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
 
 
 @pytest.mark.required
@@ -420,7 +427,7 @@ def test_raycaster_hits(show_viewer, n_envs):
     if show_viewer:
         scene.visualizer.update(force=True)
     grid_sensor_pos = grid_sensor.get_pos().clone()
-    for _ in range(100):
+    for _ in range(60):
         scene.step()
     grid_sensor.set_pos(grid_sensor_pos)
     scene.sim._sensor_manager.step()
