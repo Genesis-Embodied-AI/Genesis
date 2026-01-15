@@ -405,30 +405,30 @@ class RigidEntity(Entity):
                 # Note that Mujoco URDF parser completely ignores equality constraints.
                 l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
 
-            # Take into account 'world' body if it was added automatically for our legacy URDF parser
-            if len(links_g_infos_mj) == len(links_g_infos) + 1:
-                assert not links_g_infos_mj[0]
-                links_g_infos.insert(0, [])
-            assert len(links_g_infos_mj) == len(links_g_infos)
+                # Mujoco is not parsing actuators properties
+                for j_info_gs in chain.from_iterable(links_j_infos):
+                    for j_info_mj in chain.from_iterable(links_j_infos_mj):
+                        if j_info_mj["name"] == j_info_gs["name"]:
+                            for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
+                                j_info_mj[name] = j_info_gs[name]
+                links_j_infos = links_j_infos_mj
 
-            # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
-            # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
-            # by our custom legacy URDF parser.
-            # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
-            for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
-                # Remove collision geometries from our legacy URDF parser
-                for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
-                    is_col = g_info["contype"] or g_info["conaffinity"]
-                    if is_col:
-                        del link_g_infos[i_g]
+                # Take into account 'world' body if it was added automatically for our legacy URDF parser
+                if len(links_g_infos_mj) == len(links_g_infos) + 1:
+                    assert not links_g_infos_mj[0]
+                    links_g_infos.insert(0, [])
+                assert len(links_g_infos_mj) == len(links_g_infos)
 
-                # Add visual geometries from Mujoco's unified MJCF+URDF parser
-                for g_info in link_g_infos_mj:
-                    is_col = g_info["contype"] or g_info["conaffinity"]
-                    if is_col:
-                        link_g_infos.append(g_info)
-        except (ValueError, AssertionError):
-            gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+                # Update collision geometries, ignoring fake" visual geometries returned by Mujoco, (which is using
+                # collision as visual to avoid loading mesh files), and keeping the true visual geometries provided
+                # by our custom legacy URDF parser.
+                # Note that the Kinematic tree ordering is stable between Mujoco and Genesis (Hopefully!).
+                for link_g_infos, link_g_infos_mj in zip(links_g_infos, links_g_infos_mj):
+                    # Remove collision geometries from our legacy URDF parser
+                    for i_g, g_info in tuple(enumerate(link_g_infos))[::-1]:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            del link_g_infos[i_g]
 
                     # Add visual geometries from Mujoco's unified MJCF+URDF parser
                     for g_info in link_g_infos_mj:
