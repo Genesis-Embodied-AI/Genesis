@@ -10,10 +10,8 @@ import numpy as np
 import pytest
 
 import genesis as gs
-from genesis.utils.misc import get_assets_dir, tensor_to_array
-from genesis.utils import geom as gu
 
-from .utils import assert_allclose, get_hf_dataset
+from .utils import assert_allclose
 
 # Check for USD support
 try:

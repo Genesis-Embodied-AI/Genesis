@@ -1,6 +1,5 @@
 import os
 import platform
-import sys
 
 import numpy as np
 import pytest
@@ -14,7 +13,7 @@ from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
 # Check for USD support by testing if pxr module (from usd-core package) is available
 try:
-    from pxr import Usd
+    import pxr.Usd
 
     HAS_USD_SUPPORT = True
 except ImportError:
