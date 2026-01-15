@@ -1358,8 +1358,9 @@ class Viewer(pyglet.window.Window):
                 try:
                     self.refresh()
                 except AttributeError:
-                    # The graphical window has been closed
-                    self.on_close()
+                    # The graphical window has been closed manually
+                    pass
+            self.on_close()
         else:
             self.refresh()
 
@@ -1373,8 +1374,9 @@ class Viewer(pyglet.window.Window):
             try:
                 self.refresh()
             except AttributeError:
-                # The graphical window has been closed
-                self.on_close()
+                # The graphical window has been closed manually
+                pass
+        self.on_close()
 
     def refresh(self):
         viewer_thread = self._thread or threading.main_thread()
