@@ -140,7 +140,7 @@ class RigidGeom(RBC):
                 with open(self._gsd_path, "rb") as file:
                     gsd_dict = pkl.load(file)
                 is_cached_loaded = True
-            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
+            except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
                 gs.logger.info("Ignoring corrupted cache.")
 
         if not is_cached_loaded:
