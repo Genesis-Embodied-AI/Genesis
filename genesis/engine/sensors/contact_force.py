@@ -244,14 +244,17 @@ class ContactForceSensor(
 
         if gs.use_zerocopy:
             # Forces are aggregated BEFORE moving them in local frame for efficiency
-            force_masked_a = (link_a[:, None] == shared_metadata.links_idx[None, :, None])[..., None] * force[:, None]
-            force_masked_b = (link_b[:, None] == shared_metadata.links_idx[None, :, None])[..., None] * force[:, None]
+            force_mask_a = link_a[:, None] == shared_metadata.links_idx[None, :, None]
+            force_mask_b = link_b[:, None] == shared_metadata.links_idx[None, :, None]
+            force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
+            sensors_force = (force_mask[..., None] * force[:, None]).sum(dim=2)
             sensors_quat = links_quat[:, shared_metadata.links_idx]
-            output_forces = shared_ground_truth_cache.reshape((*shared_ground_truth_cache.shape[:-1], -1, 3))
-            output_forces[:] = inv_transform_by_quat((force_masked_b - force_masked_a).sum(dim=2), sensors_quat)
+            output_forces = shared_ground_truth_cache.reshape((max(shared_metadata.solver.n_envs, 1), -1, 3))
+            output_forces[:] = inv_transform_by_quat(sensors_force, sensors_quat)
             return
 
-        output_forces = torch.zeros_like(shared_ground_truth_cache)
+        output_forces = shared_ground_truth_cache.contiguous()
+        output_forces.zero_()
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),
