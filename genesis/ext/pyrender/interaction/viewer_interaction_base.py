@@ -8,9 +8,9 @@ EVENT_HANDLED: Literal[True] = True
 
 # Note: Viewer window is based on pyglet.window.Window, mouse events are defined in pyglet.window.BaseWindow
 
-class ViewerInteractionBase():
-    """Base class for handling pyglet.window.Window events.
-    """
+
+class ViewerInteractionBase:
+    """Base class for handling pyglet.window.Window events."""
 
     log_events: bool
 

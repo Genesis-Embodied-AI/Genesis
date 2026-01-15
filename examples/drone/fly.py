@@ -1,5 +1,4 @@
 import argparse
-import threading
 
 import numpy as np
 

@@ -90,6 +90,9 @@ class SensorManager:
             sensor_cls.reset(self._sensors_metadata[sensor_cls], envs_idx)
 
     def step(self):
+        for buffered_data in self._buffered_data.values():
+            buffered_data.rotate()
+
         for sensor_cls in self._sensors_by_type.keys():
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]

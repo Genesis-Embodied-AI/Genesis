@@ -33,7 +33,6 @@ class Light(metaclass=ABCMeta):
     """
 
     def __init__(self, color=None, intensity=None, name=None):
-
         if color is None:
             color = np.ones(3)
         if intensity is None:

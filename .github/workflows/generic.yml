@@ -77,6 +77,8 @@ jobs:
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
       TI_DEBUG: "0"
+      OMNI_KIT_ACCEPT_EULA: "yes"
+      OMNI_KIT_ALLOW_ROOT: "1"
 
     runs-on: ${{ matrix.OS }}
     if: github.event_name != 'release'
@@ -116,23 +118,24 @@ jobs:
       - name: Install Mesa 25 OpenGL driver (Linux)
         if: startsWith(matrix.OS, 'ubuntu-')
         run: |
-          sudo add-apt-repository -y ppa:kisak/kisak-mesa
-          sudo apt-get update
+          for retry in {1..10}; do
+            sudo add-apt-repository -y ppa:kisak/kisak-mesa && break || sleep 5;
+          done
           sudo apt install -y \
               libglu1-mesa \
               libegl-mesa0 \
               libgl1-mesa-dev
       - name: Install python dependencies
+        shell: bash
         run: |
           pip install --upgrade pip setuptools pkg-info wheel
-          pip3 install torch --index-url https://download.pytorch.org/whl/cpu
 
-      - name: Black Format Check
-        if: ${{ matrix.OS == 'ubuntu-24.04' && matrix.PYTHON_VERSION == '3.12' && matrix.GS_BACKEND == 'cpu' && matrix.GS_ENABLE_NDARRAY == '1' }}
-        run: |
-          pip install black
-          black --line-length 120 --check .
-
+          # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
+          if [[ "${{ matrix.OS }}" == 'macos-15' && "${{ matrix.GS_BACKEND }}" == 'gpu' ]] ; then
+            pip3 install --pre --upgrade torch --index-url https://download.pytorch.org/whl/nightly/cpu
+          else
+            pip3 install torch --index-url https://download.pytorch.org/whl/cpu
+          fi
       - name: Install Genesis
         shell: bash
         run: |
@@ -157,7 +160,7 @@ jobs:
           OS_FAMILY=$(python -c "import platform; print(platform.system())")
           MACHINE_ARCH=$(python -c "import platform; print(platform.machine())")
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
-          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY }}" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Restore Taichi Kernel Cache
         if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
@@ -170,14 +173,15 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m required --forked ./tests
+          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
 
       - name: Save Updated Taichi Kernel Cache
-        # lets match this version to the black format check
         if: >-
           ${{ always() &&
-              (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
+              (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
               matrix.PYTHON_VERSION == '3.12' &&
+              matrix.GS_BACKEND == 'cpu' &&
+              matrix.GS_ENABLE_NDARRAY == '1' &&
               steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
         uses: actions/cache/save@v4
         with:

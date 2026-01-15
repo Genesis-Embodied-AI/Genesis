@@ -33,7 +33,6 @@ from genesis.options import (
 from genesis.options.morphs import Morph, Stage
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, RendererOptions
-from genesis.options.sensors import SensorOptions
 from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
@@ -45,6 +44,7 @@ from genesis.utils.warnings import warn_once
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
     from genesis.recorders import Recorder
+    from genesis.options.sensors import SensorOptions
 
 
 @gs.assert_initialized
@@ -360,10 +360,7 @@ class Scene(RBC):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph}.")
 
         if surface.double_sided is None:
-            if isinstance(material, gs.materials.PBD.Cloth):
-                surface.double_sided = True
-            else:
-                surface.double_sided = False
+            surface.double_sided = isinstance(material, gs.materials.PBD.Cloth)
 
         if vis_mode is not None:
             surface.vis_mode = vis_mode
@@ -374,7 +371,8 @@ class Scene(RBC):
 
             if surface.vis_mode not in ("visual", "collision", "sdf"):
                 gs.raise_exception(
-                    f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: ['visual', 'collision', 'sdf']."
+                    f"Unsupported `surface.vis_mode` for material {material}: '{surface.vis_mode}'. Expected one of: "
+                    "['visual', 'collision', 'sdf']."
                 )
 
         elif isinstance(
@@ -448,7 +446,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_stage(
         self,
-        stage: Stage,
+        stage: gs.morphs.USD,
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -479,10 +477,10 @@ class Scene(RBC):
             gs.raise_exception(f"Unsupported material for stage: {material}.")
 
         morphs = []
-        if isinstance(stage, gs.morphs.USDStage):
-            from genesis.utils.usd.usd_stage import parse_usd_stage
+        if isinstance(stage, gs.morphs.USD):
+            from genesis.utils.usd import usd_scene as usu
 
-            morphs = parse_usd_stage(stage)
+            morphs = usu.parse_usd_stage(stage)
         else:
             gs.raise_exception(f"Unsupported stage: {stage}.")
 
@@ -492,6 +490,7 @@ class Scene(RBC):
 
         return entities
 
+    @gs.assert_unbuilt
     def add_mesh_light(
         self,
         morph: Morph | None = None,

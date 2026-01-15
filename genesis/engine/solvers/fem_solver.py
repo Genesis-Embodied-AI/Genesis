@@ -1047,7 +1047,7 @@ class FEMSolver(Solver):
 
     def save_ckpt(self, ckpt_name):
         if self.is_active:
-            if not ckpt_name in self._ckpt:
+            if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
                 self._ckpt[ckpt_name]["pos"] = torch.zeros((self._B, self.n_vertices, 3), dtype=gs.tc_float)
                 self._ckpt[ckpt_name]["vel"] = torch.zeros((self._B, self.n_vertices, 3), dtype=gs.tc_float)
@@ -1109,7 +1109,7 @@ class FEMSolver(Solver):
         if not self.is_active:
             return None
 
-        return ti_to_torch(self.elements_v_energy.force)
+        return ti_to_torch(self.elements_v_energy.force, copy=True)
 
     @ti.kernel
     def _kernel_add_elements(

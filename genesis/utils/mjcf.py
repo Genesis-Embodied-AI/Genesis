@@ -1,10 +1,8 @@
 import os
 import xml.etree.ElementTree as ET
-import contextlib
 from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
-import io
 
 import numpy as np
 import trimesh
@@ -25,26 +23,32 @@ MIN_TIMECONST = np.finfo(np.double).eps
 
 
 def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
-    if isinstance(xml, (str, Path)):
-        # Make sure that it is pointing to a valid XML content (either file path or string)
-        path = os.path.join(get_assets_dir(), xml)
-        is_valid_path = False
-        try:
-            if os.path.exists(path):
-                xml = ET.parse(path)
-                is_valid_path = True
-            else:
-                xml = ET.fromstring(xml)
-        except ET.ParseError:
-            gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
+    if isinstance(xml, (str, Path, urdfpy.URDF)):
+        if isinstance(xml, urdfpy.URDF):
+            is_urdf_file = True
+            asset_path = get_assets_dir()
+            root = xml._unparse(asset_path)
+            mjcf = ET.SubElement(root, "mujoco")
+        else:
+            # Make sure that it is pointing to a valid XML content (either file path or string)
+            path = os.path.join(get_assets_dir(), xml)
+            is_valid_path = False
+            try:
+                if os.path.exists(path):
+                    xml = ET.parse(path)
+                    is_valid_path = True
+                else:
+                    xml = ET.fromstring(xml)
+            except ET.ParseError:
+                gs.raise_exception_from(f"'{xml}' is not a valid XML file path or string.")
 
-        # Best guess for the search path
-        asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
+            # Best guess for the search path
+            asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
 
-        # Detect whether it is a URDF file or a Mujoco MJCF file
-        root = xml.getroot()
-        is_urdf_file = root.tag == "robot"
-        mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
+            # Detect whether it is a URDF file or a Mujoco MJCF file
+            root = xml.getroot()
+            is_urdf_file = root.tag == "robot"
+            mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
 
         # Parse all included sub-models recursively
         root_parent_stack = [(mjcf, Path(""))]
@@ -324,7 +328,7 @@ def parse_link(mj, i_l, scale):
 
         if i_a >= 0:
             if mj.actuator_dyntype[i_a] != mujoco.mjtDyn.mjDYN_NONE:
-                gs.logger.warning(f"(MJCF) Actuator internal dynamics not supported")
+                gs.logger.warning("(MJCF) Actuator internal dynamics not supported")
             gaintype = mujoco.mjtGain(mj.actuator_gaintype[i_a])
             if gaintype != mujoco.mjtGain.mjGAIN_FIXED:
                 gs.logger.warning(f"(MJCF) Actuator control gain of type '{gaintype}' not supported")

@@ -1,4 +1,3 @@
-import numpy as np
 from numba import *
 from numba import types
 from numba.extending import (

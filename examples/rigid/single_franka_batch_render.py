@@ -36,7 +36,9 @@ def main():
     ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
-        surface=gs.surfaces.Default(diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures")),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.BatchTexture.from_images(image_folder="textures"),
+        ),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),

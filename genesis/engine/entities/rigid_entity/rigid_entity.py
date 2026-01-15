@@ -1,8 +1,8 @@
+import inspect
 from copy import copy
 from itertools import chain
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
-import inspect
 
 import gstaichi as ti
 import numpy as np
@@ -20,7 +20,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, sanitize_index, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -140,15 +140,7 @@ class RigidEntity(Entity):
 
         if isinstance(self._morph, (gs.morphs.Mesh, gs.morphs.USDRigidBody)):
             self._load_mesh(self._morph, self._surface)
-        elif isinstance(
-            self._morph,
-            (
-                gs.morphs.MJCF,
-                gs.morphs.URDF,
-                gs.morphs.Drone,
-                gs.morphs.USDArticulation,
-            ),
-        ):
+        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
             self._load_scene(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
@@ -172,6 +164,8 @@ class RigidEntity(Entity):
             n_dofs = 6
             init_qpos = np.concatenate([morph.pos, morph.quat])
 
+        metadata: dict[str, Any] = {"texture_path": None}
+
         if isinstance(morph, gs.options.morphs.Box):
             extents = np.array(morph.size)
             tmesh = mu.create_box(extents=extents)
@@ -179,27 +173,29 @@ class RigidEntity(Entity):
             geom_data = extents
             geom_type = gs.GEOM_TYPE.BOX
             link_name_prefix = "box"
-
         elif isinstance(morph, gs.options.morphs.Sphere):
             tmesh = mu.create_sphere(radius=morph.radius)
             cmesh = tmesh
             geom_data = np.array([morph.radius])
             geom_type = gs.GEOM_TYPE.SPHERE
             link_name_prefix = "sphere"
-
         elif isinstance(morph, gs.options.morphs.Cylinder):
             tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
             cmesh = tmesh
             geom_data = None
             geom_type = gs.GEOM_TYPE.MESH
             link_name_prefix = "cylinder"
-
         elif isinstance(morph, gs.options.morphs.Plane):
-            tmesh, cmesh = mu.create_plane(normal=morph.normal, plane_size=morph.plane_size, tile_size=morph.tile_size)
+            metadata["texture_path"] = mu.DEFAULT_PLANE_TEXTURE_PATH
+            tmesh, cmesh = mu.create_plane(
+                normal=morph.normal,
+                plane_size=morph.plane_size,
+                tile_size=morph.tile_size,
+                color_or_texture=metadata["texture_path"],
+            )
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
             link_name_prefix = "plane"
-
         else:
             gs.raise_exception("Unsupported primitive shape")
 
@@ -210,7 +206,7 @@ class RigidEntity(Entity):
                 dict(
                     contype=0,
                     conaffinity=0,
-                    vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface),
+                    vmesh=gs.Mesh.from_trimesh(tmesh, surface=surface, metadata=metadata),
                 )
             )
         if (morph.contype or morph.conaffinity) and morph.collision:
@@ -389,25 +385,25 @@ class RigidEntity(Entity):
             surface=surface,
         )
 
-    def _collect_urdf_articulation_info(self, morph, surface):
-        # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
-        # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
-        l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-        # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
-        morph_ = copy(morph)
-        morph_.visualization = False
-        try:
-            # Mujoco's unified MJCF+URDF parser for URDF files.
-            # Note that Mujoco URDF parser completely ignores equality constraints.
-            l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
-
-            # Mujoco is not parsing actuators properties
-            for j_info_gs in chain.from_iterable(links_j_infos):
-                for j_info_mj in chain.from_iterable(links_j_infos_mj):
-                    if j_info_mj["name"] == j_info_gs["name"]:
-                        for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
-                            j_info_mj[name] = j_info_gs[name]
-            links_j_infos = links_j_infos_mj
+    def _load_scene(self, morph, surface):
+        # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
+        # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
+        # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
+        # initialized undetermined physics parameters.
+        if isinstance(morph, gs.morphs.MJCF):
+            # Mujoco's unified MJCF+URDF parser systematically for MJCF files
+            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
+        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
+            # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
+            # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
+            l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
+            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
+            morph_ = copy(morph)
+            morph_.visualization = False
+            try:
+                # Mujoco's unified MJCF+URDF parser for URDF files.
+                # Note that Mujoco URDF parser completely ignores equality constraints.
+                l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
 
             # Take into account 'world' body if it was added automatically for our legacy URDF parser
             if len(links_g_infos_mj) == len(links_g_infos) + 1:
@@ -434,9 +430,18 @@ class RigidEntity(Entity):
         except (ValueError, AssertionError):
             gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
 
-        return l_infos, links_j_infos, links_g_infos, eqs_info
+                    # Add visual geometries from Mujoco's unified MJCF+URDF parser
+                    for g_info in link_g_infos_mj:
+                        is_col = g_info["contype"] or g_info["conaffinity"]
+                        if is_col:
+                            link_g_infos.append(g_info)
+            except (ValueError, AssertionError):
+                gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+        elif isinstance(morph, gs.morphs.USD):
+            from genesis.utils.usd import usd_scene as usu
 
-    def _build_up_articulation(self, l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface):
+            # Unified parser handles both articulations and rigid bodies
+            l_infos, links_j_infos, links_g_infos, eqs_info = usu.parse_usd(morph, surface)
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))
@@ -566,7 +571,7 @@ class RigidEntity(Entity):
         for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
             if l_info["parent_idx"] < 0:
                 if morph.pos is not None or morph.quat is not None:
-                    gs.logger.info("Applying offset to base link's pose with user provided value in morph.")
+                    gs.logger.debug("Applying offset to base link's pose with user provided value in morph.")
                     pos = np.asarray(l_info.get("pos", (0.0, 0.0, 0.0)))
                     quat = np.asarray(l_info.get("quat", (1.0, 0.0, 0.0, 0.0)))
                     if morph.pos is None:
@@ -1459,13 +1464,13 @@ class RigidEntity(Entity):
             self._solver._static_rigid_sim_config,
         )
 
-        qpos = ti_to_torch(self._IK_qpos_best, transpose=True)
+        qpos = ti_to_torch(self._IK_qpos_best, transpose=True, copy=True)
         qpos = qpos[0] if self._solver.n_envs == 0 else qpos[envs_idx]
 
         if return_error:
-            error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True).reshape((-1, self._IK_n_tgts, 6))[
-                :, :n_links
-            ]
+            error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True, copy=True).reshape(
+                (-1, self._IK_n_tgts, 6)
+            )[:, :n_links]
             error_pose = error_pose[0] if self._solver.n_envs == 0 else error_pose[envs_idx]
             return qpos, error_pose
         return qpos
@@ -2077,15 +2082,37 @@ class RigidEntity(Entity):
         from genesis.engine.couplers import LegacyCoupler
 
         if self.n_geoms == 0:
-            gs.raise_exception("Entity has no geoms.")
+            gs.raise_exception("Entity has no collision geometries.")
 
         # Already computed internally by the solver. Let's access it directly for efficiency.
         if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
             return self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx)[..., 0, :]
 
         # Compute the AABB on-the-fly based on the positions of all the vertices
-        verts = self.get_verts()
-        return torch.stack((verts.min(axis=-2).values, verts.max(axis=-2).values), axis=-2)
+        verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
+        return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the visual
+        geometries associated with this entity.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
+            The AABB of the entity, where `[:, 0] = min_corner (x_min, y_min, z_min)` and
+            `[:, 1] = max_corner (x_max, y_max, z_max)`.
+        """
+        if self.n_vgeoms == 0:
+            gs.raise_exception("Entity has no visual geometries.")
+        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
+        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     def get_aabb(self):
         raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
@@ -2271,30 +2298,13 @@ class RigidEntity(Entity):
         tensor = torch.empty((self._solver._B, n_fixed_verts + n_free_vertices, 3), dtype=gs.tc_float, device=gs.device)
 
         if n_fixed_verts > 0:
-            if gs.use_zerocopy:
-                fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos)
-                tensor[:, self._fixed_verts_idx_local] = fixed_verts_state[
-                    self._fixed_verts_state_start : self._fixed_verts_state_start + n_fixed_verts
-                ]
-            else:
-                _kernel_get_fixed_verts(
-                    tensor, self._fixed_verts_idx_local, self._fixed_verts_state_start, self._solver.fixed_verts_state
-                )
+            verts_idx = slice(self._fixed_verts_state_start, self._fixed_verts_state_start + n_fixed_verts)
+            fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx)
+            tensor[:, self._fixed_verts_idx_local] = fixed_verts_state
         if n_free_vertices > 0:
-            if gs.use_zerocopy:
-                free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, transpose=True)
-                tensor[:, self._free_verts_idx_local] = free_verts_state[
-                    :, self._free_verts_state_start : self._free_verts_state_start + n_free_vertices
-                ]
-            else:
-                # FIXME: Get around some bug in gstaichi when using gstaichi with metal backend
-                must_copy = gs.backend == gs.metal and n_fixed_verts > 0
-                tensor_free = torch.zeros_like(tensor) if must_copy else tensor
-                _kernel_get_free_verts(
-                    tensor_free, self._free_verts_idx_local, self._free_verts_state_start, self._solver.free_verts_state
-                )
-                if must_copy:
-                    tensor += tensor_free
+            verts_idx = slice(self._free_verts_state_start, self._free_verts_state_start + n_free_vertices)
+            free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True)
+            tensor[:, self._free_verts_idx_local] = free_verts_state
 
         if self._solver.n_envs == 0:
             tensor = tensor[0]
@@ -2836,7 +2846,7 @@ class RigidEntity(Entity):
         contact_info : dict
             The contact information.
         """
-        contacts_info = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
+        contact_data = self._solver.collider.get_contacts(as_tensor=True, to_torch=True)
 
         logical_operation = torch.logical_xor if exclude_self_contact else torch.logical_or
         if with_entity is not None and self.idx == with_entity.idx:
@@ -2846,12 +2856,12 @@ class RigidEntity(Entity):
 
         valid_mask = logical_operation(
             torch.logical_and(
-                contacts_info["geom_a"] >= self.geom_start,
-                contacts_info["geom_a"] < self.geom_end,
+                contact_data["geom_a"] >= self.geom_start,
+                contact_data["geom_a"] < self.geom_end,
             ),
             torch.logical_and(
-                contacts_info["geom_b"] >= self.geom_start,
-                contacts_info["geom_b"] < self.geom_end,
+                contact_data["geom_b"] >= self.geom_start,
+                contact_data["geom_b"] < self.geom_end,
             ),
         )
         if with_entity is not None and self.idx != with_entity.idx:
@@ -2859,26 +2869,26 @@ class RigidEntity(Entity):
                 valid_mask,
                 torch.logical_or(
                     torch.logical_and(
-                        contacts_info["geom_a"] >= with_entity.geom_start,
-                        contacts_info["geom_a"] < with_entity.geom_end,
+                        contact_data["geom_a"] >= with_entity.geom_start,
+                        contact_data["geom_a"] < with_entity.geom_end,
                     ),
                     torch.logical_and(
-                        contacts_info["geom_b"] >= with_entity.geom_start,
-                        contacts_info["geom_b"] < with_entity.geom_end,
+                        contact_data["geom_b"] >= with_entity.geom_start,
+                        contact_data["geom_b"] < with_entity.geom_end,
                     ),
                 ),
             )
 
         if self._solver.n_envs == 0:
-            contacts_info = {key: value[valid_mask] for key, value in contacts_info.items()}
+            contact_data = {key: value[valid_mask] for key, value in contact_data.items()}
         else:
-            contacts_info["valid_mask"] = valid_mask
+            contact_data["valid_mask"] = valid_mask
 
-        contacts_info["force_a"] = -contacts_info["force"]
-        contacts_info["force_b"] = +contacts_info["force"]
-        del contacts_info["force"]
+        contact_data["force_a"] = -contact_data["force"]
+        contact_data["force_b"] = +contact_data["force"]
+        del contact_data["force"]
 
-        return contacts_info
+        return contact_data
 
     def get_links_net_contact_force(self, envs_idx=None):
         """
@@ -2889,9 +2899,8 @@ class RigidEntity(Entity):
         entity_links_force : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
             The net force applied on each links due to direct external contacts.
         """
-        tensor = ti_to_torch(
-            self._solver.links_state.contact_force, envs_idx, slice(self.link_start, self.link_end), transpose=True
-        )
+        links_idx = slice(self.link_start, self.link_end)
+        tensor = ti_to_torch(self._solver.links_state.contact_force, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None):
@@ -2914,11 +2923,9 @@ class RigidEntity(Entity):
         )
         links_friction_ratio = torch.as_tensor(friction_ratio, dtype=gs.tc_float, device=gs.device)
         geoms_friction_ratio = torch.repeat_interleave(links_friction_ratio, links_n_geoms, dim=-1)
-        geoms_idx = torch.tensor(
-            [i_g for i_l in links_idx_local for i_g in range(self._links[i_l].geom_start, self._links[i_l].geom_end)],
-            dtype=gs.tc_int,
-            device=gs.device,
-        )
+        geoms_idx = [
+            i_g for i_l in links_idx_local for i_g in range(self._links[i_l].geom_start, self._links[i_l].geom_end)
+        ]
 
         self._solver.set_geoms_friction_ratio(geoms_friction_ratio, geoms_idx, envs_idx)
 

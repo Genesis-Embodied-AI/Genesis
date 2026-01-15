@@ -84,7 +84,7 @@ def get_device_by_index(device_id):
 
     devices = query_devices()
     if device_id >= len(devices):
-        raise ValueError("Invalid device ID ({})".format(device_id, len(devices)))
+        raise ValueError("Invalid device ID ({}) with {} devices".format(device_id, len(devices)))
     return devices[device_id]
 
 
@@ -141,14 +141,12 @@ class EGLPlatform(Platform):
             EGL_OPENGL_BIT,
             EGL_CONFORMANT,
             EGL_NONE,
-            EGL_DEFAULT_DISPLAY,
             EGL_NO_CONTEXT,
             EGL_OPENGL_API,
             EGL_CONTEXT_MAJOR_VERSION,
             EGL_CONTEXT_MINOR_VERSION,
             EGL_CONTEXT_OPENGL_PROFILE_MASK,
             EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
-            eglGetDisplay,
             eglInitialize,
             eglChooseConfig,
             eglBindAPI,

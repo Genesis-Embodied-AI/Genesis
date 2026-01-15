@@ -294,7 +294,7 @@ def configure_origin(value):
         if value.shape == (6,):
             value = xyz_rpy_to_matrix(value)
         elif value.shape != (4, 4):
-            raise ValueError("Origin must be specified as a 4x4 " "homogenous transformation matrix")
+            raise ValueError("Origin must be specified as a 4x4 homogenous transformation matrix")
     else:
         raise TypeError("Invalid type for origin, expect 4x4 matrix")
     return value

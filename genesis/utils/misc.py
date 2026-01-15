@@ -448,10 +448,10 @@ def ti_to_python(
     # Check if copy mode is supported while setting default mode if not specified.
     # FIXME: Torch>2.9.1 still does not support bytes_offset for 0-dim dlpack.
     data_type = type(value)
+    is_field = issubclass(data_type, ti.Field)
     use_zerocopy = gs.use_zerocopy and (
-        (TORCH_MPS_SUPPORT_DLPACK_FIELD and (batch_shape or not issubclass(data_type, ti.ScalarField)))
-        or gs.backend != gs.metal
-        or not issubclass(data_type, ti.Field)
+        (TORCH_MPS_SUPPORT_DLPACK_FIELD or gs.backend != gs.metal or not is_field)
+        and (batch_shape or not issubclass(data_type, ti.ScalarField))
     )
     if not use_zerocopy or (not to_torch and gs.backend != gs.cpu):
         if copy is False:
@@ -482,6 +482,11 @@ def ti_to_python(
                 if gs.backend == gs.cpu:
                     value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
+
+        # FIXME: DLPack may return old values on Apple Metal for field if sync is not systematically called manually
+        if is_field and gs.backend == gs.metal:
+            ti.sync()
+
         if copy:
             if to_torch:
                 out = out.clone()
@@ -642,6 +647,9 @@ def ti_to_torch(
     if gs.use_zerocopy:
         try:
             tensor = value._T_tc if transpose else value._tc
+            # FIXME: DLPack may return old values on Apple Metal for field if sync is not systematically called manually
+            if isinstance(value, ti.Field) and gs.backend == gs.metal:
+                ti.sync()
             if copy:
                 tensor = tensor.clone()
         except AttributeError:
@@ -893,6 +901,8 @@ def assign_indexed_tensor(
     value: "np.typing.ArrayLike",
     dim_names: tuple[str, ...] | list[str] | None = None,
 ) -> None:
+    if isinstance(tensor, np.ndarray):
+        value = torch.as_tensor(value)
     try:
         tensor[indices] = value
     except (TypeError, RuntimeError):

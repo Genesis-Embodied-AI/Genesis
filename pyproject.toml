@@ -14,7 +14,6 @@ dependencies = [
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
-    "scipy>=1.14",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
@@ -58,7 +57,7 @@ dependencies = [
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
-    "gs-madrona==0.0.7.post1; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
+    "gs-madrona==0.0.7.post2; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations
@@ -75,6 +74,7 @@ dev = [
     "pytest-print",
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
     "pytest-rerunfailures!=16.0",
+    "setproctitle", # allows renaming the test processes on the cluster
     "syrupy",
     "huggingface_hub[hf_xet]",
     "wandb",
@@ -87,6 +87,8 @@ dev = [
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
+    # Used for validating polar decomposition in unit tests
+    "scipy",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
@@ -114,7 +116,7 @@ render = [
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core<25.11",
-    # import stubs
+    # import stubs to static code analysis
     "types-usd==24.5.2",
 ]
 
@@ -140,6 +142,21 @@ force-exclude = '''
     genesis/ext
 )/
 '''
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Ignore the specific errors currently present in the codebase
+ignore = [
+    "F405", # undefined-local-with-import-star-usage
+    "F401", # unused-import
+    "F841", # unused-variable
+    "E741", # ambiguous-variable-name
+    "E402", # module-import-not-at-top-of-file
+    "F403", # undefined-local-with-import-star
+    "E712", # true-false-comparison
+]
 
 [tool.pytest.ini_options]
 addopts = [

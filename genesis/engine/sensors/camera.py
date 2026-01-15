@@ -2,7 +2,6 @@
 Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 """
 
-import os
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
@@ -24,7 +23,12 @@ from genesis.vis.batch_renderer import BatchRenderer
 from genesis.options.renderers import BatchRenderer as BatchRendererOptions
 from genesis.options.vis import VisOptions
 from genesis.vis.rasterizer_context import RasterizerContext
-from .base_sensor import Sensor, SharedSensorMetadata, RigidSensorMixin, RigidSensorMetadataMixin
+from .base_sensor import (
+    Sensor,
+    SharedSensorMetadata,
+    RigidSensorMixin,
+    RigidSensorMetadataMixin,
+)
 from .sensor_manager import register_sensor
 
 
@@ -34,7 +38,6 @@ if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
     from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.raytracer import Raytracer
-    from genesis.morphs.rigid_link import RigidLink
 
 
 # ========================== Data Class ==========================
@@ -95,6 +98,7 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
         super().__init__(sensor)
         self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
         self.debug = False
+        self.model = sensor._options.model
 
         # Initial pose
         pos = torch.tensor(sensor._options.pos, dtype=gs.tc_float, device=gs.device)
@@ -195,7 +199,13 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
     - Shared read() method returning torch tensors
     """
 
-    def __init__(self, options: "SensorOptions", idx: int, data_cls: Type[CameraData], manager: "gs.SensorManager"):
+    def __init__(
+        self,
+        options: "SensorOptions",
+        idx: int,
+        data_cls: Type[CameraData],
+        manager: "gs.SensorManager",
+    ):
         super().__init__(options, idx, data_cls, manager)
         self._stale: bool = True
 
@@ -211,7 +221,9 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
 
     @classmethod
     def _update_shared_ground_truth_cache(
-        cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor
+        cls,
+        shared_metadata: SharedSensorMetadata,
+        shared_ground_truth_cache: torch.Tensor,
     ):
         pass
 
@@ -246,15 +258,13 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
             offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
         else:
             pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
+            offset_T = trans_quat_to_T(
+                pos,
+                torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device),
+            )
 
         link_pos = self._link.get_pos()
         link_quat = self._link.get_quat()
-
-        # Handle batched case - use first environment
-        if link_pos.ndim > 1:
-            link_pos = link_pos[0]
-            link_quat = link_quat[0]
 
         link_T = trans_quat_to_T(link_pos, link_quat)
         camera_T = torch.matmul(link_T, offset_T)
@@ -423,11 +433,26 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
+        if not scene.sim._rigid_only and scene.n_envs > 1:
+            gs.raise_exception("Rasterizer with n_envs > 1, does not work when using non rigid simulation")
+        if sys.platform == "darwin":
+            if scene.n_envs > 1:
+                gs.raise_exception(
+                    "Rasterizer with n_envs > 1, does not work on Metal because it doesn't support OpenGL 4.2"
+                )
+            env_separate_rigid = False
+        else:
+            if scene.n_envs > 1:
+                gs.logger.warning(
+                    "Rasterizer with n_envs > 1 is slow as it doesn't do batched rendering consider using BatchRenderer instead."
+                )
+            env_separate_rigid = True
         vis_options = VisOptions(
             show_world_frame=False,
             show_link_frame=False,
             show_cameras=False,
             rendered_envs_idx=range(max(self._manager._sim._B, 1)),
+            env_separate_rigid=env_separate_rigid,
         )
 
         context = RasterizerContext(vis_options)
@@ -464,11 +489,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
             link_pos = self._link.get_pos()
             link_quat = self._link.get_quat()
 
-            # Handle batched case - use first environment
-            if link_pos.ndim > 1:
-                link_pos = link_pos[0]
-                link_quat = link_quat[0]
-
             # Apply pos directly as offset from link
             from genesis.utils.geom import transform_by_quat
 
@@ -501,22 +521,19 @@ class RasterizerCameraSensor(BaseCameraSensor):
         self._shared_metadata.context.update(force_render=True)
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
-            self._get_camera_wrapper(), rgb=True, depth=False, segmentation=False, normal=False
+            self._get_camera_wrapper(),
+            rgb=True,
+            depth=False,
+            segmentation=False,
+            normal=False,
         )
 
         rgb_tensor = torch.from_numpy(rgb_arr.copy()).to(dtype=torch.uint8, device=gs.device)
 
-        # Store in cache
-        n_envs = self._manager._sim._B
-        if n_envs <= 1:
-            # Single environment case - add batch dimension
-            self._shared_metadata.image_cache[self._idx][0] = rgb_tensor
-        else:
-            # Multi-environment rendering is not yet supported for Rasterizer cameras
-            gs.raise_exception(
-                f"Rasterizer camera sensors do not support multi-environment rendering (n_envs={n_envs}). "
-                "Use BatchRenderer camera sensors for batched rendering."
-            )
+        if len(rgb_tensor.shape) == 3:
+            # Single environment rendered - add batch dimension.
+            rgb_tensor = rgb_tensor.unsqueeze(0)
+        self._shared_metadata.image_cache[self._idx][:] = rgb_tensor
 
 
 # ========================== Raytracer Camera Sensor ==========================
@@ -578,11 +595,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
             link_pos = self._link.get_pos()
             link_quat = self._link.get_quat()
 
-            # Handle batched case - use first environment
-            if link_pos.ndim > 1:
-                link_pos = link_pos[0]
-                link_quat = link_quat[0]
-
             # Apply pos directly as offset from link
             from genesis.utils.geom import transform_by_quat
 
@@ -625,7 +637,10 @@ class RaytracerCameraSensor(BaseCameraSensor):
             from genesis.utils.geom import trans_quat_to_T
 
             pos = torch.tensor(opts.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
+            offset_T = trans_quat_to_T(
+                pos,
+                torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device),
+            )
             self._camera_obj.attach(self._link, offset_T)
 
         h, w = self._options.res[1], self._options.res[0]
@@ -724,8 +739,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
             resolutions = [s._options.res for s in all_sensors]
             if len(set(resolutions)) > 1:
                 gs.raise_exception(
-                    f"All BatchRendererCameraSensor instances must have the same resolution. "
-                    f"Found: {set(resolutions)}"
+                    f"All BatchRendererCameraSensor instances must have the same resolution. Found: {set(resolutions)}"
                 )
 
             br_options = BatchRendererOptions(
@@ -774,7 +788,12 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         self._shared_metadata.renderer.update_scene(force_render=True)
 
         rgb_arr, *_ = self._shared_metadata.renderer.render(
-            rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=True
+            rgb=True,
+            depth=False,
+            segmentation=False,
+            normal=False,
+            antialiasing=False,
+            force_render=True,
         )
 
         # rgb_arr might be a tuple of arrays (one per camera) or a single array

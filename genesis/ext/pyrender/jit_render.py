@@ -5,14 +5,11 @@ import numba as nb
 
 import OpenGL.GL as GL
 import OpenGL.constant as GL_constant
-from OpenGL.GL import GLint, GLuint, GLvoidp, GLvoid, GLfloat, GLsizei, GLboolean, GLenum, GLsizeiptr, GLintptr
 
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
 from .light import DirectionalLight, PointLight
 from .constants import RenderFlags, MAX_N_LIGHTS
 from .numba_gl_wrapper import GLWrapper
-
-import genesis as gs
 
 
 _DISABLE_OFFSCREEN_MARKERS = "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ
@@ -374,7 +371,7 @@ class JITRenderer:
         self.gl = GLWrapper()
 
         IS_OPENGL_42_AVAILABLE = hasattr(self.gl.wrapper_instance, "glDrawElementsInstancedBaseInstance")
-        OPENGL_42_ERROR_MSG = "Seperated env rendering not supported because OpenGL 4.2 not available on this machine."
+        OPENGL_42_ERROR_MSG = "Separated env rendering not supported because OpenGL 4.2 not available on this machine."
 
         @nb.jit(
             nb.none(

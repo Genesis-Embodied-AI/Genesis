@@ -17,6 +17,7 @@ class Vec3:
 
     This also makes vector dimensionality explicit for linting and static analysis.
     """
+
     v: "np.typing.NDArray[np.float32]"
 
     def __init__(self, v: "np.typing.NDArray[np.float32]"):
@@ -24,28 +25,28 @@ class Vec3:
         assert v.dtype == np.float32, f"Vec3 must be initialized with a float32 array, got {v.dtype}"
         self.v = v
 
-    def __add__(self, other: 'Vec3') -> 'Vec3':
+    def __add__(self, other: "Vec3") -> "Vec3":
         return Vec3(self.v + other.v)
 
-    def __sub__(self, other: 'Vec3') -> 'Vec3':
+    def __sub__(self, other: "Vec3") -> "Vec3":
         return Vec3(self.v - other.v)
 
-    def __mul__(self, other: float) -> 'Vec3':
+    def __mul__(self, other: float) -> "Vec3":
         return Vec3(self.v * np.float32(other))
 
-    def __rmul__(self, other: float) -> 'Vec3':
+    def __rmul__(self, other: float) -> "Vec3":
         return Vec3(self.v * np.float32(other))
 
-    def __neg__(self) -> 'Vec3':
+    def __neg__(self) -> "Vec3":
         return Vec3(-self.v)
 
-    def dot(self, other: 'Vec3') -> float:
+    def dot(self, other: "Vec3") -> float:
         return np.dot(self.v, other.v).item()
 
-    def cross(self, other: 'Vec3') -> 'Vec3':
+    def cross(self, other: "Vec3") -> "Vec3":
         return Vec3(np.cross(self.v, other.v))
 
-    def normalized(self) -> 'Vec3':
+    def normalized(self) -> "Vec3":
         return Vec3(self.v / (np.linalg.norm(self.v) + 1e-24))
 
     def magnitude(self) -> float:
@@ -54,7 +55,7 @@ class Vec3:
     def sqr_magnitude(self) -> float:
         return np.dot(self.v, self.v)
 
-    def copy(self) -> 'Vec3':
+    def copy(self) -> "Vec3":
         return Vec3(self.v.copy())
 
     def __repr__(self) -> str:
@@ -76,23 +77,24 @@ class Vec3:
         return self.v[2]
 
     @classmethod
-    def from_xyz(cls, x: float, y: float, z: float) -> 'Vec3':
+    def from_xyz(cls, x: float, y: float, z: float) -> "Vec3":
         return cls(np.array([x, y, z], dtype=np.float32))
 
     @classmethod
-    def from_array(cls, v: np.ndarray) -> 'Vec3':
+    def from_array(cls, v: np.ndarray) -> "Vec3":
         assert v.shape == (3,), f"Vec3 must be initialized with a 3-element array, got {v.shape}"
-        assert v.dtype == np.int32 or v.dtype == np.int64 or v.dtype == np.float32 or v.dtype == np.float64, \
+        assert v.dtype == np.int32 or v.dtype == np.int64 or v.dtype == np.float32 or v.dtype == np.float64, (
             f"from_array must be initialized with a array of ints/floats 32/64-bit, got {v.dtype}"
+        )
         return cls.from_xyz(*v)
 
     @classmethod
-    def from_tensor(cls, v: torch.Tensor) -> 'Vec3':
+    def from_tensor(cls, v: torch.Tensor) -> "Vec3":
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
 
     @classmethod
-    def from_arraylike(cls, v: "np.typing.ArrayLike") -> 'Vec3':
+    def from_arraylike(cls, v: "np.typing.ArrayLike") -> "Vec3":
         if isinstance(v, np.ndarray):
             return cls.from_array(v)
         elif isinstance(v, torch.Tensor):
@@ -102,42 +104,42 @@ class Vec3:
             return cls.from_xyz(*v)
         assert False
 
-
     @classmethod
-    def zero(cls) -> 'Vec3':
+    def zero(cls) -> "Vec3":
         return cls(np.array([0, 0, 0], dtype=np.float32))
 
     @classmethod
-    def one(cls) -> 'Vec3':
+    def one(cls) -> "Vec3":
         return cls(np.array([1, 1, 1], dtype=np.float32))
 
     @classmethod
-    def full(cls, fill_value: float) -> 'Vec3':
+    def full(cls, fill_value: float) -> "Vec3":
         return cls(np.full((3,), fill_value, dtype=np.float32))
 
 
 class Quat:
     v: "np.typing.NDArray[np.float32]"
+
     def __init__(self, v: "np.typing.NDArray[np.float32]"):
         assert v.shape == (4,), f"Quat must be initialized with a 4-element array, got {v.shape}"
         assert v.dtype == np.float32, f"Quat must be initialized with a float32 array, got {v.dtype}"
         self.v = v
 
-    def get_inverse(self) -> 'Quat':
+    def get_inverse(self) -> "Quat":
         quat_inv = self.v.copy()
         quat_inv[1:] *= -1
         return Quat(quat_inv)
 
-    def __mul__(self, other: Union['Quat', Vec3]) -> Union['Quat', Vec3]:
+    def __mul__(self, other: Union["Quat", Vec3]) -> Union["Quat", Vec3]:
         if isinstance(other, Quat):
             # Quaternion * Quaternion
             w1, x1, y1, z1 = self.w, self.x, self.y, self.z
             w2, x2, y2, z2 = other.w, other.x, other.y, other.z
             return Quat.from_wxyz(
-                w1*w2 - x1*x2 - y1*y2 - z1*z2,
-                w1*x2 + x1*w2 + y1*z2 - z1*y2,
-                w1*y2 - x1*z2 + y1*w2 + z1*x2,
-                w1*z2 + x1*y2 - y1*x2 + z1*w2
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
             )
         elif isinstance(other, Vec3):  # (other, np.ndarray) and other.shape == (3,):
             # Quaternion * Vector3 -> rotate vector
@@ -147,7 +149,7 @@ class Quat:
         else:
             return NotImplemented
 
-    def copy(self) -> 'Quat':
+    def copy(self) -> "Quat":
         return Quat(self.v.copy())
 
     def __repr__(self) -> str:
@@ -173,21 +175,21 @@ class Quat:
         return self.v[3]
 
     @classmethod
-    def from_wxyz(cls, w: float, x: float, y: float, z: float) -> 'Quat':
+    def from_wxyz(cls, w: float, x: float, y: float, z: float) -> "Quat":
         return cls(np.array([w, x, y, z], dtype=np.float32))
 
     @classmethod
-    def from_array(cls, v: np.ndarray) -> 'Quat':
+    def from_array(cls, v: np.ndarray) -> "Quat":
         assert v.shape == (4,), f"Quat must be initialized with a 4-element array, got {v.shape}"
         return cls.from_wxyz(*v)
 
     @classmethod
-    def from_tensor(cls, v: torch.Tensor) -> 'Quat':
+    def from_tensor(cls, v: torch.Tensor) -> "Quat":
         array: np.ndarray = tensor_to_array(v)
         return cls.from_array(array)
 
     @classmethod
-    def from_arraylike(cls, v: "np.typing.ArrayLike") -> 'Quat':
+    def from_arraylike(cls, v: "np.typing.ArrayLike") -> "Quat":
         if isinstance(v, np.ndarray):
             return cls.from_array(v)
         elif isinstance(v, torch.Tensor):
@@ -217,7 +219,7 @@ class Pose:
     def inverse_transform_direction(self, direction: Vec3) -> Vec3:
         return self.rot.get_inverse() * direction
 
-    def get_inverse(self) -> 'Pose':
+    def get_inverse(self) -> "Pose":
         inv_rot = self.rot.get_inverse()
         # inv_pos = -1.0 * (inv_rot * self.pos)
         # faster -- avoid repeated quat inversion:
@@ -226,7 +228,7 @@ class Pose:
         inv_pos = Vec3(-inv_pos.v[1:])
         return Pose(inv_pos, inv_rot)
 
-    def __mul__(self, other: Union['Pose', Vec3]) -> Union['Pose', Vec3]:
+    def __mul__(self, other: Union["Pose", Vec3]) -> Union["Pose", Vec3]:
         if isinstance(other, Pose):
             return Pose(self.pos + self.rot * other.pos, self.rot * other.rot)
         elif isinstance(other, Vec3):
@@ -238,7 +240,7 @@ class Pose:
         return f"Pose(pos={self.pos}, rot={self.rot})"
 
     @classmethod
-    def from_geom(cls, geom: 'RigidGeom') -> 'Pose':
+    def from_geom(cls, geom: "RigidGeom") -> "Pose":
         assert geom._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
         # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
         pos = Vec3.from_tensor(geom.get_pos())
@@ -246,7 +248,7 @@ class Pose:
         return Pose(pos, quat)
 
     @classmethod
-    def from_link(cls, link: 'RigidLink') -> 'Pose':
+    def from_link(cls, link: "RigidLink") -> "Pose":
         assert link._solver.n_envs == 0, "ViewerInteraction only supports single-env for now"
         # geom.get_pos() and .get_quat() are squeezed if n_envs == 0
         pos = Vec3.from_tensor(link.get_pos())
@@ -264,21 +266,21 @@ class Color:
     def tuple(self) -> tuple[float, float, float, float]:
         return (self.r, self.g, self.b, self.a)
 
-    def with_alpha(self, alpha: float) -> 'Color':
+    def with_alpha(self, alpha: float) -> "Color":
         return Color(self.r, self.g, self.b, alpha)
 
     @classmethod
-    def red(cls) -> 'Color':
+    def red(cls) -> "Color":
         return cls(1.0, 0.0, 0.0, 1.0)
 
     @classmethod
-    def green(cls) -> 'Color':
+    def green(cls) -> "Color":
         return cls(0.0, 1.0, 0.0, 1.0)
 
     @classmethod
-    def blue(cls) -> 'Color':
+    def blue(cls) -> "Color":
         return cls(0.0, 0.0, 1.0, 1.0)
 
     @classmethod
-    def yellow(cls) -> 'Color':
+    def yellow(cls) -> "Color":
         return cls(1.0, 1.0, 0.0, 1.0)

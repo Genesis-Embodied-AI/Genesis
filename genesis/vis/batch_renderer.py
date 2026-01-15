@@ -2,9 +2,6 @@ import math
 
 import numpy as np
 import torch
-from PIL import Image
-from trimesh.visual.texture import TextureVisuals
-from trimesh.visual.color import ColorVisuals
 
 import genesis as gs
 from genesis.repr_base import RBC

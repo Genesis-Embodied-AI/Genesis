@@ -2,8 +2,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from .ray import Plane, Ray, RayHit
-from .vec3 import Pose, Quat, Vec3, Color
+from .vec3 import Pose, Quat, Vec3
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
@@ -49,7 +48,8 @@ class MouseSpring:
         link_T_principal: Pose = Pose(Vec3.from_arraylike(link.inertial_pos), Quat.from_arraylike(link.inertial_quat))
         world_T_principal: Pose = link_pose * link_T_principal
 
-        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(self.held_point_in_local)   # for non-spherical inertia
+        # for non-spherical inertia
+        arm_in_principal: Vec3 = link_T_principal.inverse_transform_point(self.held_point_in_local)
         arm_in_world: Vec3 = world_T_principal.rot * arm_in_principal  # for spherical inertia
 
         pos_err_v: Vec3 = control_point - held_point_in_world
@@ -63,7 +63,7 @@ class MouseSpring:
         total_impulse: Vec3 = Vec3.zero()
         total_torque_impulse: Vec3 = Vec3.zero()
 
-        for i in range(3*4):
+        for i in range(3 * 4):
             body_point_vel: Vec3 = lin_vel + ang_vel.cross(arm_in_world)
             vel_err_v: Vec3 = Vec3.zero() - body_point_vel
 
@@ -87,8 +87,8 @@ class MouseSpring:
         total_torque = total_torque_impulse * inv_dt
         force_tensor: torch.Tensor = total_force.as_tensor()[None]
         torque_tensor: torch.Tensor = total_torque.as_tensor()[None]
-        link.solver.apply_links_external_force(force_tensor, (link.idx,), ref='link_com', local=False)
-        link.solver.apply_links_external_torque(torque_tensor, (link.idx,), ref='link_com', local=False)
+        link.solver.apply_links_external_force(force_tensor, (link.idx,), ref="link_com", local=False)
+        link.solver.apply_links_external_torque(torque_tensor, (link.idx,), ref="link_com", local=False)
 
     @property
     def is_attached(self) -> bool:

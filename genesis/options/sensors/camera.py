@@ -63,7 +63,7 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
                 gs.raise_exception(f"lights[{i}] must be a dict, got: {type(light)}")
         if self.offset_T is not None:
             if self.offset_T.shape != (4, 4):
-                gs.raise_exception(f"offset_T must be a 4x4 array, got shape: {offset_T_np.shape}")
+                gs.raise_exception(f"offset_T must be a 4x4 array, got shape: {self.offset_T.shape}")
 
 
 class RasterizerCameraOptions(BaseCameraOptions):
@@ -151,6 +151,7 @@ class BatchRendererCameraOptions(BaseCameraOptions):
         Whether to use rasterizer mode. Default is True.
     """
 
+    model: str = "pinhole"
     near: float = 0.01
     far: float = 100.0
     use_rasterizer: bool = True
