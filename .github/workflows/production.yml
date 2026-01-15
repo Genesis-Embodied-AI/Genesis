@@ -29,7 +29,7 @@ env:
 
 jobs:
   unit-tests:
-    name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+    name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-${{ matrix.GS_SOLVER_DECOMPOSE == '0' && 'monolith' || 'decomp' }}
 
     runs-on: [self-hosted, coreweave, genesis-world]
 
@@ -103,7 +103,7 @@ jobs:
           fi
 
   benchmarks:
-    name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+    name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-${{ matrix.GS_SOLVER_DECOMPOSE == '0' && 'monolith' || 'decomp' }}
 
     needs: unit-tests
     runs-on: [self-hosted, coreweave, genesis-world]
@@ -180,10 +180,10 @@ jobs:
       - name: Upload benchmark stats as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
+          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-${{ matrix.GS_SOLVER_DECOMPOSE == '0' && 'monolith' || 'decomp' }}
           path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
       - name: Upload benchmark mem stats as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
+          name: mem-test-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-${{ matrix.GS_SOLVER_DECOMPOSE == '0' && 'monolith' || 'decomp' }}
           path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"
