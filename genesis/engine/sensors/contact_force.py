@@ -124,12 +124,10 @@ class ContactSensor(Sensor):
     ):
         assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
-        if all_contacts["link_a"].numel() == 0:
-            shared_ground_truth_cache.fill_(False)
-        else:
-            contact_links = torch.cat([all_contacts["link_a"], all_contacts["link_b"]], dim=-1)
-            is_contact = (contact_links[..., None, :] == shared_metadata.expanded_links_idx.unsqueeze(-1)).any(-1)
-            shared_ground_truth_cache.copy_(is_contact)
+        link_a, link_b = all_contacts["link_a"], all_contacts["link_b"]
+        is_contact_a = (link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
+        is_contact_b = (link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
+        shared_ground_truth_cache[:] = is_contact_a | is_contact_b
 
     @classmethod
     def _update_shared_cache(
@@ -244,14 +242,17 @@ class ContactForceSensor(
 
         if gs.use_zerocopy:
             # Forces are aggregated BEFORE moving them in local frame for efficiency
-            force_masked_a = (link_a[:, None] == shared_metadata.links_idx[None, :, None])[..., None] * force[:, None]
-            force_masked_b = (link_b[:, None] == shared_metadata.links_idx[None, :, None])[..., None] * force[:, None]
+            force_mask_a = link_a[:, None] == shared_metadata.links_idx[None, :, None]
+            force_mask_b = link_b[:, None] == shared_metadata.links_idx[None, :, None]
+            force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
+            sensors_force = (force_mask[..., None] * force[:, None]).sum(dim=2)
             sensors_quat = links_quat[:, shared_metadata.links_idx]
-            output_forces = shared_ground_truth_cache.reshape((*shared_ground_truth_cache.shape[:-1], -1, 3))
-            output_forces[:] = inv_transform_by_quat((force_masked_b - force_masked_a).sum(dim=2), sensors_quat)
+            output_forces = shared_ground_truth_cache.reshape((max(shared_metadata.solver.n_envs, 1), -1, 3))
+            output_forces[:] = inv_transform_by_quat(sensors_force, sensors_quat)
             return
 
-        output_forces = torch.zeros_like(shared_ground_truth_cache)
+        output_forces = shared_ground_truth_cache.contiguous()
+        output_forces.zero_()
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),

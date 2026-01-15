@@ -1,5 +1,6 @@
 import os
 import platform
+from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -363,7 +364,7 @@ def test_usd_bake(usd_file, show_viewer):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    robot = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Mesh(
             file=usd_file,
         ),
@@ -371,47 +372,103 @@ def test_usd_bake(usd_file, show_viewer):
 
 
 @pytest.mark.required
-def test_urdf_with_existing_glb(tmp_path, show_viewer):
-    glb_file = "usd/sneaker_airforce.glb"
-    asset_path = get_hf_dataset(pattern=glb_file)
-    glb_path = os.path.join(asset_path, glb_file)
-
+@pytest.mark.parametrize("mesh_file", ["yup_zup_coverage/cannon_z.glb", "yup_zup_coverage/cannon_y_-z.stl"])
+def test_urdf_yup(mesh_file, tmp_path):
+    asset_path = get_hf_dataset(pattern=mesh_file)
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="shoe">
               <link name="base">
                 <visual>
-                  <geometry><mesh filename="{glb_path}"/></geometry>
+                  <geometry><mesh filename="{os.path.join(asset_path, mesh_file)}"/></geometry>
                 </visual>
               </link>
             </robot>
          """
     )
 
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    robot_urdf_yup = scene.add_entity(
+    scene = gs.Scene()
+    robot = scene.add_entity(
         gs.morphs.URDF(
             file=urdf_path,
+            file_meshes_are_zup=False,
         ),
     )
-    robot_urdf_zup = scene.add_entity(
-        gs.morphs.URDF(
-            file=urdf_path,
-            parse_glb_with_zup=True,
+    mesh = robot.vgeoms[0].vmesh
+
+    with pytest.raises(AssertionError) if mesh_file == "yup_zup_coverage/cannon_z.glb" else nullcontext():
+        assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+
+
+@pytest.mark.required
+def test_obj_morphes_yup():
+    scene = gs.Scene()
+
+    asset_path = get_hf_dataset(pattern="yup_zup_coverage/*")
+
+    glb_y = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_y.glb",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=True,
         ),
     )
-    robot_mesh = scene.add_entity(
-        gs.morphs.Mesh(
-            file=glb_path,
-            parse_glb_with_zup=True,
+    glb_mesh_y = glb_y.vgeoms[0].vmesh
+    glb_z = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_z.glb",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=True,
         ),
     )
-    check_gs_meshes(robot_urdf_zup.vgeoms[0].vmesh, robot_mesh.vgeoms[0].vmesh, "robot")
-    robot_urdf_yup.vgeoms[0].vmesh.convert_to_zup()
-    check_gs_meshes(robot_urdf_yup.vgeoms[0].vmesh, robot_mesh.vgeoms[0].vmesh, "robot")
+    glb_mesh_z = glb_z.vgeoms[0].vmesh
+    stl_y = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.stl",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=False,
+        ),
+    )
+    stl_mesh_y = stl_y.vgeoms[0].vmesh
+    stl_z = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_z_y.stl",
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    stl_mesh_z = stl_z.vgeoms[0].vmesh
+    obj_y = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.obj",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=False,
+        ),
+    )
+    obj_mesh_y = obj_y.vgeoms[0].vmesh
+    obj_z = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_z_y.obj",
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    obj_mesh_z = obj_z.vgeoms[0].vmesh
+
+    assert not glb_mesh_y.metadata["imported_as_zup"]
+    assert not glb_mesh_z.metadata["imported_as_zup"]
+    assert not stl_mesh_y.metadata["imported_as_zup"]
+    assert stl_mesh_z.metadata["imported_as_zup"]
+    assert not obj_mesh_y.metadata["imported_as_zup"]
+    assert obj_mesh_z.metadata["imported_as_zup"]
+
+    for mesh in (glb_mesh_y, glb_mesh_z, stl_mesh_y, stl_mesh_z, obj_mesh_y, obj_mesh_z):
+        with pytest.raises(AssertionError) if mesh is glb_mesh_z else nullcontext():
+            assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
 
 
 @pytest.mark.required
