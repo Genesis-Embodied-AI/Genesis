@@ -27,7 +27,7 @@ def main():
             camera_fov=40,
         ),
         vis_options=gs.options.VisOptions(
-            rendered_envs_idx=[1],
+            rendered_envs_idx=[0],
         ),
         show_viewer=args.vis,
     )
@@ -66,7 +66,7 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build(n_envs=2)
+    scene.build(n_envs=0)
 
     horizon = 500 if "PYTEST_VERSION" not in os.environ else 5
 
