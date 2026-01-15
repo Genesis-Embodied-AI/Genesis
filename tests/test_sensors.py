@@ -200,7 +200,7 @@ def test_rigid_tactile_sensors_gravity_force(n_envs, show_viewer, tol):
     box_3 = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.2, 0.2, 0.2),  # volume = 0.008 m^3
-            pos=(1.0, 0.0, 0.6),
+            pos=(1.0, 0.0, 0.61),
         ),
         material=gs.materials.Rigid(
             rho=25.0,  # mass = 0.2 kg

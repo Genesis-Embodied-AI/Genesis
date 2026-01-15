@@ -124,12 +124,10 @@ class ContactSensor(Sensor):
     ):
         assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
-        if all_contacts["link_a"].numel() == 0:
-            shared_ground_truth_cache.fill_(False)
-        else:
-            contact_links = torch.cat([all_contacts["link_a"], all_contacts["link_b"]], dim=-1)
-            is_contact = (contact_links[..., None, :] == shared_metadata.expanded_links_idx.unsqueeze(-1)).any(-1)
-            shared_ground_truth_cache.copy_(is_contact)
+        link_a, link_b = all_contacts["link_a"], all_contacts["link_b"]
+        is_contact_a = (link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
+        is_contact_b = (link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
+        shared_ground_truth_cache[:] = is_contact_a | is_contact_b
 
     @classmethod
     def _update_shared_cache(
