@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import numpy as np
 from huggingface_hub import snapshot_download
@@ -51,25 +52,24 @@ class JointAnimator:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--num_steps", type=int, default=1)
+    parser.add_argument("-n", "--num_steps", type=int, default=5000 if "PYTEST_VERSION" not in os.environ else 1)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
 
-    dt = 0.002
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3.5, 0.0, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=40,
-        ),
         rigid_options=gs.options.RigidOptions(
-            dt=dt,
+            dt=0.01,
             gravity=(0, 0, -9.8),
             enable_collision=True,
             enable_joint_limit=True,
             max_collision_pairs=1000,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(4.0, 2.0, 2.5),
+            camera_lookat=(0.0, 0.0, 1.0),
+            camera_fov=40,
         ),
         show_viewer=args.vis,
     )
@@ -82,9 +82,14 @@ def main():
         max_workers=1,
     )
 
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
     entities = scene.add_stage(
         morph=gs.morphs.USD(
             file=f"{asset_path}/usd/Refrigerator055/Refrigerator055.usd",
+            pos=(0, 0, 0.9),
+            euler=(0, 0, 180),
         ),
         # vis_mode="collision",
         # visualize_contact=True,
