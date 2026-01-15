@@ -140,7 +140,7 @@ class RigidEntity(Entity):
 
         if isinstance(self._morph, gs.morphs.Mesh):
             self._load_mesh(self._morph, self._surface)
-        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone)):
+        elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
             self._load_scene(self._morph, self._surface)
         elif isinstance(self._morph, gs.morphs.Primitive):
             self._load_primitive(self._morph, self._surface)
@@ -375,11 +375,10 @@ class RigidEntity(Entity):
         if isinstance(morph, gs.morphs.MJCF):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
             l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
-        else:
+        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
             morph_ = copy(morph)
             morph_.visualization = False
@@ -420,7 +419,11 @@ class RigidEntity(Entity):
                             link_g_infos.append(g_info)
             except (ValueError, AssertionError):
                 gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+        elif isinstance(morph, gs.morphs.USD):
+            from genesis.utils.usd import parse_usd_rigid_entity
 
+            # Unified parser handles both articulations and rigid bodies
+            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_rigid_entity(morph, surface)
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))

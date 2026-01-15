@@ -1317,3 +1317,160 @@ class Terrain(Morph):
     @property
     def subterrain_params(self):
         return self._subterrain_parameters
+
+
+class USD(FileMorph):
+    """
+    Configuration class for USD file loading with advanced processing options.
+
+    This class encapsulates the file path and processing parameters for USD loading,
+    allowing users to control convexification, decimation, and decomposition behavior
+    when loading USD scenes via add_stage().
+
+    Parameters
+    ----------
+    file : str
+        The path to the USD file.
+
+    Joint Dynamics Options
+    ----------------------
+    joint_friction_attr_candidates : List[str], optional
+        List of candidate attribute names for joint friction. The parser will try these in order.
+        If no matching attribute is found, Genesis default (0.0) is used.
+        Defaults to ["physxJoint:jointFriction", "physics:jointFriction", "jointFriction", "friction"].
+    joint_armature_attr_candidates : List[str], optional
+        List of candidate attribute names for joint armature. The parser will try these in order.
+        If no matching attribute is found, Genesis default (0.0) is used.
+        Defaults to ["physxJoint:armature", "physics:armature", "armature"].
+    revolute_joint_stiffness_attr_candidates : List[str], optional
+        List of candidate attribute names for revolute joint stiffness. The parser will try these in order.
+        If no matching attribute is found, Genesis default (0.0) is used.
+        Defaults to ["physxLimit:angular:stiffness", "physics:stiffness", "stiffness"].
+    revolute_joint_damping_attr_candidates : List[str], optional
+        List of candidate attribute names for revolute joint damping. The parser will try these in order.
+        If no matching attribute is found, Genesis default (0.0) is used.
+        Defaults to ["physxLimit:angular:damping", "physics:angular:damping", "angular:damping"].
+    prismatic_joint_stiffness_attr_candidates : List[str], optional
+        List of candidate attribute names for prismatic joint stiffness. The parser will try these in order.
+        If no matching attribute is found, Genesis default (0.0) is used.
+        Defaults to ["physxLimit:linear:stiffness", "physxLimit:X:stiffness", "physxLimit:Y:stiffness", "physxLimit:Z:stiffness",
+        "physics:linear:stiffness", "linear:stiffness"].
+    prismatic_joint_damping_attr_candidates : List[str], optional
+        List of candidate attribute names for prismatic joint damping. The parser will try these in order.
+        If no matching attribute is found, Genesis default (0.0) is used.
+        Defaults to ["physxLimit:linear:damping", "physxLimit:X:damping", "physxLimit:Y:damping", "physxLimit:Z:damping",
+        "physics:linear:damping", "linear:damping"].
+
+    Geometry Parsing Options
+    -------------------------
+    collision_mesh_prim_patterns : List[str], optional
+        List of regex patterns to match collision mesh prim names. Patterns are tried in order.
+        Defaults to [r"^([cC]ollision).*", r"^.*"].
+    visual_mesh_prim_patterns : List[str], optional
+        List of regex patterns to match visual mesh prim names. Patterns are tried in order.
+        Defaults to [r"^([vV]isual).*", r"^.*"].
+
+    Geometry Decomposition Options
+    -------------------------------
+    convexify : bool, optional
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
+        sufficient to meet the desired accuracy. The module 'coacd' is used for this decomposition process.
+        If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
+    decompose_object_error_threshold : float, optional
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : float, optional
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int, optional
+        How hard the decimation process will try to match the target number of faces, as an integer ranging from 0 to 8.
+        0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
+
+    Internal Options
+    ----------------
+    prim_path : str, optional
+        The parsing target prim path. Defaults to None.
+    parser_ctx : Any, optional
+        The parser context. Defaults to None.
+    """
+
+    file: str
+
+    # Joint Dynamics Options
+    joint_friction_attr_candidates: List[str] = [
+        "physxJoint:jointFriction",  # Isaac-Sim assets compatibility
+        "physics:jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
+        "jointFriction",  # unoffical USD attribute, some assets may adapt to this attribute
+        "friction",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    joint_armature_attr_candidates: List[str] = [
+        "physxJoint:armature",  # Isaac-Sim assets compatibility
+        "physics:armature",  # unoffical USD attribute, some assets may adapt to this attribute
+        "armature",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    revolute_joint_stiffness_attr_candidates: List[str] = [
+        "physxLimit:angular:stiffness",  # Isaac-Sim assets compatibility
+        "physics:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+        "stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    revolute_joint_damping_attr_candidates: List[str] = [
+        "physxLimit:angular:damping",  # Isaac-Sim assets compatibility
+        "physics:angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+        "angular:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    prismatic_joint_stiffness_attr_candidates: List[str] = [
+        "physxLimit:linear:stiffness",  # Isaac-Sim assets compatibility
+        "physxLimit:X:stiffness",  # Isaac-Sim assets compatibility
+        "physxLimit:Y:stiffness",  # Isaac-Sim assets compatibility
+        "physxLimit:Z:stiffness",  # Isaac-Sim assets compatibility
+        "physics:linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+        "linear:stiffness",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+    prismatic_joint_damping_attr_candidates: List[str] = [
+        "physxLimit:linear:damping",  # Isaac-Sim assets compatibility
+        "physxLimit:X:damping",  # Isaac-Sim assets compatibility
+        "physxLimit:Y:damping",  # Isaac-Sim assets compatibility
+        "physxLimit:Z:damping",  # Isaac-Sim assets compatibility
+        "physics:linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+        "linear:damping",  # unoffical USD attribute, some assets may adapt to this attribute
+    ]
+
+    # Geometry Parsing Options
+    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*", r"^.*"]
+    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
+
+    # Geometry Decomposition Options
+    convexify: Optional[bool] = None
+    decompose_object_error_threshold: float = 0.15
+    decompose_robot_error_threshold: float = float("inf")
+    coacd_options: Optional[CoacdOptions] = None
+    decimate: bool = True
+    decimate_face_num: int = 500
+    decimate_aggressiveness: int = 2
+
+    # Internal Options
+    prim_path: Optional[str] = None
+    parser_ctx: Any = None
+
+    def __init__(self, **data):
+        super().__init__(**data)
+
+        if not isinstance(self.file, str):
+            gs.raise_exception("`file` should be a string.")
+
+        if not self.file.lower().endswith(USD_FORMATS):
+            gs.raise_exception(f"USDMorph requires a USD file with extension {USD_FORMATS}, got: {self.file}")
+
+        if self.coacd_options is None:
+            self.coacd_options = CoacdOptions()

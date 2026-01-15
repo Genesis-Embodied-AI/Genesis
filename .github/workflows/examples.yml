@@ -27,6 +27,8 @@ jobs:
       TI_ENABLE_OPENGL: "0"
       TI_ENABLE_VULKAN: "0"
       TI_DEBUG: "0"
+      OMNI_KIT_ACCEPT_EULA: "yes"
+      OMNI_KIT_ALLOW_ROOT: "1"
 
     steps:
       - name: Checkout code
@@ -51,7 +53,7 @@ jobs:
         run: |
           pip install --upgrade pip setuptools wheel
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e '.[dev]' pynput
+          pip install -e '.[dev,usd]' pynput
 
       - name: Get gstaichi version
         id: gstaichi_version
