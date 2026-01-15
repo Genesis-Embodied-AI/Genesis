@@ -55,7 +55,7 @@ def parse_terrain(morph: Terrain, surface):
         try:
             with open(gnd_file_path, "rb") as fd:
                 heightfield = pkl.load(fd)
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError):
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
             # Do not ignore error in case of corrupted cache, to make sure the user is aware of it
             gs.raise_exception(f"Corrupted cache for terrain heightmap: {gnd_file_path}")
 
