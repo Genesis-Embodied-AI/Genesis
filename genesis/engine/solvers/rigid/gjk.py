@@ -4821,10 +4821,10 @@ def _show_deprecation_warning_gjk():
             "║   OLD: from genesis.engine.solvers.rigid import gjk_decomp               ║\n"
             "║   NEW: from genesis.engine.solvers.rigid import gjk                      ║\n"
             "║                                                                          ║\n"
-            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
             "╚══════════════════════════════════════════════════════════════════════════╝"
         )
-    except:
+    except Exception:
         import warnings
 
         warnings.warn(

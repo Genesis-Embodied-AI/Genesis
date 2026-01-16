@@ -916,16 +916,16 @@ def _show_deprecation_warning_diffgjk():
             "╔══════════════════════════════════════════════════════════════════════════╗\n"
             "║                         DEPRECATION WARNING                              ║\n"
             "╠══════════════════════════════════════════════════════════════════════════╣\n"
-            "║ The module 'diff_gjk_decomp' has been renamed to 'diff_gjk'             ║\n"
+            "║ The module 'diff_gjk_decomp' has been renamed to 'diff_gjk'              ║\n"
             "║                                                                          ║\n"
             "║ Please update your imports:                                              ║\n"
             "║   OLD: from genesis.engine.solvers.rigid import diff_gjk_decomp          ║\n"
             "║   NEW: from genesis.engine.solvers.rigid import diff_gjk                 ║\n"
             "║                                                                          ║\n"
-            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
             "╚══════════════════════════════════════════════════════════════════════════╝"
         )
-    except:
+    except Exception:
         import warnings
 
         warnings.warn(

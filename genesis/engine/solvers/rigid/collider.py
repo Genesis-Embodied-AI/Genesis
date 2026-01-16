@@ -3450,7 +3450,6 @@ def func_set_upstream_grad(
 # ------------------------------------------------------------------------------------
 # This section creates a deprecated alias module for the old name 'collider_decomp'
 
-import sys
 import types
 
 
@@ -3464,16 +3463,16 @@ def _show_deprecation_warning_collider():
             "╔══════════════════════════════════════════════════════════════════════════╗\n"
             "║                         DEPRECATION WARNING                              ║\n"
             "╠══════════════════════════════════════════════════════════════════════════╣\n"
-            "║ The module 'collider_decomp' has been renamed to 'collider'             ║\n"
+            "║ The module 'collider_decomp' has been renamed to 'collider'              ║\n"
             "║                                                                          ║\n"
             "║ Please update your imports:                                              ║\n"
             "║   OLD: from genesis.engine.solvers.rigid import collider_decomp          ║\n"
             "║   NEW: from genesis.engine.solvers.rigid import collider                 ║\n"
             "║                                                                          ║\n"
-            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
             "╚══════════════════════════════════════════════════════════════════════════╝"
         )
-    except:
+    except Exception:
         import warnings
 
         warnings.warn(

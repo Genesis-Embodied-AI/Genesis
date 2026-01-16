@@ -8339,16 +8339,16 @@ def _show_deprecation_warning():
             "╔══════════════════════════════════════════════════════════════════════════╗\n"
             "║                         DEPRECATION WARNING                              ║\n"
             "╠══════════════════════════════════════════════════════════════════════════╣\n"
-            "║ The module 'rigid_solver_decomp' has been renamed to 'rigid_solver'     ║\n"
+            "║ The module 'rigid_solver_decomp' has been renamed to 'rigid_solver'      ║\n"
             "║                                                                          ║\n"
             "║ Please update your imports:                                              ║\n"
             "║   OLD: from genesis.engine.solvers.rigid import rigid_solver_decomp      ║\n"
             "║   NEW: from genesis.engine.solvers.rigid import rigid_solver             ║\n"
             "║                                                                          ║\n"
-            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
             "╚══════════════════════════════════════════════════════════════════════════╝"
         )
-    except:
+    except Exception:
         import warnings
 
         warnings.warn(

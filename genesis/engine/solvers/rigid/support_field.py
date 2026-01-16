@@ -416,16 +416,16 @@ def _show_deprecation_warning_supportfield():
             "╔══════════════════════════════════════════════════════════════════════════╗\n"
             "║                         DEPRECATION WARNING                              ║\n"
             "╠══════════════════════════════════════════════════════════════════════════╣\n"
-            "║ The module 'support_field_decomp' has been renamed to 'support_field'   ║\n"
+            "║ The module 'support_field_decomp' has been renamed to 'support_field'    ║\n"
             "║                                                                          ║\n"
             "║ Please update your imports:                                              ║\n"
             "║   OLD: from genesis.engine.solvers.rigid import support_field_decomp     ║\n"
             "║   NEW: from genesis.engine.solvers.rigid import support_field            ║\n"
             "║                                                                          ║\n"
-            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
             "╚══════════════════════════════════════════════════════════════════════════╝"
         )
-    except:
+    except Exception:
         import warnings
 
         warnings.warn(

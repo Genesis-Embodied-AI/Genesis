@@ -1068,17 +1068,17 @@ def _show_deprecation_warning_constraintsolverisland():
             "╔══════════════════════════════════════════════════════════════════════════╗\n"
             "║                         DEPRECATION WARNING                              ║\n"
             "╠══════════════════════════════════════════════════════════════════════════╣\n"
-            "║ The module 'constraint_solver_island_decomp' has been renamed to        ║\n"
+            "║ The module 'constraint_solver_island_decomp' has been renamed to         ║\n"
             "║ 'constraint_solver_island'                                               ║\n"
             "║                                                                          ║\n"
             "║ Please update your imports:                                              ║\n"
             "║   OLD: ...solvers.rigid import constraint_solver_island_decomp           ║\n"
             "║   NEW: ...solvers.rigid import constraint_solver_island                  ║\n"
             "║                                                                          ║\n"
-            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
             "╚══════════════════════════════════════════════════════════════════════════╝"
         )
-    except:
+    except Exception:
         import warnings
 
         warnings.warn(
