@@ -131,14 +131,14 @@ def parse_urdf(morph, surface):
                         metadata={"mesh_path": mesh_path},
                     )
 
+                    # If the file is a gltf, we have to convert it to zup
                     if mesh_path.lower().endswith(gs.morphs.GLTF_FORMATS):
-                        if morph.parse_glb_with_zup:
-                            mesh.convert_to_zup()
-                        else:
-                            gs.logger.warning(
-                                "This file contains GLTF mesh, which is using y-up while Genesis uses z-up. Please set "
-                                "'parse_glb_with_zup=True' in morph options if you find the mesh is 90-degree rotated. "
-                            )
+                        mesh.convert_to_zup()
+                        gs.logger.debug(f"Converting the GLTF geometry to zup '{morph.file}'")
+                    # If the file is a not a gltf, we convert to zup if the FileMorph.file_meshes_are_zup is true
+                    elif not morph.file_meshes_are_zup:
+                        mesh.convert_to_zup()
+                        gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)

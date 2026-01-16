@@ -539,6 +539,30 @@ def test_dynamic_weld(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_dynamic_weld_scene_reset():
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            max_dynamic_constraints=10,
+        ),
+        show_viewer=False,
+    )
+    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
+    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.2, 0, 0.5)))
+    scene.build(n_envs=2)
+
+    solver = scene.rigid_solver
+    n_eq_base = solver._rigid_global_info.n_equalities[None]
+
+    solver.add_weld_constraint(box1.base_link_idx, box2.base_link_idx)
+    assert solver.constraint_solver.constraint_state.ti_n_equalities[0] == n_eq_base + 1
+    assert solver.constraint_solver.constraint_state.ti_n_equalities[1] == n_eq_base + 1
+
+    scene.reset(state=scene.get_state(), envs_idx=[0])
+    assert solver.constraint_solver.constraint_state.ti_n_equalities[0] == n_eq_base
+    assert solver.constraint_solver.constraint_state.ti_n_equalities[1] == n_eq_base + 1
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
@@ -1961,6 +1985,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
+            quat=(0.707, -0.707, 0, 0),
             fixed=True,
         ),
         vis_mode="collision",
@@ -1970,7 +1995,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
             pos=(0.3, 0, 0.015),
-            quat=(0.707, 0.707, 0, 0),
             convexify=convexify,
             scale=1.0,
         ),

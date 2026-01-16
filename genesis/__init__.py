@@ -112,19 +112,19 @@ def init(
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─' * (bar_width)}╯>~")
 
+    # Get concrete device and backend
+    global device
+    device, device_name, total_mem, backend = get_device(backend)
+    if backend != gs.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
+        device, device_name, total_mem, _ = get_device(gs_backend.cpu)
+
     # Deal with manually disabled backend early on to make sure backend-specific logic is valid
     if (
         (backend == gs_backend.metal and os.environ.get("TI_ENABLE_METAL") == "0")
         or (backend == gs_backend.vulkan and os.environ.get("TI_ENABLE_VULKAN") == "0")
         or (backend == gs_backend.cuda and os.environ.get("TI_ENABLE_CUDA") == "0")
     ):
-        backend = gs_backend.cpu
-
-    # Get concrete device and backend
-    global device
-    device, device_name, total_mem, backend = get_device(backend)
-    if backend != gs.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
-        device, device_name, total_mem, _ = get_device(gs_backend.cpu)
+        device, device_name, total_mem, backend = get_device(gs_backend.cpu)
 
     # Configure GsTaichi fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
@@ -151,17 +151,17 @@ def init(
     if _use_zerocopy:
         if backend == gs_backend.metal and not _use_ndarray and not _TORCH_MPS_SUPPORT_DLPACK_FIELD:
             raise_exception("Zero-copy not supported for static array mode on Apple Metal if 'torch<=2.9.1'.")
-        if (backend == gs_backend.metal and torch.device.type != "mps") or (
-            backend == gs_backend.cuda and torch.device.type != "cuda"
+        if (backend == gs_backend.metal and device.type != "mps") or (
+            backend == gs_backend.cuda and device.type != "cuda"
         ):
             raise_exception(
-                f"Genesis backend '{backend}' not consistent with Torch device type '{torch.device.type}'. Zero-copy "
+                f"Genesis backend '{backend}' not consistent with Torch device type '{device.type}'. Zero-copy "
                 "not supported."
             )
     supported_arch = [gs_backend.cpu]
-    if backend == gs_backend.cuda and torch.device.type == "cuda":
+    if backend == gs_backend.cuda and device.type == "cuda":
         supported_arch.append(gs_backend.cuda)
-    if backend == gs_backend.metal and torch.device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD):
+    if backend == gs_backend.metal and device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD):
         supported_arch.append(gs_backend.metal)
     if backend in supported_arch:
         if _use_zerocopy is None:

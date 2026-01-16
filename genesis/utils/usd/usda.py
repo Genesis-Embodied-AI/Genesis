@@ -1,8 +1,9 @@
 import io
+import logging
 import os
 import shutil
 import subprocess
-import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -11,10 +12,10 @@ from PIL import Image
 
 import genesis as gs
 
-from . import mesh as mu
+from .. import mesh as mu
 
 try:
-    from pxr import Usd, UsdGeom, UsdShade, Sdf
+    from pxr import Sdf, Usd, UsdGeom, UsdShade
 except ImportError as e:
     raise ImportError(
         "Failed to import USD dependencies. Try installing Genesis with 'usd' optional dependencies."
@@ -29,7 +30,8 @@ cs_encode = {
 }
 
 
-def get_input_attribute_value(shader, input_name, input_type=None):
+# utils
+def get_input_attribute_value(shader: UsdShade.Shader, input_name, input_type=None):
     shader_input = shader.GetInput(input_name)
 
     if input_type != "value":
@@ -42,7 +44,7 @@ def get_input_attribute_value(shader, input_name, input_type=None):
     return None, None
 
 
-def get_shader(prim, output_name):
+def get_shader(prim: Usd.Prim, output_name):
     if prim.IsA(UsdShade.Shader):
         return UsdShade.Shader(prim)
     elif prim.IsA(UsdShade.NodeGraph):
@@ -51,7 +53,7 @@ def get_shader(prim, output_name):
         gs.raise_exception(f"Invalid shader type: {prim.GetTypeName()} at {prim.GetPath()}.")
 
 
-def parse_preview_surface(prim, output_name):
+def parse_preview_surface(prim: Usd.Prim, output_name):
     shader = get_shader(prim, output_name)
     shader_id = shader.GetShaderId()
 
@@ -162,7 +164,9 @@ def parse_preview_surface(prim, output_name):
         return primvar_name
 
 
-def parse_usd_material(material, surface):
+def parse_usd_material(
+    material: UsdShade.Material, surface: gs.surfaces.Surface
+) -> tuple[gs.surfaces.Surface, str, bool]:
     surface_outputs = material.GetSurfaceOutputs()
     material_dict, uv_name = None, None
     material_surface = surface.copy()
@@ -206,7 +210,7 @@ def parse_usd_material(material, surface):
     return material_surface, uv_name, require_bake
 
 
-def replace_asset_symlinks(stage):
+def replace_asset_symlinks(stage: Usd.Stage):
     asset_paths = set()
 
     for prim in stage.TraverseAll():
@@ -259,7 +263,8 @@ def decompress_usdz(usdz_path):
     return root_path
 
 
-def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
+# entrance
+def parse_mesh_usd(path: str, group_by_material: bool, scale, surface: gs.surfaces.Surface, bake_cache=True):
     if path.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
         path = decompress_usdz(path)
 
@@ -462,20 +467,3 @@ def parse_mesh_usd(path, group_by_material, scale, surface, bake_cache=True):
             mesh_info.append(points, triangles, normals, uvs)
 
     return mesh_infos.export_meshes(scale=scale)
-
-
-def parse_instance_usd(path):
-    stage = Usd.Stage.Open(path)
-    xform_cache = UsdGeom.XformCache()
-
-    instance_list = []
-    for i, prim in enumerate(stage.Traverse()):
-        if prim.IsA(UsdGeom.Xformable):
-            if len(prim.GetPrimStack()) > 1:
-                assert len(prim.GetPrimStack()) == 2, f"Invalid instance {prim.GetPath()} in usd file {path}."
-                if prim.GetPrimStack()[0].hasReferences:
-                    matrix = np.array(xform_cache.GetLocalToWorldTransform(prim))
-                    instance_spec = prim.GetPrimStack()[-1]
-                    instance_list.append((matrix.T, instance_spec.layer.identifier))
-
-    return instance_list
