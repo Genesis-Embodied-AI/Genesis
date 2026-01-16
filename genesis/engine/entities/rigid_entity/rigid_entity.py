@@ -31,7 +31,7 @@ from .rigid_link import RigidLink
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 # Wrapper to track the arguments of a function and save them in the target buffer
@@ -1523,7 +1523,7 @@ class RigidEntity(Entity):
         # run FK
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
-            gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+            gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
                 links_state,
@@ -1553,7 +1553,7 @@ class RigidEntity(Entity):
         # run FK
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
-            gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+            gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                 self._idx_in_solver,
                 envs_idx[i_b_],
                 links_state,
@@ -3332,7 +3332,7 @@ def kernel_rigid_entity_inverse_kinematics(
         for i_sample in range(max_samples):
             for _ in range(max_solver_iters):
                 # run FK to update link states using current q
-                gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+                gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                     rigid_entity._idx_in_solver,
                     i_b,
                     links_state,
@@ -3446,7 +3446,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     )
 
                 # update q
-                gs.engine.solvers.rigid.rigid_solver_decomp.func_integrate_dq_entity(
+                gs.engine.solvers.rigid.rigid_solver.func_integrate_dq_entity(
                     rigid_entity._IK_delta_qpos,
                     rigid_entity._idx_in_solver,
                     i_b,
@@ -3461,7 +3461,7 @@ def kernel_rigid_entity_inverse_kinematics(
 
             if not solved:
                 # re-compute final error if exited not due to solved
-                gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+                gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                     rigid_entity._idx_in_solver,
                     i_b,
                     links_state,
@@ -3561,7 +3561,7 @@ def kernel_rigid_entity_inverse_kinematics(
         # restore original qpos and link state
         for i_q in range(rigid_entity.n_qs):
             rigid_global_info.qpos[i_q + rigid_entity._q_start, i_b] = rigid_entity._IK_qpos_orig[i_q, i_b]
-        gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+        gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
             rigid_entity._idx_in_solver,
             i_b,
             links_state,

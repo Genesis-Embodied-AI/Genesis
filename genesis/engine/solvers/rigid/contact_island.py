@@ -6,8 +6,8 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.collider_decomp import Collider
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.collider import Collider
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 @ti.data_oriented

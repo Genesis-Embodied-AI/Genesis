@@ -24,10 +24,10 @@ from genesis.utils.misc import (
 from genesis.utils.sdf_decomp import SDF
 
 from ..base_solver import Solver
-from .collider_decomp import Collider
-from .constraint_solver_decomp import ConstraintSolver
-from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
+from .collider import Collider
+from .constraint_solver import ConstraintSolver
+from .constraint_solver_island import ConstraintSolverIsland
+from .rigid_solver_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     import genesis.engine.solvers.rigid.array_class

@@ -2,7 +2,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.gjk_decomp as GJK
+import genesis.engine.solvers.rigid.gjk as GJK
 
 
 @ti.func

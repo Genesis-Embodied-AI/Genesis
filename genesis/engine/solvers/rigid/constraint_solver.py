@@ -8,13 +8,13 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.backward_constraint_solver as backward_constraint_solver
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.utils.misc import ti_to_torch
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)

@@ -9,7 +9,7 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 class SupportField:
