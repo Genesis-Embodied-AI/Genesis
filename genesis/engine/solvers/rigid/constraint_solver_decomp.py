@@ -23,6 +23,9 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 # Check environment variable for decomposed solver usage
 USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
 
+# Check environment variable for macro kernel usage (only applies when USE_DECOMPOSED_SOLVER is True)
+USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
+
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -184,6 +187,12 @@ class ConstraintSolver:
         Args:
             use_decomposed_kernels: If True, use decomposed kernels. If False, use monolithic kernel.
                                    If None (default), uses the GS_SOLVER_DECOMPOSE environment variable.
+
+        Environment variables:
+            GS_SOLVER_DECOMPOSE: Set to "1" to use decomposed kernels (default: "0")
+            GS_SOLVER_DECOMPOSE_MACRO: Set to "1" to use macrokernels (separate kernel per step),
+                                       "0" for microkernels (single kernel with multiple loops).
+                                       Only applies when GS_SOLVER_DECOMPOSE=1 (default: "0")
         """
         if use_decomposed_kernels is None:
             use_decomposed_kernels = USE_DECOMPOSED_SOLVER
@@ -199,15 +208,32 @@ class ConstraintSolver:
 
         if use_decomposed_kernels:
             # Import here to avoid circular dependency and overhead when not needed
-            from genesis.engine.solvers.rigid.constraint_solver_decomp_batch import func_solve_decomposed_microkernels
+            if USE_DECOMPOSED_MACRO:
+                from genesis.engine.solvers.rigid.constraint_solver_decomp_batch import (
+                    func_solve_decomposed_macrokernels,
+                )
 
-            func_solve_decomposed_microkernels(
-                self._solver.entities_info,
-                self._solver.dofs_state,
-                self.constraint_state,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
+                print("use decomposed macro")
+                func_solve_decomposed_macrokernels(
+                    self._solver.entities_info,
+                    self._solver.dofs_state,
+                    self.constraint_state,
+                    self._solver._rigid_global_info,
+                    self._solver._static_rigid_sim_config,
+                )
+            else:
+                from genesis.engine.solvers.rigid.constraint_solver_decomp_batch import (
+                    func_solve_decomposed_microkernels,
+                )
+
+                print("use decomposed micro")
+                func_solve_decomposed_microkernels(
+                    self._solver.entities_info,
+                    self._solver.dofs_state,
+                    self.constraint_state,
+                    self._solver._rigid_global_info,
+                    self._solver._static_rigid_sim_config,
+                )
         else:
             func_solve(
                 self._solver.entities_info,
@@ -1767,15 +1793,11 @@ def func_linesearch_top_level(
             constraint_state.qacc[i_d, i_b] = (
                 constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
             )
-            constraint_state.Ma[i_d, i_b] = (
-                constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
-            )
+            constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
 
         # Update Jaref
         for i_c in range(constraint_state.n_constraints[i_b]):
-            constraint_state.Jaref[i_c, i_b] = (
-                constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
-            )
+            constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
 
 
 @ti.func
