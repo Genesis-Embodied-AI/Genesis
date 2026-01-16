@@ -156,33 +156,33 @@ jobs:
           GSTAICHI_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('gstaichi'))")
           echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${GSTAICHI_VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Restore Taichi Kernel Cache
-        if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache
-          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
-          restore-keys: |
-            ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
+      # - name: Restore Taichi Kernel Cache
+      #   if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     path: .cache
+      #     key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
+      #     restore-keys: |
+      #       ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
       - name: Run unit tests
         run: |
           pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
 
-      - name: Save Updated Taichi Kernel Cache
-        if: >-
-          ${{ always() &&
-              (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
-              matrix.PYTHON_VERSION == '3.12' &&
-              matrix.GS_BACKEND == 'cpu' &&
-              matrix.GS_ENABLE_NDARRAY == '1' &&
-              steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
-        uses: actions/cache/save@v4
-        with:
-          path: .cache
-          # Note that it is necessary to create a new archive systematically for now:
-          # See: https://github.com/actions/cache/issues/1594
-          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
+      # - name: Save Updated Taichi Kernel Cache
+      #   if: >-
+      #     ${{ always() &&
+      #         (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
+      #         matrix.PYTHON_VERSION == '3.12' &&
+      #         matrix.GS_BACKEND == 'cpu' &&
+      #         matrix.GS_ENABLE_NDARRAY == '1' &&
+      #         steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: .cache
+      #     # Note that it is necessary to create a new archive systematically for now:
+      #     # See: https://github.com/actions/cache/issues/1594
+      #     key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   publish-pypi:
     name: Publish on PyPI
