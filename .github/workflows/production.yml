@@ -1,187 +1,187 @@
-name: Production
+# name: Production
 
-on:
-  # Trigger the workflow on push on the master branch, or for any pull request
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+# on:
+#   # Trigger the workflow on push on the master branch, or for any pull request
+#   push:
+#     branches:
+#       - main
+#   pull_request:
+#     branches:
+#       - main
 
-concurrency:
-  # Cancel all workflows that are stil running if any when updating branches associated with PRs,
-  # BUT don't do anything for workflows that are not triggered by PRs.
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# concurrency:
+#   # Cancel all workflows that are stil running if any when updating branches associated with PRs,
+#   # BUT don't do anything for workflows that are not triggered by PRs.
+#   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+#   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
-  HF_TOKEN: ${{ secrets.HF_TOKEN }}
-  HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_20"
-  TIMEOUT_MINUTES: 60
-  FORCE_COLOR: 1
-  PY_COLORS: 1
-  MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
-  OMNI_KIT_ACCEPT_EULA: "yes"
-  OMNI_KIT_ALLOW_ROOT: "1"
+# env:
+#   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
+#   HF_TOKEN: ${{ secrets.HF_TOKEN }}
+#   HF_HUB_DOWNLOAD_TIMEOUT: 60
+#   GENESIS_IMAGE_VER: "1_20"
+#   TIMEOUT_MINUTES: 60
+#   FORCE_COLOR: 1
+#   PY_COLORS: 1
+#   MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
+#   OMNI_KIT_ACCEPT_EULA: "yes"
+#   OMNI_KIT_ALLOW_ROOT: "1"
 
-jobs:
-  unit-tests:
-    name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+# jobs:
+#   unit-tests:
+#     name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
 
-    runs-on: [self-hosted, coreweave, genesis-world]
+#     runs-on: [self-hosted, coreweave, genesis-world]
 
-    strategy:
-      fail-fast: true
-      max-parallel: 1
-      matrix:
-        GS_ENABLE_NDARRAY: ["0", "1"]
+#     strategy:
+#       fail-fast: true
+#       max-parallel: 1
+#       matrix:
+#         GS_ENABLE_NDARRAY: ["0", "1"]
 
-    env:
-      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
+#     env:
+#       GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Spawn Slurm job
-        if: github.event_name == 'pull_request'
-        run: |
-          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-          CONTAINER_NAME="${SLURM_JOB_NAME}"
-          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
-               --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
-               --no-container-mount-home \
-               --container-workdir=/root/workspace"
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA,OMNI_KIT_ALLOW_ROOT"
+#       - name: Spawn Slurm job
+#         if: github.event_name == 'pull_request'
+#         run: |
+#           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+#           CONTAINER_NAME="${SLURM_JOB_NAME}"
+#           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
+#                --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
+#                --no-container-mount-home \
+#                --container-workdir=/root/workspace"
+#           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA,OMNI_KIT_ALLOW_ROOT"
 
-          JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
-          [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
-          mkfifo "$JOBID_FIFO"
-          salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
-                 --time="${TIMEOUT_MINUTES}" \
-                 bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
-          SLURM_JOB_ID=$(cat "$JOBID_FIFO")
-          rm -f "$JOBID_FIFO"
-          SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
-          srun --jobid=${SLURM_JOB_ID} \
-               --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh \
-               ${SRUN_CONTAINER_OPTS} \
-               --export=${SLURM_ENV_VARS} \
-               echo "Container ready"
+#           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
+#           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
+#           mkfifo "$JOBID_FIFO"
+#           salloc --job-name="${SLURM_JOB_NAME}" \
+#                  --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+#                  --time="${TIMEOUT_MINUTES}" \
+#                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
+#           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
+#           rm -f "$JOBID_FIFO"
+#           SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
+#           srun --jobid=${SLURM_JOB_ID} \
+#                --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh \
+#                ${SRUN_CONTAINER_OPTS} \
+#                --export=${SLURM_ENV_VARS} \
+#                echo "Container ready"
 
-          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
-          echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
-      - name: Initialize Python virtual env
-        if: github.event_name == 'pull_request'
-        run: srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
-      - name: Run unit tests
-        if: github.event_name == 'pull_request'
-        run: |
-          srun ${SRUN_COMMON} bash -e -s <<'EOF'
-            source /venv/bin/activate
+#           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+#           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
+#       - name: Initialize Python virtual env
+#         if: github.event_name == 'pull_request'
+#         run: srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
+#       - name: Run unit tests
+#         if: github.event_name == 'pull_request'
+#         run: |
+#           srun ${SRUN_COMMON} bash -e -s <<'EOF'
+#             source /venv/bin/activate
 
-            # sudo apt update
-            # sudo apt install -y tmate
-            # tmate -S /tmp/tmate.sock new-session -d
-            # tmate -S /tmp/tmate.sock wait tmate-ready
-            # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+#             # sudo apt update
+#             # sudo apt install -y tmate
+#             # tmate -S /tmp/tmate.sock new-session -d
+#             # tmate -S /tmp/tmate.sock wait tmate-ready
+#             # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-            pytest -v -ra --backend gpu --dev --forked ./tests
+#             pytest -v -ra --backend gpu --dev --forked ./tests
 
-            # tmate -S /tmp/tmate.sock wait tmate-exit
-          EOF
-      - name: Kill Slurm job
-        if: always()
-        run: |
-          if [ -n "${SLURM_JOB_NAME}" ] ; then
-            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
-          fi
+#             # tmate -S /tmp/tmate.sock wait tmate-exit
+#           EOF
+#       - name: Kill Slurm job
+#         if: always()
+#         run: |
+#           if [ -n "${SLURM_JOB_NAME}" ] ; then
+#             scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+#           fi
 
-  benchmarks:
-    name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+#   benchmarks:
+#     name: production-benchmarks-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
 
-    needs: unit-tests
-    runs-on: [self-hosted, coreweave, genesis-world]
+#     needs: unit-tests
+#     runs-on: [self-hosted, coreweave, genesis-world]
 
-    strategy:
-      matrix:
-        GS_ENABLE_NDARRAY: ["0", "1"]
+#     strategy:
+#       matrix:
+#         GS_ENABLE_NDARRAY: ["0", "1"]
 
-    env:
-      # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
-      WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
-      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
+#     env:
+#       # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
+#       WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+#       GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
-          # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
-          fetch-depth: 0
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           # Checkout full history is required to shallow cloning while mark HEAD as "grafted". This breaks remote
+#           # tracking thereby making it impossible to detect whether a commit is contained in upstream main.
+#           fetch-depth: 0
 
-      - name: Spawn Slurm job
-        run: |
-          SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-          CONTAINER_NAME="${SLURM_JOB_NAME}"
-          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
-               --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
-               --no-container-mount-home \
-               --container-workdir=/root/workspace"
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA,OMNI_KIT_ALLOW_ROOT"
-          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
-            SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
-          fi
+#       - name: Spawn Slurm job
+#         run: |
+#           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+#           CONTAINER_NAME="${SLURM_JOB_NAME}"
+#           SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
+#                --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
+#                --no-container-mount-home \
+#                --container-workdir=/root/workspace"
+#           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA,OMNI_KIT_ALLOW_ROOT"
+#           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
+#             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
+#           fi
 
-          JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
-          [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
-          mkfifo "$JOBID_FIFO"
-          salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
-                 --time="${TIMEOUT_MINUTES}" \
-                 bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
-          SLURM_JOB_ID=$(cat "$JOBID_FIFO")
-          rm -f "$JOBID_FIFO"
-          SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
-          srun --jobid=${SLURM_JOB_ID} \
-               --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh \
-               ${SRUN_CONTAINER_OPTS} \
-               --export=${SLURM_ENV_VARS} \
-               echo "Container ready"
+#           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
+#           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
+#           mkfifo "$JOBID_FIFO"
+#           salloc --job-name="${SLURM_JOB_NAME}" \
+#                  --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+#                  --time="${TIMEOUT_MINUTES}" \
+#                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
+#           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
+#           rm -f "$JOBID_FIFO"
+#           SRUN_COMMON="--overlap --jobid=${SLURM_JOB_ID} ${SRUN_CONTAINER_OPTS} --export=${SLURM_ENV_VARS}"
+#           srun --jobid=${SLURM_JOB_ID} \
+#                --container-image=/mnt/data/images/genesis-v${GENESIS_IMAGE_VER}.sqsh \
+#                ${SRUN_CONTAINER_OPTS} \
+#                --export=${SLURM_ENV_VARS} \
+#                echo "Container ready"
 
-          echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
-          echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
-      - name: Initialize Python virtual env
-        run: srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
-      - name: Run benchmarks
-        run: |
-          srun ${SRUN_COMMON} bash -e -s <<'EOF'
-            source /venv/bin/activate
-            pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
-                   --print -x -m "benchmarks" ./tests
-            cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-          EOF
-      - name: Kill Slurm job
-        if: always()
-        run: |
-          if [ -n "${SLURM_JOB_NAME}" ] ; then
-            scancel --user=${USER} --name="${SLURM_JOB_NAME}"
-          fi
+#           echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+#           echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
+#       - name: Initialize Python virtual env
+#         run: srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
+#       - name: Run benchmarks
+#         run: |
+#           srun ${SRUN_COMMON} bash -e -s <<'EOF'
+#             source /venv/bin/activate
+#             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
+#                    --print -x -m "benchmarks" ./tests
+#             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+#           EOF
+#       - name: Kill Slurm job
+#         if: always()
+#         run: |
+#           if [ -n "${SLURM_JOB_NAME}" ] ; then
+#             scancel --user=${USER} --name="${SLURM_JOB_NAME}"
+#           fi
 
-      - name: Display benchmark stats
-        run: |
-          cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-      - name: Upload benchmark stats as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
-          path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
-      - name: Upload benchmark mem stats as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
-          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"
+#       - name: Display benchmark stats
+#         run: |
+#           cat "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+#       - name: Upload benchmark stats as artifact
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: speed-test-${{ matrix.GS_ENABLE_NDARRAY }}
+#           path: "/mnt/data/artifacts/speed_test_${{ env.SLURM_JOB_NAME }}.txt"
+#       - name: Upload benchmark mem stats as artifact
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
+#           path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"
