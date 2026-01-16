@@ -20,7 +20,6 @@ def _kernel_solve_body_decomposed(
     while still allowing Taichi to launch each step as a separate GPU kernel internally.
     """
     _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.qacc.shape[0]
 
     # Step 1: Linesearch and update qacc, Ma, Jaref
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
@@ -44,9 +43,7 @@ def _kernel_solve_body_decomposed(
         # Index: 1 if CG
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                for i_d in range(n_dofs):
-                    constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
-                    constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
+                constraint_solver_decomp.func_save_prev_grad(i_b, constraint_state=constraint_state)
 
     # Step 3: Update constraints
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
@@ -96,45 +93,12 @@ def _kernel_solve_body_decomposed(
     # Index: 4
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            # Check convergence
-            tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
-            improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
-            gradient = gs.ti_float(0.0)
-            for i_d in range(n_dofs):
-                gradient = gradient + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
-            gradient = ti.sqrt(gradient)
-
-            if gradient < tol_scaled or improvement < tol_scaled:
-                constraint_state.improved[i_b] = False
-            else:
-                constraint_state.improved[i_b] = True
-
-                # Update search direction
-                if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-                    # Newton: search = -Mgrad
-                    for i_d in range(n_dofs):
-                        constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-                else:
-                    # CG: compute beta and update search = -Mgrad + beta * search
-                    cg_beta = gs.ti_float(0.0)
-                    cg_pg_dot_pMg = gs.ti_float(0.0)
-
-                    for i_d in range(n_dofs):
-                        cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
-                            constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
-                        )
-                        cg_pg_dot_pMg = cg_pg_dot_pMg + (
-                            constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
-                        )
-                    cg_beta = ti.max(cg_beta / ti.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
-
-                    constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
-                    constraint_state.cg_beta[i_b] = cg_beta
-
-                    for i_d in range(n_dofs):
-                        constraint_state.search[i_d, i_b] = (
-                            -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
-                        )
+            constraint_solver_decomp.func_update_search_direction(
+                i_b,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
 
 def func_solve_decomposed(
