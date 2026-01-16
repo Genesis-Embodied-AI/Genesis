@@ -1,19 +1,3 @@
-"""
-Decomposed Constraint Solver with Batch-level Parallelization.
-
-This module contains decomposed kernels for the constraint solver that maintain
-the original batch-level parallelization pattern for compatibility with the
-existing codebase structure.
-
-Unlike constraint_solver_breakdown.py which uses multi-dimensional parallelization
-over (batch, dofs) and (batch, constraints), these kernels parallelize only over
-batches, matching the original func_solve kernel's parallelization strategy.
-
-The solver is decomposed into a single kernel with multiple top-level for loops,
-which reduces Python→C++ boundary crossing overhead while still allowing each step
-to be profiled separately as Taichi can launch them as separate GPU kernels internally.
-"""
-
 import gstaichi as ti
 
 import genesis as gs
@@ -21,13 +5,8 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.constraint_solver_decomp as constraint_solver_decomp
 
 
-# =============================================================================
-# Decomposed Solver Kernel - Single kernel with multiple top-level loops
-# =============================================================================
-
-
 @ti.kernel(fastcache=gs.use_fastcache)
-def kernel_solve_body_decomposed(
+def _kernel_solve_body_decomposed(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -178,11 +157,6 @@ def kernel_solve_body_decomposed(
                         )
 
 
-# =============================================================================
-# Decomposed Solver Orchestration
-# =============================================================================
-
-
 def func_solve_decomposed(
     entities_info,
     dofs_state,
@@ -196,7 +170,7 @@ def func_solve_decomposed(
     """
     iterations = rigid_global_info.iterations[None]
     for _it in range(iterations):
-        kernel_solve_body_decomposed(
+        _kernel_solve_body_decomposed(
             entities_info,
             dofs_state,
             constraint_state,
