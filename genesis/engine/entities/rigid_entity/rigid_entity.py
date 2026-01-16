@@ -138,7 +138,7 @@ class RigidEntity(Entity):
         self._joints = gs.List()
         self._equalities = gs.List()
 
-        if isinstance(self._morph, (gs.morphs.Mesh, gs.morphs.USDRigidBody)):
+        if isinstance(self._morph, (gs.morphs.Mesh)):
             self._load_mesh(self._morph, self._surface)
         elif isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
             self._load_scene(self._morph, self._surface)
@@ -438,7 +438,7 @@ class RigidEntity(Entity):
             except (ValueError, AssertionError):
                 gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
         elif isinstance(morph, gs.morphs.USD):
-            from genesis.utils.usd import usd_scene as usu
+            import genesis.utils.usd as usu
 
             # Unified parser handles both articulations and rigid bodies
             l_infos, links_j_infos, links_g_infos, eqs_info = usu.parse_usd(morph, surface)
@@ -606,26 +606,6 @@ class RigidEntity(Entity):
                 data=eq_info["data"],
                 sol_params=eq_info["sol_params"],
             )
-
-    def _load_scene(self, morph, surface):
-        # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
-        # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
-        # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
-        # initialized undetermined physics parameters.
-        if isinstance(morph, gs.morphs.MJCF):
-            # Mujoco's unified MJCF+URDF parser systematically for MJCF files
-            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
-        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
-            l_infos, links_j_infos, links_g_infos, eqs_info = self._collect_urdf_articulation_info(morph, surface)
-        elif isinstance(morph, gs.morphs.USD):
-            from genesis.utils.usd import usd_scene as usu
-
-            l_infos, links_j_infos, links_g_infos, eqs_info = usu.parse_usd(morph, surface)
-        else:
-            gs.raise_exception(f"Unsupported morph type: {type(morph)}")
-
-        if len(l_infos) > 0:
-            self._build_up_articulation(l_infos, links_j_infos, links_g_infos, eqs_info, morph, surface)
 
     def _build(self):
         for link in self._links:

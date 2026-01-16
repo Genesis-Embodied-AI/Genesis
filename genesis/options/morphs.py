@@ -1404,9 +1404,10 @@ class USD(FileMorph):
     ----------------
     prim_path : str, optional
         The parsing target prim path. Defaults to None.
-    parser_ctx : Any, optional
+    usd_ctx : Any, optional
         The parser context. Defaults to None.
     """
+
     # Joint Dynamics Options
     joint_friction_attr_candidates: List[str] = [
         "physxJoint:jointFriction",  # Isaac-Sim assets compatibility
@@ -1451,11 +1452,16 @@ class USD(FileMorph):
     visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
 
     # Internal Options
+    usd_ctx: Any = None
     prim_path: Optional[str] = None
-    parser_ctx: Any = None
 
     def __init__(self, **data):
         super().__init__(**data)
 
-        if not self.is_format(USD_FORMATS):
-            gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
+        if self.usd_ctx is None:
+            from genesis.utils.usd import UsdContext
+
+            if not self.is_format(USD_FORMATS):
+                gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
+
+            self.usd_ctx = UsdContext(self.file)

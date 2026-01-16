@@ -21,7 +21,7 @@ from genesis.options.morphs import USD
 from .. import geom as gu
 from .. import urdf as urdf_utils
 from .usd_geo_adapter import create_geo_info_from_prim, create_geo_infos_from_subtree
-from .usd_parser_context import UsdParserContext
+from .usd_context import UsdContext
 from .usd_parser_utils import (
     compute_gs_global_transform,
     compute_gs_relative_transform,
@@ -876,40 +876,32 @@ def _collect_joints(root_prim: Usd.Prim) -> Dict[str, List]:
         - "spherical_joints": List of UsdPhysics.SphericalJoint
     """
     joints = []
-    fixed_joints = []
-    revolute_joints = []
-    prismatic_joints = []
-    spherical_joints = []
+    # fixed_joints = []
+    # revolute_joints = []
+    # prismatic_joints = []
+    # spherical_joints = []
 
     for child in Usd.PrimRange(root_prim):
         if child.IsA(UsdPhysics.Joint):
             joint_api = UsdPhysics.Joint(child)
             joints.append(joint_api)
-            if child.IsA(UsdPhysics.RevoluteJoint):
-                revolute_joint_api = UsdPhysics.RevoluteJoint(child)
-                revolute_joints.append(revolute_joint_api)
-            elif child.IsA(UsdPhysics.FixedJoint):
-                fixed_joint_api = UsdPhysics.FixedJoint(child)
-                fixed_joints.append(fixed_joint_api)
-            elif child.IsA(UsdPhysics.PrismaticJoint):
-                prismatic_joint_api = UsdPhysics.PrismaticJoint(child)
-                prismatic_joints.append(prismatic_joint_api)
-            elif child.IsA(UsdPhysics.SphericalJoint):
-                spherical_joint_api = UsdPhysics.SphericalJoint(child)
-                spherical_joints.append(spherical_joint_api)
+            # if child.IsA(UsdPhysics.RevoluteJoint):
+            #     revolute_joint_api = UsdPhysics.RevoluteJoint(child)
+            #     revolute_joints.append(revolute_joint_api)
+            # elif child.IsA(UsdPhysics.FixedJoint):
+            #     fixed_joint_api = UsdPhysics.FixedJoint(child)
+            #     fixed_joints.append(fixed_joint_api)
+            # elif child.IsA(UsdPhysics.PrismaticJoint):
+            #     prismatic_joint_api = UsdPhysics.PrismaticJoint(child)
+            #     prismatic_joints.append(prismatic_joint_api)
+            # elif child.IsA(UsdPhysics.SphericalJoint):
+            #     spherical_joint_api = UsdPhysics.SphericalJoint(child)
+            #     spherical_joints.append(spherical_joint_api)
 
-    return {
-        "joints": joints,
-        "fixed_joints": fixed_joints,
-        "revolute_joints": revolute_joints,
-        "prismatic_joints": prismatic_joints,
-        "spherical_joints": spherical_joints,
-    }
+    return joints
 
 
-def _collect_links(
-    stage: Usd.Stage, joints: List[UsdPhysics.Joint], context: UsdParserContext = None
-) -> List[Usd.Prim]:
+def _collect_links(stage: Usd.Stage, joints: List[UsdPhysics.Joint], context: UsdContext = None) -> List[Usd.Prim]:
     """
     Collect all links connected by joints.
 
@@ -1096,7 +1088,7 @@ def _parse_link(link: Usd.Prim) -> Dict:
 # ==================== Main Parsing Function ====================
 
 
-def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
+def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Unified parser for USD rigid entities (both articulations and rigid bodies).
 
@@ -1123,39 +1115,37 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
         List of equality constraint info dictionaries.
     """
     # Validate scale
-    if morph.scale is not None and morph.scale != 1.0:
-        gs.logger.warning("USD rigid entity parsing currently only supports scale=1.0. Scale will be set to 1.0.")
-    morph.scale = 1.0
-
-    assert morph.parser_ctx is not None, "USDRigidEntity must have a parser context."
-    assert morph.prim_path is not None, "USDRigidEntity must have a prim path."
-
-    context: UsdParserContext = morph.parser_ctx
+    # if morph.scale is not None and morph.scale != 1.0:
+    #     gs.logger.warning("USD rigid entity parsing currently only supports scale=1.0. Scale will be set to 1.0.")
+    # morph.scale = 1.0
+    context: UsdContext = morph.usd_ctx
     stage: Usd.Stage = context.stage
-    root_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))
-    assert root_prim.IsValid(), f"Invalid prim path {morph.prim_path} in USD file {morph.file}."
+
+    if morph.prim_path is None:
+        gs.raise_exception("USD rigid entity must have a prim path.")
+
+    entity_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))
+    if not entity_prim.IsValid():
+        gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
 
     # Validate that the prim is either an articulation root or a rigid body
-    is_articulation_root = root_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
-    is_rigid_body = _is_rigid_body(root_prim)
+    entity_type = None
+    if entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+        entity_type = "articulation"
+    elif entity_prim.HasAPI(UsdPhysics.RigidBodyAPI) or entity_prim.HasAPI(UsdPhysics.CollisionAPI):
+        entity_type = "rigid_body"
 
-    if not is_articulation_root and not is_rigid_body:
+    if entity_type is None:
         gs.raise_exception(
-            f"Provided prim {root_prim.GetPath()} is neither an articulation root nor a rigid body. "
-            f"APIs found: {root_prim.GetAppliedSchemas()}"
+            f"Provided prim {entity_prim.GetPath()} is neither an articulation root nor a rigid body. "
+            f"APIs found: {entity_prim.GetAppliedSchemas()}"
         )
 
-    gs.logger.debug(f"Parsing USD rigid entity from {root_prim.GetPath()}.")
-
-    joints = []
-    if is_articulation_root:
-        joint_data = _collect_joints(root_prim)
-        joints = joint_data["joints"]
-
-    has_joints = len(joints) > 0
+    joint_prims = _find_joints(entity_prim)
+    has_joints = len(joint_prims) > 0
 
     if has_joints:
-        links = _collect_links(stage, joints, context)
+        links = _find_links(stage, joint_prims, context)
         link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(links)}
     else:
         links = [root_prim]
@@ -1196,72 +1186,72 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
 # ==================== Stage-Level Parsing Function ====================
 
 
-def parse_all_rigid_entities(
-    scene: gs.Scene,
-    stage: Usd.Stage,
-    context: UsdParserContext,
-    usd_morph: USD,
-    vis_mode: Literal["visual", "collision"],
-    visualize_contact: bool = False,
-) -> Dict[str, "Entity"]:
-    """
-    Find and parse all rigid entities (articulations and rigid bodies) from a USD stage.
+# def parse_all_rigid_entities(
+#     scene: gs.Scene,
+#     stage: Usd.Stage,
+#     context: UsdParserContext,
+#     usd_morph: USD,
+#     vis_mode: Literal["visual", "collision"],
+#     visualize_contact: bool = False,
+# ) -> Dict[str, "Entity"]:
+#     """
+#     Find and parse all rigid entities (articulations and rigid bodies) from a USD stage.
 
-    Parameters
-    ----------
-    scene : gs.Scene
-        The scene to add entities to.
-    stage : Usd.Stage
-        The USD stage.
-    context : UsdParserContext
-        The parser context.
-    usd_morph : USD
-        USD morph configuration.
-    vis_mode : Literal["visual", "collision"]
-        Visualization mode.
-    visualize_contact : bool, optional
-        Whether to visualize contact, by default False.
+#     Parameters
+#     ----------
+#     scene : gs.Scene
+#         The scene to add entities to.
+#     stage : Usd.Stage
+#         The USD stage.
+#     context : UsdParserContext
+#         The parser context.
+#     usd_morph : USD
+#         USD morph configuration.
+#     vis_mode : Literal["visual", "collision"]
+#         Visualization mode.
+#     visualize_contact : bool, optional
+#         Whether to visualize contact, by default False.
 
-    Returns
-    -------
-    Dict[str, Entity]
-        Dictionary of created entities (both articulations and rigid bodies) keyed by prim path.
-    """
-    from genesis.engine.entities.base_entity import Entity as GSEntity
+#     Returns
+#     -------
+#     Dict[str, Entity]
+#         Dictionary of created entities (both articulations and rigid bodies) keyed by prim path.
+#     """
+#     from genesis.engine.entities.base_entity import Entity as GSEntity
 
-    entities: Dict[str, GSEntity] = {}
+#     entities: Dict[str, GSEntity] = {}
 
-    # Find all rigid entities (articulations and rigid bodies)
-    rigid_entities = _find_all_rigid_entities(stage, context)
-    articulation_roots = rigid_entities["articulation_roots"]
-    rigid_bodies = rigid_entities["rigid_bodies"]
+#     # Find all rigid entities (articulations and rigid bodies)
+#     rigid_entities = _find_all_rigid_entities(stage, context)
+#     articulation_roots = rigid_entities["articulation_roots"]
+#     rigid_bodies = rigid_entities["rigid_bodies"]
 
-    gs.logger.debug(
-        f"Found {len(articulation_roots)} articulation(s) and {len(rigid_bodies)} rigid body(ies) in USD stage."
-    )
+#     gs.logger.debug(
+#         f"Found {len(articulation_roots)} articulation(s) and {len(rigid_bodies)} rigid body(ies) in USD stage."
+#     )
 
-    # Process articulation roots
-    for articulation_root in articulation_roots:
-        morph = copy.copy(usd_morph)
-        morph.prim_path = str(articulation_root.GetPath())
-        # NOTE: Now only support per-entity density, not per-geometry density.
-        density = _parse_density(articulation_root)
-        entity = scene.add_entity(
-            morph, material=gs.materials.Rigid(rho=density), vis_mode=vis_mode, visualize_contact=visualize_contact
-        )
-        entities[str(articulation_root.GetPath())] = entity
-        gs.logger.debug(f"Imported articulation from prim: {articulation_root.GetPath()} with density: {density}")
+#     # Process articulation roots
+#     for articulation_root in articulation_roots:
+#         morph = copy.copy(usd_morph)
+#         morph.prim_path = str(articulation_root.GetPath())
+#         # NOTE: Now only support per-entity density, not per-geometry density.
+#         density = _parse_density(articulation_root)
+#         entity = scene.add_entity(
+#             morph, material=gs.materials.Rigid(rho=density), vis_mode=vis_mode, visualize_contact=visualize_contact
+#         )
+#         entities[str(articulation_root.GetPath())] = entity
+#         gs.logger.debug(f"Imported articulation from prim: {articulation_root.GetPath()} with density: {density}")
 
-    # Process rigid bodies (treated as articulation roots with no child links)
-    for rigid_body_prim in rigid_bodies:
-        morph = copy.copy(usd_morph)
-        morph.prim_path = str(rigid_body_prim.GetPath())
-        # NOTE: Now only support per-entity density, not per-geometry density.
-        density = _parse_density(rigid_body_prim)
-        entity = scene.add_entity(
-            morph, material=gs.materials.Rigid(rho=density), vis_mode=vis_mode, visualize_contact=visualize_contact
-        )
-        entities[str(rigid_body_prim.GetPath())] = entity
-        gs.logger.debug(f"Imported rigid body from prim: {rigid_body_prim.GetPath()} with density: {density}")
+#     # Process rigid bodies (treated as articulation roots with no child links)
+#     for rigid_body_prim in rigid_bodies:
+#         morph = copy.copy(usd_morph)
+#         morph.prim_path = str(rigid_body_prim.GetPath())
+#         # NOTE: Now only support per-entity density, not per-geometry density.
+#         density = _parse_density(rigid_body_prim)
+#         entity = scene.add_entity(
+#             morph, material=gs.materials.Rigid(rho=density), vis_mode=vis_mode, visualize_contact=visualize_contact
+#         )
+#         entities[str(rigid_body_prim.GetPath())] = entity
+#         gs.logger.debug(f"Imported rigid body from prim: {rigid_body_prim.GetPath()} with density: {density}")
 
-    return entities
+#     return entities

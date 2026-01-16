@@ -297,7 +297,7 @@ def parse_usd_rigid_body(morph: gs.morphs.USDRigidBody, surface: gs.surfaces.Sur
     # Validate inputs and setup
     scale = getattr(morph, "scale", 1.0)
 
-    context = morph.parser_ctx
+    context = morph.usd_ctx
     stage = context.stage
     rigid_body_prim = stage.GetPrimAtPath(morph.prim_path)
     if not rigid_body_prim.IsValid():
@@ -330,7 +330,6 @@ def parse_usd_rigid_body(morph: gs.morphs.USDRigidBody, surface: gs.surfaces.Sur
 
 # entrance
 def parse_mesh_usd(path: str, group_by_material: bool, scale, surface: gs.surfaces.Surface):
-
     stage = Usd.Stage.Open(path)
     scale *= UsdGeom.GetStageMetersPerUnit(stage)
     yup = UsdGeom.GetStageUpAxis(stage) == "Y"

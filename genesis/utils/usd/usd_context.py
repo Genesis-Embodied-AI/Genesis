@@ -17,9 +17,33 @@ from pxr import Usd, UsdShade, UsdPhysics, Sdf
 import genesis as gs
 import genesis.utils.mesh as mu
 
-from .usd_parser_utils import bfs_iterator
 from .usd_material import parse_material_preview_surface
-from .usd_stage import decompress_usdz
+
+
+def decompress_usdz(usdz_path: str):
+    usdz_folder = mu.get_usd_zip_path(usdz_path)
+
+    # The first file in the package must be a native usd file.
+    # See https://openusd.org/docs/Usdz-File-Format-Specification.html
+    zip_files = Usd.ZipFile.Open(usdz_path)
+    zip_filelist = zip_files.GetFileNames()
+    root_file = zip_filelist[0]
+    if not root_file.lower().endswith(gs.options.morphs.USD_FORMATS[:-1]):
+        gs.raise_exception(f"Invalid usdz root file: {root_file}")
+    root_path = os.path.join(usdz_folder, root_file)
+
+    if not os.path.exists(root_path):
+        for file_name in zip_filelist:
+            file_data = io.BytesIO(zip_files.GetFile(file_name))
+            file_path = os.path.join(usdz_folder, file_name)
+            file_folder = os.path.dirname(file_path)
+            os.makedirs(file_folder, exist_ok=True)
+            with open(file_path, "wb") as out:
+                out.write(file_data.read())
+        gs.logger.warning(f"USDZ file {usdz_path} decompressed to {root_path}.")
+    else:
+        gs.logger.info(f"Decompressed assets detected and used: {root_path}.")
+    return root_path
 
 
 class UsdContext:
@@ -62,47 +86,18 @@ class UsdContext:
 
         self._stage_file = stage_file
         self._stage = Usd.Stage.Open(self._stage_file)
-        self._articulation_roots: list[Usd.Prim] = []  # prim_path -> articulation_root_prim
-        self._rigid_bodies: list[Usd.Prim] = []  # prim_path -> rigid_body_top_prim
-        self._material_preview_surfaces: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
-        self._bake_materials: dict[str, str] = {}  # material_id -> bake_material_path
+        self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
+        self._material_parsed = False
 
     @property
     def stage(self) -> Usd.Stage:
         """Get the USD stage."""
         return self._stage
 
-    # @property
-    # def vis_mode(self) -> Literal["visual", "collision"]:
-    #     """Get the visualization mode."""
-    #     return self._vis_mode
-
     @property
-    def materials(self) -> dict[str, tuple[gs.surfaces.Surface, str]]:
-        """
-        Get the parsed materials dictionary.
-
-        Returns
-        -------
-        dict
-            Key: material_id (str)
-            Value: tuple of (material_surface, uv_name)
-        """
-        return self._materials
-
-    @property
-    def articulation_roots(self) -> list[Usd.Prim]:
-        """
-        Get the articulation root prims.
-        """
-        return self._articulation_roots
-
-    @property
-    def rigid_bodies(self) -> list[Usd.Prim]:
-        """
-        Get the rigid body prims.
-        """
-        return self._rigid_bodies
+    def material_parsed(self) -> bool:
+        """Get whether the materials have been parsed."""
+        return self._material_parsed
 
     def get_prim_id(self, prim: Usd.Prim):
         """Get a unique identifier for a prim based on its first SpecifierOver spec."""
@@ -111,36 +106,41 @@ class UsdContext:
         spec_path = self._stage_file if spec.layer.identifier == self._bake_stage_file else spec.layer.identifier
         return spec_path + spec.path.pathString
 
-    def find_all_rigids(self):
+    def find_all_rigid_entities(self) -> list[Usd.Prim]:
         """
         Find all prims with ArticulationRootAPI and RigidBody in the stage.
         """
-        queue = deque([self._stage.GetPseudoRoot()])
-        while queue:
-            prim = queue.popleft()
+        entity_prims = []
+        stage_iter = iter(Usd.PrimRange(self._stage.GetPseudoRoot()))
+        for prim in stage_iter:
+            # Early break if we come across an ArticulationRootAPI (don't go deeper)
             if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-                self._articulation_roots.append(prim)
+                entity_prims.append(prim)
+                stage_iter.PruneChildren()
             elif prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI):
-                self._rigid_bodies.append(prim)
-            else:
-                for child in prim.GetChildren():
-                    queue.append(child)
+                entity_prims.append(prim)
+                stage_iter.PruneChildren()
+
+        return entity_prims
 
     def find_all_materials(self):
         """
         Parse all materials in the USD stage.
         """
+        bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
+
         # parse materials
         for prim in self._stage.Traverse():
             if prim.IsA(UsdShade.Material):
                 material_usd = UsdShade.Material(prim)
+                # TODO: material_id is reversed for group_by_material option.
                 material_id = self.get_prim_id(prim)
                 material_dict, uv_name = parse_material_preview_surface(material_usd)
-                self._material_preview_surfaces[material_id] = material_dict, uv_name
+                self._material_properties[material_id] = material_dict, uv_name
                 if self._need_bake and material_dict is None:
-                    self._bake_materials[material_id] = str(prim.GetPath())
+                    bake_material_paths[material_id] = str(prim.GetPath())
 
-        if not self._bake_materials:
+        if not bake_material_paths:
             return
 
         device = gs.device
@@ -164,7 +164,7 @@ class UsdContext:
             "--output_dir",
             self._bake_folder,
             "--usd_material_paths",
-            *self._bake_materials.values(),
+            *bake_material_paths.values(),
             "--device",
             str(device.index if device.index is not None else 0),
             "--log_level",
@@ -189,10 +189,10 @@ class UsdContext:
         if os.path.exists(self._bake_stage_file):
             gs.logger.warning(f"USD materials baked to file {self._bake_stage_file}")
             self._stage = Usd.Stage.Open(self._bake_stage_file)
-            for bake_material_id, bake_material_path in self._bake_materials.items():
+            for bake_material_id, bake_material_path in bake_material_paths.items():
                 bake_material_usd = UsdShade.Material(self._stage.GetPrimAtPath(bake_material_path))
                 bake_material_dict, uv_name = parse_material_preview_surface(bake_material_usd)
-                self._material_preview_surfaces[bake_material_id] = bake_material_dict, uv_name
+                self._material_properties[bake_material_id] = bake_material_dict, uv_name
             for baked_texture_obj in Path(self._bake_folder).glob("baked_textures*"):
                 shutil.rmtree(baked_texture_obj)
 
@@ -224,7 +224,7 @@ class UsdContext:
 
     def apply_surface(self, material_id: str, surface: gs.surfaces.Surface):
         material_surface = surface.copy()
-        material_dict, uv_name = self._material_preview_surfaces.get(material_id, (None, "st"))
+        material_dict, uv_name = self._material_properties.get(material_id, (None, "st"))
         if material_dict is not None:
             material_surface.update_texture(
                 color_texture=material_dict.get("color_texture"),

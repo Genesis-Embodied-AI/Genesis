@@ -923,7 +923,7 @@ def parse_usd_articulation(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
         List of equality constraint info dictionaries.
     """
     # Validate inputs and setup
-    context: UsdParserContext = morph.parser_ctx
+    context: UsdParserContext = morph.usd_ctx
     stage: Usd.Stage = context.stage
     root_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))
     assert root_prim.IsValid(), f"Invalid prim path {morph.prim_path} in USD file {morph.file}."

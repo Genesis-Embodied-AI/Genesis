@@ -478,9 +478,9 @@ class Scene(RBC):
 
         morphs = []
         if isinstance(stage, gs.morphs.USD):
-            from genesis.utils.usd import usd_scene as usu
+            from genesis.utils.usd import parse_usd_stage
 
-            morphs = usu.parse_usd_stage(stage)
+            morphs = parse_usd_stage(stage)
         else:
             gs.raise_exception(f"Unsupported stage: {stage}.")
 

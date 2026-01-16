@@ -356,10 +356,6 @@ class Mesh(RBC):
                 for mesh in meshes:
                     mesh.convert_to_zup()
                 gs.logger.debug(f"Converting the GLTF geometry to zup '{morph.file}'")
-            elif morph.is_format(gs.options.morphs.USD_FORMATS):
-                import genesis.utils.usd.usda as usda_utils
-
-                meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
@@ -367,12 +363,6 @@ class Mesh(RBC):
                 gs.raise_exception(f"File type not supported: {morph.file}")
 
             return meshes
-
-        elif isinstance(morph, gs.options.morphs.USDRigidBody):
-            import genesis.utils.usd.usda as usda_utils
-
-            # meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
-            meshes = usda_utils.parse_usd_rigid_body(morph, surface)
 
         else:
             if isinstance(morph, gs.options.morphs.Box):

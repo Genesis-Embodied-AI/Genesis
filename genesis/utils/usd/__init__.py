@@ -19,6 +19,7 @@ except ImportError as e:
     gs.raise_exception_from("pxr module not found. Please install it with `pip install genesis-world[usd]`.", e)
 else:
     # USD support is available - import the parser modules
-    from .usd_parser import import_from_stage
-    from .usd_rigid_entity_parser import parse_usd_rigid_entity
+    from .usd_stage import parse_usd_stage
+    from .usd_context import UsdContext
+    from .usd_rigid_entity import parse_usd
     from .usd_rendering_material_parser import parse_all_materials
