@@ -209,7 +209,7 @@ class ConstraintSolver:
         if use_decomposed_kernels:
             # Import here to avoid circular dependency and overhead when not needed
             if USE_DECOMPOSED_MACRO:
-                from genesis.engine.solvers.rigid.constraint_solver_decomp_batch_breakdown import (
+                from genesis.engine.solvers.rigid.constraint_solver_decomp_breakdown import (
                     func_solve_decomposed_macrokernels,
                 )
 
@@ -222,7 +222,7 @@ class ConstraintSolver:
                     self._solver._static_rigid_sim_config,
                 )
             else:
-                from genesis.engine.solvers.rigid.constraint_solver_decomp_batch_breakdown import (
+                from genesis.engine.solvers.rigid.constraint_solver_decomp_breakdown import (
                     func_solve_decomposed_microkernels,
                 )
 
