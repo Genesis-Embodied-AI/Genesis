@@ -259,7 +259,7 @@ def func_solve_decomposed_macrokernels(
 ):
     """
     Uses separate kernels for each solver step per iteration.
-    
+
     This maximizes kernel granularity, potentially allowing better GPU scheduling
     and more flexibility in execution, at the cost of more Python→C++ boundary crossings
     (6× per iteration instead of 1×).
