@@ -191,20 +191,8 @@ def func_solve_decomposed(
     static_rigid_sim_config,
 ):
     """
-    Decomposed constraint solver maintaining original batch-level parallelization.
-
     Uses a single kernel with multiple top-level for loops per iteration, reducing
     Python→C++ boundary crossing overhead from 6× to 1× per iteration.
-
-    This provides much better CPU performance (~3-6x faster than separate kernels)
-    while still allowing profiling of individual steps on GPU.
-
-    Args:
-        entities_info: Entity information array
-        dofs_state: DOF state array
-        constraint_state: Constraint state array
-        rigid_global_info: Global rigid body info
-        static_rigid_sim_config: Static configuration
     """
     iterations = rigid_global_info.iterations[None]
     for _it in range(iterations):
