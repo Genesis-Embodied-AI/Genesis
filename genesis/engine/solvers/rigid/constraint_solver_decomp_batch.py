@@ -38,8 +38,7 @@ def kernel_solve_body_decomposed(
     Single kernel containing all solver steps as separate top-level loops.
 
     This reduces Python→C++ boundary crossing overhead (1 call per iteration instead of 6)
-    while still allowing Taichi to launch each step as a separate GPU kernel internally
-    for profiling purposes.
+    while still allowing Taichi to launch each step as a separate GPU kernel internally.
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.qacc.shape[0]
