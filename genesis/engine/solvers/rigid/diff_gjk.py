@@ -950,22 +950,6 @@ class _DeprecatedModuleWrapper_diffgjk(types.ModuleType):
         self._warned = False
         self.__file__ = getattr(actual_module, '__file__', None)
         self.__package__ = '.'.join(old_name.split('.')[:-1])
-        
-        try:
-            import inspect
-            frame = inspect.currentframe()
-            for _ in range(10):
-                if frame is None:
-                    break
-                frame = frame.f_back
-                if frame and 'diff_gjk_decomp' in str(frame.f_code.co_filename):
-                    continue
-                if frame and frame.f_code.co_name in ('_find_and_load', '_handle_fromlist', 'import_module'):
-                    _show_deprecation_warning_diffgjk()
-                    self._warned = True
-                    break
-        except:
-            pass
 
     def __getattr__(self, name):
         if not self._warned:

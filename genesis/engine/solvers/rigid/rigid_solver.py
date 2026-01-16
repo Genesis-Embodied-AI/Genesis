@@ -8374,27 +8374,6 @@ class _DeprecatedModuleWrapper(types.ModuleType):
         self._warned = False
         self.__file__ = getattr(actual_module, '__file__', None)
         self.__package__ = '.'.join(old_name.split('.')[:-1])
-        
-        # Check if someone is trying to import this module from the stack
-        # We show the warning immediately if we detect an import
-        try:
-            import inspect
-            frame = inspect.currentframe()
-            # Walk up the stack to see if we're being imported
-            for _ in range(10):  # Check up to 10 frames
-                if frame is None:
-                    break
-                frame = frame.f_back
-                if frame and 'rigid_solver_decomp' in str(frame.f_code.co_filename):
-                    # Skip if we're in this file
-                    continue
-                if frame and frame.f_code.co_name in ('_find_and_load', '_handle_fromlist', 'import_module'):
-                    # We're being imported!
-                    _show_deprecation_warning()
-                    self._warned = True
-                    break
-        except:
-            pass
 
     def __getattr__(self, name):
         # This is called when an attribute is not found via normal lookup
