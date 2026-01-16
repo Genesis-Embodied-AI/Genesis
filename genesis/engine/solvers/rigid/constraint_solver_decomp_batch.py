@@ -27,7 +27,7 @@ def _kernel_solve_body_decomposed(
     # Index: 0
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            alpha = constraint_solver_decomp.func_linesearch(
+            constraint_solver_decomp.func_linesearch_top_level(
                 i_b,
                 entities_info=entities_info,
                 dofs_state=dofs_state,
@@ -35,26 +35,6 @@ def _kernel_solve_body_decomposed(
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
-
-            if ti.abs(alpha) < rigid_global_info.EPS[None]:
-                constraint_state.improved[i_b] = False
-            else:
-                # Update qacc and Ma
-                # we need alpha for this, so stay in same top level for loop
-                # (though we could store alpha in a new tensor of course, if we wanted to split this)
-                for i_d in range(n_dofs):
-                    constraint_state.qacc[i_d, i_b] = (
-                        constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
-                    )
-                    constraint_state.Ma[i_d, i_b] = (
-                        constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
-                    )
-
-                # Update Jaref
-                for i_c in range(constraint_state.n_constraints[i_b]):
-                    constraint_state.Jaref[i_c, i_b] = (
-                        constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
-                    )
         else:
             constraint_state.improved[i_b] = False
 
