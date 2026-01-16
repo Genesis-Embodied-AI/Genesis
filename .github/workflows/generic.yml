@@ -21,7 +21,6 @@ jobs:
       fail-fast: false
       matrix:
         # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: []
         PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
         GS_BACKEND: ["cpu"]
         GS_ENABLE_NDARRAY: ["1"]
