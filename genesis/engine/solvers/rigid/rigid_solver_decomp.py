@@ -147,9 +147,9 @@ class RigidSolver(Solver):
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
-        # Handle heterogeneous morphs (list of morphs)
+        # Handle heterogeneous morphs (list/tuple of morphs)
         morph_heterogeneous = []
-        if isinstance(morph, list):
+        if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph
             self._enable_heterogeneous |= bool(morph_heterogeneous)
 
@@ -262,7 +262,6 @@ class RigidSolver(Solver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
-            batch_entities_info=self._options.batch_entities_info,
             enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_multi_contact=self._enable_multi_contact,
@@ -892,6 +891,7 @@ class RigidSolver(Solver):
                 # taichi variables
                 entities_info=self.entities_info,
                 entities_state=self.entities_state,
+                links_info=self.links_info,
                 dofs_info=self.dofs_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -3433,6 +3433,7 @@ def kernel_init_entity_fields(
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
+    links_info: array_class.LinksInfo,
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),

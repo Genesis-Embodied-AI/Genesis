@@ -4,7 +4,7 @@ import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 import numpy as np
 import torch
@@ -313,7 +313,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_entity(
         self,
-        morph: Morph | list[Morph],
+        morph: Morph | Iterable[Morph],
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -349,20 +349,18 @@ class Scene(RBC):
             # assign a local surface, otherwise modification will apply on global default surface
             surface = gs.surfaces.Default()
 
-        # Handle heterogeneous morphs (any iterable of morphs, excluding strings and Morph objects)
-        is_heterogeneous = isinstance(morph, collections.abc.Iterable) and not isinstance(morph, (Morph))
+        # Handle heterogeneous morphs (any iterable of morphs, excluding Morph objects)
+        is_heterogeneous = isinstance(morph, collections.abc.Iterable) and not isinstance(morph, Morph)
         if is_heterogeneous:
-            morphs = tuple(morph)
-            morph_for_checks = morphs[0]
+            morph = tuple(morph)
+            morph_for_checks = morph[0]
             if not isinstance(material, gs.materials.Rigid):
                 gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
-            for m in morphs:
+            for m in morph:
                 if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
                     gs.raise_exception(
                         f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
                     )
-            # Convert to list for downstream processing
-            morph = list(morphs)
         else:
             morph_for_checks = morph
 

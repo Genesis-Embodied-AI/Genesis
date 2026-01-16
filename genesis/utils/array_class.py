@@ -1757,7 +1757,7 @@ class StructEntitiesInfo(metaclass=BASE_METACLASS):
 
 
 def get_entities_info(solver):
-    shape = (solver.n_entities_, solver._B) if solver._options.batch_entities_info else (solver.n_entities_,)
+    shape = (solver.n_entities_,)
 
     return StructEntitiesInfo(
         dof_start=V(dtype=gs.ti_int, shape=shape),
@@ -1821,7 +1821,6 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     para_level: int
     enable_collision: bool
     use_hibernation: bool
-    batch_entities_info: bool
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool

@@ -1360,12 +1360,11 @@ def func_broad_phase(
     for i_b in range(_B):
         axis = 0
 
-        # Calculate the number of active geoms for this environment
-        # (for heterogeneous entities, different envs may have different geoms)
+        # Get total number of active geoms for this environment
         env_n_geoms = 0
         for i_l in range(n_links):
             I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
-            env_n_geoms = env_n_geoms + links_info.geom_end[I_l] - links_info.geom_start[I_l]
+            env_n_geoms += links_info.geom_end[I_l] - links_info.geom_start[I_l]
 
         # copy updated geom aabbs to buffer for sorting
         if collider_state.first_time[i_b]:
