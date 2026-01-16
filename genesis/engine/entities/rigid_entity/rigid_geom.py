@@ -349,7 +349,7 @@ class RigidGeom(RBC):
             gs.raise_exception("`friction` must be non-negative.")
         self._friction = friction
 
-        if self.is_built:
+        if self._solver.is_built:
             self._solver.set_geom_friction(friction, self._idx)
 
     # ------------------------------------------------------------------------------------
@@ -400,7 +400,7 @@ class RigidGeom(RBC):
         """
         Set the solver parameters of this geometry.
         """
-        if self.is_built:
+        if self._solver.is_built:
             self._solver.set_sol_params(sol_params, geoms_idx=self._idx, envs_idx=None)
         else:
             self._sol_params = sol_params
@@ -410,7 +410,7 @@ class RigidGeom(RBC):
         """
         Get the solver parameters of this geometry.
         """
-        if self.is_built:
+        if self._solver.is_built:
             return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None)[0]
         return self._sol_params
 

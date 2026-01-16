@@ -2220,7 +2220,7 @@ class RigidSolver(Solver):
             tensor = ti_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, copy=True)
             if self.n_envs == 0 and self._options.batch_joints_info:
                 tensor = tensor[0]
-        else:
+        else:  # geoms_idx is not None
             # Never batched
             assert envs_idx is None
             tensor = ti_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, copy=True)
