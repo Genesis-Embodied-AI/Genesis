@@ -2531,3 +2531,92 @@ def kernel_get_equality_constraints(
             elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.JOINT:
                 fout[i_e, 0] = constraint_state.efc_force[i_c_start, i_b]
                 i_c_start = i_c_start + 1
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'constraint_solver_decomp'
+
+import sys
+import types
+
+
+def _show_deprecation_warning_constraintsolver():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+        gs.logger.warning(
+            f"\n"
+            f"╔══════════════════════════════════════════════════════════════════════════╗\n"
+            f"║                         DEPRECATION WARNING                              ║\n"
+            f"╠══════════════════════════════════════════════════════════════════════════╣\n"
+            f"║ The module 'constraint_solver_decomp' has been renamed to               ║\n"
+            f"║ 'constraint_solver'                                                      ║\n"
+            f"║                                                                          ║\n"
+            f"║ Please update your imports:                                              ║\n"
+            f"║   OLD: from genesis.engine.solvers.rigid import constraint_solver_decomp ║\n"
+            f"║   NEW: from genesis.engine.solvers.rigid import constraint_solver        ║\n"
+            f"║                                                                          ║\n"
+            f"║ This compatibility shim will be removed in a future release.            ║\n"
+            f"╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except:
+        import warnings
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.constraint_solver_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.constraint_solver'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper_constraintsolver(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'constraint_solver_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, '__file__', None)
+        self.__package__ = '.'.join(old_name.split('.')[:-1])
+        
+        try:
+            import inspect
+            frame = inspect.currentframe()
+            for _ in range(10):
+                if frame is None:
+                    break
+                frame = frame.f_back
+                if frame and 'constraint_solver_decomp' in str(frame.f_code.co_filename):
+                    continue
+                if frame and frame.f_code.co_name in ('_find_and_load', '_handle_fromlist', 'import_module'):
+                    _show_deprecation_warning_constraintsolver()
+                    self._warned = True
+                    break
+        except:
+            pass
+
+    def __getattr__(self, name):
+        if not self._warned:
+            _show_deprecation_warning_constraintsolver()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+_current_module_constraintsolver = sys.modules[__name__]
+_deprecated_name_constraintsolver = "genesis.engine.solvers.rigid.constraint_solver_decomp"
+_wrapper_constraintsolver = _DeprecatedModuleWrapper_constraintsolver(
+    _current_module_constraintsolver, _deprecated_name_constraintsolver, __name__
+)
+sys.modules[_deprecated_name_constraintsolver] = _wrapper_constraintsolver

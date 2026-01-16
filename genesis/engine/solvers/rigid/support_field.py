@@ -395,3 +395,91 @@ def _func_count_supports_box(
     d_box = gu.ti_inv_transform_by_quat(d, g_quat)
 
     return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'support_field_decomp'
+
+import sys
+import types
+
+
+def _show_deprecation_warning_supportfield():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+        gs.logger.warning(
+            f"\n"
+            f"╔══════════════════════════════════════════════════════════════════════════╗\n"
+            f"║                         DEPRECATION WARNING                              ║\n"
+            f"╠══════════════════════════════════════════════════════════════════════════╣\n"
+            f"║ The module 'support_field_decomp' has been renamed to 'support_field'   ║\n"
+            f"║                                                                          ║\n"
+            f"║ Please update your imports:                                              ║\n"
+            f"║   OLD: from genesis.engine.solvers.rigid import support_field_decomp     ║\n"
+            f"║   NEW: from genesis.engine.solvers.rigid import support_field            ║\n"
+            f"║                                                                          ║\n"
+            f"║ This compatibility shim will be removed in a future release.            ║\n"
+            f"╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except:
+        import warnings
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.support_field_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.support_field'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper_supportfield(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'support_field_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, '__file__', None)
+        self.__package__ = '.'.join(old_name.split('.')[:-1])
+        
+        try:
+            import inspect
+            frame = inspect.currentframe()
+            for _ in range(10):
+                if frame is None:
+                    break
+                frame = frame.f_back
+                if frame and 'support_field_decomp' in str(frame.f_code.co_filename):
+                    continue
+                if frame and frame.f_code.co_name in ('_find_and_load', '_handle_fromlist', 'import_module'):
+                    _show_deprecation_warning_supportfield()
+                    self._warned = True
+                    break
+        except:
+            pass
+
+    def __getattr__(self, name):
+        if not self._warned:
+            _show_deprecation_warning_supportfield()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+_current_module_supportfield = sys.modules[__name__]
+_deprecated_name_supportfield = "genesis.engine.solvers.rigid.support_field_decomp"
+_wrapper_supportfield = _DeprecatedModuleWrapper_supportfield(
+    _current_module_supportfield, _deprecated_name_supportfield, __name__
+)
+sys.modules[_deprecated_name_supportfield] = _wrapper_supportfield
