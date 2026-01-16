@@ -3,7 +3,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.support_field_decomp as support_field
+import genesis.engine.solvers.rigid.support_field as support_field
 
 
 class MPR:
@@ -822,3 +822,75 @@ def func_mpr_contact(
         center_a=center_a,
         center_b=center_b,
     )
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'mpr_decomp'
+
+import sys
+import types
+
+
+def _show_deprecation_warning_mpr():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+
+        gs.logger.warning(
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'mpr_decomp' has been renamed to 'mpr'                        ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: from genesis.engine.solvers.rigid import mpr_decomp               ║\n"
+            "║   NEW: from genesis.engine.solvers.rigid import mpr                      ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except Exception:
+        import warnings
+
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.mpr_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.mpr'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper_mpr(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'mpr_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
+
+    def __getattr__(self, name):
+        if not self._warned:
+            _show_deprecation_warning_mpr()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+_current_module_mpr = sys.modules[__name__]
+_deprecated_name_mpr = "genesis.engine.solvers.rigid.mpr_decomp"
+_wrapper_mpr = _DeprecatedModuleWrapper_mpr(_current_module_mpr, _deprecated_name_mpr, __name__)
+sys.modules[_deprecated_name_mpr] = _wrapper_mpr

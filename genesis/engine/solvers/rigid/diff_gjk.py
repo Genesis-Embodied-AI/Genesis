@@ -2,7 +2,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.gjk_decomp as GJK
+import genesis.engine.solvers.rigid.gjk as GJK
 
 
 @ti.func
@@ -895,3 +895,75 @@ def func_triangle_affine_coords(v1, v2, v3, normal, point):
         (v3 - point).cross(v1 - point).dot(normal) * inv_nn,
         (v1 - point).cross(v2 - point).dot(normal) * inv_nn,
     )
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'diff_gjk_decomp'
+
+import sys
+import types
+
+
+def _show_deprecation_warning_diffgjk():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+
+        gs.logger.warning(
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'diff_gjk_decomp' has been renamed to 'diff_gjk'              ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: from genesis.engine.solvers.rigid import diff_gjk_decomp          ║\n"
+            "║   NEW: from genesis.engine.solvers.rigid import diff_gjk                 ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except Exception:
+        import warnings
+
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.diff_gjk_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.diff_gjk'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper_diffgjk(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'diff_gjk_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
+
+    def __getattr__(self, name):
+        if not self._warned:
+            _show_deprecation_warning_diffgjk()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+_current_module_diffgjk = sys.modules[__name__]
+_deprecated_name_diffgjk = "genesis.engine.solvers.rigid.diff_gjk_decomp"
+_wrapper_diffgjk = _DeprecatedModuleWrapper_diffgjk(_current_module_diffgjk, _deprecated_name_diffgjk, __name__)
+sys.modules[_deprecated_name_diffgjk] = _wrapper_diffgjk

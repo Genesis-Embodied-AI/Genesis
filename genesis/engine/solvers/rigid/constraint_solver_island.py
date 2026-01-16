@@ -9,11 +9,11 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 from .contact_island import ContactIsland
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
+from .rigid_solver_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     from genesis.engine.colliders.collider import Collider
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 @ti.data_oriented
@@ -1047,3 +1047,78 @@ class ConstraintSolverIsland:
             i_e = self.contact_island.entity_id[i_e_, i_b]
             for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                 self.search[i_d, i_b] = -self.Mgrad[i_d, i_b]
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'constraint_solver_island_decomp'
+
+import sys
+import types
+
+
+def _show_deprecation_warning_constraintsolverisland():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+
+        gs.logger.warning(
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'constraint_solver_island_decomp' has been renamed to         ║\n"
+            "║ 'constraint_solver_island'                                               ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: ...solvers.rigid import constraint_solver_island_decomp           ║\n"
+            "║   NEW: ...solvers.rigid import constraint_solver_island                  ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except Exception:
+        import warnings
+
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.constraint_solver_island_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.constraint_solver_island'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper_constraintsolverisland(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'constraint_solver_island_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
+
+    def __getattr__(self, name):
+        if not self._warned:
+            _show_deprecation_warning_constraintsolverisland()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+_current_module_constraintsolverisland = sys.modules[__name__]
+_deprecated_name_constraintsolverisland = "genesis.engine.solvers.rigid.constraint_solver_island_decomp"
+_wrapper_constraintsolverisland = _DeprecatedModuleWrapper_constraintsolverisland(
+    _current_module_constraintsolverisland, _deprecated_name_constraintsolverisland, __name__
+)
+sys.modules[_deprecated_name_constraintsolverisland] = _wrapper_constraintsolverisland

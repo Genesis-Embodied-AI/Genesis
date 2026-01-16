@@ -21,13 +21,13 @@ from genesis.utils.misc import (
     sanitize_indexed_tensor,
     assign_indexed_tensor,
 )
-from genesis.utils.sdf_decomp import SDF
+from genesis.utils.sdf import SDF
 
 from ..base_solver import Solver
-from .collider_decomp import Collider
-from .constraint_solver_decomp import ConstraintSolver
-from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
+from .collider import Collider
+from .constraint_solver import ConstraintSolver
+from .constraint_solver_island import ConstraintSolverIsland
+from .rigid_solver_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     import genesis.engine.solvers.rigid.array_class
@@ -8318,3 +8318,80 @@ def func_write_and_read_field_if(field: array_class.V_ANNOTATION, I, value, cond
 def func_check_index_range(idx: ti.i32, min: ti.i32, max: ti.i32, cond: ti.template()):
     # Conditionally check if the index is in the range [min, max) to save computational cost
     return (idx >= min and idx < max) if ti.static(cond) else True
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'rigid_solver_decomp'
+
+import sys
+import types
+
+
+def _show_deprecation_warning():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+
+        gs.logger.warning(
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'rigid_solver_decomp' has been renamed to 'rigid_solver'      ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: from genesis.engine.solvers.rigid import rigid_solver_decomp      ║\n"
+            "║   NEW: from genesis.engine.solvers.rigid import rigid_solver             ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except Exception:
+        import warnings
+
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.rigid_solver_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.rigid_solver'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'rigid_solver_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        # Use regular attribute assignment which works with ModuleType
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
+
+    def __getattr__(self, name):
+        # This is called when an attribute is not found via normal lookup
+        if not self._warned:
+            _show_deprecation_warning()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+# Create the deprecated module alias
+_current_module = sys.modules[__name__]
+_deprecated_name = "genesis.engine.solvers.rigid.rigid_solver_decomp"
+_wrapper = _DeprecatedModuleWrapper(_current_module, _deprecated_name, __name__)
+
+# Register it in sys.modules so imports of the old name will work
+sys.modules[_deprecated_name] = _wrapper

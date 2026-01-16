@@ -9,23 +9,23 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.gjk_decomp as gjk
-import genesis.engine.solvers.rigid.diff_gjk_decomp as diff_gjk
-import genesis.engine.solvers.rigid.mpr_decomp as mpr
-import genesis.utils.sdf_decomp as sdf
-import genesis.engine.solvers.rigid.support_field_decomp as support_field
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.gjk as gjk
+import genesis.engine.solvers.rigid.diff_gjk as diff_gjk
+import genesis.engine.solvers.rigid.mpr as mpr
+import genesis.utils.sdf as sdf
+import genesis.engine.solvers.rigid.support_field as support_field
+import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 
-from .mpr_decomp import MPR
-from .gjk_decomp import GJK
-from ....utils.sdf_decomp import SDF
-from .support_field_decomp import SupportField
+from .mpr import MPR
+from .gjk import GJK
+from ....utils.sdf import SDF
+from .support_field import SupportField
 
 from enum import IntEnum
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -3443,3 +3443,74 @@ def func_set_upstream_grad(
             collider_state.contact_data.pos.grad[i_c, i_b][j] = dL_dposition[i_b, i_c, j]
             collider_state.contact_data.normal.grad[i_c, i_b][j] = dL_dnormal[i_b, i_c, j]
         collider_state.contact_data.penetration.grad[i_c, i_b] = dL_dpenetration[i_b, i_c]
+
+
+# ------------------------------------------------------------------------------------
+# ------------------------ Backward Compatibility Shim ------------------------------
+# ------------------------------------------------------------------------------------
+# This section creates a deprecated alias module for the old name 'collider_decomp'
+
+import types
+
+
+def _show_deprecation_warning_collider():
+    """Show a deprecation warning for the old module name."""
+    try:
+        import genesis as gs
+
+        gs.logger.warning(
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'collider_decomp' has been renamed to 'collider'              ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: from genesis.engine.solvers.rigid import collider_decomp          ║\n"
+            "║   NEW: from genesis.engine.solvers.rigid import collider                 ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.             ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
+        )
+    except Exception:
+        import warnings
+
+        warnings.warn(
+            "Module 'genesis.engine.solvers.rigid.collider_decomp' has been renamed to "
+            "'genesis.engine.solvers.rigid.collider'. Please update your imports. "
+            "This compatibility shim will be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+
+
+class _DeprecatedModuleWrapper_collider(types.ModuleType):
+    """
+    A module wrapper that shows a deprecation warning when accessed.
+    This allows us to support the old module name 'collider_decomp' while
+    warning users to update their imports.
+    """
+
+    def __init__(self, actual_module, old_name, new_name):
+        super().__init__(old_name)
+        self._actual_module = actual_module
+        self._old_name = old_name
+        self._new_name = new_name
+        self._warned = False
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
+
+    def __getattr__(self, name):
+        if not self._warned:
+            _show_deprecation_warning_collider()
+            self._warned = True
+        return getattr(self._actual_module, name)
+
+    def __dir__(self):
+        return dir(self._actual_module)
+
+
+_current_module_collider = sys.modules[__name__]
+_deprecated_name_collider = "genesis.engine.solvers.rigid.collider_decomp"
+_wrapper_collider = _DeprecatedModuleWrapper_collider(_current_module_collider, _deprecated_name_collider, __name__)
+sys.modules[_deprecated_name_collider] = _wrapper_collider

@@ -329,7 +329,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         """Rebuild BVH from current geometry in the scene."""
-        from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
+        from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
 
         kernel_update_all_verts(
             geoms_info=shared_metadata.solver.geoms_info,
