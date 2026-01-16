@@ -196,8 +196,6 @@ def func_solve_decomposed(
     """
     iterations = rigid_global_info.iterations[None]
     for _it in range(iterations):
-        # Single kernel call containing all 6 steps as separate top-level loops
-        # This reduces overhead: 1 Python→C++ crossing instead of 6
         kernel_solve_body_decomposed(
             entities_info,
             dofs_state,
