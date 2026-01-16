@@ -93,6 +93,7 @@ class RigidSolver(Solver):
         self._enable_mujoco_compatibility = options.enable_mujoco_compatibility
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
+        self._enable_neutral_collision = options.enable_neutral_collision
         self._enable_adjacent_collision = options.enable_adjacent_collision
         self._disable_constraint = options.disable_constraint
         self._max_collision_pairs = options.max_collision_pairs
@@ -131,6 +132,9 @@ class RigidSolver(Solver):
             )
 
         self._options = options
+
+        self.collider = None
+        self.constraint_solver = None
 
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
@@ -350,11 +354,12 @@ class RigidSolver(Solver):
 
         self._init_envs_offset()
         self._init_sdf()
-        self._init_collider()
-        self._init_constraint_solver()
 
         self._init_invweight_and_meaninertia(force_update=False)
         self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
+
+        self._init_collider()
+        self._init_constraint_solver()
 
         # FIXME: when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -639,7 +644,7 @@ class RigidSolver(Solver):
             self.qpos.from_numpy(init_qpos)
         if is_init_qpos_out_of_bounds:
             gs.logger.warning(
-                "Reference robot position exceeds joint limits."
+                "Neutral robot position (qpos0) exceeds joint limits."
                 # "Clipping initial position too make sure it is valid."
             )
 
@@ -1833,8 +1838,10 @@ class RigidSolver(Solver):
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
 
-        self.collider.reset(envs_idx)
-        self.constraint_solver.reset(envs_idx)
+        if self.collider is not None:
+            self.collider.reset(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):

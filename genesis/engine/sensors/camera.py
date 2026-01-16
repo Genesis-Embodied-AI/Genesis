@@ -17,7 +17,7 @@ from genesis.options.sensors import (
     SensorOptions,
 )
 
-from genesis.utils.geom import pos_lookat_up_to_T, trans_quat_to_T
+from genesis.utils.geom import pos_lookat_up_to_T, trans_quat_to_T, transform_by_quat
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.batch_renderer import BatchRenderer
 from genesis.options.renderers import BatchRenderer as BatchRendererOptions
@@ -490,8 +490,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
             link_quat = self._link.get_quat()
 
             # Apply pos directly as offset from link
-            from genesis.utils.geom import transform_by_quat
-
             pos_world = transform_by_quat(pos, link_quat) + link_pos
             pos = pos_world
         elif self._link is not None:
@@ -596,8 +594,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
             link_quat = self._link.get_quat()
 
             # Apply pos directly as offset from link
-            from genesis.utils.geom import transform_by_quat
-
             pos_world = transform_by_quat(torch.tensor(pos, dtype=gs.tc_float, device=gs.device), link_quat) + link_pos
             pos = pos_world.tolist()
 

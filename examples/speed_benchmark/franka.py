@@ -7,16 +7,16 @@ gs.init(backend=gs.gpu, performance_mode=True)
 
 ########################## create a scene ##########################
 scene = gs.Scene(
-    show_viewer=False,
+    rigid_options=gs.options.RigidOptions(
+        dt=0.01,
+    ),
     viewer_options=gs.options.ViewerOptions(
         camera_pos=(3.5, -1.0, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
         camera_fov=40,
         res=(1920, 1080),
     ),
-    rigid_options=gs.options.RigidOptions(
-        dt=0.01,
-    ),
+    show_viewer=False,
 )
 
 ########################## entities ##########################
