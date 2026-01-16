@@ -65,23 +65,25 @@ def _show_deprecation_warning_rigidsolverutil():
     """Show a deprecation warning for the old module name."""
     try:
         import genesis as gs
+
         gs.logger.warning(
-            f"\n"
-            f"╔══════════════════════════════════════════════════════════════════════════╗\n"
-            f"║                         DEPRECATION WARNING                              ║\n"
-            f"╠══════════════════════════════════════════════════════════════════════════╣\n"
-            f"║ The module 'rigid_solver_util_decomp' has been renamed to               ║\n"
-            f"║ 'rigid_solver_util'                                                      ║\n"
-            f"║                                                                          ║\n"
-            f"║ Please update your imports:                                              ║\n"
-            f"║   OLD: from genesis.engine.solvers.rigid import rigid_solver_util_decomp ║\n"
-            f"║   NEW: from genesis.engine.solvers.rigid import rigid_solver_util        ║\n"
-            f"║                                                                          ║\n"
-            f"║ This compatibility shim will be removed in a future release.            ║\n"
-            f"╚══════════════════════════════════════════════════════════════════════════╝"
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'rigid_solver_util_decomp' has been renamed to               ║\n"
+            "║ 'rigid_solver_util'                                                      ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: from genesis.engine.solvers.rigid import rigid_solver_util_decomp ║\n"
+            "║   NEW: from genesis.engine.solvers.rigid import rigid_solver_util        ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
         )
     except:
         import warnings
+
         warnings.warn(
             "Module 'genesis.engine.solvers.rigid.rigid_solver_util_decomp' has been renamed to "
             "'genesis.engine.solvers.rigid.rigid_solver_util'. Please update your imports. "
@@ -104,8 +106,8 @@ class _DeprecatedModuleWrapper_rigidsolverutil(types.ModuleType):
         self._old_name = old_name
         self._new_name = new_name
         self._warned = False
-        self.__file__ = getattr(actual_module, '__file__', None)
-        self.__package__ = '.'.join(old_name.split('.')[:-1])
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
 
     def __getattr__(self, name):
         if not self._warned:

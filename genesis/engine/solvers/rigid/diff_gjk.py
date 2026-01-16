@@ -910,22 +910,24 @@ def _show_deprecation_warning_diffgjk():
     """Show a deprecation warning for the old module name."""
     try:
         import genesis as gs
+
         gs.logger.warning(
-            f"\n"
-            f"╔══════════════════════════════════════════════════════════════════════════╗\n"
-            f"║                         DEPRECATION WARNING                              ║\n"
-            f"╠══════════════════════════════════════════════════════════════════════════╣\n"
-            f"║ The module 'diff_gjk_decomp' has been renamed to 'diff_gjk'             ║\n"
-            f"║                                                                          ║\n"
-            f"║ Please update your imports:                                              ║\n"
-            f"║   OLD: from genesis.engine.solvers.rigid import diff_gjk_decomp          ║\n"
-            f"║   NEW: from genesis.engine.solvers.rigid import diff_gjk                 ║\n"
-            f"║                                                                          ║\n"
-            f"║ This compatibility shim will be removed in a future release.            ║\n"
-            f"╚══════════════════════════════════════════════════════════════════════════╝"
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'diff_gjk_decomp' has been renamed to 'diff_gjk'             ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: from genesis.engine.solvers.rigid import diff_gjk_decomp          ║\n"
+            "║   NEW: from genesis.engine.solvers.rigid import diff_gjk                 ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
         )
     except:
         import warnings
+
         warnings.warn(
             "Module 'genesis.engine.solvers.rigid.diff_gjk_decomp' has been renamed to "
             "'genesis.engine.solvers.rigid.diff_gjk'. Please update your imports. "
@@ -948,8 +950,8 @@ class _DeprecatedModuleWrapper_diffgjk(types.ModuleType):
         self._old_name = old_name
         self._new_name = new_name
         self._warned = False
-        self.__file__ = getattr(actual_module, '__file__', None)
-        self.__package__ = '.'.join(old_name.split('.')[:-1])
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
 
     def __getattr__(self, name):
         if not self._warned:
@@ -963,7 +965,5 @@ class _DeprecatedModuleWrapper_diffgjk(types.ModuleType):
 
 _current_module_diffgjk = sys.modules[__name__]
 _deprecated_name_diffgjk = "genesis.engine.solvers.rigid.diff_gjk_decomp"
-_wrapper_diffgjk = _DeprecatedModuleWrapper_diffgjk(
-    _current_module_diffgjk, _deprecated_name_diffgjk, __name__
-)
+_wrapper_diffgjk = _DeprecatedModuleWrapper_diffgjk(_current_module_diffgjk, _deprecated_name_diffgjk, __name__)
 sys.modules[_deprecated_name_diffgjk] = _wrapper_diffgjk

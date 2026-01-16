@@ -1062,23 +1062,25 @@ def _show_deprecation_warning_constraintsolverisland():
     """Show a deprecation warning for the old module name."""
     try:
         import genesis as gs
+
         gs.logger.warning(
-            f"\n"
-            f"╔══════════════════════════════════════════════════════════════════════════╗\n"
-            f"║                         DEPRECATION WARNING                              ║\n"
-            f"╠══════════════════════════════════════════════════════════════════════════╣\n"
-            f"║ The module 'constraint_solver_island_decomp' has been renamed to        ║\n"
-            f"║ 'constraint_solver_island'                                               ║\n"
-            f"║                                                                          ║\n"
-            f"║ Please update your imports:                                              ║\n"
-            f"║   OLD: ...solvers.rigid import constraint_solver_island_decomp           ║\n"
-            f"║   NEW: ...solvers.rigid import constraint_solver_island                  ║\n"
-            f"║                                                                          ║\n"
-            f"║ This compatibility shim will be removed in a future release.            ║\n"
-            f"╚══════════════════════════════════════════════════════════════════════════╝"
+            "\n"
+            "╔══════════════════════════════════════════════════════════════════════════╗\n"
+            "║                         DEPRECATION WARNING                              ║\n"
+            "╠══════════════════════════════════════════════════════════════════════════╣\n"
+            "║ The module 'constraint_solver_island_decomp' has been renamed to        ║\n"
+            "║ 'constraint_solver_island'                                               ║\n"
+            "║                                                                          ║\n"
+            "║ Please update your imports:                                              ║\n"
+            "║   OLD: ...solvers.rigid import constraint_solver_island_decomp           ║\n"
+            "║   NEW: ...solvers.rigid import constraint_solver_island                  ║\n"
+            "║                                                                          ║\n"
+            "║ This compatibility shim will be removed in a future release.            ║\n"
+            "╚══════════════════════════════════════════════════════════════════════════╝"
         )
     except:
         import warnings
+
         warnings.warn(
             "Module 'genesis.engine.solvers.rigid.constraint_solver_island_decomp' has been renamed to "
             "'genesis.engine.solvers.rigid.constraint_solver_island'. Please update your imports. "
@@ -1101,8 +1103,8 @@ class _DeprecatedModuleWrapper_constraintsolverisland(types.ModuleType):
         self._old_name = old_name
         self._new_name = new_name
         self._warned = False
-        self.__file__ = getattr(actual_module, '__file__', None)
-        self.__package__ = '.'.join(old_name.split('.')[:-1])
+        self.__file__ = getattr(actual_module, "__file__", None)
+        self.__package__ = ".".join(old_name.split(".")[:-1])
 
     def __getattr__(self, name):
         if not self._warned:
