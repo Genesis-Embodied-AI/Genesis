@@ -7,7 +7,7 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-import genesis.utils.sdf_decomp as sdf_decomp
+import genesis.utils.sdf as sdf
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState

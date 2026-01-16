@@ -12,14 +12,14 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.gjk as gjk
 import genesis.engine.solvers.rigid.diff_gjk as diff_gjk
 import genesis.engine.solvers.rigid.mpr as mpr
-import genesis.utils.sdf_decomp as sdf
+import genesis.utils.sdf as sdf
 import genesis.engine.solvers.rigid.support_field as support_field
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 
 from .mpr import MPR
 from .gjk import GJK
-from ....utils.sdf_decomp import SDF
+from ....utils.sdf import SDF
 from .support_field import SupportField
 
 from enum import IntEnum

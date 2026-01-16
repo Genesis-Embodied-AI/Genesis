@@ -4,7 +4,7 @@ import numpy as np
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.sdf_decomp as sdf_decomp
+import genesis.utils.sdf as sdf
 
 from genesis.options.solvers import LegacyCouplerOptions
 from genesis.repr_base import RBC

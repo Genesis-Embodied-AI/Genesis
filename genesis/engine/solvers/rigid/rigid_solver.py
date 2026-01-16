@@ -21,7 +21,7 @@ from genesis.utils.misc import (
     sanitize_indexed_tensor,
     assign_indexed_tensor,
 )
-from genesis.utils.sdf_decomp import SDF
+from genesis.utils.sdf import SDF
 
 from ..base_solver import Solver
 from .collider import Collider
