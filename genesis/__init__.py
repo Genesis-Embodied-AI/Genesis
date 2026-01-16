@@ -278,7 +278,7 @@ def init(
             # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
             force_scalarize_matrix=True,
             # FIXME: Turning off 'advanced_optimization' is causing issues on MacOS
-            advanced_optimization=True,
+            advanced_optimization=platform != "windows",
             # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
             cfg_optimization=False,
             fast_math=not debug,
