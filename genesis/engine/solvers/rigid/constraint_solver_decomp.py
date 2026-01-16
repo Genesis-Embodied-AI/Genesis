@@ -199,9 +199,9 @@ class ConstraintSolver:
 
         if use_decomposed_kernels:
             # Import here to avoid circular dependency and overhead when not needed
-            from genesis.engine.solvers.rigid.constraint_solver_decomp_batch import func_solve_decomposed
+            from genesis.engine.solvers.rigid.constraint_solver_decomp_batch import func_solve_decomposed_microkernels
 
-            func_solve_decomposed(
+            func_solve_decomposed_microkernels(
                 self._solver.entities_info,
                 self._solver.dofs_state,
                 self.constraint_state,
