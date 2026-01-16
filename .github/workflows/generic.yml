@@ -184,31 +184,31 @@ jobs:
       #     # See: https://github.com/actions/cache/issues/1594
       #     key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-  publish-pypi:
-    name: Publish on PyPI
-    runs-on: ubuntu-24.04
-    permissions:
-      id-token: write
-    environment:
-      name: advance
+  # publish-pypi:
+  #   name: Publish on PyPI
+  #   runs-on: ubuntu-24.04
+  #   permissions:
+  #     id-token: write
+  #   environment:
+  #     name: advance
 
-    if: github.event_name == 'release'
+  #   if: github.event_name == 'release'
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
 
-      - name: Build wheels
-        run: |
-          pip wheel --no-deps . -w wheelhouse
+  #     - name: Build wheels
+  #       run: |
+  #         pip wheel --no-deps . -w wheelhouse
 
-      - name: Publish the wheels on PyPI
-        uses: pypa/gh-action-pypi-publish@v1.12.4
-        with:
-          packages-dir: wheelhouse
-          verify-metadata: true
-          attestations: true
-          print-hash: true
-          skip-existing: true
+  #     - name: Publish the wheels on PyPI
+  #       uses: pypa/gh-action-pypi-publish@v1.12.4
+  #       with:
+  #         packages-dir: wheelhouse
+  #         verify-metadata: true
+  #         attestations: true
+  #         print-hash: true
+  #         skip-existing: true
