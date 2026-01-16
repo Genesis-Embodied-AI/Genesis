@@ -87,6 +87,7 @@ dev = [
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
+    "frozendict",
     # Used for validating polar decomposition in unit tests
     "scipy",
 ]
