@@ -62,11 +62,11 @@ def _kernel_solve_body_decomposed(
 
     # Step 4: Newton Hessian update (Newton only)
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=128)
         # Index: 2 if Newton
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                constraint_solver_decomp.func_nt_hessian_incremental(
+                constraint_solver_decomp.func_nt_hessian_incremental2(
                     i_b,
                     entities_info=entities_info,
                     constraint_state=constraint_state,
@@ -190,18 +190,112 @@ def _kernel_newton_only_nt_hessian_incremental(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    """Step 4: Newton Hessian update (Newton only)"""
+    """
+    Step 4: Newton Hessian update with maximum parallelism (Newton only).
+    
+    This uses func_nt_hessian_incremental2 which automatically falls back to 
+    the parallelizable direct method when incremental updates aren't viable.
+    The direct method allows parallelization over DOFs in addition to batches.
+    """
     _B = constraint_state.grad.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=128)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_nt_hessian_incremental(
+            constraint_solver_decomp.func_nt_hessian_incremental2(
                 i_b,
                 entities_info=entities_info,
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_newton_only_nt_hessian_direct_parallel(
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    n_dofs: ti.i32,
+):
+    """
+    Fully parallelized Newton Hessian direct computation.
+    
+    This kernel parallelizes over (batch, dof1, dof2) to maximize GPU utilization.
+    After this kernel completes, Cholesky factorization must be done separately.
+    """
+    _B = constraint_state.grad.shape[1]
+    
+    # Compute H = J'*D*J + M in parallel over all batch-dof pairs
+    ti.loop_config(serialize=False, block_dim=256)
+    for i_b, i_d1, i_d2 in ti.ndrange(_B, n_dofs, n_dofs):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b] and i_d2 <= i_d1:
+            constraint_solver_decomp.func_nt_hessian_direct2(
+                i_b,
+                i_d1,
+                i_d2,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    
+    # Cholesky factorization must be done sequentially per batch
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=128)
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            constraint_solver_decomp.func_nt_chol_factor(
+                i_b,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+            )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_cholesky_diagonal(
+    i_d: ti.i32,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """
+    Compute diagonal elements L[i_b, i_d, i_d] for column i_d.
+    Parallelized over batches.
+    """
+    _B = constraint_state.grad.shape[1]
+    EPS = rigid_global_info.EPS[None]
+    
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=128)
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            tmp = constraint_state.nt_H[i_b, i_d, i_d]
+            for j_d in range(i_d):
+                tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
+            constraint_state.nt_H[i_b, i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def _kernel_cholesky_offdiagonal(
+    i_d: ti.i32,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """
+    Compute off-diagonal elements L[i_b, j_d, i_d] for column i_d, where j_d > i_d.
+    Parallelized over (batches, rows).
+    """
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    
+    ti.loop_config(serialize=False, block_dim=256)
+    for i_b, j_d in ti.ndrange(_B, n_dofs):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b] and j_d > i_d:
+            dot = gs.ti_float(0.0)
+            for k_d in range(i_d):
+                dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+            tmp = gs.ti_float(1.0) / constraint_state.nt_H[i_b, i_d, i_d]
+            constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -290,23 +384,49 @@ def func_solve_decomposed_macrokernels(
                   end='',
             )
             if _it >= 1:
-            # if _it >= 1:
                 active_changed = (prev_active != constraint_state.active.to_numpy()).sum()
                 print(f"active_changed_avg {active_changed / num_env:.2f} ", end='')
+            
             import time
             ti.sync()
             start = time.time()
-            _kernel_newton_only_nt_hessian_incremental(
+            
+            # Use fully parallel Hessian computation
+            n_dofs = constraint_state.nt_H.shape[1]
+            _kernel_newton_only_nt_hessian_direct_parallel(
                 entities_info,
                 constraint_state,
                 rigid_global_info,
                 static_rigid_sim_config,
+                n_dofs,
             )
+            
             ti.sync()
             end = time.time()
             elapsed = end - start
-            print(f"time {elapsed * 1e6:.0f}us ",
-                  end='')
+            print(f"time_hessian {elapsed * 1e6:.0f}us ", end='')
+            
+            # Parallel Cholesky factorization (column by column)
+            ti.sync()
+            start = time.time()
+            for i_d in range(n_dofs):
+                _kernel_cholesky_diagonal(
+                    i_d,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                )
+                _kernel_cholesky_offdiagonal(
+                    i_d,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                )
+            ti.sync()
+            end = time.time()
+            elapsed = end - start
+            print(f"time_cholesky {elapsed * 1e6:.0f}us ", end='')
+            
             print('')
             prev_active = constraint_state.active.to_numpy()
         _kernel_update_gradient(
