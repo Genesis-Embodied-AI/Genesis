@@ -282,12 +282,33 @@ def func_solve_decomposed_macrokernels(
             static_rigid_sim_config,
         )
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
+            num_env = 4096
+            import time
+            ti.sync()
+            start = time.time()
             _kernel_newton_only_nt_hessian_incremental(
                 entities_info,
                 constraint_state,
                 rigid_global_info,
                 static_rigid_sim_config,
             )
+            ti.sync()
+            end = time.time()
+            elapsed = end - start
+            if _it >= 1:
+                active_changed = (prev_active != constraint_state.active.to_numpy()).sum()
+            print(f"n_improved {constraint_state.improved.to_numpy().sum()} "
+                  f"n_constraints_avg {constraint_state.n_constraints.to_numpy().sum() / num_env:.2f} "
+                  f"nt_dofs {constraint_state.nt_H.shape[1]} "
+                  f"n_active_avg {constraint_state.active.to_numpy().sum() / num_env:.4f} ",
+                  end='',
+            )
+            if _it >= 1:
+                  print(f"active_changed_avg {active_changed / num_env:.2f} ", end='')
+            print(f"time {elapsed * 1e6:.0f}us ",
+                  end='')
+            print('')
+            prev_active = constraint_state.active.to_numpy()
         _kernel_update_gradient(
             entities_info,
             dofs_state,
