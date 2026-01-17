@@ -246,12 +246,9 @@ class Collider:
                     continue
 
                 # contype and conaffinity
-                # Use .all() because entities_is_local_collision_mask may be batched
                 mask_ea = entities_is_local_collision_mask[i_ea]
                 mask_eb = entities_is_local_collision_mask[i_eb]
-                mask_ea_val = mask_ea.all() if isinstance(mask_ea, np.ndarray) else mask_ea
-                mask_eb_val = mask_eb.all() if isinstance(mask_eb, np.ndarray) else mask_eb
-                if ((i_ea == i_eb) or not (mask_ea_val or mask_eb_val)) and not (
+                if ((i_ea == i_eb) or not (mask_ea or mask_eb)) and not (
                     (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
                 ):
                     continue

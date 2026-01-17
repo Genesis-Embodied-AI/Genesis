@@ -2277,24 +2277,33 @@ class RigidEntity(Entity):
 
         # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
         if self._enable_heterogeneous and self._solver.n_envs > 0:
-            n_envs = self._solver.n_envs
-            # Initialize with extreme values
-            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
-            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            # Determine target environments upfront to avoid computing for all envs
+            if envs_idx is not None:
+                target_envs = np.atleast_1d(np.asarray(envs_idx))
+            else:
+                target_envs = np.arange(self._solver.n_envs)
+            n_target = len(target_envs)
+
+            # Initialize with extreme values for target environments only
+            aabb_min = torch.full((n_target, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_target, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
 
             for geom in self.geoms:
                 geom_aabb = geom.get_AABB()  # shape: (n_envs, 2, 3)
                 active_envs = geom.active_envs_idx
                 if active_envs is not None:
-                    aabb_min[active_envs] = torch.minimum(aabb_min[active_envs], geom_aabb[active_envs, 0])
-                    aabb_max[active_envs] = torch.maximum(aabb_max[active_envs], geom_aabb[active_envs, 1])
+                    # Find which target environments are active for this geom
+                    active_mask = np.isin(target_envs, active_envs)
+                    if active_mask.any():
+                        active_targets = target_envs[active_mask]
+                        aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], geom_aabb[active_targets, 0])
+                        aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], geom_aabb[active_targets, 1])
                 else:
                     # Non-heterogeneous geom, active in all environments
-                    aabb_min = torch.minimum(aabb_min, geom_aabb[:, 0])
-                    aabb_max = torch.maximum(aabb_max, geom_aabb[:, 1])
+                    aabb_min = torch.minimum(aabb_min, geom_aabb[target_envs, 0])
+                    aabb_max = torch.maximum(aabb_max, geom_aabb[target_envs, 1])
 
-            result = torch.stack((aabb_min, aabb_max), dim=-2)
-            return result[envs_idx] if envs_idx is not None else result
+            return torch.stack((aabb_min, aabb_max), dim=-2)
 
         # Compute the AABB on-the-fly based on the positions of all the vertices
         verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
@@ -2322,24 +2331,33 @@ class RigidEntity(Entity):
 
         # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
         if self._enable_heterogeneous and self._solver.n_envs > 0:
-            n_envs = self._solver.n_envs
-            # Initialize with extreme values
-            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
-            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            # Determine target environments upfront to avoid computing for all envs
+            if envs_idx is not None:
+                target_envs = np.atleast_1d(np.asarray(envs_idx))
+            else:
+                target_envs = np.arange(self._solver.n_envs)
+            n_target = len(target_envs)
+
+            # Initialize with extreme values for target environments only
+            aabb_min = torch.full((n_target, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_target, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
 
             for vgeom in self._vgeoms:
-                vgeom_aabb = vgeom.get_vAABB()  # shape: (n_envs, 2, 3) or (2, 3)
+                vgeom_aabb = vgeom.get_vAABB()  # shape: (n_envs, 2, 3)
                 active_envs = vgeom.active_envs_idx
                 if active_envs is not None:
-                    aabb_min[active_envs] = torch.minimum(aabb_min[active_envs], vgeom_aabb[active_envs, 0])
-                    aabb_max[active_envs] = torch.maximum(aabb_max[active_envs], vgeom_aabb[active_envs, 1])
+                    # Find which target environments are active for this vgeom
+                    active_mask = np.isin(target_envs, active_envs)
+                    if active_mask.any():
+                        active_targets = target_envs[active_mask]
+                        aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], vgeom_aabb[active_targets, 0])
+                        aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], vgeom_aabb[active_targets, 1])
                 else:
                     # Non-heterogeneous vgeom, active in all environments
-                    aabb_min = torch.minimum(aabb_min, vgeom_aabb[:, 0])
-                    aabb_max = torch.maximum(aabb_max, vgeom_aabb[:, 1])
+                    aabb_min = torch.minimum(aabb_min, vgeom_aabb[target_envs, 0])
+                    aabb_max = torch.maximum(aabb_max, vgeom_aabb[target_envs, 1])
 
-            result = torch.stack((aabb_min, aabb_max), dim=-2)
-            return result[envs_idx] if envs_idx is not None else result
+            return torch.stack((aabb_min, aabb_max), dim=-2)
 
         aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
@@ -2522,6 +2540,9 @@ class RigidEntity(Entity):
         verts : torch.Tensor, shape (n_envs, n_verts, 3)
             The vertices of the entity.
         """
+        if self._enable_heterogeneous:
+            gs.raise_exception("get_verts is not supported for heterogeneous entities.")
+
         self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
 
         n_fixed_verts, n_free_vertices = self._n_fixed_verts, self._n_free_verts
@@ -3306,7 +3327,7 @@ class RigidEntity(Entity):
     @property
     def morphs(self):
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
-        return (self._morph,) + tuple(self._morph_heterogeneous)
+        return (self._morph, *self._morph_heterogeneous)
 
     @property
     def n_joints(self):

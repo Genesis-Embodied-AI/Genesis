@@ -4101,7 +4101,7 @@ def test_pick_heterogenous_objects(show_viewer):
 
     # Test 1: CoM at rest matches expected heights based on shape
     # Control robot to hold position while objects settle
-    for _ in range(100):
+    for _ in range(30):
         franka.control_dofs_position(init_qpos[:, :7], motors_dof)
         franka.control_dofs_position(init_qpos[:, 7:9], fingers_dof)
         scene.step()
@@ -4116,13 +4116,13 @@ def test_pick_heterogenous_objects(show_viewer):
     )
 
     # Hold - approach with gripper open
-    for _ in range(100):
+    for _ in range(50):
         franka.control_dofs_position(qpos_grasp[:, :7], motors_dof)
         franka.control_dofs_position(np.array([[0.04, 0.04]] * scene.n_envs), fingers_dof)
         scene.step()
 
     # Grasp - close gripper
-    for _ in range(100):
+    for _ in range(50):
         franka.control_dofs_position(qpos_grasp[:, :7], motors_dof)
         franka.control_dofs_position(np.array([[0.0, 0.0]] * scene.n_envs), fingers_dof)
         scene.step()
@@ -4131,7 +4131,7 @@ def test_pick_heterogenous_objects(show_viewer):
     gripper_qpos = franka.get_qpos()[:, 7:9]
     gripper_widths = (gripper_qpos[:, 0] + gripper_qpos[:, 1]).cpu().numpy()
     expected_grip_widths = np.array([sizes[0], sizes[1], 2 * sizes[2], 2 * sizes[3]])  # box size or sphere diameter
-    assert_allclose(gripper_widths, expected_grip_widths, tol=0.01)
+    assert_allclose(gripper_widths, expected_grip_widths, tol=0.005)
 
     # Record positions before lifting
     pre_lift_z = het_obj.get_pos()[:, 2].clone()
@@ -4142,7 +4142,7 @@ def test_pick_heterogenous_objects(show_viewer):
         pos=np.array([[0.65, 0.0, 0.3]] * scene.n_envs),
         quat=np.array([[0, 1, 0, 0]] * scene.n_envs),
     )
-    for _ in range(200):
+    for _ in range(50):
         franka.control_dofs_position(qpos_lift[:, :7], motors_dof)
         franka.control_dofs_position(np.array([[0.0, 0.0]] * scene.n_envs), fingers_dof)
         scene.step()
