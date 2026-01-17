@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+import trimesh
 
 import gstaichi as ti
 
@@ -186,11 +187,13 @@ class Collider:
         Compute flat indices of all valid collision pairs.
 
         For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
+        Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
         """
         solver = self._solver
         n_geoms = solver.n_geoms_
         n_equalities = solver.n_equalities
         enable_self_collision = solver._enable_self_collision
+        enable_neutral_collision = solver._enable_neutral_collision
         enable_adjacent_collision = solver._enable_adjacent_collision
         batch_links_info = solver._static_rigid_sim_config.batch_links_info
 
@@ -211,6 +214,18 @@ class Collider:
             links_is_fixed = links_is_fixed[:, 0]
         entities_is_local_collision_mask = solver.entities_info.is_local_collision_mask.to_numpy()
 
+        # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
+        geoms_verts: list[np.ndarray] = []
+        for geom in solver.geoms:
+            verts = tensor_to_array(geom.get_verts())
+            verts = verts.reshape((-1, *verts.shape[-2:]))
+            centroid = verts.mean(axis=1, keepdims=True)
+            verts = centroid + (1.0 - 1e-3) * (verts - centroid)
+            geoms_verts.append(verts)
+
+        # Track pairs that are colliding in neutral configuration for warning
+        self_colliding_pairs: list[tuple[int, int]] = []
+
         n_possible_pairs = 0
         collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
         for i_ga in range(n_geoms):
@@ -223,17 +238,6 @@ class Collider:
                 # geoms in the same link
                 if i_la == i_lb:
                     continue
-
-                # self collision
-                if links_root_idx[i_la] == links_root_idx[i_lb]:
-                    if not enable_self_collision:
-                        continue
-
-                    # adjacent links
-                    if not enable_adjacent_collision and (
-                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
-                    ):
-                        continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed
                 is_valid = True
@@ -257,8 +261,48 @@ class Collider:
                 if links_is_fixed[i_la] and links_is_fixed[i_lb]:
                     continue
 
+                # self collision
+                if links_root_idx[i_la] == links_root_idx[i_lb]:
+                    if not enable_self_collision:
+                        continue
+
+                    # adjacent links
+                    if not enable_adjacent_collision and (
+                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
+                    ):
+                        continue
+
+                    # active in neutral configuration (qpos0)
+                    is_self_colliding = False
+                    for i_b in range(1 if not enable_neutral_collision else 0):
+                        mesh_a = trimesh.Trimesh(
+                            vertices=geoms_verts[i_ga][i_b], faces=solver.geoms[i_ga].init_faces, process=False
+                        )
+                        mesh_b = trimesh.Trimesh(
+                            vertices=geoms_verts[i_gb][i_b], faces=solver.geoms[i_gb].init_faces, process=False
+                        )
+                        bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
+                        if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
+                            if (mesh_a.is_watertight and mesh_a.contains(mesh_b.vertices).any()) or (
+                                mesh_b.is_watertight and mesh_b.contains(mesh_a.vertices).any()
+                            ):
+                                is_self_colliding = True
+                                self_colliding_pairs.append((i_ga, i_gb))
+                                break
+                    if is_self_colliding:
+                        continue
+
                 collision_pair_idx[i_ga, i_gb] = n_possible_pairs
                 n_possible_pairs = n_possible_pairs + 1
+
+        # Emit warning for self-collision pairs
+        if self_colliding_pairs:
+            pairs = ", ".join((f"({i_ga}, {i_gb})") for i_ga, i_gb in self_colliding_pairs)
+            gs.logger.warning(
+                f"Filtered out geometry pairs causing self-collision for the neutral configuration (qpos0): {pairs}. "
+                "Consider tuning Morph option 'decompose_robot_error_threshold' or specify dedicated collision meshes. "
+                "This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'."
+            )
 
         return n_possible_pairs, collision_pair_idx
 

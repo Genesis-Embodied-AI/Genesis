@@ -784,6 +784,8 @@ class RigidEntity(Entity):
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
         self._n_geoms = self.n_geoms
+        self._geoms = self.geoms
+        self._vgeoms = self.vgeoms
         self._is_built = True
 
         verts_start = 0
@@ -801,9 +803,6 @@ class RigidEntity(Entity):
             self._fixed_verts_idx_local = torch.cat(fixed_verts_idx_local)
         self._n_free_verts = len(self._free_verts_idx_local)
         self._n_fixed_verts = len(self._fixed_verts_idx_local)
-
-        self._geoms = self.geoms
-        self._vgeoms = self.vgeoms
 
         self._init_jac_and_IK()
 
@@ -3263,6 +3262,13 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @property
+    def is_built(self):
+        """
+        Whether this rigid entity is built.
+        """
+        return self._is_built
+
+    @property
     def visualize_contact(self):
         """Whether to visualize contact force."""
         return self._visualize_contact
@@ -3450,22 +3456,14 @@ class RigidEntity(Entity):
         """The list of collision geoms (`RigidGeom`) in the entity."""
         if self.is_built:
             return self._geoms
-        else:
-            geoms = gs.List()
-            for link in self._links:
-                geoms += link.geoms
-            return geoms
+        return gs.List(geom for link in self._links for geom in link.geoms)
 
     @property
     def vgeoms(self):
         """The list of visual geoms (`RigidVisGeom`) in the entity."""
         if self.is_built:
             return self._vgeoms
-        else:
-            vgeoms = gs.List()
-            for link in self._links:
-                vgeoms += link.vgeoms
-            return vgeoms
+        return gs.List(vgeom for link in self._links for vgeom in link.vgeoms)
 
     @property
     def links(self) -> list[RigidLink]:

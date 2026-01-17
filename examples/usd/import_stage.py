@@ -59,13 +59,6 @@ def main():
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            gravity=(0, 0, -9.8),
-            enable_collision=True,
-            enable_joint_limit=True,
-            max_collision_pairs=1000,
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(4.0, 2.0, 2.5),
             camera_lookat=(0.0, 0.0, 1.0),
@@ -77,7 +70,7 @@ def main():
     asset_path = snapshot_download(
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
-        revision="main",
+        revision="c50bfe3e354e105b221ef4eb9a79504650709dd2",
         allow_patterns="usd/Refrigerator055/*",
         max_workers=1,
     )
