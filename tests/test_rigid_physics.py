@@ -1114,6 +1114,65 @@ def test_robot_scaling_primitive_collision(show_viewer):
 
 
 @pytest.mark.required
+def test_filter_neutral_self_collisions(show_viewer):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            enable_neutral_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+    )
+    scene.build()
+    eq_type = scene.rigid_solver.equalities_info.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj1id = scene.rigid_solver.equalities_info.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj2id = scene.rigid_solver.equalities_info.eq_obj2id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+
+    scene.rigid_solver.collider.detection()
+    contacts_data = scene.rigid_solver.collider.get_contacts()
+    assert ((contacts_data["link_a"] == 11) & (contacts_data["link_b"] == 0)).any()
+
+    for i in range(2):
+        for i_ga in range(robot.n_geoms):
+            for i_gb in range(i_ga + 1, robot.n_geoms):
+                geom_a = scene.rigid_solver.geoms[i_ga]
+                geom_b = scene.rigid_solver.geoms[i_gb]
+                link_a = geom_a.link
+                link_b = geom_b.link
+                if link_a.idx == link_b.idx:
+                    continue
+                if link_a.is_fixed and link_b.is_fixed:
+                    continue
+                if (
+                    (eq_type == gs.EQUALITY_TYPE.WELD)
+                    & (
+                        (eq_obj1id == link_a.idx & eq_obj2id == link_b.idx)
+                        | (eq_obj1id == link_b.idx & eq_obj2id == link_a.idx)
+                    )
+                ).any():
+                    continue
+                if link_a.idx == link_b.parent_idx:
+                    continue
+                verts_a = tensor_to_array(geom_a.get_verts())
+                verts_a = (1.0 - 1e-3) * verts_a + 1e-3 * verts_a.mean(axis=0, keepdims=True)
+                mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
+                geom_b = scene.rigid_solver.geoms[i_gb]
+                verts_b = tensor_to_array(geom_b.get_verts())
+                verts_b = (1.0 - 1e-3) * verts_b + 1e-3 * verts_b.mean(axis=0, keepdims=True)
+                mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
+                is_colliding = mesh_a.contains(mesh_b.vertices).any() or mesh_b.contains(mesh_a.vertices).any()
+                assert is_colliding == ({(i_ga, i_gb)} in ({(5, 10)}, {(6, 10)}))
+        scene.step()
+
+
+@pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
