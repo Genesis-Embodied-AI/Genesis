@@ -100,6 +100,7 @@ class RigidSolver(Solver):
         self._integrator = options.integrator
         self._box_box_detection = options.box_box_detection
         self._requires_grad = self._sim.options.requires_grad
+        self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
 
         self._use_contact_island = options.use_contact_island
         self._use_hibernation = options.use_hibernation and options.use_contact_island
@@ -150,6 +151,12 @@ class RigidSolver(Solver):
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
+        # Handle heterogeneous morphs (list/tuple of morphs)
+        morph_heterogeneous = []
+        if isinstance(morph, (tuple, list)):
+            morph, *morph_heterogeneous = morph
+            self._enable_heterogeneous |= bool(morph_heterogeneous)
+
         if isinstance(morph, gs.morphs.Drone):
             EntityClass = DroneEntity
         else:
@@ -180,6 +187,7 @@ class RigidSolver(Solver):
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
+            morph_heterogeneous=morph_heterogeneous,
         )
         assert isinstance(entity, RigidEntity)
         self._entities.append(entity)
@@ -245,6 +253,11 @@ class RigidSolver(Solver):
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
         self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
+        # batch_links_info is required when heterogeneous simulation is used.
+        # We must update options because get_links_info reads from solver._options.batch_links_info.
+        if self._enable_heterogeneous:
+            self._options.batch_links_info = True
+
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -253,6 +266,7 @@ class RigidSolver(Solver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
+            enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
@@ -349,6 +363,7 @@ class RigidSolver(Solver):
         self._init_geom_fields()
         self._init_vgeom_fields()
         self._init_link_fields()
+        self._process_heterogeneous_link_info()
         self._init_entity_fields()
         self._init_equality_fields()
 
@@ -371,7 +386,7 @@ class RigidSolver(Solver):
             return
 
         # Handling default arguments
-        batched = self._options.batch_dofs_info and self._options.batch_links_info
+        batched = self._options.batch_dofs_info or self._options.batch_links_info
         if not batched and envs_idx is not None:
             gs.raise_exception(
                 "Links and dofs must be batched to selectively update invweight and meaninertia for some environment."
@@ -600,6 +615,10 @@ class RigidSolver(Solver):
                 links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
                 links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
                 links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
+                links_geom_start=np.array([link.geom_start for link in links], dtype=gs.np_int),
+                links_geom_end=np.array([link.geom_end for link in links], dtype=gs.np_int),
+                links_vgeom_start=np.array([link.vgeom_start for link in links], dtype=gs.np_int),
+                links_vgeom_end=np.array([link.vgeom_end for link in links], dtype=gs.np_int),
                 # taichi variables
                 links_info=self.links_info,
                 links_state=self.links_state,
@@ -652,6 +671,80 @@ class RigidSolver(Solver):
         # TODO: support IK with parallel envs
         # self._rigid_global_info.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=self.n_links)
         self.links_T = self._rigid_global_info.links_T
+
+    def _process_heterogeneous_link_info(self):
+        """
+        Process heterogeneous link info: dispatch geoms per environment and compute per-env inertial properties.
+        This method is called after _init_link_fields to update the per-environment inertial properties
+        for entities with heterogeneous morphs.
+        """
+        for entity in self._entities:
+            # Skip non-heterogeneous entities
+            if not entity._enable_heterogeneous:
+                continue
+
+            # Get the number of variants for this entity
+            n_variants = len(entity.variants_geom_start)
+
+            # Distribute variants across environments using balanced block assignment:
+            # - If B >= n_variants: first B/n_variants environments get variant 0, next get variant 1, etc.
+            # - If B < n_variants: each environment gets a different variant (some variants unused)
+            if self._B >= n_variants:
+                base = self._B // n_variants
+                extra = self._B % n_variants  # first `extra` chunks get one more
+                sizes = np.r_[np.full(extra, base + 1), np.full(n_variants - extra, base)]
+                variant_idx = np.repeat(np.arange(n_variants), sizes)
+            else:
+                # Each environment gets a unique variant; variants beyond B are unused
+                variant_idx = np.arange(self._B)
+
+            # Get arrays from entity
+            np_geom_start = np.array(entity.variants_geom_start, dtype=gs.np_int)
+            np_geom_end = np.array(entity.variants_geom_end, dtype=gs.np_int)
+            np_vgeom_start = np.array(entity.variants_vgeom_start, dtype=gs.np_int)
+            np_vgeom_end = np.array(entity.variants_vgeom_end, dtype=gs.np_int)
+
+            # Process each link in this heterogeneous entity (currently only single-link supported)
+            for link in entity.links:
+                i_l = link.idx
+
+                # Build per-env arrays for geom/vgeom ranges
+                links_geom_start = np_geom_start[variant_idx]
+                links_geom_end = np_geom_end[variant_idx]
+                links_vgeom_start = np_vgeom_start[variant_idx]
+                links_vgeom_end = np_vgeom_end[variant_idx]
+
+                # Build per-env arrays for inertial properties
+                links_inertial_mass = np.array(
+                    [entity.variants_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
+                )
+                links_inertial_pos = np.array([entity.variants_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_i = np.array([entity.variants_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
+
+                # Update links_info with per-environment values
+                # Note: when batch_links_info is True, the shape is (n_links, B)
+                kernel_update_heterogeneous_link_info(
+                    i_l,
+                    links_geom_start,
+                    links_geom_end,
+                    links_vgeom_start,
+                    links_vgeom_end,
+                    links_inertial_mass,
+                    links_inertial_pos,
+                    links_inertial_i,
+                    self.links_info,
+                )
+
+                # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
+                for geom in link.geoms:
+                    active_envs_mask = (links_geom_start <= geom.idx) & (geom.idx < links_geom_end)
+                    geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                    (geom.active_envs_idx,) = np.where(active_envs_mask)
+
+                for vgeom in link.vgeoms:
+                    active_envs_mask = (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
+                    vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                    (vgeom.active_envs_idx,) = np.where(active_envs_mask)
 
     def _init_vert_fields(self):
         # # collisioin geom
@@ -805,6 +898,7 @@ class RigidSolver(Solver):
                 # taichi variables
                 entities_info=self.entities_info,
                 entities_state=self.entities_state,
+                links_info=self.links_info,
                 dofs_info=self.dofs_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -2965,6 +3059,10 @@ def kernel_init_link_fields(
     links_inertial_i: ti.types.ndarray(),
     links_inertial_mass: ti.types.ndarray(),
     links_entity_idx: ti.types.ndarray(),
+    links_geom_start: ti.types.ndarray(),
+    links_geom_end: ti.types.ndarray(),
+    links_vgeom_start: ti.types.ndarray(),
+    links_vgeom_end: ti.types.ndarray(),
     # taichi variables
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -2988,6 +3086,10 @@ def kernel_init_link_fields(
         links_info.n_dofs[I_l] = links_dof_end[i_l] - links_dof_start[i_l]
         links_info.is_fixed[I_l] = links_is_fixed[i_l]
         links_info.entity_idx[I_l] = links_entity_idx[i_l]
+        links_info.geom_start[I_l] = links_geom_start[i_l]
+        links_info.geom_end[I_l] = links_geom_end[i_l]
+        links_info.vgeom_start[I_l] = links_vgeom_start[i_l]
+        links_info.vgeom_end[I_l] = links_vgeom_end[i_l]
 
         for j in ti.static(range(2)):
             links_info.invweight[I_l][j] = links_invweight[i_l, j]
@@ -3001,9 +3103,8 @@ def kernel_init_link_fields(
             links_info.inertial_pos[I_l][j] = links_inertial_pos[i_l, j]
 
         links_info.inertial_mass[I_l] = links_inertial_mass[i_l]
-        for j1 in ti.static(range(3)):
-            for j2 in ti.static(range(3)):
-                links_info.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
 
     for i_l, i_b in ti.ndrange(n_links, _B):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -3029,6 +3130,36 @@ def kernel_init_link_fields(
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_b in range(_B):
             rigid_global_info.n_awake_links[i_b] = n_links
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_update_heterogeneous_link_info(
+    i_l: ti.i32,
+    links_geom_start: ti.types.ndarray(),
+    links_geom_end: ti.types.ndarray(),
+    links_vgeom_start: ti.types.ndarray(),
+    links_vgeom_end: ti.types.ndarray(),
+    links_inertial_mass: ti.types.ndarray(),
+    links_inertial_pos: ti.types.ndarray(),
+    links_inertial_i: ti.types.ndarray(),
+    # taichi variables
+    links_info: array_class.LinksInfo,
+):
+    """Update per-environment link info for heterogeneous entities."""
+    _B = links_geom_start.shape[0]
+
+    for i_b in range(_B):
+        links_info.geom_start[i_l, i_b] = links_geom_start[i_b]
+        links_info.geom_end[i_l, i_b] = links_geom_end[i_b]
+        links_info.vgeom_start[i_l, i_b] = links_vgeom_start[i_b]
+        links_info.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
+        links_info.inertial_mass[i_l, i_b] = links_inertial_mass[i_b]
+
+        for j in ti.static(range(3)):
+            links_info.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
+
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -3311,6 +3442,7 @@ def kernel_init_entity_fields(
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
+    links_info: array_class.LinksInfo,
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
