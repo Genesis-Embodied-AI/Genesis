@@ -250,6 +250,7 @@ def _kernel_cholesky_diagonal(
     static_rigid_sim_config: ti.template(),
 ):
     """
+    [DEPRECATED - Use _kernel_cholesky_single instead]
     Compute diagonal elements L[i_b, i_d, i_d] for column i_d.
     Parallelized over batches.
     """
@@ -273,6 +274,7 @@ def _kernel_cholesky_offdiagonal(
     static_rigid_sim_config: ti.template(),
 ):
     """
+    [DEPRECATED - Use _kernel_cholesky_single instead]
     Compute off-diagonal elements L[i_b, j_d, i_d] for column i_d, where j_d > i_d.
     Parallelized over (batches, rows).
     """
@@ -367,58 +369,72 @@ def func_solve_decomposed_macrokernels(
             static_rigid_sim_config,
         )
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
-            num_env = 4096
-            print(f"n_improved {constraint_state.improved.to_numpy().sum()} "
-                  f"n_constraints_avg {constraint_state.n_constraints.to_numpy().sum() / num_env:.2f} "
-                  f"nt_dofs {constraint_state.nt_H.shape[1]} "
-                  f"n_active_avg {constraint_state.active.to_numpy().sum() / num_env:.4f} ",
-                  end='',
-            )
-            if _it >= 1:
-                active_changed = (prev_active != constraint_state.active.to_numpy()).sum()
-                print(f"active_changed_avg {active_changed / num_env:.2f} ", end='')
+            # num_env = 4096
+            # print(f"n_improved {constraint_state.improved.to_numpy().sum()} "
+            #       f"n_constraints_avg {constraint_state.n_constraints.to_numpy().sum() / num_env:.2f} "
+            #       f"nt_dofs {constraint_state.nt_H.shape[1]} "
+            #       f"n_active_avg {constraint_state.active.to_numpy().sum() / num_env:.4f} ",
+            #       end='',
+            # )
+            # if _it >= 1:
+            #     active_changed = (prev_active != constraint_state.active.to_numpy()).sum()
+            #     print(f"active_changed_avg {active_changed / num_env:.2f} ", end='')
             
-            import time
-            ti.sync()
-            start = time.time()
+            # import time
+            # ti.sync()
+            # start = time.time()
             
-            # Use fully parallel Hessian computation
-            n_dofs = constraint_state.nt_H.shape[1]
-            _kernel_newton_only_nt_hessian_direct_parallel(
-                entities_info,
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-                n_dofs,
-            )
-            
-            ti.sync()
-            end = time.time()
-            elapsed = end - start
-            print(f"time_hessian {elapsed * 1e6:.0f}us ", end='')
-            
-            # Parallel Cholesky factorization (column by column)
-            ti.sync()
-            start = time.time()
-            for i_d in range(n_dofs):
-                _kernel_cholesky_diagonal(
-                    i_d,
+            # Hybrid approach: parallel for early iterations, incremental for later
+            if _it < 3:
+                # Early iterations: Use parallel direct method (better for large updates)
+                n_dofs = constraint_state.nt_H.shape[1]
+                _kernel_newton_only_nt_hessian_direct_parallel(
+                    entities_info,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    n_dofs,
+                )
+                
+                # ti.sync()
+                # end = time.time()
+                # elapsed = end - start
+                # print(f"time_hessian {elapsed * 1e6:.0f}us ", end='')
+                
+                # Parallel Cholesky factorization
+                # ti.sync()
+                # start = time.time()
+                for i_d in range(n_dofs):
+                    _kernel_cholesky_diagonal(
+                        i_d,
+                        constraint_state,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                    )
+                    _kernel_cholesky_offdiagonal(
+                        i_d,
+                        constraint_state,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                    )
+                # ti.sync()
+                # end = time.time()
+                # elapsed = end - start
+                # print(f"time_cholesky {elapsed * 1e6:.0f}us (parallel) ", end='')
+            else:
+                # Later iterations: Use incremental method (better for small updates)
+                _kernel_newton_only_nt_hessian_incremental(
+                    entities_info,
                     constraint_state,
                     rigid_global_info,
                     static_rigid_sim_config,
                 )
-                _kernel_cholesky_offdiagonal(
-                    i_d,
-                    constraint_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
-                )
-            ti.sync()
-            end = time.time()
-            elapsed = end - start
-            print(f"time_cholesky {elapsed * 1e6:.0f}us ", end='')
+                # ti.sync()
+                # end = time.time()
+                # elapsed = end - start
+                # print(f"time_newton {elapsed * 1e6:.0f}us (incremental) ", end='')
             
-            print('')
+            # print('')
             prev_active = constraint_state.active.to_numpy()
         _kernel_update_gradient(
             entities_info,
