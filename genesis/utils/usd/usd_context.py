@@ -12,7 +12,8 @@ import os
 import subprocess
 import logging
 
-from pxr import Usd, UsdShade, UsdPhysics, Sdf
+import numpy as np
+from pxr import Usd, UsdShade, UsdPhysics, UsdGeom, Sdf
 
 import genesis as gs
 import genesis.utils.mesh as mu
@@ -88,11 +89,17 @@ class UsdContext:
         self._stage = Usd.Stage.Open(self._stage_file)
         self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
         self._material_parsed = False
+        self._xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
 
     @property
     def stage(self) -> Usd.Stage:
         """Get the USD stage."""
         return self._stage
+    
+    @property
+    def stage_file(self) -> str:
+        """Get the USD stage file."""
+        return self._stage_file
 
     @property
     def material_parsed(self) -> bool:
@@ -105,6 +112,10 @@ class UsdContext:
         spec = next((s for s in prim_stack if s.specifier == Sdf.SpecifierOver), prim_stack[-1])
         spec_path = self._stage_file if spec.layer.identifier == self._bake_stage_file else spec.layer.identifier
         return spec_path + spec.path.pathString
+
+    def get_prim_transform(self, prim: Usd.Prim) -> np.ndarray:
+        """Get the transform of a prim."""
+        return np.asarray(self._xform_cache.GetLocalToWorldTransform(prim), dtype=np.float32)
 
     def find_all_rigid_entities(self) -> list[Usd.Prim]:
         """

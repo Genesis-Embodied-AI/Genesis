@@ -22,6 +22,7 @@ from .. import geom as gu
 from .. import urdf as urdf_utils
 from .usd_geo_adapter import create_geo_info_from_prim, create_geo_infos_from_subtree
 from .usd_context import UsdContext
+from .usd_geometry import parse_prim_geoms
 from .usd_parser_utils import (
     compute_gs_global_transform,
     compute_gs_relative_transform,
@@ -856,85 +857,6 @@ def _find_all_rigid_entities(stage: Usd.Stage, context: UsdParserContext = None)
 # ==================== Collection Functions: Joints and Links ====================
 
 
-def _collect_joints(root_prim: Usd.Prim) -> Dict[str, List]:
-    """
-    Collect all joints in the articulation subtree.
-
-    Parameters
-    ----------
-    root_prim : Usd.Prim
-        The root prim of the articulation or rigid body.
-
-    Returns
-    -------
-    Dict[str, List]
-        Dictionary with keys:
-        - "joints": List of all UsdPhysics.Joint
-        - "fixed_joints": List of UsdPhysics.FixedJoint
-        - "revolute_joints": List of UsdPhysics.RevoluteJoint
-        - "prismatic_joints": List of UsdPhysics.PrismaticJoint
-        - "spherical_joints": List of UsdPhysics.SphericalJoint
-    """
-    joints = []
-    # fixed_joints = []
-    # revolute_joints = []
-    # prismatic_joints = []
-    # spherical_joints = []
-
-    for child in Usd.PrimRange(root_prim):
-        if child.IsA(UsdPhysics.Joint):
-            joint_api = UsdPhysics.Joint(child)
-            joints.append(joint_api)
-            # if child.IsA(UsdPhysics.RevoluteJoint):
-            #     revolute_joint_api = UsdPhysics.RevoluteJoint(child)
-            #     revolute_joints.append(revolute_joint_api)
-            # elif child.IsA(UsdPhysics.FixedJoint):
-            #     fixed_joint_api = UsdPhysics.FixedJoint(child)
-            #     fixed_joints.append(fixed_joint_api)
-            # elif child.IsA(UsdPhysics.PrismaticJoint):
-            #     prismatic_joint_api = UsdPhysics.PrismaticJoint(child)
-            #     prismatic_joints.append(prismatic_joint_api)
-            # elif child.IsA(UsdPhysics.SphericalJoint):
-            #     spherical_joint_api = UsdPhysics.SphericalJoint(child)
-            #     spherical_joints.append(spherical_joint_api)
-
-    return joints
-
-
-def _collect_links(stage: Usd.Stage, joints: List[UsdPhysics.Joint], context: UsdContext = None) -> List[Usd.Prim]:
-    """
-    Collect all links connected by joints.
-
-    Parameters
-    ----------
-    stage : Usd.Stage
-        The USD stage.
-    joints : List[UsdPhysics.Joint]
-        List of joints to extract links from.
-    context : UsdParserContext, optional
-        If provided, links will be added to the context.
-    Returns
-    -------
-    Tuple[List[Usd.Prim], Set[str]]
-        Tuple of list of link prims and set of link paths.
-    """
-    links = []
-    paths = set()
-    for joint in joints:
-        body0_targets = joint.GetBody0Rel().GetTargets()
-        body1_targets = joint.GetBody1Rel().GetTargets()
-        for target_path in body0_targets + body1_targets:
-            # Check target is valid
-            if stage.GetPrimAtPath(target_path):
-                paths.add(target_path)
-            else:
-                gs.raise_exception(f"Joint {joint.GetPath()} has invalid target body reference {target_path}.")
-    for path in paths:
-        prim = stage.GetPrimAtPath(path)
-        links.append(prim)
-        if context:
-            context.add_link_prim(prim)
-    return links
 
 
 def _is_fixed_rigid_body(prim: Usd.Prim) -> bool:
@@ -1084,10 +1006,46 @@ def _parse_link(link: Usd.Prim) -> Dict:
 
     return l_info
 
+# Rigidbody requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_rigid_bodies/capability-physics_rigid_bodies.html
+# Joint requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_joints/capability-physics_joints.html
+
+def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim) -> Tuple[List[UsdPhysics.Joint], List[Usd.Prim]]:
+    # TODO: we only assume that all links are under the subtree of the articulation root now.
+    # To parse the accurate articulation structure, we need to search through the BodyRel.
+    link_path_joints = {}
+    for prim in Usd.PrimRange(entity_prim):
+        if prim.IsA(UsdPhysics.Joint):
+            joint = UsdPhysics.Joint(prim)
+            body0_targets = joint.GetBody0Rel().GetTargets()    # parent
+            body1_targets = joint.GetBody1Rel().GetTargets()    # child
+            for target_path in body0_targets + body1_targets:
+                if stage.GetPrimAtPath(target_path):
+                    link_path_joints[target_path] = []
+                else:
+                    gs.raise_exception(f"Joint {joint.GetPath()} has invalid target body reference {target_path}.")
+            if body1_targets:
+                link_path_joints[body1_targets[0]].append(joint)
+            elif body0_targets:
+                link_path_joints[body0_targets[0]].append(joint)
+        
+    links, link_joints = [], []
+    if link_path_joints:
+        for link_path, joints in link_path_joints.items():
+            links.append(stage.GetPrimAtPath(link_path))
+            link_joints.append(joints)
+    else:
+        links = [entity_prim]
+        link_joints = [[]]
+
+    return link_joints, links
+
+
+def parse_geoms(context: UsdContext, links: List[Usd.Prim], morph: gs.morphs.USD, surface: gs.surfaces.Surface) -> List[List[Dict]]:
+    for link in links:
+        link_g_infos = parse_prim_geoms(context, link, link, morph, surface)
+
 
 # ==================== Main Parsing Function ====================
-
-
 def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Unified parser for USD rigid entities (both articulations and rigid bodies).
@@ -1124,38 +1082,35 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     if morph.prim_path is None:
         gs.raise_exception("USD rigid entity must have a prim path.")
 
-    entity_prim: Usd.Prim = stage.GetPrimAtPath(Sdf.Path(morph.prim_path))
+    entity_prim: Usd.Prim = stage.GetPrimAtPath(morph.prim_path)
     if not entity_prim.IsValid():
         gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
 
     # Validate that the prim is either an articulation root or a rigid body
-    entity_type = None
-    if entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-        entity_type = "articulation"
-    elif entity_prim.HasAPI(UsdPhysics.RigidBodyAPI) or entity_prim.HasAPI(UsdPhysics.CollisionAPI):
-        entity_type = "rigid_body"
-
-    if entity_type is None:
+    if not (
+        entity_prim.HasAPI(UsdPhysics.RigidBodyAPI) or
+        entity_prim.HasAPI(UsdPhysics.CollisionAPI) or
+        entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
+    ):
         gs.raise_exception(
             f"Provided prim {entity_prim.GetPath()} is neither an articulation root nor a rigid body. "
             f"APIs found: {entity_prim.GetAppliedSchemas()}"
         )
 
-    joint_prims = _find_joints(entity_prim)
-    has_joints = len(joint_prims) > 0
-
-    if has_joints:
-        links = _find_links(stage, joint_prims, context)
-        link_name_to_idx = {link.GetPath(): idx for idx, link in enumerate(links)}
-    else:
-        links = [root_prim]
+    # find joints
+    link_joints, links = _parse_articulation_structure(stage, entity_prim)
 
     n_links = len(links)
     l_infos = []
     links_j_infos = [[] for _ in range(n_links)]
     links_g_infos = [[] for _ in range(n_links)]
 
-    for link, link_g_infos in zip(links, links_g_infos):
+    links_g_infos = parse_geoms(context, links, morph, surface)
+    l_infos, links_j_infos = parse_links(mj, morph.scale)
+    l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
+    eqs_info = parse_equalities(mj, morph.scale)
+
+        
         l_info = _parse_link(link)
         l_infos.append(l_info)
         visual_g_infos = _create_visual_geo_infos(link, context, morph)

@@ -4,9 +4,12 @@ USD Rendering Material Parser
 Parser for extracting and parsing rendering materials from USD stages.
 """
 
+import numpy as np
 from pxr import Usd, UsdShade, Sdf
-from typing import List
+from PIL import Image
+    
 import genesis as gs
+from genesis.utils import mesh as mu
 
 # from . import usda
 
