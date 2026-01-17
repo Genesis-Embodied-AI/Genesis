@@ -3016,6 +3016,8 @@ def test_data_accessor(n_envs, batched, tol):
         ),
     )
     gs_link = gs_robot.get_link("RR_thigh")
+    gs_geom = gs_link.geoms[0]
+    gs_vgeom = gs_link.vgeoms[0]
     scene.build(n_envs=n_envs)
     gs_s = scene.sim.rigid_solver
 
@@ -3176,18 +3178,25 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
         (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
+        (-1, -1, gs_robot.get_verts, None, None),
         (-1, -1, gs_robot.get_AABB, None, None),
         (-1, -1, gs_robot.get_vAABB, None, None),
         # LINK
         (-1, -1, gs_link.get_pos, None, None),
         (-1, -1, gs_link.get_quat, None, None),
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
+        (-1, -1, gs_link.get_verts, None, None),
         (-1, -1, gs_link.get_AABB, None, None),
         (-1, -1, gs_link.get_vAABB, None, None),
         # GEOM
-        (-1, -1, gs_link.get_pos, None, None),
-        (-1, -1, gs_link.get_quat, None, None),
-        (-1, -1, gs_link.get_vAABB, None, None),
+        (-1, -1, gs_geom.get_pos, None, None),
+        (-1, -1, gs_geom.get_quat, None, None),
+        (-1, -1, gs_geom.get_verts, None, None),
+        (-1, -1, gs_geom.get_AABB, None, None),
+        # VGEOM
+        (-1, -1, gs_vgeom.get_pos, None, None),
+        (-1, -1, gs_vgeom.get_quat, None, None),
+        (-1, -1, gs_vgeom.get_vAABB, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
 
@@ -4036,11 +4045,13 @@ def test_heterogeneous_aabb(tol):
 
     # get_AABB should return correct shapes
     aabb = het_obj.get_AABB()
-    assert aabb.shape == (4, 2, 3)  # (n_envs, min/max, xyz)
+    assert aabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz)
+    for i in range(scene.n_envs):
+        assert_allclose(aabb[i], het_obj.get_AABB(i), tol=gs.EPS)
 
     # Box envs should have same AABB, sphere envs should have same AABB
-    assert_allclose(aabb[0], aabb[1], tol=tol)
-    assert_allclose(aabb[2], aabb[3], tol=tol)
+    assert_allclose(aabb[0], aabb[1], tol=gs.EPS)
+    assert_allclose(aabb[2], aabb[3], tol=gs.EPS)
 
     # Box and sphere should have different AABBs (different sizes)
     with pytest.raises(AssertionError):
@@ -4048,11 +4059,13 @@ def test_heterogeneous_aabb(tol):
 
     # get_vAABB should also work
     vaabb = het_obj.get_vAABB()
-    assert vaabb.shape == (4, 2, 3)  # (n_envs, min/max, xyz) - same as AABB
+    assert vaabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz) - same as AABB
+    for i in range(scene.n_envs):
+        assert_allclose(vaabb[i], het_obj.get_vAABB(i), tol=gs.EPS)
 
     # vAABB should have same structure as AABB (box envs same, sphere envs same)
-    assert_allclose(vaabb[0], vaabb[1], tol=tol)
-    assert_allclose(vaabb[2], vaabb[3], tol=tol)
+    assert_allclose(vaabb[0], vaabb[1], tol=gs.EPS)
+    assert_allclose(vaabb[2], vaabb[3], tol=gs.EPS)
     with pytest.raises(AssertionError):
         assert_allclose(vaabb[0], vaabb[2], tol=1e-3)
 

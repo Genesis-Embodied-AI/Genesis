@@ -732,12 +732,14 @@ class RigidSolver(Solver):
 
                 # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
                 for geom in link.geoms:
-                    geom.active_envs_idx = np.where((links_geom_start <= geom.idx) & (geom.idx < links_geom_end))[0]
+                    active_envs_mask = (links_geom_start <= geom.idx) & (geom.idx < links_geom_end)
+                    geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                    (geom.active_envs_idx,) = np.where(active_envs_mask)
 
                 for vgeom in link.vgeoms:
-                    vgeom.active_envs_idx = np.where((links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end))[
-                        0
-                    ]
+                    active_envs_mask = (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
+                    vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                    (vgeom.active_envs_idx,) = np.where(active_envs_mask)
 
     def _init_vert_fields(self):
         # # collisioin geom

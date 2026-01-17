@@ -83,6 +83,7 @@ class RigidGeom(RBC):
         self._init_quat: np.ndarray = init_quat
 
         # For heterogeneous simulation: which environments this geom is active in (None = all envs)
+        self.active_envs_mask: torch.Tensor | None = None
         self.active_envs_idx: np.ndarray | None = None
 
         self._init_verts = mesh.verts
@@ -852,6 +853,7 @@ class RigidVisGeom(RBC):
         self._init_quat = init_quat
 
         # For heterogeneous simulation: which environments this vgeom is active in (None = all envs)
+        self.active_envs_mask: torch.Tensor | None = None
         self.active_envs_idx: np.ndarray | None = None
 
         self._init_vverts = vmesh.verts
