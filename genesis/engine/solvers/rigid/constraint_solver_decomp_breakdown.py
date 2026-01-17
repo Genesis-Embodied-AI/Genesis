@@ -219,10 +219,11 @@ def _kernel_newton_only_nt_hessian_direct_parallel(
     n_dofs: ti.i32,
 ):
     """
-    Fully parallelized Newton Hessian direct computation.
+    Fully parallelized Newton Hessian matrix computation: H = J'*D*J + M
     
     This kernel parallelizes over (batch, dof1, dof2) to maximize GPU utilization.
-    After this kernel completes, Cholesky factorization must be done separately.
+    Computes only the Hessian matrix. Cholesky factorization is done separately
+    using column-by-column parallel kernels.
     """
     _B = constraint_state.grad.shape[1]
     
@@ -238,16 +239,6 @@ def _kernel_newton_only_nt_hessian_direct_parallel(
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
-            )
-    
-    # Cholesky factorization must be done sequentially per batch
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=128)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_nt_chol_factor(
-                i_b,
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
             )
 
 
