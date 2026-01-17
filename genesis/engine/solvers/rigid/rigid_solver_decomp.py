@@ -1040,9 +1040,14 @@ class RigidSolver(Solver):
                     self._static_rigid_sim_config,
                 )
 
+    def get_error_envs_mask(self):
+        return ti_to_torch(self._errno) > 0
+
     def check_errno(self):
-        # Zero-copy cannot be used for 0-dim tensors because of torch limitation, so we are better of calling a kernel
-        errno = kernel_read_scalar_int32(self._errno)
+        if gs.use_zerocopy:
+            errno = np.bitwise_or.reduce(ti_to_numpy(self._errno))
+        else:
+            errno = kernel_bit_reduction(self._errno)
 
         if errno & 0b00000000000000000000000000000001:
             max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
@@ -1576,6 +1581,13 @@ class RigidSolver(Solver):
     def set_state(self, f, state, envs_idx=None):
         if self.is_active:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+
+            if gs.use_zerocopy:
+                errno = ti_to_torch(self._errno, copy=False)
+                errno[envs_idx] = 0
+            else:
+                kernel_set_zero(envs_idx, self._errno)
+
             kernel_set_state(
                 qpos=state.qpos,
                 dofs_vel=state.dofs_vel,
@@ -1609,7 +1621,6 @@ class RigidSolver(Solver):
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
 
-            self._errno[None] = 0
             self.collider.clear(envs_idx)
             self.constraint_solver.clear(envs_idx)
 
@@ -1907,6 +1918,7 @@ class RigidSolver(Solver):
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+            errno = ti_to_torch(self._errno, copy=False)
             qs_mask = indices_to_mask(qs_idx)
             if (
                 (not qs_mask or isinstance(qs_mask[0], slice))
@@ -1919,9 +1931,11 @@ class RigidSolver(Solver):
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
+                errno.masked_fill_(envs_idx, 0.0)
             else:
                 mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
                 assign_indexed_tensor(data, mask, qpos)
+                errno[envs_idx] = 0
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
         else:
@@ -1931,6 +1945,7 @@ class RigidSolver(Solver):
             if self.n_envs == 0:
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
+            kernel_set_zero(envs_idx, self._errno)
 
         if self.collider is not None:
             self.collider.reset(envs_idx)
@@ -2203,6 +2218,12 @@ class RigidSolver(Solver):
             self._rigid_global_info,
             self._static_rigid_sim_config,
         )
+
+        if gs.use_zerocopy:
+            errno = ti_to_torch(self._errno, copy=False)
+            errno[envs_idx] = 0
+        else:
+            kernel_set_zero(envs_idx, self._errno)
 
         self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)
@@ -7097,7 +7118,7 @@ def func_copy_next_to_curr(
             for i_q in range(n_qs):
                 rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
         else:
-            errno[None] = errno[None] | 0b00000000000000000000000000001000
+            errno[i_b] = errno[i_b] | 0b00000000000000000000000000001000
 
 
 @ti.func
@@ -8407,13 +8428,22 @@ def kernel_set_geoms_friction(
     static_rigid_sim_config: ti.template(),
 ):
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_g_ in ti.ndrange(geoms_idx.shape[0]):
+    for i_g_ in range(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def kernel_read_scalar_int32(tensor: array_class.V_ANNOTATION) -> ti.i32:
-    return tensor[None]
+def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> ti.i32:
+    flag = ti.i32(0)
+    for i in range(tensor.shape[0]):
+        flag = ti.atomic_or(flag, tensor[i])
+    return flag
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_set_zero(envs_idx: ti.types.ndarray(), tensor: array_class.V_ANNOTATION):
+    for i_b in range(envs_idx.shape[0]):
+        tensor[i_b] = 0
 
 
 @ti.func

@@ -1505,7 +1505,7 @@ def func_broad_phase(
                             continue
 
                         if n_broad == collider_info.max_collision_pairs_broad[None]:
-                            errno[None] = errno[None] | 0b00000000000000000000000000000001
+                            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000001
                             break
                         collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
                         collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
@@ -2230,7 +2230,7 @@ def func_add_contact(
 
         collider_state.n_contacts[i_b] = i_c + 1
     else:
-        errno[None] = errno[None] | 0b00000000000000000000000000000010
+        errno[i_b] = errno[i_b] | 0b00000000000000000000000000000010
 
 
 @ti.func

@@ -1892,7 +1892,7 @@ class DataManager:
             self.geoms_state_adjoint_cache = get_geoms_state(solver)
 
         self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
-        self.errno = V_SCALAR_FROM(dtype=gs.ti_int, value=0)
+        self.errno = V(dtype=gs.ti_int, shape=(solver._B,))
 
 
 DofsState = StructDofsState if gs.use_ndarray else ti.template()
