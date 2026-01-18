@@ -1,9 +1,10 @@
+import collections.abc
 import os
 import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Callable, Iterable, Literal
 
 import numpy as np
 import torch
@@ -312,7 +313,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_entity(
         self,
-        morph: Morph,
+        morph: Morph | Iterable[Morph],
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -323,8 +324,10 @@ class Scene(RBC):
 
         Parameters
         ----------
-        morph : gs.morphs.Morph
-            The morph of the entity.
+        morph : gs.morphs.Morph | list[gs.morphs.Morph]
+            The morph of the entity. If a list of morphs is provided, the entity will be heterogeneous
+            (rigid only, single-link entities only). Each parallel environment will simulate a different
+            geometry variant from the list.
         material : gs.materials.Material | None, optional
             The material of the entity. If None, use ``gs.materials.Rigid()``.
         surface : gs.surfaces.Surface | None, optional
@@ -346,18 +349,33 @@ class Scene(RBC):
             # assign a local surface, otherwise modification will apply on global default surface
             surface = gs.surfaces.Default()
 
+        # Handle heterogeneous morphs (any iterable of morphs, excluding Morph objects)
+        is_heterogeneous = isinstance(morph, collections.abc.Iterable) and not isinstance(morph, Morph)
+        if is_heterogeneous:
+            morph = tuple(morph)
+            morph_for_checks = morph[0]
+            if not isinstance(material, gs.materials.Rigid):
+                gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
+            for m in morph:
+                if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
+                    gs.raise_exception(
+                        f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
+                    )
+        else:
+            morph_for_checks = morph
+
         if isinstance(material, gs.materials.Rigid):
             # small sdf res is sufficient for primitives regardless of size
-            if isinstance(morph, gs.morphs.Primitive):
+            if isinstance(morph_for_checks, gs.morphs.Primitive):
                 material._sdf_max_res = 32
 
         # some morph should not smooth surface normal
-        if isinstance(morph, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
+        if isinstance(morph_for_checks, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
             surface.smooth = False
 
-        if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Terrain)):
+        if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Terrain)):
             if not isinstance(material, (gs.materials.Rigid, gs.materials.Hybrid)):
-                gs.raise_exception(f"Unsupported material for morph: {material} and {morph}.")
+                gs.raise_exception(f"Unsupported material for morph: {material} and {morph_for_checks}.")
 
         if surface.double_sided is None:
             surface.double_sided = isinstance(material, gs.materials.PBD.Cloth)

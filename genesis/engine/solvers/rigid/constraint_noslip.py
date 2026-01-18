@@ -3,7 +3,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.array_class as array_class
 
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 
 
 @ti.kernel(fastcache=gs.use_fastcache)

@@ -11,7 +11,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
-from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
+from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
 
@@ -1088,7 +1088,7 @@ class SAPCoupler(RBC):
                 continue
             out[i_b, i_d1] += rigid_global_info.mass_mat[i_d1, i_d0, i_b] * vec[i_b, i_d0]
 
-    # FIXME: This following two rigid solves are duplicated with the one in rigid_solver_decomp.py:func_solve_mass_batched
+    # FIXME: This following two rigid solves are duplicated with the one in rigid_solver.py:func_solve_mass_batched
     # Consider refactoring.
     @ti.func
     def rigid_solve_pcg(
@@ -2270,7 +2270,7 @@ class RigidContactHandler(BaseContactHandler):
         super().__init__(simulator)
         self.rigid_solver = self.sim.rigid_solver
 
-    # FIXME This function is similar to the one in constraint_solver_decomp.py:add_collision_constraints.
+    # FIXME This function is similar to the one in constraint_solver.py:add_collision_constraints.
     # Consider refactoring, using better naming, and removing while.
     @ti.func
     def compute_jacobian(

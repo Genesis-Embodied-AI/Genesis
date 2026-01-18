@@ -16,7 +16,7 @@ from .rigid_geom import RigidGeom, RigidVisGeom
 if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
     from .rigid_joint import RigidJoint
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.ext.pyrender.interaction.vec3 import Pose
 
 
@@ -298,6 +298,9 @@ class RigidLink(RBC):
         """
         Get the vertices of the link's collision body (concatenation of all `link.geoms`) in the world frame.
         """
+        if self.entity._enable_heterogeneous:
+            gs.raise_exception("This method is not supported for heterogeneous entity.")
+
         geoms_idx = slice(self.geom_start, self.geom_end)
         self._solver.update_verts_for_geoms(geoms_idx)
 
@@ -318,6 +321,19 @@ class RigidLink(RBC):
         """
         if self.n_geoms == 0:
             gs.raise_exception("Link has no collision geometries.")
+
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx.
+        # FIXME: Remove this branch after implementing 'get_verts'.
+        if self.entity._enable_heterogeneous and self._solver.n_envs > 0:
+            aabb_min = torch.full((self._solver.n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((self._solver.n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            for geom in self.geoms:
+                geom_aabb = geom.get_AABB()
+                active_mask = geom.active_envs_mask if geom.active_envs_mask is not None else ()
+                aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], geom_aabb[active_mask, 0])
+                aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], geom_aabb[active_mask, 1])
+            return torch.stack((aabb_min, aabb_max), dim=-2)
+
         verts = self.get_verts()
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
 
@@ -329,6 +345,20 @@ class RigidLink(RBC):
         """
         if self.n_geoms == 0:
             gs.raise_exception("Link has no visual geometries.")
+
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
+        if self.entity._enable_heterogeneous:
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            n_envs = len(envs_idx)
+            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            for vgeom in self.vgeoms:
+                vgeom_aabb = vgeom.get_vAABB(envs_idx)
+                active_mask = vgeom.active_envs_mask[envs_idx] if vgeom.active_envs_mask is not None else ()
+                aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], vgeom_aabb[active_mask, 0])
+                aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], vgeom_aabb[active_mask, 1])
+            return torch.stack((aabb_min, aabb_max), dim=-2)
+
         aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
@@ -337,7 +367,7 @@ class RigidLink(RBC):
         """
         Set the mass of the link.
         """
-        from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_adjust_link_inertia
+        from genesis.engine.solvers.rigid.rigid_solver import kernel_adjust_link_inertia
 
         if self.is_fixed:
             gs.logger.warning("Updating the mass of a link that is fixed wrt world has no effect, skipping.")

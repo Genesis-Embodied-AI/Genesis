@@ -9,13 +9,13 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.backward_constraint_solver as backward_constraint_solver
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
 from genesis.engine.solvers.rigid.contact_island import ContactIsland
 from genesis.utils.misc import ti_to_torch
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -1471,7 +1471,7 @@ def func_update_qacc(
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[None] = errno[None] | 0b00000000000000000000000000000100
+            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000100
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -2733,3 +2733,8 @@ def kernel_get_equality_constraints(
             elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.JOINT:
                 fout[i_e, 0] = constraint_state.efc_force[i_c_start, i_b]
                 i_c_start = i_c_start + 1
+
+
+from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
+
+create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.constraint_solver_decomp")
