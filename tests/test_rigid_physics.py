@@ -3931,6 +3931,11 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     with pytest.raises(gs.GenesisException):
         box.attach(hand, "right_finger")
 
+    with pytest.raises(gs.GenesisException):
+        hand.set_pos(0.0)
+    with pytest.raises(gs.GenesisException):
+        hand.set_quat(0.0)
+
     franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
     hand.control_dofs_position([0.04, 0.04])
     for _ in range(30):
