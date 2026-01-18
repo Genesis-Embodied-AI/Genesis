@@ -66,8 +66,8 @@ class RigidGeom(RBC):
         self._friction: float = friction
         self._sol_params = sol_params
         self._needs_coup: bool = needs_coup
-        self._contype = contype
-        self._conaffinity = conaffinity
+        self._contype = int(contype)
+        self._conaffinity = int(conaffinity)
         self._is_convex: bool = mesh.is_convex
         self._cell_start: int = cell_start
         self._vert_start: int = vert_start
@@ -504,7 +504,7 @@ class RigidGeom(RBC):
         return self._needs_coup
 
     @property
-    def contype(self):
+    def contype(self) -> int:
         """
         Get the contact type of the geometry for collision pair filtering.
 
@@ -516,7 +516,7 @@ class RigidGeom(RBC):
         return self._contype
 
     @property
-    def conaffinity(self):
+    def conaffinity(self) -> int:
         """
         Get the contact affinity of the geometry for collision pair filtering.
 
