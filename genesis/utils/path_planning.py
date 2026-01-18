@@ -11,7 +11,7 @@ import genesis.utils.geom as gu
 from genesis.utils import array_class
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 class PathPlanner(ABC):
@@ -416,7 +416,7 @@ class RRT(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         self._solver.qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+                    gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         links_state,
@@ -430,7 +430,7 @@ class RRT(PathPlanner):
                         self._solver._static_rigid_sim_config,
                         is_backward=False,
                     )
-                    gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms_batch(
+                    gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
                         geoms_info,
@@ -785,7 +785,7 @@ class RRTConnect(PathPlanner):
                     # set the steer result and collision check for i_b
                     for i_q in range(self._entity.n_qs):
                         qpos[i_q + self._entity._q_start, i_b] = steer_result[i_q]
-                    gs.engine.solvers.rigid.rigid_solver_decomp.func_forward_kinematics_entity(
+                    gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
                         links_state,
@@ -799,7 +799,7 @@ class RRTConnect(PathPlanner):
                         self._solver._static_rigid_sim_config,
                         is_backward=False,
                     )
-                    gs.engine.solvers.rigid.rigid_solver_decomp.func_update_geoms_batch(
+                    gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
                         geoms_info,

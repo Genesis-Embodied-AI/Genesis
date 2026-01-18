@@ -1795,7 +1795,7 @@ class StructRigidAdjointCache(metaclass=BASE_METACLASS):
     # us not to overwrite the values that have been read during the forward pass, so we need to store the intemediate
     # values in this cache to avoid overwriting them. Specifically, after we compute next frame's qpos, dofs_vel, and
     # dofs_acc, we need to store them in this cache because we overwrite the values in the next frame. See how
-    # [kernel_save_adjoint_cache] is used in [rigid_solver_decomp.py] to store the values in this cache.
+    # [kernel_save_adjoint_cache] is used in [rigid_solver.py] to store the values in this cache.
     qpos: V_ANNOTATION
     dofs_vel: V_ANNOTATION
     dofs_acc: V_ANNOTATION

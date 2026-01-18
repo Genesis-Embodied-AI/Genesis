@@ -619,7 +619,7 @@ def check_mujoco_model_consistency(
     tol: float,
 ):
     # Delay import to enable run benchmarks for old Genesis versions that do not have this method
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
+    from genesis.engine.solvers.rigid.rigid_solver import _sanitize_sol_params
 
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)

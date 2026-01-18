@@ -10,23 +10,23 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.gjk_decomp as gjk
-import genesis.engine.solvers.rigid.diff_gjk_decomp as diff_gjk
-import genesis.engine.solvers.rigid.mpr_decomp as mpr
-import genesis.utils.sdf_decomp as sdf
-import genesis.engine.solvers.rigid.support_field_decomp as support_field
-import genesis.engine.solvers.rigid.rigid_solver_decomp as rigid_solver
+import genesis.engine.solvers.rigid.gjk as gjk
+import genesis.engine.solvers.rigid.diff_gjk as diff_gjk
+import genesis.engine.solvers.rigid.mpr as mpr
+import genesis.utils.sdf as sdf
+import genesis.engine.solvers.rigid.support_field as support_field
+import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 
-from .mpr_decomp import MPR
-from .gjk_decomp import GJK
-from ....utils.sdf_decomp import SDF
-from .support_field_decomp import SupportField
+from .mpr import MPR
+from .gjk import GJK
+from ....utils.sdf import SDF
+from .support_field import SupportField
 
 from enum import IntEnum
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -3498,3 +3498,8 @@ def func_set_upstream_grad(
             collider_state.contact_data.pos.grad[i_c, i_b][j] = dL_dposition[i_b, i_c, j]
             collider_state.contact_data.normal.grad[i_c, i_b][j] = dL_dnormal[i_b, i_c, j]
         collider_state.contact_data.penetration.grad[i_c, i_b] = dL_dpenetration[i_b, i_c]
+
+
+from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
+
+create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.collider_decomp")
