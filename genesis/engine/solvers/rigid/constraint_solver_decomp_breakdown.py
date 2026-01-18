@@ -192,8 +192,8 @@ def _kernel_newton_only_nt_hessian_incremental(
 ):
     """
     Step 4: Newton Hessian update with maximum parallelism (Newton only).
-    
-    This uses func_nt_hessian_incremental2 which automatically falls back to 
+
+    This uses func_nt_hessian_incremental2 which automatically falls back to
     the parallelizable direct method when incremental updates aren't viable.
     The direct method allows parallelization over DOFs in addition to batches.
     """
@@ -218,10 +218,10 @@ def _kernel_cholesky_warp_level(
 ):
     """
     Single-kernel Cholesky factorization using warp-level synchronization.
-    
+
     Each warp (32 threads) processes one batch through all columns sequentially.
     Warp-level sync eliminates the need for 70 separate kernel launches.
-    
+
     Thread organization:
     - 4096 warps (one per batch)
     - 32 threads per warp
@@ -232,13 +232,13 @@ def _kernel_cholesky_warp_level(
     n_dofs = constraint_state.nt_H.shape[1]
     EPS = rigid_global_info.EPS[None]
     WARP_SIZE = ti.static(32)
-    
+
     # Launch with 32 threads per block (one warp per batch)
     ti.loop_config(block_dim=WARP_SIZE)
     for i in range(_B * WARP_SIZE):
         tid = i % WARP_SIZE  # Thread ID within warp (0-31)
         i_b = i // WARP_SIZE  # Batch index
-        
+
         if i_b < _B and constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             # Process all columns sequentially with warp-level synchronization
             for i_d in range(n_dofs):
@@ -249,10 +249,10 @@ def _kernel_cholesky_warp_level(
                     for j_d in range(i_d):
                         tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
                     constraint_state.nt_H[i_b, i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
-                
+
                 # Warp sync: All threads wait for diagonal to be computed
                 ti.simt.warp.sync(ti.u32(0xFFFFFFFF))
-                
+
                 # Phase 2: Compute off-diagonal elements L[i_b, j_d, i_d] for j_d > i_d
                 # Use grid-stride loop to handle any number of DOFs
                 inv_diag = gs.ti_float(1.0) / constraint_state.nt_H[i_b, i_d, i_d]
@@ -266,7 +266,7 @@ def _kernel_cholesky_warp_level(
                     constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * inv_diag
                     # Stride to next element for this thread
                     j_d = j_d + WARP_SIZE
-                
+
                 # Warp sync: All threads wait for off-diagonal to be computed
                 ti.simt.warp.sync(ti.u32(0xFFFFFFFF))
 
@@ -281,13 +281,13 @@ def _kernel_newton_only_nt_hessian_direct_parallel(
 ):
     """
     Fully parallelized Newton Hessian matrix computation: H = J'*D*J + M
-    
+
     This kernel parallelizes over (batch, dof1, dof2) to maximize GPU utilization.
     Computes only the Hessian matrix. Cholesky factorization is done separately
     using column-by-column parallel kernels.
     """
     _B = constraint_state.grad.shape[1]
-    
+
     # Compute H = J'*D*J + M in parallel over all batch-dof pairs
     ti.loop_config(serialize=False, block_dim=256)
     for i_b, i_d1, i_d2 in ti.ndrange(_B, n_dofs, n_dofs):
@@ -317,7 +317,7 @@ def _kernel_cholesky_diagonal(
     """
     _B = constraint_state.grad.shape[1]
     EPS = rigid_global_info.EPS[None]
-    
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=128)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
@@ -341,7 +341,7 @@ def _kernel_cholesky_offdiagonal(
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
-    
+
     ti.loop_config(serialize=False, block_dim=256)
     for i_b, j_d in ti.ndrange(_B, n_dofs):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b] and j_d > i_d:
@@ -440,11 +440,11 @@ def func_solve_decomposed_macrokernels(
             # if _it >= 1:
             #     active_changed = (prev_active != constraint_state.active.to_numpy()).sum()
             #     print(f"active_changed_avg {active_changed / num_env:.2f} ", end='')
-            
+
             # import time
             # ti.sync()
             # start = time.time()
-            
+
             n_dofs = constraint_state.nt_H.shape[1]
             _kernel_newton_only_nt_hessian_direct_parallel(
                 entities_info,
@@ -453,14 +453,14 @@ def func_solve_decomposed_macrokernels(
                 static_rigid_sim_config,
                 n_dofs,
             )
-            
+
             # Warp-level Cholesky factorization (single kernel, fast!)
             _kernel_cholesky_warp_level(
                 constraint_state,
                 rigid_global_info,
                 static_rigid_sim_config,
             )
-            
+
             # print('')
             # prev_active = constraint_state.active.to_numpy()
         _kernel_update_gradient(

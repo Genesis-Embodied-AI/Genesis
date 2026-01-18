@@ -1275,7 +1275,7 @@ def func_nt_hessian_incremental2(
     """
     Parallelized version that checks if incremental update is viable,
     and falls back to parallelized direct computation if needed.
-    
+
     The incremental rank-1 updates are inherently sequential (Cholesky rank-1 update),
     so we fall back to direct computation which can be parallelized.
     """
@@ -1290,11 +1290,11 @@ def func_nt_hessian_incremental2(
         is_active_prev = constraint_state.prev_active[i_c, i_b]
         if is_active ^ is_active_prev:
             n_changed += 1
-    
+
     # Heuristic: if more than 20% of constraints changed, use direct method
     # Direct method is more parallelizable and might be faster for large changes
     use_direct = n_changed > constraint_state.n_constraints[i_b] * 0.2
-    
+
     if not use_direct:
         # Try incremental update
         is_degenerated = False
@@ -1331,9 +1331,9 @@ def func_nt_hessian_incremental2(
                             )
                 if is_degenerated:
                     break
-        
+
         use_direct = is_degenerated
-    
+
     if use_direct:
         # Use direct computation (will be called from parallelized kernel)
         func_nt_hessian_direct(
@@ -1413,18 +1413,18 @@ def func_nt_hessian_direct2(
     """
     Parallelized version of func_nt_hessian_direct that computes one element of H at a time.
     This allows parallelization over both batches (i_b) and DOF pairs (i_d1, i_d2).
-    
+
     Note: This only computes the J'*D*J + M part. Cholesky factorization must be done separately.
     """
     EPS = rigid_global_info.EPS[None]
     n_dofs = constraint_state.nt_H.shape[1]
-    
+
     if i_d2 <= i_d1:
         # return  # Only compute lower triangular part
-    
+
         # Compute H[i_b, i_d1, i_d2] = sum over constraints of J'*D*J
         h_val = gs.ti_float(0.0)
-        
+
         if ti.static(static_rigid_sim_config.sparse_solve):
             # For sparse solve, we need to check if dofs are relevant for each constraint
             for i_c in range(constraint_state.n_constraints[i_b]):
@@ -1432,14 +1432,14 @@ def func_nt_hessian_direct2(
                 is_d1_relevant = False
                 is_d2_relevant = False
                 jac_n_relevant_dofs = constraint_state.jac_n_relevant_dofs[i_c, i_b]
-                
+
                 for i_d_ in range(jac_n_relevant_dofs):
                     dof_idx = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
                     if dof_idx == i_d1:
                         is_d1_relevant = True
                     if dof_idx == i_d2:
                         is_d2_relevant = True
-                
+
                 if is_d1_relevant and is_d2_relevant:
                     if ti.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                         h_val += (
@@ -1458,7 +1458,7 @@ def func_nt_hessian_direct2(
                         * constraint_state.efc_D[i_c, i_b]
                         * constraint_state.active[i_c, i_b]
                     )
-        
+
         # Add mass matrix contribution
         # Find which entity these DOFs belong to
         for i_e in range(entities_info.n_links.shape[0]):
@@ -1467,7 +1467,7 @@ def func_nt_hessian_direct2(
             if dof_start <= i_d1 and i_d1 < dof_end and dof_start <= i_d2 and i_d2 < dof_end:
                 h_val += rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                 break
-        
+
         constraint_state.nt_H[i_b, i_d1, i_d2] = h_val
 
 
