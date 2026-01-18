@@ -35,10 +35,13 @@ def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     return np.array([usd_quat.GetReal(), *usd_quat.GetImaginary()])
 
 
-def extract_rotation_and_scale(trans_matrix: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    R, S = gu.polar(trans_matrix[:3, :3], pure_rotation=True, side="right")
+def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    R, S = gu.polar(T[:3, :3], pure_rotation=True, side="right")
     assert np.linalg.det(R) > 0, "Rotation matrix must contain only pure rotations."
-    return R, S
+    Q = np.eye(4, dtype=T.dtype)
+    Q[:3, :3] = R
+    Q[:3, 3] = T[:3, 3]
+    return Q, S
 
 
 def usd_mesh_to_gs_trimesh(usd_mesh: UsdGeom.Mesh, ref_prim: Usd.Prim | None) -> Tuple[np.ndarray, trimesh.Trimesh]:
@@ -177,7 +180,7 @@ def compute_gs_global_transform(prim: Usd.Prim) -> tuple[np.ndarray, np.ndarray]
     T_w = compute_usd_global_transform(prim)
 
     # Extract rotation R and scale S from T^w
-    R, S = extract_rotation_and_scale(T_w[:3, :3])
+    R, S = extract_scale(T_w[:3, :3])
 
     # Build Genesis transform Q^w = [R | t; 0 | 1] (no scaling)
     Q_w = np.eye(4)

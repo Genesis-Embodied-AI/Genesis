@@ -19,6 +19,7 @@ import genesis as gs
 import genesis.utils.mesh as mu
 
 from .usd_material import parse_material_preview_surface
+from .usd_parser_utils import extract_scale
 
 
 def decompress_usdz(usdz_path: str):
@@ -90,21 +91,18 @@ class UsdContext:
         self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
         self._material_parsed = False
         self._xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+        self._is_yup = UsdGeom.GetStageUpAxis(self._stage) == "Y"
+        self._meter_scale = UsdGeom.GetStageMetersPerUnit(self._stage)
 
     @property
     def stage(self) -> Usd.Stage:
         """Get the USD stage."""
         return self._stage
-    
+
     @property
     def stage_file(self) -> str:
         """Get the USD stage file."""
         return self._stage_file
-
-    @property
-    def material_parsed(self) -> bool:
-        """Get whether the materials have been parsed."""
-        return self._material_parsed
 
     def get_prim_id(self, prim: Usd.Prim):
         """Get a unique identifier for a prim based on its first SpecifierOver spec."""
@@ -112,10 +110,6 @@ class UsdContext:
         spec = next((s for s in prim_stack if s.specifier == Sdf.SpecifierOver), prim_stack[-1])
         spec_path = self._stage_file if spec.layer.identifier == self._bake_stage_file else spec.layer.identifier
         return spec_path + spec.path.pathString
-
-    def get_prim_transform(self, prim: Usd.Prim) -> np.ndarray:
-        """Get the transform of a prim."""
-        return np.asarray(self._xform_cache.GetLocalToWorldTransform(prim), dtype=np.float32)
 
     def find_all_rigid_entities(self) -> list[Usd.Prim]:
         """
@@ -138,6 +132,9 @@ class UsdContext:
         """
         Parse all materials in the USD stage.
         """
+        if self._material_parsed:
+            return
+
         bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
 
         # parse materials
@@ -150,6 +147,7 @@ class UsdContext:
                 self._material_properties[material_id] = material_dict, uv_name
                 if self._need_bake and material_dict is None:
                     bake_material_paths[material_id] = str(prim.GetPath())
+        self._material_parsed = True
 
         if not bake_material_paths:
             return
@@ -233,49 +231,32 @@ class UsdContext:
                 gs.logger.warning(f"Replacing symlink {asset_path} with real file {real_path}.")
                 shutil.copy2(real_path, asset_path)
 
-    def apply_surface(self, material_id: str, surface: gs.surfaces.Surface):
-        material_surface = surface.copy()
-        material_dict, uv_name = self._material_properties.get(material_id, (None, "st"))
-        if material_dict is not None:
-            material_surface.update_texture(
-                color_texture=material_dict.get("color_texture"),
-                opacity_texture=material_dict.get("opacity_texture"),
-                roughness_texture=material_dict.get("roughness_texture"),
-                metallic_texture=material_dict.get("metallic_texture"),
-                normal_texture=material_dict.get("normal_texture"),
-                emissive_texture=material_dict.get("emissive_texture"),
-                ior=material_dict.get("ior"),
+    def apply_surface(self, surface_id: str, surface: gs.surfaces.Surface):
+        applied_surface = surface.copy()
+        surface_dict, uv_name = self._material_properties.get(surface_id, (None, "st"))
+        if surface_dict is not None:
+            applied_surface.update_texture(
+                color_texture=surface_dict.get("color_texture"),
+                opacity_texture=surface_dict.get("opacity_texture"),
+                roughness_texture=surface_dict.get("roughness_texture"),
+                metallic_texture=surface_dict.get("metallic_texture"),
+                normal_texture=surface_dict.get("normal_texture"),
+                emissive_texture=surface_dict.get("emissive_texture"),
+                ior=surface_dict.get("ior"),
             )
-        return material_surface, uv_name
+        return applied_surface, uv_name
 
-    def is_prim_in_articulation(self, prim: Usd.Prim) -> bool:
-        """
-        Check if a prim is in an articulation.
+    def compute_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None):
+        transform = self._xform_cache.GetLocalToWorldTransform(prim)
+        T_usd = np.asarray(transform, dtype=np.float32)  # translation on the bottom row
+        if self._is_yup:
+            T_usd @= mu.Y_UP_TRANSFORM
+        T_usd[:, :3] *= self._meter_scale
+        Q, S = extract_scale(T_usd.transpose())
 
-        Parameters
-        ----------
-        prim : Usd.Prim
-            The prim to check.
+        if ref_prim is None:
+            return Q, S
 
-        Returns
-        -------
-        bool
-            True if the prim is in an articulation, False otherwise.
-        """
-        return prim.GetPath() in self._prims_in_articulation
-
-    def get_material(self, material_id: str):
-        """
-        Get a parsed material by its ID.
-
-        Parameters
-        ----------
-        material_id : str
-            The material ID.
-
-        Returns
-        -------
-        tuple or None
-            Tuple of (material_surface, uv_name) if found, None otherwise.
-        """
-        return self._materials.get(material_id)
+        Q_ref, S_ref = self.compute_transform(ref_prim)
+        Q_rel = np.linalg.inv(Q_ref) @ Q
+        return Q_rel, S

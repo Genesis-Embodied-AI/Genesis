@@ -66,26 +66,6 @@ def _create_joint_default_values(n_dofs: int) -> Dict:
     return defaults
 
 
-def _create_link_default_values() -> Dict:
-    """
-    Create default values for link info dictionary.
-
-    Returns
-    -------
-    dict
-        Dictionary with default link values.
-    """
-    defaults = {
-        "parent_idx": -1,  # No parent by default, will be overwritten later if appropriate
-        "invweight": np.full((2,), fill_value=-1.0),
-        "inertial_pos": gu.zero_pos(),
-        "inertial_quat": gu.identity_quat(),
-        "inertial_i": None,
-        "inertial_mass": None,
-        "density": None,  # Density from UsdPhysicsMassAPI, if specified
-    }
-    return defaults
-
 
 # ==================== Helper Functions ====================
 
@@ -800,85 +780,6 @@ def _get_parent_child_links(stage: Usd.Stage, joint: UsdPhysics.Joint) -> Tuple[
     return parent_link, child_link
 
 
-# ==================== Finding Functions ====================
-
-
-def _find_all_rigid_entities(stage: Usd.Stage, context: UsdParserContext = None) -> Dict[str, List[Usd.Prim]]:
-    """
-    Find all articulation roots and rigid bodies in the stage.
-
-    Rigid bodies are treated as articulation roots with no child links.
-    This function distinguishes them at the finding level but they will be
-    processed similarly in the parsing part.
-
-    Parameters
-    ----------
-    stage : Usd.Stage
-        The USD stage.
-    context : UsdParserContext, optional
-        If provided, articulation roots and rigid bodies will be added to the context.
-
-    Returns
-    -------
-    Dict[str, List[Usd.Prim]]
-        Dictionary with keys:
-        - "articulation_roots": List of articulation root prims
-        - "rigid_bodies": List of rigid body prims
-    """
-    articulation_roots = []
-    rigid_bodies = []
-
-    # Use Usd.PrimRange for traversal
-    it = iter(Usd.PrimRange(stage.GetPseudoRoot()))
-    for prim in it:
-        # Early break if we come across an ArticulationRootAPI (don't go deeper)
-        if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-            articulation_roots.append(prim)
-            if context:
-                context.add_articulation_root(prim)
-            # Skip descendants (they are part of this articulation)
-            it.PruneChildren()
-            continue
-
-        # Early break if we come across a rigid body
-        if _is_rigid_body(prim):
-            rigid_bodies.append(prim)
-            if context:
-                context.add_rigid_body(prim)
-            # Skip descendants (they will be merged, not treated as separate rigid bodies)
-            it.PruneChildren()
-
-    return {
-        "articulation_roots": articulation_roots,
-        "rigid_bodies": rigid_bodies,
-    }
-
-
-# ==================== Collection Functions: Joints and Links ====================
-
-
-
-
-def _is_fixed_rigid_body(prim: Usd.Prim) -> bool:
-    """
-    Check if a rigid body prim is fixed (kinematic or collision-only).
-
-    Parameters
-    ----------
-    prim : Usd.Prim
-        The rigid body prim.
-
-    Returns
-    -------
-    bool
-        True if the rigid body is fixed, False otherwise.
-    """
-    collision_api_only = prim.HasAPI(UsdPhysics.CollisionAPI) and not prim.HasAPI(UsdPhysics.RigidBodyAPI)
-    kinematic_enabled = False
-    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
-        rigid_body_api = UsdPhysics.RigidBodyAPI(prim)
-        kinematic_enabled = bool(rigid_body_api.GetKinematicEnabledAttr().Get())
-    return collision_api_only or kinematic_enabled
 
 
 def _parse_joints(
@@ -961,55 +862,66 @@ def _parse_joints(
             j_info.update(_parse_drive_api(joint_prim, j_type, n_dofs))
 
 
-def _parse_density(link: Usd.Prim) -> float:
-    """
-    Parse density from UsdPhysicsMassAPI.
 
-    Parameters
-    ----------
-    link : Usd.Prim
-        The link prim to parse.
-
-    Returns
-    -------
-    float
-        Density value
+def _parse_link(
+    context: UsdContext,
+    link: Usd.Prim,
+    joints: List[UsdPhysics.Joint],
+    entity_prim: Usd.Prim,
+):
     """
+    Parse a link and return a link info dictionary.
+    """
+    defaults = {
+        "parent_idx": -1,  # No parent by default, will be overwritten later if appropriate
+        "invweight": np.full((2,), fill_value=-1.0),
+        "inertial_pos": gu.zero_pos(),
+        "inertial_quat": gu.identity_quat(),
+        "inertial_i": None,
+        "inertial_mass": None,
+        "density": None,  # Density from UsdPhysicsMassAPI, if specified
+    }
+
+    l_info = {}
+    l_info["name"] = str(link.GetPath())
+
+    Q, S = context.compute_transform(link, entity_prim)
+    l_info["pos"] = Q[:3, 3]
+    l_info["quat"] = gu.R_to_quat(Q[:3, :3])
+
+    link_fixed = False
+    if link.HasAPI(UsdPhysics.RigidBodyAPI):
+        rigid_body_link = UsdPhysics.RigidBodyAPI(link)
+        if rigid_body_link.GetKinematicEnabledAttr().Get():
+            link_fixed = True
+        elif rigid_body_link.GetRigidBodyEnabledAttr().Get() is False:
+            link_fixed = True
+    elif link.HasAPI(UsdPhysics.CollisionAPI):
+        link_fixed = True
+
+    # Parse mass/density from UsdPhysicsMassAPI
+    
+    l_info["inertial_pos"] = mj.body_ipos[i_l]
+    l_info["inertial_quat"] = mj.body_iquat[i_l]
+    l_info["inertial_i"] = np.diag(mj.body_inertia[i_l])
+    l_info["inertial_mass"] = float(mj.body_mass[i_l])
+    l_info["density"] = density
+
+
     if not link.HasAPI(UsdPhysics.MassAPI):
         # Default density to 1000.0 to match MuJoCo's default density when computing inertia from geometry
         return 1000.0
 
     mass_api = UsdPhysics.MassAPI(link)
-
     return mass_api.GetDensityAttr().Get()
 
-
-def _parse_link(link: Usd.Prim) -> Dict:
-    """
-    Parse a link and return a link info dictionary.
-    """
-    l_info = _create_link_default_values()
-
-    l_info["name"] = str(link.GetPath())
-
-    Q, S = compute_gs_global_transform(link)
-    global_pos = Q[:3, 3]
-    global_quat = gu.R_to_quat(Q[:3, :3])
-    l_info["pos"] = global_pos
-    l_info["quat"] = global_quat
-    l_info["is_fixed"] = _is_fixed_rigid_body(link)
-
-    # Parse mass/density from UsdPhysicsMassAPI
-    density = _parse_density(link)
-    if density is not None:
-        l_info["density"] = density
 
     return l_info
 
 # Rigidbody requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_rigid_bodies/capability-physics_rigid_bodies.html
 # Joint requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_joints/capability-physics_joints.html
 
-def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim) -> Tuple[List[UsdPhysics.Joint], List[Usd.Prim]]:
+def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
     # TODO: we only assume that all links are under the subtree of the articulation root now.
     # To parse the accurate articulation structure, we need to search through the BodyRel.
     link_path_joints = {}
@@ -1037,12 +949,35 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim) -> Tu
         links = [entity_prim]
         link_joints = [[]]
 
-    return link_joints, links
+    return links, link_joints
 
 
-def parse_geoms(context: UsdContext, links: List[Usd.Prim], morph: gs.morphs.USD, surface: gs.surfaces.Surface) -> List[List[Dict]]:
+def _parse_geoms(
+    context: UsdContext,
+    links: List[Usd.Prim],
+    morph: gs.morphs.USD,
+    surface: gs.surfaces.Surface,
+) -> List[List[Dict]]:
+    links_g_infos = []
     for link in links:
-        link_g_infos = parse_prim_geoms(context, link, link, morph, surface)
+        links_g_infos.append(parse_prim_geoms(context, link, link, morph, surface))
+    return links_g_infos
+
+
+def _parse_links(
+    context: UsdContext,
+    links: List[Usd.Prim],
+    link_joints: List[List[UsdPhysics.Joint]],
+    entity_prim: Usd.Prim,
+    morph: gs.morphs.USD,
+) -> Tuple[List[Dict], List[List[Dict]]]:
+    l_infos = []
+    links_j_infos = []
+    for link, joints in zip(links, link_joints):
+        l_info, link_j_info = _parse_link(context, link, joints, entity_prim)
+        l_infos.append(l_info)
+        links_j_infos.append(link_j_info)
+    return l_infos, links_j_infos
 
 
 # ==================== Main Parsing Function ====================
@@ -1077,16 +1012,14 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     #     gs.logger.warning("USD rigid entity parsing currently only supports scale=1.0. Scale will be set to 1.0.")
     # morph.scale = 1.0
     context: UsdContext = morph.usd_ctx
+    context.find_all_materials()
     stage: Usd.Stage = context.stage
 
     if morph.prim_path is None:
         gs.raise_exception("USD rigid entity must have a prim path.")
-
     entity_prim: Usd.Prim = stage.GetPrimAtPath(morph.prim_path)
     if not entity_prim.IsValid():
         gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
-
-    # Validate that the prim is either an articulation root or a rigid body
     if not (
         entity_prim.HasAPI(UsdPhysics.RigidBodyAPI) or
         entity_prim.HasAPI(UsdPhysics.CollisionAPI) or
@@ -1098,28 +1031,22 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
         )
 
     # find joints
-    link_joints, links = _parse_articulation_structure(stage, entity_prim)
-
-    n_links = len(links)
-    l_infos = []
-    links_j_infos = [[] for _ in range(n_links)]
-    links_g_infos = [[] for _ in range(n_links)]
-
-    links_g_infos = parse_geoms(context, links, morph, surface)
-    l_infos, links_j_infos = parse_links(mj, morph.scale)
+    links, link_joints = _parse_articulation_structure(stage, entity_prim)
+    links_g_infos = _parse_geoms(context, links, morph, surface)
+    l_infos, links_j_infos = _parse_links(context, links, link_joints, entity_prim, morph)
     l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
     eqs_info = parse_equalities(mj, morph.scale)
 
         
-        l_info = _parse_link(link)
-        l_infos.append(l_info)
-        visual_g_infos = _create_visual_geo_infos(link, context, morph)
-        collision_g_infos = _create_collision_geo_infos(link, context, morph)
-        if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
-            gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
-            continue
-        link_g_infos.extend(visual_g_infos)
-        link_g_infos.extend(collision_g_infos)
+    l_info = _parse_link(link)
+    l_infos.append(l_info)
+    visual_g_infos = _create_visual_geo_infos(link, context, morph)
+    collision_g_infos = _create_collision_geo_infos(link, context, morph)
+    if len(visual_g_infos) == 0 and len(collision_g_infos) == 0:
+        gs.logger.warning(f"No visual or collision geometries found for link {link.GetPath()}, skipping.")
+        continue
+    link_g_infos.extend(visual_g_infos)
+    link_g_infos.extend(collision_g_infos)
 
     if has_joints:
         _parse_joints(stage, joints, l_infos, links_j_infos, link_name_to_idx, morph)

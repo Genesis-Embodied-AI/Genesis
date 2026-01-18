@@ -11,14 +11,12 @@ from .usd_context import UsdContext
 
 
 AXES_T = {
-    "X": np.array([[0.0, 0.0, 1.0, 0.0],
-                   [0.0, 1.0, 0.0, 0.0],
-                   [-1.0, 0.0, 0.0, 0.0],
-                   [0.0, 0.0, 0.0, 1.0]], dtype=np.float64),
-    "Y": np.array([[1.0, 0.0, 0.0, 0.0],
-                   [0.0, 0.0, 1.0, 0.0],
-                   [0.0, -1.0, 0.0, 0.0],
-                   [0.0, 0.0, 0.0, 1.0]], dtype=np.float64),
+    "X": np.array(
+        [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float64
+    ),
+    "Y": np.array(
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float64
+    ),
     "Z": np.eye(4, dtype=np.float64),
 }
 
@@ -34,7 +32,7 @@ def parse_prim_geoms(
     morph: gs.morphs.USD,
     surface: gs.surfaces.Surface,
     match_visual=False,
-    match_collision=False
+    match_collision=False,
 ):
     g_infos = []
 
@@ -48,7 +46,7 @@ def parse_prim_geoms(
             if re.match(pattern, prim.GetName()):
                 match_collision = True
                 break
-    
+
     if prim.IsA(UsdGeom.Gprim):
         # parse materials
         prim_bindings = UsdShade.MaterialBindingAPI(prim)
@@ -60,8 +58,9 @@ def parse_prim_geoms(
             geom_surface, uv_name, surface_id = surface.copy(), "st", None
 
         # parse transform
-        geom_transform, geom_scale = context.compute_rel_transform(prim, link_prim)
-        scale = geom_scale * morph.scale
+        geom_Q, geom_S = context.compute_transform(prim, link_prim)
+        geom_S *= morph.scale
+        geom_Q[:3, 3] *= morph.scale
         geom_id = context.get_prim_id(prim)
 
         # parse geometry
@@ -77,7 +76,9 @@ def parse_prim_geoms(
             # parse faces
             faces_attr = mesh_prim.GetFaceVertexCountsAttr()
             faces_vertex_counts_attr = mesh_prim.GetFaceVertexIndicesAttr()
-            faces = np.array(faces_attr.Get(), dtype=np.int32) if faces_attr.HasValue() else np.array([], dtype=np.int32)
+            faces = (
+                np.array(faces_attr.Get(), dtype=np.int32) if faces_attr.HasValue() else np.array([], dtype=np.int32)
+            )
             faces_vertex_counts = (
                 np.array(faces_vertex_counts_attr.Get())
                 if faces_vertex_counts_attr.HasValue()
@@ -143,26 +144,29 @@ def parse_prim_geoms(
                 visual=trimesh.visual.TextureVisuals(uv=uvs) if uvs is not None else None,
                 process=True,
             )
+            processed_mesh.apply_transform(geom_S)
             points = processed_mesh.vertices
             triangles = processed_mesh.faces
             normals = processed_mesh.vertex_normals
             if uvs is not None:
                 uvs = processed_mesh.visual.uv
 
-            metadata = { "mesh_path": context.stage_file, } # unbaked file or cache
+            metadata = {
+                "mesh_path": context.stage_file,
+            }  # unbaked file or cache
             mesh = gs.Mesh.from_attrs(
                 verts=points,
                 faces=triangles,
                 normals=normals,
                 surface=geom_surface,
                 uvs=uvs,
-                scale=scale,
             )
             mesh.metadata.update(metadata)
             geom_data = None
             gs_type = gs.GEOM_TYPE.MESH
 
-        else: # primitive geometries
+        else:  # primitive geometries
+            geom_S_diag = np.diag(geom_S)
             if prim.IsA(UsdGeom.Plane):
                 plane_prim = UsdGeom.Plane(prim)
                 width = plane_prim.GetWidthAttr().Get()
@@ -172,23 +176,21 @@ def parse_prim_geoms(
                 w = float(width) * 0.5
                 l = float(length) * 0.5
                 tmesh = trimesh.Trimesh(
-                    vertices=np.array(
-                        [[-w, -l, 0.0], [ w, -l, 0.0], [ w,  l, 0.0], [-w,  l, 0.0]], dtype=np.float32
-                    ),
+                    vertices=np.array([[-w, -l, 0.0], [w, -l, 0.0], [w, l, 0.0], [-w, l, 0.0]], dtype=np.float32),
                     faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32),
                     face_normals=np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
                 )
                 tmesh.apply_transform(axis_T)
                 geom_data = np.array([0.0, 0.0, 1.0])
                 gs_type = gs.GEOM_TYPE.PLANE
-            
+
             elif prim.IsA(UsdGeom.Sphere):
                 sphere_prim = UsdGeom.Sphere(prim)
                 radius = sphere_prim.GetRadiusAttr().Get()
                 tmesh = trimesh.creation.icosphere(radius=radius, subdivisions=2)
-                geom_data = np.array([radius]) * scale
+                geom_data = np.array([radius]) * geom_S_diag
                 gs_type = gs.GEOM_TYPE.SPHERE
-            
+
             elif prim.IsA(UsdGeom.Capsule):
                 capsule_prim = UsdGeom.Capsule(prim)
                 radius = capsule_prim.GetRadiusAttr().Get()
@@ -197,17 +199,17 @@ def parse_prim_geoms(
                 tmesh = trimesh.creation.capsule(radius=radius, height=height, count=(8, 12))
                 tmesh.apply_translation([0.0, 0.0, -0.5 * height])
                 tmesh.apply_transform(axis_T)
-                geom_data = np.array([radius, height, 1.0]) * scale  # TODO: use the correct direction
+                geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
                 gs_type = gs.GEOM_TYPE.CAPSULE
-            
+
             elif prim.IsA(UsdGeom.Cube):
                 cube_prim = UsdGeom.Cube(prim)
                 size = cube_prim.GetSizeAttr().Get()
                 extents = np.array([size, size, size], dtype=np.float32)
                 tmesh = trimesh.creation.box(extents=extents)
-                geom_data = extents * scale
+                geom_data = extents * geom_S_diag
                 gs_type = gs.GEOM_TYPE.BOX
-            
+
             elif prim.IsA(UsdGeom.Cylinder):
                 cylinder_prim = UsdGeom.Cylinder(prim)
                 radius = cylinder_prim.GetRadiusAttr().Get()
@@ -215,20 +217,20 @@ def parse_prim_geoms(
                 axis_T = AXES_T[cylinder_prim.GetAxisAttr().Get()]
                 tmesh = trimesh.creation.cylinder(radius=radius, height=height, count=(8, 12))
                 tmesh.apply_transform(axis_T)
-                geom_data = np.array([radius, height, 1.0]) * scale  # TODO: use the correct direction
+                geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
                 gs_type = gs.GEOM_TYPE.CYLINDER
-            
+
             else:
                 gs.raise_exception(f"Unsupported geometry type: {prim.GetTypeName()}")
 
+            tmesh.apply_transform(geom_S)
             mesh = gs.Mesh.from_trimesh(
                 tmesh,
-                scale=scale,
                 surface=geom_surface,
             )
 
-        geom_pos = geom_transform[:3, 3]
-        geom_quat = gu.R_to_quat(geom_transform[:3, :3])
+        geom_pos = geom_Q[:3, 3]
+        geom_quat = gu.R_to_quat(geom_Q[:3, :3])
 
         is_visual = match_visual or not (match_collision or match_visual)
         is_collision = match_collision or not (match_collision or match_visual)
@@ -261,6 +263,6 @@ def parse_prim_geoms(
             )
 
     for child in prim.GetChildren():
-        g_infos.extend(parse_prim_geoms(context, child, morph, surface, match_visual, match_collision))
+        g_infos.extend(parse_prim_geoms(context, child, link_prim, morph, surface, match_visual, match_collision))
 
     return g_infos
