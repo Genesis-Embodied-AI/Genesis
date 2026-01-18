@@ -1535,7 +1535,7 @@ def _tc_z_up_to_R(z, eps: float, up=None, out: torch.Tensor | None = None):
 
     # Compute x vectors (first column)
     if up is not None:
-        x[:] = torch.cross(up, z, dim=-1)
+        x[:] = torch.cross(torch.broadcast_to(up, z.shape), z, dim=-1)
     else:
         up_mask = z[..., 2:].abs() < 1.0 - eps
         torch.where(up_mask, z[..., 1], z[..., 2], out=x[..., 0])

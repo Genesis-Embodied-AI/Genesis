@@ -1357,6 +1357,11 @@ class StructLinksInfo(metaclass=BASE_METACLASS):
     inertial_i: V_ANNOTATION
     inertial_mass: V_ANNOTATION
     entity_idx: V_ANNOTATION
+    # Heterogeneous simulation support: per-link geom/vgeom index ranges
+    geom_start: V_ANNOTATION
+    geom_end: V_ANNOTATION
+    vgeom_start: V_ANNOTATION
+    vgeom_end: V_ANNOTATION
 
 
 def get_links_info(solver):
@@ -1381,6 +1386,11 @@ def get_links_info(solver):
         inertial_i=V(dtype=gs.ti_mat3, shape=links_info_shape),
         inertial_mass=V(dtype=gs.ti_float, shape=links_info_shape),
         entity_idx=V(dtype=gs.ti_int, shape=links_info_shape),
+        # Heterogeneous simulation support: per-link geom/vgeom index ranges
+        geom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        geom_end=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_end=V(dtype=gs.ti_int, shape=links_info_shape),
     )
 
 
@@ -1814,6 +1824,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool
+    enable_heterogeneous: bool
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
@@ -1881,7 +1892,7 @@ class DataManager:
             self.geoms_state_adjoint_cache = get_geoms_state(solver)
 
         self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
-        self.errno = V_SCALAR_FROM(dtype=gs.ti_int, value=0)
+        self.errno = V(dtype=gs.ti_int, shape=(solver._B,))
 
 
 DofsState = StructDofsState if gs.use_ndarray else ti.template()

@@ -1369,7 +1369,7 @@ def func_update_qacc(
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[None] = errno[None] | 0b00000000000000000000000000000100
+            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000100
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
