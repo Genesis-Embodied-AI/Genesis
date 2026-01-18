@@ -1,5 +1,44 @@
 # Genesis Release Note
 
+## 0.3.12
+
+This PR focuses on performance improvements (x4 faster for complex scenes with 64 < n_dofs < 96 and n_envs=4096 compared to 0.3.10). Besides, initial support of heterogenous object and USD stage import for rigid body simulation has been introduced.
+
+### New Features
+
+* [FEATURE] Add method to compute axis-aligned bounding boxes of visual geometries. (@duburcqa) (#2185)
+* [FEATURE] Add partial support of batched camera sensor with Rasterizer. (@Narsil) (#2207, #2212)
+* [FEATURE] Add support for attaching MPM particles to rigid links. (@YilingQiao) (#2205)
+* [FEATURE] Add support of USD import for Rigid Body. (@alanray-tech) (#2067)
+* [FEATURE] Add support of batched textures to BatchRenderer. (@ACMLCZH) (#2077)
+* [FEATURE] Add support of fisheye camera mode to BatchRenderer. (@ACMLCZH) (#2138)
+* [FEATURE] Add batched simulation of heterogeneous objects. (@YilingQiao) (#2202)
+* [FEATURE] Filter out self-collision pairs active in neutral configuration. (@duburcqa) (#2251)
+
+### Bug Fixes
+
+* [BUG FIX] Fix zero-copy for fields on Apple Metal. (@duburcqa) (#2188, #2223)
+* [BUG FIX] Fix compatibility with 'numpy<2.0'. (@duburcqa) (#2197)
+* [BUG FIX] Fix invalid default particle sampler on Linux ARM. (@duburcqa) (#2211)
+* [BUG FIX] Fix 'RigidGeom.get_(pos|quat)' invalid shape. (@duburcqa) (#2218)
+* [BUG FIX] Fix various sensor bugs and add zero-copy to contact force sensors. (@duburcqa) (#2232, #2235)
+* [BUG FIX] Clear dynamic weld at scene reset. (@YilingQiao) (#2233)
+* [BUG FIX] Fix viewer not closed at scene destroy if running in background thread. (@duburcqa) (#2236)
+* [BUG FIX] More robust handling of corrupted cache. (@duburcqa) (#2241)
+
+### Miscellaneous
+
+* [MISC] More intuitive visualisation of camera frustum in interactive viewer. (@duburcqa) (#2180)
+* [MISC] Remove broken and unmaintained Avatar Solver. (@duburcqa) (#2181)
+* [MISC] Speedup non-tiled hessian cholesky factor and solve. (@duburcqa) (#2182, #2183)
+* [MISC] Force public getters to return by-value to avoid mistake. (@duburcqa) (#2184)
+* [MISC] Improve CI infrastructure. (@hughperkins, @duburcqa) (#1981, #2166, #2190, #2194, #2195, #2242, #2245, #2250)
+* [MISC] Add Ruff format. (@Narsil) (#2213, #2214, #2215)
+* [MISC] Store texture path for primitive morphs as metadata. (@Rush2k) (#2227)
+* [MISC] Improve import logics of y-up vs z-up file meshes. (@AnisB) (#2237)
+* [MISC] Simplify boolean contact sensors update logics. (@duburcqa) (#2238)
+* [MISC] Rigid methods set_qpos,set_dofs_position now clear error code. (@duburcqa) (#2253)
+
 ## 0.3.11
 
 The main focus of this release is to improve scaling of the simulation wrt the complexity of the scene, and better leverage GPUn compute for small to moderate batch sizes (0<=n_envs<=8192). As usual, a bunch of minor bugs have been fixed.

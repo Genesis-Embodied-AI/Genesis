@@ -50,3 +50,8 @@ def func_wakeup_entity_and_its_temp_island(
 
             for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
                 geoms_state.hibernated[i_g, i_b] = False
+
+
+from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
+
+create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.rigid_solver_util_decomp")

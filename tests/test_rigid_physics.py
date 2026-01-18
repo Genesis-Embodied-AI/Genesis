@@ -1114,6 +1114,65 @@ def test_robot_scaling_primitive_collision(show_viewer):
 
 
 @pytest.mark.required
+def test_filter_neutral_self_collisions(show_viewer):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            enable_neutral_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+    )
+    scene.build()
+    eq_type = scene.rigid_solver.equalities_info.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj1id = scene.rigid_solver.equalities_info.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj2id = scene.rigid_solver.equalities_info.eq_obj2id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+
+    scene.rigid_solver.collider.detection()
+    contacts_data = scene.rigid_solver.collider.get_contacts()
+    assert ((contacts_data["link_a"] == 11) & (contacts_data["link_b"] == 0)).any()
+
+    for i in range(2):
+        for i_ga in range(robot.n_geoms):
+            for i_gb in range(i_ga + 1, robot.n_geoms):
+                geom_a = scene.rigid_solver.geoms[i_ga]
+                geom_b = scene.rigid_solver.geoms[i_gb]
+                link_a = geom_a.link
+                link_b = geom_b.link
+                if link_a.idx == link_b.idx:
+                    continue
+                if link_a.is_fixed and link_b.is_fixed:
+                    continue
+                if (
+                    (eq_type == gs.EQUALITY_TYPE.WELD)
+                    & (
+                        (eq_obj1id == link_a.idx & eq_obj2id == link_b.idx)
+                        | (eq_obj1id == link_b.idx & eq_obj2id == link_a.idx)
+                    )
+                ).any():
+                    continue
+                if link_a.idx == link_b.parent_idx:
+                    continue
+                verts_a = tensor_to_array(geom_a.get_verts())
+                verts_a = (1.0 - 1e-3) * verts_a + 1e-3 * verts_a.mean(axis=0, keepdims=True)
+                mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
+                geom_b = scene.rigid_solver.geoms[i_gb]
+                verts_b = tensor_to_array(geom_b.get_verts())
+                verts_b = (1.0 - 1e-3) * verts_b + 1e-3 * verts_b.mean(axis=0, keepdims=True)
+                mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
+                is_colliding = mesh_a.contains(mesh_b.vertices).any() or mesh_b.contains(mesh_a.vertices).any()
+                assert is_colliding == ({(i_ga, i_gb)} in ({(5, 10)}, {(6, 10)}))
+        scene.step()
+
+
+@pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -3016,6 +3075,8 @@ def test_data_accessor(n_envs, batched, tol):
         ),
     )
     gs_link = gs_robot.get_link("RR_thigh")
+    gs_geom = gs_link.geoms[0]
+    gs_vgeom = gs_link.vgeoms[0]
     scene.build(n_envs=n_envs)
     gs_s = scene.sim.rigid_solver
 
@@ -3176,18 +3237,25 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, n_envs, gs_robot.get_pos, gs_robot.set_pos, None),
         (-1, n_envs, gs_robot.get_quat, gs_robot.set_quat, None),
         (-1, -1, gs_robot.get_mass, gs_robot.set_mass, None),
+        (-1, -1, gs_robot.get_verts, None, None),
         (-1, -1, gs_robot.get_AABB, None, None),
         (-1, -1, gs_robot.get_vAABB, None, None),
         # LINK
         (-1, -1, gs_link.get_pos, None, None),
         (-1, -1, gs_link.get_quat, None, None),
         (-1, -1, gs_link.get_mass, gs_link.set_mass, None),
+        (-1, -1, gs_link.get_verts, None, None),
         (-1, -1, gs_link.get_AABB, None, None),
         (-1, -1, gs_link.get_vAABB, None, None),
         # GEOM
-        (-1, -1, gs_link.get_pos, None, None),
-        (-1, -1, gs_link.get_quat, None, None),
-        (-1, -1, gs_link.get_vAABB, None, None),
+        (-1, -1, gs_geom.get_pos, None, None),
+        (-1, -1, gs_geom.get_quat, None, None),
+        (-1, -1, gs_geom.get_verts, None, None),
+        (-1, -1, gs_geom.get_AABB, None, None),
+        # VGEOM
+        (-1, -1, gs_vgeom.get_pos, None, None),
+        (-1, -1, gs_vgeom.get_quat, None, None),
+        (-1, -1, gs_vgeom.get_vAABB, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
 
@@ -3878,3 +3946,280 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
 
     assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_heterogeneous_simulation(show_viewer, tol):
+    """Test heterogeneous simulation by comparing against independent homogeneous simulations.
+
+    This test verifies that heterogeneous simulation produces identical physics results
+    to running separate homogeneous simulations for each variant.
+    """
+    n_steps = 20
+    drop_height = 0.05  # Drop objects 5cm above ground for collision dynamics
+
+    # Define morphs for testing - box and sphere with different sizes
+    box_morph = gs.morphs.Box(
+        size=(0.04, 0.04, 0.04),
+        pos=(0.0, 0.0, drop_height),
+    )
+    sphere_morph = gs.morphs.Sphere(
+        radius=0.02,
+        pos=(0.0, 0.0, drop_height),
+    )
+
+    # Run homogeneous simulation with box only
+    scene_box = gs.Scene(show_viewer=False)
+    scene_box.add_entity(gs.morphs.Plane())
+    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, drop_height)))
+    scene_box.build()
+    for _ in range(n_steps):
+        scene_box.step()
+    box_pos = tensor_to_array(box_obj.get_pos())
+    box_vel = tensor_to_array(box_obj.get_vel())
+
+    # Run homogeneous simulation with sphere only
+    scene_sphere = gs.Scene(show_viewer=False)
+    scene_sphere.add_entity(gs.morphs.Plane())
+    sphere_obj = scene_sphere.add_entity(
+        gs.morphs.Sphere(
+            radius=0.02,
+            pos=(0.0, 0.0, drop_height),
+        ),
+    )
+    scene_sphere.build()
+    for _ in range(n_steps):
+        scene_sphere.step()
+    sphere_pos = tensor_to_array(sphere_obj.get_pos())
+    sphere_vel = tensor_to_array(sphere_obj.get_vel())
+
+    # Run heterogeneous simulation with both variants
+    # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
+    scene_het = gs.Scene(show_viewer=show_viewer)
+    scene_het.add_entity(gs.morphs.Plane())
+    morphs_heterogeneous = (
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.0, 0.0, drop_height),
+        ),
+        gs.morphs.Sphere(
+            radius=0.02,
+            pos=(0.0, 0.0, drop_height),
+        ),
+    )
+    het_obj = scene_het.add_entity(morph=morphs_heterogeneous)
+    scene_het.build(n_envs=4)
+    for _ in range(n_steps):
+        scene_het.step()
+    het_pos = tensor_to_array(het_obj.get_pos())
+    het_vel = tensor_to_array(het_obj.get_vel())
+
+    # Verify heterogeneous results match homogeneous results
+    # Envs 0-1 should match box simulation
+    assert_allclose(het_pos[0], box_pos, tol=tol)
+    assert_allclose(het_pos[1], box_pos, tol=tol)
+    assert_allclose(het_vel[0], box_vel, tol=tol)
+    assert_allclose(het_vel[1], box_vel, tol=tol)
+
+    # Envs 2-3 should match sphere simulation
+    assert_allclose(het_pos[2], sphere_pos, tol=tol)
+    assert_allclose(het_pos[3], sphere_pos, tol=tol)
+    assert_allclose(het_vel[2], sphere_vel, tol=tol)
+    assert_allclose(het_vel[3], sphere_vel, tol=tol)
+
+    # Box envs should have same mass, sphere envs should have same mass
+    mass = het_obj.get_mass()
+    assert_allclose(mass[0], mass[1], tol=tol)
+    assert_allclose(mass[2], mass[3], tol=tol)
+    # Box and sphere should have different masses
+    with pytest.raises(AssertionError):
+        assert_allclose(mass[0], mass[2], tol=tol)
+
+
+@pytest.mark.required
+def test_heterogeneous_invalid_material_raises():
+    """Test that heterogeneous morphs with non-Rigid material raises an exception."""
+    scene = gs.Scene(show_viewer=False)
+
+    morphs_heterogeneous = (
+        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
+        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
+    )
+
+    # PBD material should raise an exception
+    with pytest.raises(gs.GenesisException):
+        scene.add_entity(
+            morph=morphs_heterogeneous,
+            material=gs.materials.PBD.Cloth(),
+        )
+
+
+@pytest.mark.required
+def test_heterogeneous_fewer_envs_than_variants():
+    """Test that having fewer environments than variants works correctly.
+
+    Variant Assignment Rule (when n_envs < n_het):
+        Environment i gets variant i (0-indexed). Variants beyond n_envs are unused.
+        For example, with 4 variants and 2 environments:
+        - Environment 0 -> Variant 0 (first morph in list)
+        - Environment 1 -> Variant 1 (second morph in list)
+        - Variants 2 and 3 are unused
+    """
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    # 4 variants but only 2 environments
+    morphs_heterogeneous = [
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Box(size=(0.03, 0.03, 0.03), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),
+    ]
+    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+
+    # Building with only 2 environments should work - each env gets a unique variant
+    scene.build(n_envs=2)
+
+    # Verify mass - env 0 gets variant 0 (0.04 box), env 1 gets variant 1 (0.03 box)
+    mass = het_obj.get_mass()
+    assert mass.shape == (scene.n_envs,)
+    # Different box sizes should have different masses
+    assert mass[0] != mass[1]
+
+
+@pytest.mark.required
+def test_heterogeneous_aabb(tol):
+    """Test that get_AABB and get_vAABB work correctly with heterogeneous simulation."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    # Box and sphere with different sizes
+    morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.01, pos=(0.0, 0.0, 0.1)),
+    )
+    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    # 4 envs: envs 0-1 get box, envs 2-3 get sphere
+    scene.build(n_envs=4)
+
+    # get_AABB should return correct shapes
+    aabb = het_obj.get_AABB()
+    assert aabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz)
+    for i in range(scene.n_envs):
+        assert_allclose(aabb[i], het_obj.get_AABB(i), tol=gs.EPS)
+
+    # Box envs should have same AABB, sphere envs should have same AABB
+    assert_allclose(aabb[0], aabb[1], tol=gs.EPS)
+    assert_allclose(aabb[2], aabb[3], tol=gs.EPS)
+
+    # Box and sphere should have different AABBs (different sizes)
+    with pytest.raises(AssertionError):
+        assert_allclose(aabb[0], aabb[2], tol=1e-3)
+
+    # get_vAABB should also work
+    vaabb = het_obj.get_vAABB()
+    assert vaabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz) - same as AABB
+    for i in range(scene.n_envs):
+        assert_allclose(vaabb[i], het_obj.get_vAABB(i), tol=gs.EPS)
+
+    # vAABB should have same structure as AABB (box envs same, sphere envs same)
+    assert_allclose(vaabb[0], vaabb[1], tol=gs.EPS)
+    assert_allclose(vaabb[2], vaabb[3], tol=gs.EPS)
+    with pytest.raises(AssertionError):
+        assert_allclose(vaabb[0], vaabb[2], tol=1e-3)
+
+    # AABB and vAABB sizes should be approximately equal for each environment
+    aabb_size_box = aabb[0, 1] - aabb[0, 0]
+    vaabb_size_box = vaabb[0, 1] - vaabb[0, 0]
+    assert_allclose(aabb_size_box, vaabb_size_box, tol=tol)
+
+    aabb_size_sphere = aabb[2, 1] - aabb[2, 0]
+    vaabb_size_sphere = vaabb[2, 1] - vaabb[2, 0]
+    assert_allclose(aabb_size_sphere, vaabb_size_sphere, tol=1e-3)  # Allow small tolerance for decimation
+
+
+# 30s
+@pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
+def test_pick_heterogenous_objects(show_viewer):
+    """Test heterogeneous simulation: CoM at rest, lifting, and gripper width differ per variant."""
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+
+    # 4 geometry variants: env i -> variant i
+    # Sizes: box0=0.04, box1=0.02, sphere0=0.03, sphere1=0.025 (radius for spheres)
+    # Note: spheres need larger radius to be reliably grasped by the Franka gripper
+    sizes = [0.04, 0.02, 0.03, 0.025]  # box0, box1, sphere0, sphere1
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.Box(size=(sizes[0],) * 3, pos=(0.65, 0.0, 0.02)),
+            gs.morphs.Box(size=(sizes[1],) * 3, pos=(0.65, 0.0, 0.02)),
+            gs.morphs.Sphere(radius=sizes[2], pos=(0.65, 0.0, 0.02)),
+            gs.morphs.Sphere(radius=sizes[3], pos=(0.65, 0.0, 0.02)),
+        ]
+    )
+    scene.build(n_envs=4, env_spacing=(1, 1))
+
+    # Expected CoM z at rest: half-height for boxes, radius for spheres
+    expected_com_z = np.array([sizes[0] / 2, sizes[1] / 2, sizes[2], sizes[3]])
+
+    motors_dof = np.arange(7)
+    fingers_dof = np.arange(7, 9)
+    init_qpos = np.array([[-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]] * 4)
+
+    # Initialize robot position
+    franka.set_qpos(init_qpos)
+    scene.step()
+
+    # Test 1: CoM at rest matches expected heights based on shape
+    # Control robot to hold position while objects settle
+    for _ in range(30):
+        franka.control_dofs_position(init_qpos[:, :7], motors_dof)
+        franka.control_dofs_position(init_qpos[:, 7:9], fingers_dof)
+        scene.step()
+    assert_allclose(het_obj.get_pos()[:, 2], expected_com_z, tol=0.005)
+
+    # Move to grasp position
+    end_effector = franka.get_link("hand")
+    qpos_grasp = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([[0.65, 0.0, 0.135]] * scene.n_envs),
+        quat=np.array([[0, 1, 0, 0]] * scene.n_envs),
+    )
+
+    # Hold - approach with gripper open
+    for _ in range(50):
+        franka.control_dofs_position(qpos_grasp[:, :7], motors_dof)
+        franka.control_dofs_position(np.array([[0.04, 0.04]] * scene.n_envs), fingers_dof)
+        scene.step()
+
+    # Grasp - close gripper
+    for _ in range(50):
+        franka.control_dofs_position(qpos_grasp[:, :7], motors_dof)
+        franka.control_dofs_position(np.array([[0.0, 0.0]] * scene.n_envs), fingers_dof)
+        scene.step()
+
+    # Test 2: Gripper width matches object size (box width or sphere diameter)
+    gripper_qpos = franka.get_qpos()[:, 7:9]
+    gripper_widths = (gripper_qpos[:, 0] + gripper_qpos[:, 1]).cpu().numpy()
+    expected_grip_widths = np.array([sizes[0], sizes[1], 2 * sizes[2], 2 * sizes[3]])  # box size or sphere diameter
+    assert_allclose(gripper_widths, expected_grip_widths, tol=0.005)
+
+    # Record positions before lifting
+    pre_lift_z = het_obj.get_pos()[:, 2].clone()
+
+    # Lift
+    qpos_lift = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([[0.65, 0.0, 0.3]] * scene.n_envs),
+        quat=np.array([[0, 1, 0, 0]] * scene.n_envs),
+    )
+    for _ in range(50):
+        franka.control_dofs_position(qpos_lift[:, :7], motors_dof)
+        franka.control_dofs_position(np.array([[0.0, 0.0]] * scene.n_envs), fingers_dof)
+        scene.step()
+
+    # Test 3: All 4 objects were lifted
+    post_lift_z = het_obj.get_pos()[:, 2]
+    lift_deltas = (post_lift_z - pre_lift_z).cpu().numpy()
+    assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"

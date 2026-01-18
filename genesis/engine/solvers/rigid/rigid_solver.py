@@ -21,13 +21,13 @@ from genesis.utils.misc import (
     sanitize_indexed_tensor,
     assign_indexed_tensor,
 )
-from genesis.utils.sdf_decomp import SDF
+from genesis.utils.sdf import SDF
 
 from ..base_solver import Solver
-from .collider_decomp import Collider
-from .constraint_solver_decomp import ConstraintSolver
-from .constraint_solver_decomp_island import ConstraintSolverIsland
-from .rigid_solver_decomp_util import func_wakeup_entity_and_its_temp_island
+from .collider import Collider
+from .constraint_solver import ConstraintSolver
+from .constraint_solver_island import ConstraintSolverIsland
+from .rigid_solver_util import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     import genesis.engine.solvers.rigid.array_class
@@ -93,12 +93,14 @@ class RigidSolver(Solver):
         self._enable_mujoco_compatibility = options.enable_mujoco_compatibility
         self._enable_joint_limit = options.enable_joint_limit
         self._enable_self_collision = options.enable_self_collision
+        self._enable_neutral_collision = options.enable_neutral_collision
         self._enable_adjacent_collision = options.enable_adjacent_collision
         self._disable_constraint = options.disable_constraint
         self._max_collision_pairs = options.max_collision_pairs
         self._integrator = options.integrator
         self._box_box_detection = options.box_box_detection
         self._requires_grad = self._sim.options.requires_grad
+        self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
 
         self._use_contact_island = options.use_contact_island
         self._use_hibernation = options.use_hibernation and options.use_contact_island
@@ -132,6 +134,9 @@ class RigidSolver(Solver):
 
         self._options = options
 
+        self.collider = None
+        self.constraint_solver = None
+
         self.qpos: ti.Template | ti.types.NDArray | None = None
 
         self._is_backward: bool = False
@@ -146,6 +151,12 @@ class RigidSolver(Solver):
         pass
 
     def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
+        # Handle heterogeneous morphs (list/tuple of morphs)
+        morph_heterogeneous = []
+        if isinstance(morph, (tuple, list)):
+            morph, *morph_heterogeneous = morph
+            self._enable_heterogeneous |= bool(morph_heterogeneous)
+
         if isinstance(morph, gs.morphs.Drone):
             EntityClass = DroneEntity
         else:
@@ -176,6 +187,7 @@ class RigidSolver(Solver):
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
+            morph_heterogeneous=morph_heterogeneous,
         )
         assert isinstance(entity, RigidEntity)
         self._entities.append(entity)
@@ -241,6 +253,11 @@ class RigidSolver(Solver):
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
         self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
+        # batch_links_info is required when heterogeneous simulation is used.
+        # We must update options because get_links_info reads from solver._options.batch_links_info.
+        if self._enable_heterogeneous:
+            self._options.batch_links_info = True
+
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -249,6 +266,7 @@ class RigidSolver(Solver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
+            enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
@@ -345,16 +363,18 @@ class RigidSolver(Solver):
         self._init_geom_fields()
         self._init_vgeom_fields()
         self._init_link_fields()
+        self._process_heterogeneous_link_info()
         self._init_entity_fields()
         self._init_equality_fields()
 
         self._init_envs_offset()
         self._init_sdf()
-        self._init_collider()
-        self._init_constraint_solver()
 
         self._init_invweight_and_meaninertia(force_update=False)
         self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
+
+        self._init_collider()
+        self._init_constraint_solver()
 
         # FIXME: when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -366,7 +386,7 @@ class RigidSolver(Solver):
             return
 
         # Handling default arguments
-        batched = self._options.batch_dofs_info and self._options.batch_links_info
+        batched = self._options.batch_dofs_info or self._options.batch_links_info
         if not batched and envs_idx is not None:
             gs.raise_exception(
                 "Links and dofs must be batched to selectively update invweight and meaninertia for some environment."
@@ -595,6 +615,10 @@ class RigidSolver(Solver):
                 links_inertial_i=np.array([link.inertial_i for link in links], dtype=gs.np_float),
                 links_inertial_mass=np.array([link.inertial_mass for link in links], dtype=gs.np_float),
                 links_entity_idx=np.array([link._entity_idx_in_solver for link in links], dtype=gs.np_int),
+                links_geom_start=np.array([link.geom_start for link in links], dtype=gs.np_int),
+                links_geom_end=np.array([link.geom_end for link in links], dtype=gs.np_int),
+                links_vgeom_start=np.array([link.vgeom_start for link in links], dtype=gs.np_int),
+                links_vgeom_end=np.array([link.vgeom_end for link in links], dtype=gs.np_int),
                 # taichi variables
                 links_info=self.links_info,
                 links_state=self.links_state,
@@ -639,7 +663,7 @@ class RigidSolver(Solver):
             self.qpos.from_numpy(init_qpos)
         if is_init_qpos_out_of_bounds:
             gs.logger.warning(
-                "Reference robot position exceeds joint limits."
+                "Neutral robot position (qpos0) exceeds joint limits."
                 # "Clipping initial position too make sure it is valid."
             )
 
@@ -647,6 +671,80 @@ class RigidSolver(Solver):
         # TODO: support IK with parallel envs
         # self._rigid_global_info.links_T = ti.Matrix.field(n=4, m=4, dtype=gs.ti_float, shape=self.n_links)
         self.links_T = self._rigid_global_info.links_T
+
+    def _process_heterogeneous_link_info(self):
+        """
+        Process heterogeneous link info: dispatch geoms per environment and compute per-env inertial properties.
+        This method is called after _init_link_fields to update the per-environment inertial properties
+        for entities with heterogeneous morphs.
+        """
+        for entity in self._entities:
+            # Skip non-heterogeneous entities
+            if not entity._enable_heterogeneous:
+                continue
+
+            # Get the number of variants for this entity
+            n_variants = len(entity.variants_geom_start)
+
+            # Distribute variants across environments using balanced block assignment:
+            # - If B >= n_variants: first B/n_variants environments get variant 0, next get variant 1, etc.
+            # - If B < n_variants: each environment gets a different variant (some variants unused)
+            if self._B >= n_variants:
+                base = self._B // n_variants
+                extra = self._B % n_variants  # first `extra` chunks get one more
+                sizes = np.r_[np.full(extra, base + 1), np.full(n_variants - extra, base)]
+                variant_idx = np.repeat(np.arange(n_variants), sizes)
+            else:
+                # Each environment gets a unique variant; variants beyond B are unused
+                variant_idx = np.arange(self._B)
+
+            # Get arrays from entity
+            np_geom_start = np.array(entity.variants_geom_start, dtype=gs.np_int)
+            np_geom_end = np.array(entity.variants_geom_end, dtype=gs.np_int)
+            np_vgeom_start = np.array(entity.variants_vgeom_start, dtype=gs.np_int)
+            np_vgeom_end = np.array(entity.variants_vgeom_end, dtype=gs.np_int)
+
+            # Process each link in this heterogeneous entity (currently only single-link supported)
+            for link in entity.links:
+                i_l = link.idx
+
+                # Build per-env arrays for geom/vgeom ranges
+                links_geom_start = np_geom_start[variant_idx]
+                links_geom_end = np_geom_end[variant_idx]
+                links_vgeom_start = np_vgeom_start[variant_idx]
+                links_vgeom_end = np_vgeom_end[variant_idx]
+
+                # Build per-env arrays for inertial properties
+                links_inertial_mass = np.array(
+                    [entity.variants_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
+                )
+                links_inertial_pos = np.array([entity.variants_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_i = np.array([entity.variants_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
+
+                # Update links_info with per-environment values
+                # Note: when batch_links_info is True, the shape is (n_links, B)
+                kernel_update_heterogeneous_link_info(
+                    i_l,
+                    links_geom_start,
+                    links_geom_end,
+                    links_vgeom_start,
+                    links_vgeom_end,
+                    links_inertial_mass,
+                    links_inertial_pos,
+                    links_inertial_i,
+                    self.links_info,
+                )
+
+                # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
+                for geom in link.geoms:
+                    active_envs_mask = (links_geom_start <= geom.idx) & (geom.idx < links_geom_end)
+                    geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                    (geom.active_envs_idx,) = np.where(active_envs_mask)
+
+                for vgeom in link.vgeoms:
+                    active_envs_mask = (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
+                    vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                    (vgeom.active_envs_idx,) = np.where(active_envs_mask)
 
     def _init_vert_fields(self):
         # # collisioin geom
@@ -800,6 +898,7 @@ class RigidSolver(Solver):
                 # taichi variables
                 entities_info=self.entities_info,
                 entities_state=self.entities_state,
+                links_info=self.links_info,
                 dofs_info=self.dofs_info,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
@@ -941,9 +1040,14 @@ class RigidSolver(Solver):
                     self._static_rigid_sim_config,
                 )
 
+    def get_error_envs_mask(self):
+        return ti_to_torch(self._errno) > 0
+
     def check_errno(self):
-        # Zero-copy cannot be used for 0-dim tensors because of torch limitation, so we are better of calling a kernel
-        errno = kernel_read_scalar_int32(self._errno)
+        if gs.use_zerocopy:
+            errno = np.bitwise_or.reduce(ti_to_numpy(self._errno))
+        else:
+            errno = kernel_bit_reduction(self._errno)
 
         if errno & 0b00000000000000000000000000000001:
             max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
@@ -1477,6 +1581,13 @@ class RigidSolver(Solver):
     def set_state(self, f, state, envs_idx=None):
         if self.is_active:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+
+            if gs.use_zerocopy:
+                errno = ti_to_torch(self._errno, copy=False)
+                errno[envs_idx] = 0
+            else:
+                kernel_set_zero(envs_idx, self._errno)
+
             kernel_set_state(
                 qpos=state.qpos,
                 dofs_vel=state.dofs_vel,
@@ -1510,7 +1621,6 @@ class RigidSolver(Solver):
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
 
-            self._errno[None] = 0
             self.collider.clear(envs_idx)
             self.constraint_solver.clear(envs_idx)
 
@@ -1808,6 +1918,7 @@ class RigidSolver(Solver):
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = ti_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+            errno = ti_to_torch(self._errno, copy=False)
             qs_mask = indices_to_mask(qs_idx)
             if (
                 (not qs_mask or isinstance(qs_mask[0], slice))
@@ -1820,9 +1931,11 @@ class RigidSolver(Solver):
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
+                errno.masked_fill_(envs_idx, 0.0)
             else:
                 mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
                 assign_indexed_tensor(data, mask, qpos)
+                errno[envs_idx] = 0
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
         else:
@@ -1832,9 +1945,12 @@ class RigidSolver(Solver):
             if self.n_envs == 0:
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
+            kernel_set_zero(envs_idx, self._errno)
 
-        self.collider.reset(envs_idx)
-        self.constraint_solver.reset(envs_idx)
+        if self.collider is not None:
+            self.collider.reset(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
@@ -2103,6 +2219,12 @@ class RigidSolver(Solver):
             self._static_rigid_sim_config,
         )
 
+        if gs.use_zerocopy:
+            errno = ti_to_torch(self._errno, copy=False)
+            errno[envs_idx] = 0
+        else:
+            kernel_set_zero(envs_idx, self._errno)
+
         self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)
 
@@ -2220,7 +2342,7 @@ class RigidSolver(Solver):
             tensor = ti_to_torch(self.joints_info.sol_params, envs_idx, joints_idx, transpose=True, copy=True)
             if self.n_envs == 0 and self._options.batch_joints_info:
                 tensor = tensor[0]
-        else:
+        else:  # geoms_idx is not None
             # Never batched
             assert envs_idx is None
             tensor = ti_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, copy=True)
@@ -2958,6 +3080,10 @@ def kernel_init_link_fields(
     links_inertial_i: ti.types.ndarray(),
     links_inertial_mass: ti.types.ndarray(),
     links_entity_idx: ti.types.ndarray(),
+    links_geom_start: ti.types.ndarray(),
+    links_geom_end: ti.types.ndarray(),
+    links_vgeom_start: ti.types.ndarray(),
+    links_vgeom_end: ti.types.ndarray(),
     # taichi variables
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -2981,6 +3107,10 @@ def kernel_init_link_fields(
         links_info.n_dofs[I_l] = links_dof_end[i_l] - links_dof_start[i_l]
         links_info.is_fixed[I_l] = links_is_fixed[i_l]
         links_info.entity_idx[I_l] = links_entity_idx[i_l]
+        links_info.geom_start[I_l] = links_geom_start[i_l]
+        links_info.geom_end[I_l] = links_geom_end[i_l]
+        links_info.vgeom_start[I_l] = links_vgeom_start[i_l]
+        links_info.vgeom_end[I_l] = links_vgeom_end[i_l]
 
         for j in ti.static(range(2)):
             links_info.invweight[I_l][j] = links_invweight[i_l, j]
@@ -2994,9 +3124,8 @@ def kernel_init_link_fields(
             links_info.inertial_pos[I_l][j] = links_inertial_pos[i_l, j]
 
         links_info.inertial_mass[I_l] = links_inertial_mass[i_l]
-        for j1 in ti.static(range(3)):
-            for j2 in ti.static(range(3)):
-                links_info.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[I_l][j1, j2] = links_inertial_i[i_l, j1, j2]
 
     for i_l, i_b in ti.ndrange(n_links, _B):
         I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -3022,6 +3151,36 @@ def kernel_init_link_fields(
         ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_b in range(_B):
             rigid_global_info.n_awake_links[i_b] = n_links
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_update_heterogeneous_link_info(
+    i_l: ti.i32,
+    links_geom_start: ti.types.ndarray(),
+    links_geom_end: ti.types.ndarray(),
+    links_vgeom_start: ti.types.ndarray(),
+    links_vgeom_end: ti.types.ndarray(),
+    links_inertial_mass: ti.types.ndarray(),
+    links_inertial_pos: ti.types.ndarray(),
+    links_inertial_i: ti.types.ndarray(),
+    # taichi variables
+    links_info: array_class.LinksInfo,
+):
+    """Update per-environment link info for heterogeneous entities."""
+    _B = links_geom_start.shape[0]
+
+    for i_b in range(_B):
+        links_info.geom_start[i_l, i_b] = links_geom_start[i_b]
+        links_info.geom_end[i_l, i_b] = links_geom_end[i_b]
+        links_info.vgeom_start[i_l, i_b] = links_vgeom_start[i_b]
+        links_info.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
+        links_info.inertial_mass[i_l, i_b] = links_inertial_mass[i_b]
+
+        for j in ti.static(range(3)):
+            links_info.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
+
+        for j1, j2 in ti.static(ti.ndrange(3, 3)):
+            links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -3304,6 +3463,7 @@ def kernel_init_entity_fields(
     # taichi variables
     entities_info: array_class.EntitiesInfo,
     entities_state: array_class.EntitiesState,
+    links_info: array_class.LinksInfo,
     dofs_info: array_class.DofsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
@@ -6958,7 +7118,7 @@ def func_copy_next_to_curr(
             for i_q in range(n_qs):
                 rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
         else:
-            errno[None] = errno[None] | 0b00000000000000000000000000001000
+            errno[i_b] = errno[i_b] | 0b00000000000000000000000000001000
 
 
 @ti.func
@@ -8268,13 +8428,22 @@ def kernel_set_geoms_friction(
     static_rigid_sim_config: ti.template(),
 ):
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_g_ in ti.ndrange(geoms_idx.shape[0]):
+    for i_g_ in range(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def kernel_read_scalar_int32(tensor: array_class.V_ANNOTATION) -> ti.i32:
-    return tensor[None]
+def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> ti.i32:
+    flag = ti.i32(0)
+    for i in range(tensor.shape[0]):
+        flag = ti.atomic_or(flag, tensor[i])
+    return flag
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_set_zero(envs_idx: ti.types.ndarray(), tensor: array_class.V_ANNOTATION):
+    for i_b in range(envs_idx.shape[0]):
+        tensor[i_b] = 0
 
 
 @ti.func
@@ -8318,3 +8487,8 @@ def func_write_and_read_field_if(field: array_class.V_ANNOTATION, I, value, cond
 def func_check_index_range(idx: ti.i32, min: ti.i32, max: ti.i32, cond: ti.template()):
     # Conditionally check if the index is in the range [min, max) to save computational cost
     return (idx >= min and idx < max) if ti.static(cond) else True
+
+
+from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
+
+create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.rigid_solver_decomp")
