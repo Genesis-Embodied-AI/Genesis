@@ -204,6 +204,7 @@ class ConstraintSolver:
             from genesis.engine.solvers.rigid.constraint_solver_decomp_breakdown import (
                 func_solve_decomposed_macrokernels,
             )
+
             func_solve_decomposed_macrokernels(
                 self._solver.entities_info,
                 self._solver.dofs_state,
