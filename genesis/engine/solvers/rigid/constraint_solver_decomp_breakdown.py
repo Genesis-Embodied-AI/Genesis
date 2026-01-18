@@ -231,14 +231,15 @@ def _kernel_cholesky_warp_level(
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
     EPS = rigid_global_info.EPS[None]
+    WARP_SIZE = ti.static(32)
     
     # Launch with 32 threads per block (one warp per batch)
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            # Get thread ID within warp (0-31)
-            tid = ti.simt.thread_idx()
-            
+    ti.loop_config(block_dim=WARP_SIZE)
+    for i in range(_B * WARP_SIZE):
+        tid = i % WARP_SIZE  # Thread ID within warp (0-31)
+        i_b = i // WARP_SIZE  # Batch index
+        
+        if i_b < _B and constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             # Process all columns sequentially with warp-level synchronization
             for i_d in range(n_dofs):
                 # Phase 1: Compute diagonal element L[i_b, i_d, i_d]
@@ -264,7 +265,7 @@ def _kernel_cholesky_warp_level(
                     # Update element
                     constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * inv_diag
                     # Stride to next element for this thread
-                    j_d = j_d + 32
+                    j_d = j_d + WARP_SIZE
                 
                 # Warp sync: All threads wait for off-diagonal to be computed
                 ti.simt.warp.sync(ti.u32(0xFFFFFFFF))
