@@ -20,8 +20,7 @@ if TYPE_CHECKING:
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
-# Check environment variable for decomposed solver usage
-USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
+GS_SOLVER_DECOMPOSE = "GS_SOLVER_DECOMPOSE"
 
 
 class ConstraintSolver:
@@ -177,19 +176,16 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-    def resolve(self, use_decomposed_kernels=None):
+    def resolve(self):
         """
         Resolve constraints using either monolithic or decomposed solver kernels.
 
-        Args:
-            use_decomposed_kernels: If True, use decomposed kernels. If False, use monolithic kernel.
-                                   If None (default), uses the GS_SOLVER_DECOMPOSE environment variable.
-
         Environment variables:
-            GS_SOLVER_DECOMPOSE: Set to "1" to use decomposed kernels (default: "0")
+            GS_SOLVER_DECOMPOSE: Overrides any heuristics we are using
         """
-        if use_decomposed_kernels is None:
-            use_decomposed_kernels = USE_DECOMPOSED_SOLVER
+        use_decomposed_kernels = gs.backend != gs.cpu
+        if GS_SOLVER_DECOMPOSE in os.environ:
+            use_decomposed_kernels = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
 
         func_init_solver(
             self._solver.dofs_info,
