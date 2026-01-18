@@ -445,36 +445,21 @@ def func_solve_decomposed_macrokernels(
             # ti.sync()
             # start = time.time()
             
-            # Hybrid approach: parallel for early iterations, incremental for later
-            if _it < 3:
-                # Early iterations: Use parallel direct method (better for large updates)
-                n_dofs = constraint_state.nt_H.shape[1]
-                _kernel_newton_only_nt_hessian_direct_parallel(
-                    entities_info,
-                    constraint_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
-                    n_dofs,
-                )
-                
-                # Warp-level Cholesky factorization (single kernel, fast!)
-                _kernel_cholesky_warp_level(
-                    constraint_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
-                )
-            else:
-                # Later iterations: Use incremental method (better for small updates)
-                _kernel_newton_only_nt_hessian_incremental(
-                    entities_info,
-                    constraint_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
-                )
-                # ti.sync()
-                # end = time.time()
-                # elapsed = end - start
-                # print(f"time_newton {elapsed * 1e6:.0f}us (incremental) ", end='')
+            n_dofs = constraint_state.nt_H.shape[1]
+            _kernel_newton_only_nt_hessian_direct_parallel(
+                entities_info,
+                constraint_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+                n_dofs,
+            )
+            
+            # Warp-level Cholesky factorization (single kernel, fast!)
+            _kernel_cholesky_warp_level(
+                constraint_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+            )
             
             # print('')
             # prev_active = constraint_state.active.to_numpy()
