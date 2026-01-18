@@ -9,6 +9,7 @@ class _DeprecatedModuleWrapper(ModuleType):
     This allows us to support the old module name while
     warning users to update their imports.
     """
+
     def __init__(self, actual_module, old_name, new_name):
         super().__init__(old_name)
         self._actual_module = actual_module
