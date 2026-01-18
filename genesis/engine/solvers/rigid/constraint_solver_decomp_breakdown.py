@@ -435,7 +435,7 @@ def func_solve_decomposed_macrokernels(
                 # print(f"time_newton {elapsed * 1e6:.0f}us (incremental) ", end='')
             
             # print('')
-            prev_active = constraint_state.active.to_numpy()
+            # prev_active = constraint_state.active.to_numpy()
         _kernel_update_gradient(
             entities_info,
             dofs_state,
