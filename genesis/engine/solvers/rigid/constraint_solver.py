@@ -201,7 +201,7 @@ class ConstraintSolver:
         )
 
         if use_decomposed_kernels:
-            from genesis.engine.solvers.rigid.constraint_solver_decomp_breakdown import (
+            from genesis.engine.solvers.rigid.constraint_solver_breakdown import (
                 func_solve_decomposed_macrokernels,
             )
 
