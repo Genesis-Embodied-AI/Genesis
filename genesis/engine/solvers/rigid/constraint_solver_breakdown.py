@@ -147,7 +147,7 @@ def _kernel_newton_only_nt_hessian_direct_parallel(
     ti.loop_config(serialize=False, block_dim=256)
     for i_b, i_d1, i_d2 in ti.ndrange(_B, n_dofs, n_dofs):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b] and i_d2 <= i_d1:
-            constraint_solver_decomp.func_nt_hessian_direct2(
+            constraint_solver_decomp.func_nt_hessian_direct_B_dofs_dofs(
                 i_b,
                 i_d1,
                 i_d2,
