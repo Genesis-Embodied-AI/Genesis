@@ -1229,7 +1229,7 @@ def func_nt_hessian_incremental(
                             )
 
     if is_degenerated:
-        func_nt_hessian_direct(
+        func_nt_hessian_direct_B(
             i_b,
             entities_info=entities_info,
             constraint_state=constraint_state,
@@ -1239,13 +1239,14 @@ def func_nt_hessian_incremental(
 
 
 @ti.func
-def func_nt_hessian_direct(
+def func_nt_hessian_direct_B(
     i_b,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    # based on parallelization only over B dimension
     EPS = rigid_global_info.EPS[None]
 
     n_dofs = constraint_state.nt_H.shape[1]
@@ -1294,7 +1295,7 @@ def func_nt_hessian_direct(
 
 
 @ti.func
-def func_nt_hessian_direct2(
+def func_nt_hessian_direct_B_dofs_dofs(
     i_b,
     i_d1,
     i_d2,
@@ -2221,7 +2222,7 @@ def func_tiled_hessian(
     if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
-            func_nt_hessian_direct(
+            func_nt_hessian_direct_B(
                 i_b,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
