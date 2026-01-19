@@ -474,3 +474,49 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_magnetometer_sensor(n_envs, tol):
+    """Test if the Magnetometer sensor returns invariant magnitude across rotations."""
+    scene = gs.Scene(show_viewer=False)
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Test with a 90-degree pitch to ensure axis swapping works
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 1.0),
+            size=(1.0, 1.0, 1.0),
+            euler=(0.0, 90.0, 0.0),
+        )
+    )
+
+    world_field = (0.3, 0.0, 0.4)  # Magnitude = 0.5
+    mag = scene.add_sensor(
+        gs.sensors.Magnetometer(
+            entity_idx=box.idx,
+            noise=0.0,  # Zero noise for exact math check
+            magnetic_field=world_field,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    # mag.read() returns a MagnetometerData object
+    data = mag.read()
+    measured_field = data.magnetic_field if hasattr(data, "magnetic_field") else data
+    measured_field = measured_field.to(torch.float64)
+
+    magnitudes = torch.norm(measured_field, dim=-1)
+    assert torch.allclose(magnitudes, torch.tensor(0.5, dtype=torch.float64), atol=1e-6)
+
+    # Check directional components (Signs from your successful log)
+    # Expected: x ≈ -0.4, y ≈ 0, z ≈ 0.3
+    val = measured_field[0] if n_envs > 0 else measured_field
+
+    assert torch.abs(val[0] - (-0.4)) < 1e-2
+    assert torch.abs(val[1] - 0.0) < 1e-2
+    assert torch.abs(val[2] - 0.3) < 1e-2

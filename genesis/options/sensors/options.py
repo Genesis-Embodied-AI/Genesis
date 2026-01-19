@@ -308,3 +308,28 @@ class DepthCamera(Raycaster):
     """
 
     pattern: DepthCameraPattern
+
+
+class Magnetometer(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+    """
+    Magnetometer sensor returns the local magnetic field vector.
+    This simulates a 3-axis magnetometer.
+
+    Parameters
+    ----------
+    magnetic_field : float | tuple[float, float, float], optional
+       The world-frame magnetic field vector (e.g., Earth's magnetic field).
+       Default is (0.0, 0.0, 0.5).
+    debug_color : float, optional
+        The rgba color of the debug arrow. Defaults to (0.0, 0.0, 1.0, 0.5).
+    debug_scale : float, optional
+        The scale factor for the debug arrow. Defaults to 2.0.
+    """
+
+    magnetic_field: MaybeTuple3FType = (0.0, 0.0, 0.5)
+
+    # Note: 'resolution', 'noise', 'bias', etc. are inherited from NoisySensorOptionsMixin.
+    # You can use them directly when instantiating the sensor without redefining them here.
+
+    debug_color: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.5)
+    debug_scale: float = 2.0
