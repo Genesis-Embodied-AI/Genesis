@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     import genesis.engine.solvers.rigid.array_class
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
+    from genesis.engine.entities.rigid_entity import RigidJoint, RigidLink, RigidGeom, RigidVisGeom
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -2691,25 +2692,25 @@ class RigidSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     @property
-    def links(self):
+    def links(self) -> list["RigidLink"]:
         if self.is_built:
             return self._links
         return gs.List(link for entity in self._entities for link in entity.links)
 
     @property
-    def joints(self):
+    def joints(self) -> list["RigidJoint"]:
         if self.is_built:
             return self._joints
         return gs.List(joint for entity in self._entities for joint in entity.joints)
 
     @property
-    def geoms(self):
+    def geoms(self) -> list["RigidGeom"]:
         if self.is_built:
             return self._geoms
         return gs.List(geom for entity in self._entities for geom in entity.geoms)
 
     @property
-    def vgeoms(self):
+    def vgeoms(self) -> list["RigidVisGeom"]:
         if self.is_built:
             return self._vgeoms
         return gs.List(vgeom for entity in self._entities for vgeom in entity.vgeoms)
