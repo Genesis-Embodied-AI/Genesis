@@ -182,7 +182,7 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        func_solve(
+        func_solve_body(
             self._solver.entities_info,
             self._solver.dofs_state,
             self.constraint_state,
@@ -1570,6 +1570,40 @@ def func_hessian_and_cholesky_factor_direct_batch(
 
 
 @ti.func
+def func_hessian_and_cholesky_factor_direct(
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+
+    if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            func_hessian_and_cholesky_factor_direct_batch(
+                i_b,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    else:
+        _B = constraint_state.jac.shape[2]
+
+        # Compute the hessian matrix
+        func_hessian_direct_tiled(constraint_state, rigid_global_info)
+
+        if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
+            # Compute Cholesky decomposition of the Hessian matrix
+            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
+        else:
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            for i_b in range(_B):
+                func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info)
+
+
+@ti.func
 def func_hessian_and_cholesky_factor_incremental_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
@@ -2198,12 +2232,36 @@ def func_update_constraint_batch(
 
 
 @ti.func
+def func_update_constraint(
+    qacc: array_class.V_ANNOTATION,
+    Ma: array_class.V_ANNOTATION,
+    cost: array_class.V_ANNOTATION,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_update_constraint_batch(
+            i_b,
+            qacc=qacc,
+            Ma=Ma,
+            cost=cost,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@ti.func
 def func_update_gradient_batch(
     i_b,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
     n_dofs = constraint_state.grad.shape[0]
@@ -2230,6 +2288,79 @@ def func_update_gradient_batch(
 
 
 @ti.func
+def func_update_gradient_tiled(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+
+    # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in ti.ndrange(n_dofs, _B):
+        constraint_state.grad[i_d, i_b] = (
+            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+        )
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            rigid_solver.func_solve_mass_batch(
+                i_b,
+                constraint_state.grad,
+                constraint_state.Mgrad,
+                array_class.PLACEHOLDER,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
+            )
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
+
+
+@ti.func
+def func_update_gradient(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+
+    if ti.static(
+        not static_rigid_sim_config.enable_tiled_cholesky_hessian
+        or static_rigid_sim_config.sparse_solve
+        or static_rigid_sim_config.backend == gs.cpu
+    ):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            func_update_gradient_batch(
+                i_b,
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    else:
+        func_update_gradient_tiled(
+            dofs_state=dofs_state,
+            entities_info=entities_info,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@ti.func
 def initialize_Jaref(
     qacc: array_class.V_ANNOTATION,
     constraint_state: array_class.ConstraintState,
@@ -2237,6 +2368,7 @@ def initialize_Jaref(
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -2304,17 +2436,14 @@ def func_solve_init(
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_constraint_batch(
-                i_b,
-                qacc=constraint_state.qacc_ws,
-                Ma=constraint_state.Ma_ws,
-                cost=constraint_state.cost_ws,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        func_update_constraint(
+            qacc=constraint_state.qacc_ws,
+            Ma=constraint_state.Ma_ws,
+            cost=constraint_state.cost_ws,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
         # Compute cost for current state (assuming constraint-free acceleration)
         initialize_Ma(
@@ -2331,17 +2460,14 @@ def func_solve_init(
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_constraint_batch(
-                i_b,
-                qacc=dofs_state.acc_smooth,
-                Ma=constraint_state.Ma,
-                cost=constraint_state.cost,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        func_update_constraint(
+            qacc=dofs_state.acc_smooth,
+            Ma=constraint_state.Ma,
+            cost=constraint_state.cost,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
         # Pick the best starting point between current state and warmstart
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2375,80 +2501,30 @@ def func_solve_init(
         constraint_state=constraint_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_update_constraint_batch(
-            i_b,
-            qacc=constraint_state.qacc,
-            Ma=constraint_state.Ma,
-            cost=constraint_state.cost,
-            dofs_state=dofs_state,
+    func_update_constraint(
+        qacc=constraint_state.qacc,
+        Ma=constraint_state.Ma,
+        cost=constraint_state.cost,
+        dofs_state=dofs_state,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        func_hessian_and_cholesky_factor_direct(
+            entities_info=entities_info,
             constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-    if ti.static(
-        static_rigid_sim_config.solver_type != gs.constraint_solver.Newton
-        or static_rigid_sim_config.sparse_solve
-        or static_rigid_sim_config.backend == gs.cpu
-    ):
-        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-            for i_b in range(_B):
-                func_hessian_and_cholesky_factor_direct_batch(
-                    i_b,
-                    entities_info=entities_info,
-                    rigid_global_info=rigid_global_info,
-                    constraint_state=constraint_state,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                )
-
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_gradient_batch(
-                i_b,
-                dofs_state=dofs_state,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-    else:
-        # Compute the hessian matrix
-        func_hessian_direct_tiled(constraint_state, rigid_global_info)
-
-        # Update the gradient
-        if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            # Compute Cholesky decomposition of the Hessian matrix
-            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
-
-            # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(n_dofs, _B):
-                constraint_state.grad[i_d, i_b] = (
-                    constraint_state.Ma[i_d, i_b]
-                    - dofs_state.force[i_d, i_b]
-                    - constraint_state.qfrc_constraint[i_d, i_b]
-                )
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
-
-            func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
-        else:
-            # Compute Cholesky decomposition of the Hessian matrix
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-            for i_b in range(_B):
-                func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info)
-
-            # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(_B):
-                for i_d in range(n_dofs):
-                    constraint_state.grad[i_d, i_b] = (
-                        constraint_state.Ma[i_d, i_b]
-                        - dofs_state.force[i_d, i_b]
-                        - constraint_state.qfrc_constraint[i_d, i_b]
-                    )
-                func_cholesky_solve_batch(i_b, constraint_state)
+    func_update_gradient(
+        dofs_state=dofs_state,
+        entities_info=entities_info,
+        constraint_state=constraint_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
@@ -2563,7 +2639,7 @@ def func_solve_iter(
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def func_solve(
+def func_solve_body(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
