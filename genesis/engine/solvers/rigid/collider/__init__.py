@@ -10,7 +10,8 @@ Modules:
 - box_contact: Specialized box collision (plane-box, box-box)
 - contact: Contact management utilities
 - gjk: Gilbert-Johnson-Keerthi algorithm
-- epa: Expanding Polytope Algorithm (in gjk.py)
+- epa: Expanding Polytope Algorithm
+- multi_contact: Multi-contact detection (polygon clipping)
 - mpr: Minkowski Portal Refinement
 """
 
