@@ -2163,140 +2163,21 @@ def initialize_Ma(
         Ma[i_d1, i_b] = Ma_
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
-def func_init_solver(
-    dofs_info: array_class.DofsInfo,
-    dofs_state: array_class.DofsState,
+@ti.func
+def func_tiled_hessian(
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    EPS = rigid_global_info.EPS[None]
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
 
-    _B = dofs_state.acc_smooth.shape[1]
-    n_dofs = dofs_state.acc_smooth.shape[0]
-
-    if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
-        # Compute cost for warmstart state (i.e. acceleration at previous timestep)
-        initialize_Ma(
-            Ma=constraint_state.Ma_ws,
-            qacc=constraint_state.qacc_ws,
-            dofs_info=dofs_info,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-        initialize_Jaref(
-            qacc=constraint_state.qacc_ws,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
-            func_update_constraint(
+            func_nt_hessian_direct(
                 i_b,
-                qacc=constraint_state.qacc_ws,
-                Ma=constraint_state.Ma_ws,
-                cost=constraint_state.cost_ws,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-
-        # Compute cost for current state (assuming constraint-free acceleration)
-        initialize_Ma(
-            Ma=constraint_state.Ma,
-            qacc=dofs_state.acc_smooth,
-            dofs_info=dofs_info,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-        initialize_Jaref(
-            qacc=dofs_state.acc_smooth,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_constraint(
-                i_b,
-                qacc=dofs_state.acc_smooth,
-                Ma=constraint_state.Ma,
-                cost=constraint_state.cost,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-
-        # Pick the best starting point between current state and warmstart
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(n_dofs, _B):
-            if constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
-                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
-                constraint_state.Ma[i_d, i_b] = constraint_state.Ma_ws[i_d, i_b]
-            else:
-                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
-    else:
-        # Always initialize from warmstart
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in ti.ndrange(n_dofs, _B):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
-                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
-            else:
-                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
-
-        initialize_Ma(
-            Ma=constraint_state.Ma,
-            qacc=constraint_state.qacc,
-            dofs_info=dofs_info,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-    # Initialize solver accordingly
-    initialize_Jaref(
-        qacc=constraint_state.qacc,
-        constraint_state=constraint_state,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_update_constraint(
-            i_b,
-            qacc=constraint_state.qacc,
-            Ma=constraint_state.Ma,
-            cost=constraint_state.cost,
-            dofs_state=dofs_state,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-    if ti.static(
-        static_rigid_sim_config.solver_type != gs.constraint_solver.Newton
-        or static_rigid_sim_config.sparse_solve
-        or static_rigid_sim_config.backend == gs.cpu
-    ):
-        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-            for i_b in range(_B):
-                func_nt_hessian_direct(
-                    i_b,
-                    entities_info=entities_info,
-                    rigid_global_info=rigid_global_info,
-                    constraint_state=constraint_state,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                )
-
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_gradient(
-                i_b,
-                dofs_state=dofs_state,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
@@ -2308,7 +2189,6 @@ def func_init_solver(
         MAX_DOFS_PER_BLOCK = ti.static(64)
         MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
 
-        n_dofs_2 = n_dofs**2
         n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
         # FIXME: Adding `serialize=False` is causing sync failing for some reason...
@@ -2395,6 +2275,38 @@ def func_init_solver(
                     i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                     constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                     i_pair = i_pair + BLOCK_DIM
+
+
+@ti.func
+def func_tiled_update_gradient(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    EPS = rigid_global_info.EPS[None]
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            func_update_gradient(
+                i_b,
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    else:
+        # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64.
+        BLOCK_DIM = ti.static(64)
+
+        n_dofs_2 = n_dofs**2
+        n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
         if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
             BLOCK_DIM = ti.static(64)
@@ -2547,6 +2459,134 @@ def func_init_solver(
                         - constraint_state.qfrc_constraint[i_d, i_b]
                     )
                 func_nt_chol_solve(i_b, constraint_state)
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def func_init_solver(
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = dofs_state.acc_smooth.shape[1]
+    n_dofs = dofs_state.acc_smooth.shape[0]
+
+    if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
+        # Compute cost for warmstart state (i.e. acceleration at previous timestep)
+        initialize_Ma(
+            Ma=constraint_state.Ma_ws,
+            qacc=constraint_state.qacc_ws,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+        initialize_Jaref(
+            qacc=constraint_state.qacc_ws,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            func_update_constraint(
+                i_b,
+                qacc=constraint_state.qacc_ws,
+                Ma=constraint_state.Ma_ws,
+                cost=constraint_state.cost_ws,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+
+        # Compute cost for current state (assuming constraint-free acceleration)
+        initialize_Ma(
+            Ma=constraint_state.Ma,
+            qacc=dofs_state.acc_smooth,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+        initialize_Jaref(
+            qacc=dofs_state.acc_smooth,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            func_update_constraint(
+                i_b,
+                qacc=dofs_state.acc_smooth,
+                Ma=constraint_state.Ma,
+                cost=constraint_state.cost,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+
+        # Pick the best starting point between current state and warmstart
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            if constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
+                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+                constraint_state.Ma[i_d, i_b] = constraint_state.Ma_ws[i_d, i_b]
+            else:
+                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+    else:
+        # Always initialize from warmstart
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in ti.ndrange(n_dofs, _B):
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
+                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+            else:
+                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+
+        initialize_Ma(
+            Ma=constraint_state.Ma,
+            qacc=constraint_state.qacc,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+    # Initialize solver accordingly
+    initialize_Jaref(
+        qacc=constraint_state.qacc,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_update_constraint(
+            i_b,
+            qacc=constraint_state.qacc,
+            Ma=constraint_state.Ma,
+            cost=constraint_state.cost,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        func_tiled_hessian(
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+    func_tiled_update_gradient(
+        dofs_state=dofs_state,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):

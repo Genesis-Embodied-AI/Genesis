@@ -189,34 +189,9 @@ class Collider:
         For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
         """
-        solver = self._solver
-        n_geoms = solver.n_geoms_
-        n_equalities = solver.n_equalities
-        enable_self_collision = solver._enable_self_collision
-        enable_neutral_collision = solver._enable_neutral_collision
-        enable_adjacent_collision = solver._enable_adjacent_collision
-        batch_links_info = solver._static_rigid_sim_config.batch_links_info
-
-        eq_type = solver.equalities_info.eq_type.to_numpy()[:, 0]
-        eq_obj1id = solver.equalities_info.eq_obj1id.to_numpy()[:, 0]
-        eq_obj2id = solver.equalities_info.eq_obj2id.to_numpy()[:, 0]
-        geoms_link_idx = solver.geoms_info.link_idx.to_numpy()
-        geoms_contype = solver.geoms_info.contype.to_numpy()
-        geoms_conaffinity = solver.geoms_info.conaffinity.to_numpy()
-        links_entity_idx = solver.links_info.entity_idx.to_numpy()
-        links_root_idx = solver.links_info.root_idx.to_numpy()
-        links_parent_idx = solver.links_info.parent_idx.to_numpy()
-        links_is_fixed = solver.links_info.is_fixed.to_numpy()
-        if batch_links_info:
-            links_entity_idx = links_entity_idx[:, 0]
-            links_root_idx = links_root_idx[:, 0]
-            links_parent_idx = links_parent_idx[:, 0]
-            links_is_fixed = links_is_fixed[:, 0]
-        entities_is_local_collision_mask = solver.entities_info.is_local_collision_mask.to_numpy()
-
         # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
         geoms_verts: list[np.ndarray] = []
-        for geom in solver.geoms:
+        for geom in self._solver.geoms:
             verts = tensor_to_array(geom.get_verts())
             verts = verts.reshape((-1, *verts.shape[-2:]))
             centroid = verts.mean(axis=1, keepdims=True)
@@ -227,59 +202,67 @@ class Collider:
         self_colliding_pairs: list[tuple[int, int]] = []
 
         n_possible_pairs = 0
-        collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
-        for i_ga in range(n_geoms):
-            for i_gb in range(i_ga + 1, n_geoms):
-                i_la = geoms_link_idx[i_ga]
-                i_lb = geoms_link_idx[i_gb]
-                i_ea = links_entity_idx[i_la]
-                i_eb = links_entity_idx[i_lb]
+        collision_pair_idx = np.full((self._solver.n_geoms, self._solver.n_geoms), fill_value=-1, dtype=gs.np_int)
+        for i_ga in range(self._solver.n_geoms):
+            geom_a = self._solver.geoms[i_ga]
+            link_a = geom_a.link
+            e_a = geom_a.entity
+            for i_gb in range(i_ga + 1, self._solver.n_geoms):
+                geom_b = self._solver.geoms[i_gb]
+                link_b = geom_b.link
+                e_b = geom_b.entity
 
                 # geoms in the same link
-                if i_la == i_lb:
+                if link_a is link_b:
                     continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed
                 is_valid = True
-                for i_eq in range(n_equalities):
-                    if eq_type[i_eq] == gs.EQUALITY_TYPE.WELD:
-                        i_leqa, i_leqb = eq_obj1id[i_eq], eq_obj2id[i_eq]
-                        if (i_leqa == i_la and i_leqb == i_lb) or (i_leqa == i_lb and i_leqb == i_la):
-                            is_valid = False
+                for eq in self._solver.equalities:
+                    if eq.type == gs.EQUALITY_TYPE.WELD and {eq.eq_obj1id, eq.eq_obj2id} == {link_a.idx, link_b.idx}:
+                        is_valid = False
+                        break
                 if not is_valid:
                     continue
 
                 # contype and conaffinity
-                mask_ea = entities_is_local_collision_mask[i_ea]
-                mask_eb = entities_is_local_collision_mask[i_eb]
-                if ((i_ea == i_eb) or not (mask_ea or mask_eb)) and not (
-                    (geoms_contype[i_ga] & geoms_conaffinity[i_gb]) or (geoms_contype[i_gb] & geoms_conaffinity[i_ga])
+                if ((e_a is e_b) or not (e_a.is_local_collision_mask or e_b.is_local_collision_mask)) and not (
+                    (geom_a.contype & geom_b.conaffinity) or (geom_b.contype & geom_a.conaffinity)
                 ):
                     continue
 
                 # pair of fixed links wrt the world
-                if links_is_fixed[i_la] and links_is_fixed[i_lb]:
+                if link_a.is_fixed and link_b.is_fixed:
                     continue
 
                 # self collision
-                if links_root_idx[i_la] == links_root_idx[i_lb]:
-                    if not enable_self_collision:
+                if link_a.root_idx == link_b.root_idx:
+                    if not self._solver._enable_self_collision:
                         continue
 
                     # adjacent links
-                    if not enable_adjacent_collision and (
-                        links_parent_idx[i_la] == i_lb or links_parent_idx[i_lb] == i_la
-                    ):
-                        continue
+                    # FIXME: Links should be considered adjacent if connected by only fixed joints.
+                    if not self._solver._enable_adjacent_collision:
+                        is_adjacent = False
+                        link_a_, link_b_ = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
+                        while link_b_.parent_idx > 0:
+                            if link_b_.parent_idx == link_a_.idx:
+                                is_adjacent = True
+                                break
+                            if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link_b_.joints):
+                                break
+                            link_b_ = self._solver.links[link_b_.parent_idx]
+                        if is_adjacent:
+                            continue
 
                     # active in neutral configuration (qpos0)
                     is_self_colliding = False
-                    for i_b in range(1 if not enable_neutral_collision else 0):
+                    for i_b in range(1 if not self._solver._enable_neutral_collision else 0):
                         mesh_a = trimesh.Trimesh(
-                            vertices=geoms_verts[i_ga][i_b], faces=solver.geoms[i_ga].init_faces, process=False
+                            vertices=geoms_verts[i_ga][i_b], faces=geom_a.init_faces, process=False
                         )
                         mesh_b = trimesh.Trimesh(
-                            vertices=geoms_verts[i_gb][i_b], faces=solver.geoms[i_gb].init_faces, process=False
+                            vertices=geoms_verts[i_gb][i_b], faces=geom_b.init_faces, process=False
                         )
                         bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
                         if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
@@ -328,6 +311,9 @@ class Collider:
         return vert_neighbors, vert_neighbor_start, vert_n_neighbors
 
     def _init_collision_pair_idx(self, collision_pair_idx):
+        if self._n_possible_pairs == 0:
+            self._collider_info.collision_pair_idx.fill(-1)
+            return
         self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):

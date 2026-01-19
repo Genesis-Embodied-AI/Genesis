@@ -1119,17 +1119,30 @@ def test_filter_neutral_self_collisions(show_viewer):
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=True,
             enable_neutral_collision=False,
+            enable_adjacent_collision=False,
         ),
         show_viewer=show_viewer,
     )
     robot = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.08,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 2.0, 0.0, 1.0),
+        ),
+    )
     box = scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
         ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
     )
+    sphere.attach(robot, "hand")
     scene.build()
     eq_type = scene.rigid_solver.equalities_info.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
     eq_obj1id = scene.rigid_solver.equalities_info.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
@@ -1137,19 +1150,22 @@ def test_filter_neutral_self_collisions(show_viewer):
 
     scene.rigid_solver.collider.detection()
     contacts_data = scene.rigid_solver.collider.get_contacts()
-    assert ((contacts_data["link_a"] == 11) & (contacts_data["link_b"] == 0)).any()
+    assert ((contacts_data["link_a"] == 12) & (contacts_data["link_b"] == 0)).any()
 
     for i in range(2):
-        for i_ga in range(robot.n_geoms):
-            for i_gb in range(i_ga + 1, robot.n_geoms):
+        for i_ga in range(robot.geom_start, box.geom_start):
+            for i_gb in range(i_ga + 1, box.geom_start):
                 geom_a = scene.rigid_solver.geoms[i_ga]
                 geom_b = scene.rigid_solver.geoms[i_gb]
                 link_a = geom_a.link
                 link_b = geom_b.link
+
                 if link_a.idx == link_b.idx:
                     continue
+
                 if link_a.is_fixed and link_b.is_fixed:
                     continue
+
                 if (
                     (eq_type == gs.EQUALITY_TYPE.WELD)
                     & (
@@ -1158,8 +1174,19 @@ def test_filter_neutral_self_collisions(show_viewer):
                     )
                 ).any():
                     continue
-                if link_a.idx == link_b.parent_idx:
+
+                is_adjacent = False
+                link = link_b
+                while link.parent_idx > 0:
+                    if link.parent_idx == link_a.idx:
+                        is_adjacent = True
+                        break
+                    if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
+                        break
+                    link = scene.rigid_solver.links[link.parent_idx]
+                if is_adjacent:
                     continue
+
                 verts_a = tensor_to_array(geom_a.get_verts())
                 verts_a = (1.0 - 1e-3) * verts_a + 1e-3 * verts_a.mean(axis=0, keepdims=True)
                 mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
@@ -1168,7 +1195,7 @@ def test_filter_neutral_self_collisions(show_viewer):
                 verts_b = (1.0 - 1e-3) * verts_b + 1e-3 * verts_b.mean(axis=0, keepdims=True)
                 mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
                 is_colliding = mesh_a.contains(mesh_b.vertices).any() or mesh_b.contains(mesh_a.vertices).any()
-                assert is_colliding == ({(i_ga, i_gb)} in ({(5, 10)}, {(6, 10)}))
+                assert is_colliding == ({(i_ga, i_gb)} in ({(5, 10)}, {(6, 10)}, {(11, 23)}, {(17, 23)}))
         scene.step()
 
 
@@ -3885,6 +3912,11 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            enable_neutral_collision=True,
+            enable_adjacent_collision=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3.5, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -3930,6 +3962,15 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     scene.build()
     with pytest.raises(gs.GenesisException):
         box.attach(hand, "right_finger")
+
+    # Make sure that collision between hand base link and franka attachment point has been filtered out as adjacent
+    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+    assert collision_pair_idx[franka.get_link("attachment").idx, hand.base_link_idx] == -1
+
+    with pytest.raises(gs.GenesisException):
+        hand.set_pos(0.0)
+    with pytest.raises(gs.GenesisException):
+        hand.set_quat(0.0)
 
     franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
     hand.control_dofs_position([0.04, 0.04])
