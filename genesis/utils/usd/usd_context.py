@@ -246,17 +246,20 @@ class UsdContext:
             )
         return applied_surface, uv_name
 
-    def compute_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None):
+    def compute_transform(self, prim: Usd.Prim) -> np.ndarray:
         transform = self._xform_cache.GetLocalToWorldTransform(prim)
         T_usd = np.asarray(transform, dtype=np.float32)  # translation on the bottom row
         if self._is_yup:
             T_usd @= mu.Y_UP_TRANSFORM
         T_usd[:, :3] *= self._meter_scale
-        Q, S = extract_scale(T_usd.transpose())
+        return T_usd.transpose()
+
+    def compute_gs_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None):
+        Q, S = extract_scale(self.compute_transform(prim))
 
         if ref_prim is None:
             return Q, S
 
-        Q_ref, S_ref = self.compute_transform(ref_prim)
+        Q_ref, S_ref = self.compute_gs_transform(ref_prim)
         Q_rel = np.linalg.inv(Q_ref) @ Q
         return Q_rel, S

@@ -8,17 +8,8 @@ import genesis as gs
 from genesis.utils import geom as gu
 
 from .usd_context import UsdContext
+from .usd_parser_utils import AXES_T
 
-
-AXES_T = {
-    "X": np.array(
-        [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float64
-    ),
-    "Y": np.array(
-        [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float64
-    ),
-    "Z": np.eye(4, dtype=np.float64),
-}
 
 
 def geom_exception(geom_type, geom_id, stage_file, reason_msg):
@@ -58,7 +49,7 @@ def parse_prim_geoms(
             geom_surface, uv_name, surface_id = surface.copy(), "st", None
 
         # parse transform
-        geom_Q, geom_S = context.compute_transform(prim, link_prim)
+        geom_Q, geom_S = context.compute_gs_transform(prim, link_prim)
         geom_S *= morph.scale
         geom_Q[:3, 3] *= morph.scale
         geom_id = context.get_prim_id(prim)
@@ -171,7 +162,7 @@ def parse_prim_geoms(
                 plane_prim = UsdGeom.Plane(prim)
                 width = plane_prim.GetWidthAttr().Get()
                 length = plane_prim.GetLengthAttr().Get()
-                axis_T = AXES_T[plane_prim.GetAxisAttr().Get()]
+                axis_T = AXES_T[plane_prim.GetAxisAttr().Get() or "Z"]
 
                 w = float(width) * 0.5
                 l = float(length) * 0.5
@@ -195,7 +186,7 @@ def parse_prim_geoms(
                 capsule_prim = UsdGeom.Capsule(prim)
                 radius = capsule_prim.GetRadiusAttr().Get()
                 height = capsule_prim.GetHeightAttr().Get()
-                axis_T = AXES_T[capsule_prim.GetAxisAttr().Get()]
+                axis_T = AXES_T[capsule_prim.GetAxisAttr().Get() or "Z"]
                 tmesh = trimesh.creation.capsule(radius=radius, height=height, count=(8, 12))
                 tmesh.apply_translation([0.0, 0.0, -0.5 * height])
                 tmesh.apply_transform(axis_T)
@@ -214,7 +205,7 @@ def parse_prim_geoms(
                 cylinder_prim = UsdGeom.Cylinder(prim)
                 radius = cylinder_prim.GetRadiusAttr().Get()
                 height = cylinder_prim.GetHeightAttr().Get()
-                axis_T = AXES_T[cylinder_prim.GetAxisAttr().Get()]
+                axis_T = AXES_T[cylinder_prim.GetAxisAttr().Get() or "Z"]
                 tmesh = trimesh.creation.cylinder(radius=radius, height=height, count=(8, 12))
                 tmesh.apply_transform(axis_T)
                 geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
