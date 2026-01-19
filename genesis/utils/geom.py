@@ -1452,27 +1452,10 @@ def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right
 
 
 def _np_slerp(q0, q1, t):
-    q0 = np.asarray(q0)
-    q1 = np.asarray(q1)
-    t = np.asarray(t)
-
-    scalar_output = q0.ndim == 1 and (t.ndim == 0 or (t.ndim == 1 and t.shape[0] == 1))
-    if q0.ndim == 1:
-        q0 = q0[None, :]
-    if q1.ndim == 1:
-        q1 = q1[None, :]
-    if t.ndim == 0:
-        t = t[None]
-    if t.ndim != 1:
-        t = np.reshape(t, (-1,))
-
-    if q0.shape[0] == 1 and t.shape[0] > 1:
-        q0 = np.broadcast_to(q0, (t.shape[0], q0.shape[-1]))
-        q1 = np.broadcast_to(q1, (t.shape[0], q1.shape[-1]))
-    elif t.shape[0] == 1 and q0.shape[0] > 1:
-        t = np.broadcast_to(t, (q0.shape[0],))
-    elif q0.shape[0] != t.shape[0]:
-        raise ValueError(f"Batch mismatch: q0 has {q0.shape[0]} but t has {t.shape[0]}")
+    q0 = q0.reshape(-1, 4)
+    q1 = q1.reshape(-1, 4)
+    t = t.reshape(-1, 1)
+    assert q0.shape[0] == t.shape[0] or q0.shape[0] == 1 or t.shape[0] == 1
 
     q0 = q0 / np.linalg.norm(q0, axis=-1, keepdims=True)
     q1 = q1 / np.linalg.norm(q1, axis=-1, keepdims=True)
@@ -1482,13 +1465,11 @@ def _np_slerp(q0, q1, t):
     neg_mask = dot_product < 0.0
     q1 = np.where(neg_mask, -q1, q1)
     dot_product = np.where(neg_mask, -dot_product, dot_product)
-
     dot_product = np.clip(dot_product, -1.0, 1.0)
 
     theta_0 = np.arccos(dot_product)
     sin_theta_0 = np.sqrt(np.maximum(0.0, 1.0 - dot_product * dot_product))
 
-    t = np.expand_dims(t, axis=-1) if t.ndim == dot_product.ndim - 1 else t
     small_mask = sin_theta_0 < 1e-6
     lerp = (1.0 - t) * q0 + t * q1
 
@@ -1500,28 +1481,15 @@ def _np_slerp(q0, q1, t):
     new_q = s0 * q0 + s1 * q1
 
     out = np.where(small_mask, lerp, new_q)
-    return out[0] if scalar_output else out
+    return out
 
 
 @torch.jit.script
 def _tc_slerp(q0, q1, t):
-    scalar_output = q0.ndim == 1 and (t.ndim == 0 or (t.ndim == 1 and t.shape[0] == 1))
-    if q0.ndim == 1:
-        q0 = q0.unsqueeze(0)
-    if q1.ndim == 1:
-        q1 = q1.unsqueeze(0)
-    if t.ndim == 0:
-        t = t.unsqueeze(0)
-    if t.ndim != 1:
-        t = t.reshape(-1)
-
-    if q0.shape[0] == 1 and t.shape[0] > 1:
-        q0 = q0.expand(t.shape[0], -1)
-        q1 = q1.expand(t.shape[0], -1)
-    elif t.shape[0] == 1 and q0.shape[0] > 1:
-        t = t.expand(q0.shape[0])
-    elif q0.shape[0] != t.shape[0]:
-        raise ValueError(f"Batch mismatch: q0 has {q0.shape[0]} but t has {t.shape[0]}")
+    q0 = q0.reshape(-1, 4)
+    q1 = q1.reshape(-1, 4)
+    t = t.reshape(-1, 1)
+    assert q0.shape[0] == t.shape[0] or q0.shape[0] == 1 or t.shape[0] == 1
 
     q0 = q0 / torch.linalg.norm(q0, dim=-1, keepdim=True)
     q1 = q1 / torch.linalg.norm(q1, dim=-1, keepdim=True)
@@ -1531,13 +1499,11 @@ def _tc_slerp(q0, q1, t):
     neg_mask = dot_product < 0
     q1 = torch.where(neg_mask, -q1, q1)
     dot_product = torch.where(neg_mask, -dot_product, dot_product)
-
     dot_product = torch.clamp(dot_product, -1.0, 1.0)
 
     theta_0 = torch.acos(dot_product)
     sin_theta_0 = torch.sqrt(torch.clamp(1.0 - dot_product * dot_product, min=0.0))
 
-    t = t.unsqueeze(-1) if t.ndim == dot_product.ndim - 1 else t
     small_mask = sin_theta_0 < 1e-6
     lerp = (1.0 - t) * q0 + t * q1
 
@@ -1549,7 +1515,7 @@ def _tc_slerp(q0, q1, t):
     new_q = s0 * q0 + s1 * q1
 
     out = torch.where(small_mask, lerp, new_q)
-    return out[0] if scalar_output else out
+    return out
 
 
 def slerp(q0, q1, t):
@@ -1559,16 +1525,16 @@ def slerp(q0, q1, t):
     Parameters
     ----------
     q0 : numpy.array | torch.Tensor
-        The start quaternion (4-dimensional vector).
+        The start quaternion (w, x, y, z), can be batched.
     q1 : numpy.array | torch.Tensor
-        The end quaternion (4-dimensional vector).
+        The end quaternion (w, x, y, z), can be batched.
     t : numpy.array | torch.Tensor
         The interpolation parameter between 0 and 1.
 
     Returns
     -------
     numpy.array | torch.Tensor
-        The interpolated quaternion (4-dimensional vector).
+        The interpolated quaternion (w, x, y, z).
     """
     if isinstance(q0, np.ndarray):
         return _np_slerp(q0, q1, t)
