@@ -13,13 +13,13 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.utils.sdf as sdf
-import genesis.engine.solvers.rigid.mpr as mpr
-import genesis.engine.solvers.rigid.gjk as gjk
-import genesis.engine.solvers.rigid.diff_gjk as diff_gjk
-import genesis.engine.solvers.rigid.support_field as support_field
+from . import mpr
+from . import gjk
+from . import diff_gjk
+from . import support_field
 
-from .collider_broadphase import func_point_in_geom_aabb
-from .collider_contact import (
+from .broadphase import func_point_in_geom_aabb
+from .contact import (
     func_add_contact,
     func_set_contact,
     func_add_diff_contact_input,

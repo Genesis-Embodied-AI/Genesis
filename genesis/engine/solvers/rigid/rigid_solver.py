@@ -25,9 +25,8 @@ from genesis.utils.sdf import SDF
 
 from ..base_solver import Solver
 from .collider import Collider
-from .constraint_solver import ConstraintSolver
-from .constraint_solver_island import ConstraintSolverIsland
-from .rigid_solver_util import (
+from .constraint import ConstraintSolver, ConstraintSolverIsland
+from .articulation.util import (
     func_wakeup_entity_and_its_temp_island,
     kernel_init_invweight,
     kernel_init_meaninertia,
@@ -61,7 +60,7 @@ from .rigid_solver_util import (
     func_check_index_range,
     kernel_clear_external_force,
 )
-from .rigid_solver_kinematics import (
+from .articulation.kinematics import (
     kernel_forward_kinematics_links_geoms,
     kernel_masked_forward_kinematics_links_geoms,
     kernel_forward_velocity,
@@ -92,7 +91,7 @@ from .rigid_solver_kinematics import (
     func_update_cartesian_space,
     kernel_update_cartesian_space,
 )
-from .rigid_solver_dynamics import (
+from .articulation.dynamics import (
     update_qacc_from_qvel_delta,
     update_qvel,
     kernel_compute_mass_matrix,
@@ -116,7 +115,7 @@ from .rigid_solver_dynamics import (
     kernel_forward_dynamics_without_qacc,
     func_implicit_damping,
 )
-from .rigid_solver_control import (
+from .articulation.control import (
     kernel_get_state,
     kernel_set_state,
     kernel_get_state_grad,
@@ -155,7 +154,7 @@ from .rigid_solver_control import (
     kernel_set_geom_friction,
     kernel_set_geoms_friction,
 )
-from .rigid_solver_backward import (
+from .articulation.backward import (
     func_copy_next_to_curr,
     func_copy_next_to_curr_grad,
     kernel_save_adjoint_cache,

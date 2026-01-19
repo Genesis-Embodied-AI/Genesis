@@ -18,23 +18,23 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.gjk as gjk
-import genesis.engine.solvers.rigid.diff_gjk as diff_gjk
-import genesis.engine.solvers.rigid.mpr as mpr
+from . import gjk
+from . import diff_gjk
+from . import mpr
 import genesis.utils.sdf as sdf
-import genesis.engine.solvers.rigid.support_field as support_field
+from . import support_field
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 
 from .mpr import MPR
 from .gjk import GJK
-from ....utils.sdf import SDF
+from genesis.utils.sdf import SDF
 from .support_field import SupportField
 
 from enum import IntEnum
 
 # Import and re-export from submodules for backward compatibility
-from .collider_broadphase import (
+from .broadphase import (
     func_point_in_geom_aabb,
     func_is_geom_aabbs_overlap,
     func_find_intersect_midpoint,
@@ -43,7 +43,7 @@ from .collider_broadphase import (
     func_broad_phase,
 )
 
-from .collider_contact import (
+from .contact import (
     rotaxis,
     rotmatx,
     collider_kernel_reset,
@@ -58,7 +58,7 @@ from .collider_contact import (
     func_set_upstream_grad,
 )
 
-from .collider_narrowphase import (
+from .narrowphase import (
     CCD_ALGORITHM_CODE,
     func_contact_sphere_sdf,
     func_contact_vertex_sdf,

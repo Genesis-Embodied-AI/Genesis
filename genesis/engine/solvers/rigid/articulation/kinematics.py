@@ -15,7 +15,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .rigid_solver_util import (
+from .util import (
     func_check_index_range,
     func_read_field_if,
     func_write_field_if,
