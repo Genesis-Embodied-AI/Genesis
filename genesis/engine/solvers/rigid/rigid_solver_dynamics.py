@@ -19,7 +19,11 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .rigid_solver_util import func_wakeup_entity_and_its_temp_island
+from .rigid_solver_util import (
+    func_wakeup_entity_and_its_temp_island,
+    func_check_index_range,
+    func_add_safe_backward,
+)
 
 
 @ti.kernel
@@ -282,23 +286,6 @@ def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksSt
     vel_rot = links_state.cd_ang[link_idx, i_b].cross(pos_world - links_state.root_COM[link_idx, i_b])
     vel_lin = links_state.cd_vel[link_idx, i_b]
     return vel_rot + vel_lin
-
-
-@ti.func
-def func_check_index_range(idx: ti.i32, min: ti.i32, max: ti.i32, cond: ti.template()):
-    # Conditionally check if the index is in the range [min, max) to save computational cost
-    return (idx >= min and idx < max) if ti.static(cond) else True
-
-
-@ti.func
-def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: ti.template()):
-    # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to
-    # write, use atomic add directly. For reference, see official Taichi documentation:
-    # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
-    if ti.static(cond):
-        ti.atomic_add(field[I], value)
-    else:
-        field[I] = field[I] + value
 
 
 @ti.func
