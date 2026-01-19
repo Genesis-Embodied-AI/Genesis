@@ -352,6 +352,7 @@ class Collider:
 
     def _init_collision_pair_idx(self, collision_pair_idx):
         if self._n_possible_pairs == 0:
+            self._collider_info.collision_pair_idx.fill(-1)
             return
         self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
 
