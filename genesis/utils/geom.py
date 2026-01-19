@@ -1451,6 +1451,133 @@ def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right
     gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(A)=}")
 
 
+def _np_slerp(q0, q1, t):
+    q0 = np.asarray(q0)
+    q1 = np.asarray(q1)
+    t = np.asarray(t)
+
+    scalar_output = q0.ndim == 1 and (t.ndim == 0 or (t.ndim == 1 and t.shape[0] == 1))
+    if q0.ndim == 1:
+        q0 = q0[None, :]
+    if q1.ndim == 1:
+        q1 = q1[None, :]
+    if t.ndim == 0:
+        t = t[None]
+    if t.ndim != 1:
+        t = np.reshape(t, (-1,))
+
+    if q0.shape[0] == 1 and t.shape[0] > 1:
+        q0 = np.broadcast_to(q0, (t.shape[0], q0.shape[-1]))
+        q1 = np.broadcast_to(q1, (t.shape[0], q1.shape[-1]))
+    elif t.shape[0] == 1 and q0.shape[0] > 1:
+        t = np.broadcast_to(t, (q0.shape[0],))
+    elif q0.shape[0] != t.shape[0]:
+        raise ValueError(f"Batch mismatch: q0 has {q0.shape[0]} but t has {t.shape[0]}")
+
+    q0 = q0 / np.linalg.norm(q0, axis=-1, keepdims=True)
+    q1 = q1 / np.linalg.norm(q1, axis=-1, keepdims=True)
+
+    dot_product = np.sum(q0 * q1, axis=-1, keepdims=True)
+
+    neg_mask = dot_product < 0.0
+    q1 = np.where(neg_mask, -q1, q1)
+    dot_product = np.where(neg_mask, -dot_product, dot_product)
+
+    dot_product = np.clip(dot_product, -1.0, 1.0)
+
+    theta_0 = np.arccos(dot_product)
+    sin_theta_0 = np.sqrt(np.maximum(0.0, 1.0 - dot_product * dot_product))
+
+    t = np.expand_dims(t, axis=-1) if t.ndim == dot_product.ndim - 1 else t
+    small_mask = sin_theta_0 < 1e-6
+    lerp = (1.0 - t) * q0 + t * q1
+
+    theta = theta_0 * t
+    sin_theta = np.sin(theta)
+
+    s0 = np.cos(theta) - dot_product * sin_theta / sin_theta_0
+    s1 = sin_theta / sin_theta_0
+    new_q = s0 * q0 + s1 * q1
+
+    out = np.where(small_mask, lerp, new_q)
+    return out[0] if scalar_output else out
+
+
+@torch.jit.script
+def _tc_slerp(q0, q1, t):
+    scalar_output = q0.ndim == 1 and (t.ndim == 0 or (t.ndim == 1 and t.shape[0] == 1))
+    if q0.ndim == 1:
+        q0 = q0.unsqueeze(0)
+    if q1.ndim == 1:
+        q1 = q1.unsqueeze(0)
+    if t.ndim == 0:
+        t = t.unsqueeze(0)
+    if t.ndim != 1:
+        t = t.reshape(-1)
+
+    if q0.shape[0] == 1 and t.shape[0] > 1:
+        q0 = q0.expand(t.shape[0], -1)
+        q1 = q1.expand(t.shape[0], -1)
+    elif t.shape[0] == 1 and q0.shape[0] > 1:
+        t = t.expand(q0.shape[0])
+    elif q0.shape[0] != t.shape[0]:
+        raise ValueError(f"Batch mismatch: q0 has {q0.shape[0]} but t has {t.shape[0]}")
+
+    q0 = q0 / torch.linalg.norm(q0, dim=-1, keepdim=True)
+    q1 = q1 / torch.linalg.norm(q1, dim=-1, keepdim=True)
+
+    dot_product = torch.sum(q0 * q1, dim=-1, keepdim=True)
+
+    neg_mask = dot_product < 0
+    q1 = torch.where(neg_mask, -q1, q1)
+    dot_product = torch.where(neg_mask, -dot_product, dot_product)
+
+    dot_product = torch.clamp(dot_product, -1.0, 1.0)
+
+    theta_0 = torch.acos(dot_product)
+    sin_theta_0 = torch.sqrt(torch.clamp(1.0 - dot_product * dot_product, min=0.0))
+
+    t = t.unsqueeze(-1) if t.ndim == dot_product.ndim - 1 else t
+    small_mask = sin_theta_0 < 1e-6
+    lerp = (1.0 - t) * q0 + t * q1
+
+    theta = theta_0 * t
+    sin_theta = torch.sin(theta)
+
+    s0 = torch.cos(theta) - dot_product * sin_theta / sin_theta_0
+    s1 = sin_theta / sin_theta_0
+    new_q = s0 * q0 + s1 * q1
+
+    out = torch.where(small_mask, lerp, new_q)
+    return out[0] if scalar_output else out
+
+
+def slerp(q0, q1, t):
+    """
+    Perform spherical linear interpolation between two quaternions.
+
+    Parameters
+    ----------
+    q0 : numpy.array | torch.Tensor
+        The start quaternion (4-dimensional vector).
+    q1 : numpy.array | torch.Tensor
+        The end quaternion (4-dimensional vector).
+    t : numpy.array | torch.Tensor
+        The interpolation parameter between 0 and 1.
+
+    Returns
+    -------
+    numpy.array | torch.Tensor
+        The interpolated quaternion (4-dimensional vector).
+    """
+    if isinstance(q0, np.ndarray):
+        return _np_slerp(q0, q1, t)
+    elif isinstance(q0, torch.Tensor):
+        return _tc_slerp(q0, q1, t)
+    else:
+        gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(q0)=}")
+
+
 # ------------------------------------------------------------------------------------
 # ------------------------------------- numpy ----------------------------------------
 # ------------------------------------------------------------------------------------
@@ -1897,48 +2024,6 @@ def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torc
     z = torch.sin(phi)  # up
 
     return torch.stack([x, y, z], dim=-1)
-
-
-def slerp(q0, q1, t):
-    """
-    Perform spherical linear interpolation between two quaternions.
-
-    Parameters:
-    q0 : numpy.array
-        The start quaternion (4-dimensional vector).
-    q1 : numpy.array
-        The end quaternion (4-dimensional vector).
-    t : float
-        The interpolation parameter between 0 and 1.
-
-    Returns:
-    numpy.array
-        The interpolated quaternion (4-dimensional vector).
-    """
-    q0 = q0 / np.linalg.norm(q0)
-    q1 = q1 / np.linalg.norm(q1)
-
-    dot_product = np.dot(q0, q1)
-
-    if dot_product < 0.0:
-        q1 = -q1
-        dot_product = -dot_product
-
-    dot_product = np.clip(dot_product, -1.0, 1.0)
-
-    theta_0 = np.arccos(dot_product)
-    sin_theta_0 = np.sin(theta_0)
-
-    if sin_theta_0 < 1e-6:
-        return (1.0 - t) * q0 + t * q1
-
-    theta = theta_0 * t
-    sin_theta = np.sin(theta)
-
-    s0 = np.cos(theta) - dot_product * sin_theta / sin_theta_0
-    s1 = sin_theta / sin_theta_0
-
-    return s0 * q0 + s1 * q1
 
 
 def random_quaternion(batch_size):
