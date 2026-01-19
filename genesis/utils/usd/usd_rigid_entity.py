@@ -152,31 +152,12 @@ def _parse_joint_axis_pos(
         joint_axis = gu.transform_by_R(joint_axis, T[:3, :3])
         joint_axis = Q_inv[:3, :3] @ joint_axis
         if np.linalg.norm(joint_axis) < gs.EPS:
-            gs.raise_exception(f"Joint axis is zero for joint {revolute_joint.GetPath()}.")
+            gs.raise_exception(f"Joint axis is zero for joint {joint.GetPath()}.")
         joint_axis /= np.linalg.norm(joint_axis)
     else:
         joint_axis = None
 
     return joint_axis, joint_pos
-
-
-def _compute_child_link_local_pos(joint: UsdPhysics.SphericalJoint, child_link: Usd.Prim) -> np.ndarray:
-    """
-    Compute the local position of a spherical joint in the child link local space.
-
-    Parameters
-    ----------
-    joint : UsdPhysics.SphericalJoint
-        The spherical joint API.
-    child_link : Usd.Prim
-        The child link prim.
-    """
-    pos_attr = joint.GetLocalPos1Attr()
-    usd_local_pos = pos_attr.Get() if pos_attr else gu.zero_pos()
-    gs_local_pos = compute_gs_joint_pos_from_usd_prim(usd_local_pos, child_link)
-    return gs_local_pos
-
-
 
 
 def _create_joint_info_for_base_link(l_info: Dict) -> Dict:
@@ -312,30 +293,30 @@ def _parse_link(
         l_info["pos"] = Q[:3, 3]
         l_info["quat"] = gu.R_to_quat(Q[:3, :3])
 
-        j_info = dict()
-        if joint_prim.IsA(UsdPhysics.RevoluteJoint):
-            joint_type = gs.JOINT_TYPE.REVOLUTE
-            joint = UsdPhysics.RevoluteJoint(joint_prim)
-            n_dofs, n_qs = 1, 1
-        elif joint_prim.IsA(UsdPhysics.PrismaticJoint):
-            joint_type = gs.JOINT_TYPE.PRISMATIC
-            joint = UsdPhysics.PrismaticJoint(joint_prim)
-            n_dofs, n_qs = 1, 1
-        elif joint_prim.IsA(UsdPhysics.SphericalJoint):
-            joint_type = gs.JOINT_TYPE.SPHERICAL
-            joint = UsdPhysics.SphericalJoint(joint_prim)
-            n_dofs, n_qs = 3, 4
-        else:
-            if not joint_prim.IsA(UsdPhysics.FixedJoint):
+        joint_type = gs.JOINT_TYPE.FIXED
+        n_dofs, n_qs = 0, 0
+        if not link_fixed:
+            if joint_prim.IsA(UsdPhysics.RevoluteJoint):
+                joint_type = gs.JOINT_TYPE.REVOLUTE
+                joint = UsdPhysics.RevoluteJoint(joint_prim)
+                n_dofs, n_qs = 1, 1
+            elif joint_prim.IsA(UsdPhysics.PrismaticJoint):
+                joint_type = gs.JOINT_TYPE.PRISMATIC
+                joint = UsdPhysics.PrismaticJoint(joint_prim)
+                n_dofs, n_qs = 1, 1
+            elif joint_prim.IsA(UsdPhysics.SphericalJoint):
+                joint_type = gs.JOINT_TYPE.SPHERICAL
+                joint = UsdPhysics.SphericalJoint(joint_prim)
+                n_dofs, n_qs = 3, 4
+            elif not joint_prim.IsA(UsdPhysics.FixedJoint):
                 gs.logger.warning(
                     f"Unsupported USD joint type: {joint_prim.GetTypeName()} for {joint_prim.GetPath()}. "
                     "Parsed as fixed joint."
                 )
-            joint_type = gs.JOINT_TYPE.FIXED
-            joint = UsdPhysics.FixedJoint(joint_prim)
-            n_dofs, n_qs = 0, 0
-        joint_axis, joint_pos = _parse_joint_axis_pos(context, joint, link, is_body1)
+        if joint_type == gs.JOINT_TYPE.FIXED:
+            joint = UsdPhysics.Joint(joint_prim)
 
+        joint_axis, joint_pos = _parse_joint_axis_pos(context, joint, link, is_body1)
         j_info = {
             "name": str(joint_prim.GetPath()),
             "sol_params": gu.default_solver_params(),
@@ -398,17 +379,12 @@ def _parse_link(
             j_info["dofs_stiffness"] = np.zeros(n_dofs, dtype=gs.np_float)
             j_info["dofs_damping"] = np.zeros(n_dofs, dtype=gs.np_float)
 
-            if joint_prim.IsA(UsdPhysics.SphericalJoint):
-                j_info["dofs_motion_ang"] = np.eye(3)  # Identity matrix for 3 rotational axes
+            if joint_type == gs.JOINT_TYPE.SPHERICAL:
+                j_info["dofs_motion_ang"] = np.eye(3)
                 j_info["dofs_motion_vel"] = np.zeros((3, 3))
                 j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
                 j_info["init_qpos"] = gu.identity_quat()
             else:
-                if not joint_prim.IsA(UsdPhysics.FixedJoint):
-                    gs.logger.warning(
-                        f"Unsupported USD joint type: <{joint_prim.GetTypeName()}> in joint {joint_prim.GetPath()}. "
-                        "Treating as fixed joint."
-                    )
                 j_info["dofs_motion_ang"] = np.zeros((0, 3))
                 j_info["dofs_motion_vel"] = np.zeros((0, 3))
                 j_info["dofs_limit"] = np.zeros((0, 2))
@@ -463,6 +439,12 @@ def _parse_link(
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         j_infos.append(j_info)
+
+    if not j_infos:
+        if not link_fixed:
+            j_infos.append(_create_joint_info_for_base_link(l_info))
+        else:
+            j_infos.append(_create_joint_info_for_fixed_link(l_info))
 
     if abs(1.0 - morph.scale) > gs.EPS:
         l_info["pos"] *= morph.scale
