@@ -1247,8 +1247,8 @@ def func_nt_hessian_direct_B(
     static_rigid_sim_config: ti.template(),
 ):
     # based on parallelization only over B dimension
-    EPS = rigid_global_info.EPS[None]
 
+    EPS = rigid_global_info.EPS[None]
     n_dofs = constraint_state.nt_H.shape[1]
     n_entities = entities_info.n_links.shape[0]
 
