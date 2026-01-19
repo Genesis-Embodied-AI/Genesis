@@ -1487,7 +1487,6 @@ def func_solve(
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        # t0_start = ti.clock_counter()
         if constraint_state.n_constraints[i_b] > 0:
             for _ in range(rigid_global_info.iterations[None]):
                 func_solve_iter(
@@ -1502,8 +1501,6 @@ def func_solve(
                     break
         else:
             constraint_state.improved[i_b] = False
-        # t0_end = ti.clock_counter()
-        # constraint_state.timers[0, i_b_] = t0_end - t0_start
 
 
 @ti.func
