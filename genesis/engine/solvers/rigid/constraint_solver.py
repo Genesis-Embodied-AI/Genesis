@@ -1471,7 +1471,7 @@ def func_cholesky_factor_direct_batch(
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for all environments at once.
 
-    Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to spare memory resources.
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
     """
