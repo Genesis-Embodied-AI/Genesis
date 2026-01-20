@@ -1802,7 +1802,7 @@ def func_cholesky_solve_tiled(
         # Copy the gradient to shared memory for efficiency
         k_d = tid
         while k_d < n_dofs:
-            v[k_d] = constraint_state.Mgrad[k_d, i_b]
+            v[k_d] = constraint_state.grad[k_d, i_b]
             k_d = k_d + BLOCK_DIM
         ti.simt.block.sync()
 
@@ -2366,8 +2366,6 @@ def func_update_gradient_tiled(
         constraint_state.grad[i_d, i_b] = (
             constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
         )
-        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
