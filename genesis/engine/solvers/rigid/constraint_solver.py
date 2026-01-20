@@ -1507,7 +1507,7 @@ def func_cholesky_factor_direct_tiled(
     hardware-specific, but the 48kB default limit without enabling dedicated GPU context flag is hardware-agnostic on
     modern GPUs.
 
-    Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to sparse memory resources.
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to sparse memory resources.
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
     """
@@ -1779,7 +1779,7 @@ def func_cholesky_solve_tiled(
     the time of writing, all warp-level intrinsics in `ti.simt.warp` sub-module are CUDA-specific, of which only
     `shfl_down_f32` is being used here. Although some of these warp-level instrinsics are supposed to be supported by
     all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), GsTaichi does not provide a unified
-    API for it yet. As a result, warp-level intrinsics are currently disabled of not running on CUDA backend. On top of
+    API for it yet. As a result, warp-level intrinsics are currently disabled if not running on CUDA backend. On top of
     that, most if not all, Warp-level intrinsics are only supporting 32bits precision.
     """
     # Performance is optimal for BLOCK_DIM = 64
