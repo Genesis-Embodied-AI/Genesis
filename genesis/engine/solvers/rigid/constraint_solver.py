@@ -1593,7 +1593,7 @@ def func_hessian_and_cholesky_factor_direct(
     """
     _B = constraint_state.jac.shape[2]
 
-    if ti.static(static_rigid_sim_config.backend == gs.cpu and static_rigid_sim_config.sparse_solve):
+    if ti.static(static_rigid_sim_config.backend == gs.cpu or static_rigid_sim_config.sparse_solve):
         # CPU
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
@@ -1617,11 +1617,10 @@ def func_hessian_and_cholesky_factor_direct(
 
 
 @ti.func
-def func_hessian_and_cholesky_factor_incremental_batch(
+def func_hessian_and_cholesky_factor_incremental_dense_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
 ) -> bool:
     EPS = rigid_global_info.EPS[None]
 
@@ -1633,15 +1632,13 @@ def func_hessian_and_cholesky_factor_incremental_batch(
         is_active_prev = constraint_state.prev_active[i_c, i_b]
         if is_active ^ is_active_prev:
             sign = 1.0 if is_active else -1.0
-
             efc_D_sqrt = ti.sqrt(constraint_state.efc_D[i_c, i_b])
-            if ti.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-                for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
+            for i_d in range(n_dofs):
+                constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+
+            for k in range(n_dofs):
+                if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
                     Lkk = constraint_state.nt_H[i_b, k, k]
                     tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
                     if tmp < EPS:
@@ -1652,43 +1649,84 @@ def func_hessian_and_cholesky_factor_incremental_batch(
                     cinv = 1 / c
                     s = constraint_state.nt_vec[k, i_b] / Lkk
                     constraint_state.nt_H[i_b, k, k] = r
-                    for i_ in range(k_):
-                        i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                    for i in range(k + 1, n_dofs):
                         constraint_state.nt_H[i_b, i, k] = (
                             constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                         ) * cinv
 
-                    for i_ in range(k_):
-                        i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                    for i in range(k + 1, n_dofs):
                         constraint_state.nt_vec[i, i_b] = (
                             constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                         )
-            else:
-                for i_d in range(n_dofs):
-                    constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-                for k in range(n_dofs):
-                    if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                        Lkk = constraint_state.nt_H[i_b, k, k]
-                        tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-                        if tmp < EPS:
-                            is_degenerated = True
-                            break
-                        r = ti.sqrt(tmp)
-                        c = r / Lkk
-                        cinv = 1 / c
-                        s = constraint_state.nt_vec[k, i_b] / Lkk
-                        constraint_state.nt_H[i_b, k, k] = r
-                        for i in range(k + 1, n_dofs):
-                            constraint_state.nt_H[i_b, i, k] = (
-                                constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
-                            ) * cinv
+    return is_degenerated
 
-                        for i in range(k + 1, n_dofs):
-                            constraint_state.nt_vec[i, i_b] = (
-                                constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                            )
 
+@ti.func
+def func_hessian_and_cholesky_factor_incremental_sparse_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+) -> bool:
+    EPS = rigid_global_info.EPS[None]
+
+    is_degenerated = False
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        is_active = constraint_state.active[i_c, i_b]
+        is_active_prev = constraint_state.prev_active[i_c, i_b]
+        if is_active ^ is_active_prev:
+            sign = 1.0 if is_active else -1.0
+            efc_D_sqrt = ti.sqrt(constraint_state.efc_D[i_c, i_b])
+
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+
+            for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
+                Lkk = constraint_state.nt_H[i_b, k, k]
+                tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+                if tmp < EPS:
+                    is_degenerated = True
+                    break
+                r = ti.sqrt(tmp)
+                c = r / Lkk
+                cinv = 1 / c
+                s = constraint_state.nt_vec[k, i_b] / Lkk
+                constraint_state.nt_H[i_b, k, k] = r
+                for i_ in range(k_):
+                    i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                    constraint_state.nt_H[i_b, i, k] = (
+                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                    ) * cinv
+
+                for i_ in range(k_):
+                    i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                    constraint_state.nt_vec[i, i_b] = (
+                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                    )
+
+    return is_degenerated
+
+
+@ti.func
+def func_hessian_and_cholesky_factor_incremental_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+) -> bool:
+    is_degenerated = False
+    if ti.static(static_rigid_sim_config.sparse_solve):
+        # Sparse
+        is_degenerated = func_hessian_and_cholesky_factor_incremental_sparse_batch(
+            i_b, constraint_state, rigid_global_info
+        )
+    else:
+        # Dense
+        is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(
+            i_b, constraint_state, rigid_global_info
+        )
     return is_degenerated
 
 
@@ -2387,6 +2425,52 @@ def func_update_gradient(
 
 
 @ti.func
+def func_terminate_or_update_descent_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    n_dofs = constraint_state.jac.shape[1]
+
+    # Check convergence, i.e. whether the cost function is not longer decreasing or the gradient is flat
+    tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
+    improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
+    grad_norm = gs.ti_float(0.0)
+    for i_d in range(n_dofs):
+        grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+    grad_norm = ti.sqrt(grad_norm)
+    improved = grad_norm > tol_scaled and improvement > tol_scaled
+    constraint_state.improved[i_b] = improved
+
+    # Update search direction if necessary
+    if improved:
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            for i_d in range(n_dofs):
+                constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+        else:
+            cg_beta = gs.ti_float(0.0)
+            cg_pg_dot_pMg = gs.ti_float(0.0)
+
+            for i_d in range(n_dofs):
+                cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
+                    constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                )
+                cg_pg_dot_pMg = cg_pg_dot_pMg + (
+                    constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                )
+            cg_beta = ti.max(cg_beta / ti.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
+
+            constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
+            constraint_state.cg_beta[i_b] = cg_beta
+
+            for i_d in range(n_dofs):
+                constraint_state.search[i_d, i_b] = (
+                    -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
+                )
+
+
+@ti.func
 def initialize_Jaref(
     qacc: array_class.V_ANNOTATION,
     constraint_state: array_class.ConstraintState,
@@ -2628,40 +2712,12 @@ def func_solve_iter(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
-        improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
-        gradient = gs.ti_float(0.0)
-        for i_d in range(n_dofs):
-            gradient = gradient + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
-        gradient = ti.sqrt(gradient)
-        if gradient < tol_scaled or improvement < tol_scaled:
-            constraint_state.improved[i_b] = False
-        else:
-            constraint_state.improved[i_b] = True
-
-            if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-                for i_d in range(n_dofs):
-                    constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-            else:
-                cg_beta = gs.ti_float(0.0)
-                cg_pg_dot_pMg = gs.ti_float(0.0)
-
-                for i_d in range(n_dofs):
-                    cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
-                        constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
-                    )
-                    cg_pg_dot_pMg = cg_pg_dot_pMg + (
-                        constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
-                    )
-                cg_beta = ti.max(cg_beta / ti.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
-
-                constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
-                constraint_state.cg_beta[i_b] = cg_beta
-
-                for i_d in range(n_dofs):
-                    constraint_state.search[i_d, i_b] = (
-                        -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
-                    )
+        func_terminate_or_update_descent_batch(
+            i_b,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
