@@ -917,10 +917,16 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
     return T
 
 
-def T_to_trans_quat(T, *, out=None):
-    trans = T[..., :3, 3]
-    quat = R_to_quat(T[..., :3, :3])
-    return trans, quat
+def T_to_trans(T):
+    return T[..., :3, 3]
+
+
+def T_to_quat(T):
+    return R_to_quat(T[..., :3, :3])
+
+
+def T_to_trans_quat(T):
+    return T_to_trans(T), T_to_quat(T)
 
 
 @nb.jit(nopython=True, cache=True)

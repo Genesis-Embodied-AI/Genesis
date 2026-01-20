@@ -41,7 +41,9 @@ ENABLE_MADRONA = ENABLE_MADRONA and (gs.backend == gs.cuda)
 if ENABLE_RAYTRACER:
     renderer = gs.renderers.RayTracer(
         env_surface=gs.surfaces.Emission(
-            emissive_texture=gs.textures.ColorTexture(color=(0.2, 0.3, 0.5)),
+            emissive_texture=gs.textures.ColorTexture(
+                color=(0.2, 0.3, 0.5),
+            ),
         ),
         env_radius=20.0,
     )
@@ -50,10 +52,6 @@ else:
     renderer = gs.renderers.Rasterizer()
 
 scene = gs.Scene(
-    rigid_options=gs.options.RigidOptions(
-        enable_collision=True,
-        gravity=(0, 0, -9.8),
-    ),
     renderer=renderer,
     show_viewer=False,
 )
@@ -61,17 +59,29 @@ scene = gs.Scene(
 ########################## entities ##########################
 plane = scene.add_entity(
     morph=gs.morphs.Plane(),
-    surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
+    surface=gs.surfaces.Rough(
+        color=(0.4, 0.4, 0.4),
+    ),
 )
 
 sphere = scene.add_entity(
-    morph=gs.morphs.Sphere(pos=(0.0, 0.0, 2.0), radius=0.5),
-    surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
+    morph=gs.morphs.Sphere(
+        radius=0.5,
+        pos=(0.0, 0.0, 2.0),
+    ),
+    surface=gs.surfaces.Smooth(
+        color=(1.0, 0.5, 0.5),
+    ),
 )
 
 box = scene.add_entity(
-    morph=gs.morphs.Box(pos=(1.0, 1.0, 1.0), size=(0.3, 0.3, 0.3)),
-    surface=gs.surfaces.Rough(color=(0.5, 1.0, 0.5)),
+    morph=gs.morphs.Box(
+        size=(0.3, 0.3, 0.3),
+        pos=(1.0, 1.0, 1.0),
+    ),
+    surface=gs.surfaces.Rough(
+        color=(0.5, 1.0, 0.5),
+    ),
 )
 
 ########################## Camera Configurations ##########################
@@ -129,9 +139,9 @@ CAMERA_SENSORS_KWARGS = [
 
 # Create camera configurations for all backends
 backends = [
-    ("raster", RasterizerCameraOptions, True),  # Always enabled
-    ("raytrace", RaytracerCameraOptions, ENABLE_RAYTRACER),
-    ("batch", BatchRendererCameraOptions, ENABLE_MADRONA),
+    ("rasterizer", RasterizerCameraOptions, True),  # Always enabled
+    ("raytracer", RaytracerCameraOptions, ENABLE_RAYTRACER),
+    ("batch_render", BatchRendererCameraOptions, ENABLE_MADRONA),
 ]
 
 backend_configs = {}
@@ -168,9 +178,9 @@ for backend_name, options_class, enabled in backends:
                 options_kwargs["offset_T"] = attachment["offset_T"]
 
         # Add backend-specific parameters
-        if backend_name == "raster":
+        if options_class is RasterizerCameraOptions:
             options_kwargs.update({"near": CAMERA_COMMON_KWARGS["near"], "far": CAMERA_COMMON_KWARGS["far"]})
-        elif backend_name == "raytrace":
+        elif options_class is RaytracerCameraOptions:
             options_kwargs.update(
                 {
                     "model": "pinhole",
@@ -187,14 +197,14 @@ for backend_name, options_class, enabled in backends:
                         "env_radius": 20.0,
                     }
                 )
-        elif backend_name == "batch":
+        elif options_class is BatchRendererCameraOptions:
             options_kwargs.update({"use_rasterizer": True})
             if camera_config["lights"]:
                 adjusted_lights = [{**light, "directional": False} for light in camera_config["lights"]]
                 options_kwargs["lights"] = adjusted_lights
 
         # Adjust lights for raytracer (different intensity/color)
-        if backend_name == "raytrace" and camera_config["lights"]:
+        if options_class is RaytracerCameraOptions and camera_config["lights"]:
             adjusted_lights = [
                 {**light, "color": (10.0, 10.0, 10.0), "intensity": 1.0} for light in camera_config["lights"]
             ]
