@@ -174,7 +174,7 @@ class ConstraintSolver:
         )
 
     def resolve(self):
-        func_init_solver(
+        func_solve_init(
             self._solver.dofs_info,
             self._solver.dofs_state,
             self._solver.entities_info,
@@ -182,7 +182,7 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        func_solve(
+        func_solve_body(
             self._solver.entities_info,
             self._solver.dofs_state,
             self.constraint_state,
@@ -386,6 +386,70 @@ class ConstraintSolver:
         )
 
 
+# =====================================================================================================================
+# ================================================= Getters / Setters =================================================
+# =====================================================================================================================
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_get_equality_constraints(
+    is_padded: ti.template(),
+    iout: ti.types.ndarray(),
+    fout: ti.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
+    equalities_info: array_class.EqualitiesInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.ti_n_equalities.shape[0]
+    n_eqs_max = gs.ti_int(0)
+
+    # this is a reduction operation (global max), we have to serialize it
+    # TODO: a good unittest and a better implementation from gstaichi for this kind of reduction
+    ti.loop_config(serialize=True)
+    for i_b in range(_B):
+        n_eqs = constraint_state.ti_n_equalities[i_b]
+        if n_eqs > n_eqs_max:
+            n_eqs_max = n_eqs
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        i_c_start = gs.ti_int(0)
+        i_e_start = gs.ti_int(0)
+        if ti.static(is_padded):
+            i_e_start = i_b * n_eqs_max
+        else:
+            for j_b in range(i_b):
+                i_e_start = i_e_start + constraint_state.ti_n_equalities[j_b]
+
+        for i_e_ in range(constraint_state.ti_n_equalities[i_b]):
+            i_e = i_e_start + i_e_
+
+            iout[i_e, 0] = equalities_info.eq_type[i_e_, i_b]
+            iout[i_e, 1] = equalities_info.eq_obj1id[i_e_, i_b]
+            iout[i_e, 2] = equalities_info.eq_obj2id[i_e_, i_b]
+
+            if equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.CONNECT:
+                for i_c_ in ti.static(range(3)):
+                    i_c = i_c_start + i_c_
+                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
+                i_c_start = i_c_start + 3
+            elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.WELD:
+                for i_c_ in ti.static(range(6)):
+                    i_c = i_c_start + i_c_
+                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
+                i_c_start = i_c_start + 6
+            elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.JOINT:
+                fout[i_e, 0] = constraint_state.efc_force[i_c_start, i_b]
+                i_c_start = i_c_start + 1
+
+
+# =====================================================================================================================
+# =================================================== Problem Setup ===================================================
+# =====================================================================================================================
+
+# ====================================== Reset and Clear Constraint Solver State ======================================
+
+
 @ti.kernel(fastcache=gs.use_fastcache)
 def constraint_solver_kernel_reset(
     envs_idx: ti.types.ndarray(),
@@ -425,6 +489,9 @@ def constraint_solver_kernel_clear(
         if ti.static(static_rigid_sim_config.sparse_solve):
             for i_c in range(len_constraints):
                 constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+
+
+# ========================================= Register Pre-Defined Constraints ==========================================
 
 
 @ti.func
@@ -939,7 +1006,7 @@ def func_equality_weld(
 
                     t_quat = gu.ti_identity_quat()
                     t_pos = pos_anchor - links_state.root_COM[link, i_b]
-                    ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                    _ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                     diff = sign * vel
                     jac = diff[i]
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
@@ -1127,108 +1194,118 @@ def add_frictionloss_constraints(
                         constraint_state.jac[i_con, i_d, i_b] = jac
 
 
+# ====================================== Runtime User-Specified Weld Constraints ======================================
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_add_weld_constraint(
+    link1_idx: ti.i32,
+    link2_idx: ti.i32,
+    envs_idx: ti.types.ndarray(),
+    equalities_info: array_class.EqualitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    links_state: array_class.LinksState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+) -> ti.i32:
+    overflow = gs.ti_bool(False)
+
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        i_e = constraint_state.ti_n_equalities[i_b]
+        if i_e == rigid_global_info.n_candidate_equalities[None]:
+            overflow = True
+        else:
+            shared_pos = links_state.pos[link1_idx, i_b]
+            pos1 = gu.ti_inv_transform_by_trans_quat(
+                shared_pos, links_state.pos[link1_idx, i_b], links_state.quat[link1_idx, i_b]
+            )
+            pos2 = gu.ti_inv_transform_by_trans_quat(
+                shared_pos, links_state.pos[link2_idx, i_b], links_state.quat[link2_idx, i_b]
+            )
+
+            equalities_info.eq_type[i_e, i_b] = gs.ti_int(gs.EQUALITY_TYPE.WELD)
+            equalities_info.eq_obj1id[i_e, i_b] = link1_idx
+            equalities_info.eq_obj2id[i_e, i_b] = link2_idx
+
+            for i_3 in ti.static(range(3)):
+                equalities_info.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
+                equalities_info.eq_data[i_e, i_b][i_3] = pos2[i_3]
+
+            relpose = gu.ti_quat_mul(gu.ti_inv_quat(links_state.quat[link1_idx, i_b]), links_state.quat[link2_idx, i_b])
+
+            for i_4 in ti.static(range(4)):
+                equalities_info.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
+
+            equalities_info.eq_data[i_e, i_b][10] = 1.0
+
+            equalities_info.sol_params[i_e, i_b] = ti.Vector(
+                [2 * rigid_global_info.substep_dt[None], 1.0, 0.9, 0.95, 0.001, 0.5, 2.0]
+            )
+
+            constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1
+    return overflow
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def kernel_delete_weld_constraint(
+    link1_idx: ti.i32,
+    link2_idx: ti.i32,
+    envs_idx: ti.types.ndarray(),
+    equalities_info: array_class.EqualitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        for i_e in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
+            if (
+                equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
+                and equalities_info.eq_obj1id[i_e, i_b] == link1_idx
+                and equalities_info.eq_obj2id[i_e, i_b] == link2_idx
+            ):
+                if i_e < constraint_state.ti_n_equalities[i_b] - 1:
+                    equalities_info.eq_type[i_e, i_b] = equalities_info.eq_type[
+                        constraint_state.ti_n_equalities[i_b] - 1, i_b
+                    ]
+                constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
+
+
+# =====================================================================================================================
+# ================================================= Solving Iteration =================================================
+# =====================================================================================================================
+
+# ====================================== Hessian Matrix & Cholesky Factorization ======================================
+
+
 @ti.func
-def func_nt_hessian_incremental(
+def func_hessian_direct_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    EPS = rigid_global_info.EPS[None]
+    """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for a given environment `i_b`.
 
-    n_dofs = constraint_state.nt_H.shape[1]
-
-    is_degenerated = False
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        is_active = constraint_state.active[i_c, i_b]
-        is_active_prev = constraint_state.prev_active[i_c, i_b]
-        if is_active ^ is_active_prev:
-            sign = 1.0 if is_active else -1.0
-
-            efc_D_sqrt = ti.sqrt(constraint_state.efc_D[i_c, i_b])
-            if ti.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
-
-                for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
-                    Lkk = constraint_state.nt_H[i_b, k, k]
-                    tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-                    if tmp < EPS:
-                        is_degenerated = True
-                        break
-                    r = ti.sqrt(tmp)
-                    c = r / Lkk
-                    cinv = 1 / c
-                    s = constraint_state.nt_vec[k, i_b] / Lkk
-                    constraint_state.nt_H[i_b, k, k] = r
-                    for i_ in range(k_):
-                        i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                        constraint_state.nt_H[i_b, i, k] = (
-                            constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
-                        ) * cinv
-
-                    for i_ in range(k_):
-                        i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                        constraint_state.nt_vec[i, i_b] = (
-                            constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                        )
-            else:
-                for i_d in range(n_dofs):
-                    constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
-
-                for k in range(n_dofs):
-                    if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                        Lkk = constraint_state.nt_H[i_b, k, k]
-                        tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-                        if tmp < EPS:
-                            is_degenerated = True
-                            break
-                        r = ti.sqrt(tmp)
-                        c = r / Lkk
-                        cinv = 1 / c
-                        s = constraint_state.nt_vec[k, i_b] / Lkk
-                        constraint_state.nt_H[i_b, k, k] = r
-                        for i in range(k + 1, n_dofs):
-                            constraint_state.nt_H[i_b, i, k] = (
-                                constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
-                            ) * cinv
-
-                        for i in range(k + 1, n_dofs):
-                            constraint_state.nt_vec[i, i_b] = (
-                                constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                            )
-
-    if is_degenerated:
-        func_nt_hessian_direct(
-            i_b,
-            entities_info=entities_info,
-            constraint_state=constraint_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-
-@ti.func
-def func_nt_hessian_direct(
-    i_b,
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-):
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    The upper triangular part is left as-is for efficiency. Accordingly, our solver's functions all leverage the
+    symmetry property of the Hessian matrix and only ever use values from the upper triangle.
+    """
     EPS = rigid_global_info.EPS[None]
 
     n_dofs = constraint_state.nt_H.shape[1]
     n_entities = entities_info.n_links.shape[0]
 
-    # H = M + J'*D*J
+    # Reset Hessian matrix to zero
     for i_d1 in range(n_dofs):
         for i_d2 in range(i_d1 + 1):
             constraint_state.nt_H[i_b, i_d1, i_d2] = gs.ti_float(0.0)
 
+    # Compute `H += J.T @ D @ J` using either dense or sparse implementation
     if ti.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(constraint_state.n_constraints[i_b]):
             jac_n_relevant_dofs = constraint_state.jac_n_relevant_dofs[i_c, i_b]
@@ -1256,6 +1333,7 @@ def func_nt_hessian_direct(
                         * constraint_state.active[i_c, i_b]
                     )
 
+    # Compute `H += M`
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             for i_d2 in range(entities_info.dof_start[i_e], i_d1 + 1):
@@ -1263,18 +1341,144 @@ def func_nt_hessian_direct(
                     constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                 )
 
-    func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
+
+@ti.func
+def func_hessian_direct_tiled(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for all environment at once.
+
+    This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
+    threading.
+
+    Under the hood, it implements a square-block matrix partitioned production algorithm to support arbitrary matrix
+    sizes because shared memory storage is limited to 48kB. It boils down to classical matrix production if the entire
+    optimization problem fits in a single block, i.e. n_constraints <= 32 and n_dofs <= 64.
+
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    """
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64
+    BLOCK_DIM = ti.static(64)
+    MAX_DOFS_PER_BLOCK = ti.static(64)
+    MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
+
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+    # FIXME: Adding `serialize=False` is causing sync failing for some reason...
+    # TODO: Consider moving `H += M` in a dedicated CUDA kernel. It should be both simpler and faster.
+    ti.loop_config(block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        if i_b >= _B:
+            continue
+
+        jac_row = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+        jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
+        efc_D = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
+
+        # Loop over all the constraints and accumulate their respective contributions to the Hessian matrix
+        i_c_start = 0
+        n_c = constraint_state.n_constraints[i_b]
+        while i_c_start < n_c:
+            # Store masked `efc_D` in shared memory for fast access
+            i_c_ = tid
+            n_conts_tile = ti.min(MAX_CONSTRAINTS_PER_BLOCK, n_c - i_c_start)
+            while i_c_ < n_conts_tile:
+                efc_D[i_c_] = (
+                    constraint_state.efc_D[i_c_start + i_c_, i_b] * constraint_state.active[i_c_start + i_c_, i_b]
+                )
+                i_c_ = i_c_ + BLOCK_DIM
+
+            # Loop over all row blocks of the hessian matrix
+            i_d1_start = 0
+            while i_d1_start < n_dofs:
+                n_dofs_tile_row = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d1_start)
+
+                # Copy Jacobian row blocks to shared memory for fast access
+                i_c_ = tid
+                while i_c_ < n_conts_tile:
+                    for i_d_ in range(n_dofs_tile_row):
+                        jac_row[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d1_start + i_d_, i_b]
+                    i_c_ = i_c_ + BLOCK_DIM
+                ti.simt.block.sync()
+
+                # Loop over all column blocks of the hessian matrix
+                i_d2_start = 0
+                while i_d2_start <= i_d1_start:
+                    n_dofs_tile_col = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d2_start)
+                    is_diag_tile = i_d1_start == i_d2_start
+
+                    # Copy Jacobian column block to shared memory for fast access if necessary, i.e. the hessian block
+                    # being considered is a diagonal block.
+                    if not is_diag_tile:
+                        i_c_ = tid
+                        while i_c_ < n_conts_tile:
+                            for i_d_ in range(n_dofs_tile_col):
+                                jac_col[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d2_start + i_d_, i_b]
+                            i_c_ = i_c_ + BLOCK_DIM
+                        ti.simt.block.sync()
+
+                    # Compute `H += J.T @ D @ J` for a single Hessian block
+                    pid = tid
+                    numel = n_dofs_tile_row * n_dofs_tile_col
+                    while pid < numel:
+                        i_d1_ = pid // n_dofs_tile_col
+                        i_d2_ = pid % n_dofs_tile_col
+                        i_d1 = i_d1_ + i_d1_start
+                        i_d2 = i_d2_ + i_d2_start
+                        if i_d1 >= i_d2:
+                            coef = gs.ti_float(0.0)
+                            if i_c_start == 0:
+                                coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                            if is_diag_tile:
+                                for j_c_ in range(n_conts_tile):
+                                    coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
+                            else:
+                                for j_c_ in range(n_conts_tile):
+                                    coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
+                            if i_c_start == 0:
+                                constraint_state.nt_H[i_b, i_d1, i_d2] = coef
+                            else:
+                                constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + coef
+                        pid = pid + BLOCK_DIM
+                    ti.simt.block.sync()
+
+                    i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
+                i_d1_start = i_d1_start + MAX_DOFS_PER_BLOCK
+            i_c_start = i_c_start + MAX_CONSTRAINTS_PER_BLOCK
+
+        # If there is no constraint, the main loop will be completely skipped, which means that the Hessian matrix must
+        # be updated separately to store the lower triangular part  of the mass matrix M.
+        if n_c == 0:
+            i_pair = tid
+            while i_pair < n_lower_tri:
+                i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
+                i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+                constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                i_pair = i_pair + BLOCK_DIM
 
 
 @ti.func
-def func_nt_chol_factor(
+def func_cholesky_factor_direct_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
+    """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for all environments at once.
+
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
+
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    """
     EPS = rigid_global_info.EPS[None]
 
     n_dofs = constraint_state.nt_H.shape[1]
+
     for i_d in range(n_dofs):
         tmp = constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d):
@@ -1290,7 +1494,257 @@ def func_nt_chol_factor(
 
 
 @ti.func
-def func_nt_chol_solve(
+def func_cholesky_factor_direct_tiled(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
+
+    This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
+    threading. The current implementation only supports n_dofs <= 64 for 64bits precision and n_dofs <= 92 for 32bits
+    precision due to shared memory storage being limited to 48kB. Note that the amount of shared memory available is
+    hardware-specific, but the 48kB default limit without enabling dedicated GPU context flag is hardware-agnostic on
+    modern GPUs.
+
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to sparse memory resources.
+
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    """
+    EPS = rigid_global_info.EPS[None]
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    # Performance is optimal for BLOCK_DIM = 64
+    BLOCK_DIM = ti.static(64)
+    MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
+
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+    ti.loop_config(block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        if i_b >= _B:
+            continue
+
+        # Padding +1 to avoid memory bank conflicts that would cause access serialization
+        H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
+
+        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
+        i_pair = tid
+        while i_pair < n_lower_tri:
+            i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
+            i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+            H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
+            i_pair = i_pair + BLOCK_DIM
+        ti.simt.block.sync()
+
+        # Loop over all columns sequentially, which is an integral part of Cholesky-Crout algorithm and cannot be
+        # avoided.
+        for i_d in range(n_dofs):
+            # Compute the diagonal of the Cholesky factor L for the column i being considered, ie
+            # L_{i,i} = sqrt(A_{i,i} - sum_{j=1}^{i-1}(L_{i,j} ** 2 ))
+            if tid == 0:
+                tmp = H[i_d, i_d]
+                for j_d in range(i_d):
+                    tmp = tmp - H[i_d, j_d] ** 2
+                H[i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
+            ti.simt.block.sync()
+
+            # Compute all the off-diagonal terms of the Cholesky factor L for the column i being considered, ie
+            # L_{j,i} = 1 / L_{i,i} (A_{j,i} - sum_{k=1}^{i-1}(L_{j,k} L_{i,k}), for j > i
+            inv_diag = 1.0 / H[i_d, i_d]
+            j_d = i_d + 1 + tid
+            while j_d < n_dofs:
+                dot = gs.ti_float(0.0)
+                for k_d in range(i_d):
+                    dot = dot + H[j_d, k_d] * H[i_d, k_d]
+                H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
+                j_d = j_d + BLOCK_DIM
+            ti.simt.block.sync()
+
+        # Copy the final result back from shared memory, only considered the lower triangular part
+        i_pair = tid
+        while i_pair < n_lower_tri:
+            i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
+            i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+            constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
+            i_pair = i_pair + BLOCK_DIM
+
+
+@ti.func
+def func_hessian_and_cholesky_factor_direct_batch(
+    i_b,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    func_hessian_direct_batch(i_b, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config)
+    func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info)
+
+
+@ti.func
+def func_hessian_and_cholesky_factor_direct(
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """
+    Unified implementation of Hessian matrix computation with Cholesky factorization optimized for both CPU and GPU
+    backends.
+
+    The tiled optimization is only supported on GPU backend and specifically optimized for it, falling back to the
+    classical batched implementation when running on CPU backend.
+
+    Note that the sparse implementation has not been optimized using tiling for now, mainly it is largely designed to
+    target CPU rather than GPU backend. In any event, its advantage over the dense implementation is still not clear.
+    """
+    _B = constraint_state.jac.shape[2]
+
+    if ti.static(static_rigid_sim_config.backend == gs.cpu or static_rigid_sim_config.sparse_solve):
+        # CPU
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            func_hessian_and_cholesky_factor_direct_batch(
+                i_b,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    else:
+        # GPU
+        func_hessian_direct_tiled(constraint_state, rigid_global_info)
+
+        if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
+            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
+        else:
+            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            for i_b in range(_B):
+                func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info)
+
+
+@ti.func
+def func_hessian_and_cholesky_factor_incremental_dense_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+) -> bool:
+    EPS = rigid_global_info.EPS[None]
+
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    is_degenerated = False
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        is_active = constraint_state.active[i_c, i_b]
+        is_active_prev = constraint_state.prev_active[i_c, i_b]
+        if is_active ^ is_active_prev:
+            sign = 1.0 if is_active else -1.0
+            efc_D_sqrt = ti.sqrt(constraint_state.efc_D[i_c, i_b])
+
+            for i_d in range(n_dofs):
+                constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+
+            for k in range(n_dofs):
+                if ti.abs(constraint_state.nt_vec[k, i_b]) > EPS:
+                    Lkk = constraint_state.nt_H[i_b, k, k]
+                    tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+                    if tmp < EPS:
+                        is_degenerated = True
+                        break
+                    r = ti.sqrt(tmp)
+                    c = r / Lkk
+                    cinv = 1 / c
+                    s = constraint_state.nt_vec[k, i_b] / Lkk
+                    constraint_state.nt_H[i_b, k, k] = r
+                    for i in range(k + 1, n_dofs):
+                        constraint_state.nt_H[i_b, i, k] = (
+                            constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                        ) * cinv
+
+                    for i in range(k + 1, n_dofs):
+                        constraint_state.nt_vec[i, i_b] = (
+                            constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                        )
+
+    return is_degenerated
+
+
+@ti.func
+def func_hessian_and_cholesky_factor_incremental_sparse_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+) -> bool:
+    EPS = rigid_global_info.EPS[None]
+
+    is_degenerated = False
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        is_active = constraint_state.active[i_c, i_b]
+        is_active_prev = constraint_state.prev_active[i_c, i_b]
+        if is_active ^ is_active_prev:
+            sign = 1.0 if is_active else -1.0
+            efc_D_sqrt = ti.sqrt(constraint_state.efc_D[i_c, i_b])
+
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+
+            for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
+                Lkk = constraint_state.nt_H[i_b, k, k]
+                tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+                if tmp < EPS:
+                    is_degenerated = True
+                    break
+                r = ti.sqrt(tmp)
+                c = r / Lkk
+                cinv = 1 / c
+                s = constraint_state.nt_vec[k, i_b] / Lkk
+                constraint_state.nt_H[i_b, k, k] = r
+                for i_ in range(k_):
+                    i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                    constraint_state.nt_H[i_b, i, k] = (
+                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                    ) * cinv
+
+                for i_ in range(k_):
+                    i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                    constraint_state.nt_vec[i, i_b] = (
+                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                    )
+
+    return is_degenerated
+
+
+@ti.func
+def func_hessian_and_cholesky_factor_incremental_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+) -> bool:
+    is_degenerated = False
+    if ti.static(static_rigid_sim_config.sparse_solve):
+        is_degenerated = func_hessian_and_cholesky_factor_incremental_sparse_batch(
+            i_b, constraint_state, rigid_global_info
+        )
+    else:
+        is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(
+            i_b, constraint_state, rigid_global_info
+        )
+    return is_degenerated
+
+
+# ======================================== Cholesky Factorization and Solving =========================================
+
+
+@ti.func
+def func_cholesky_solve_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
 ):
@@ -1310,101 +1764,124 @@ def func_nt_chol_solve(
         constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
-def func_update_contact_force(
-    links_state: array_class.LinksState,
-    collider_state: array_class.ColliderState,
+@ti.func
+def func_cholesky_solve_tiled(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    n_links = links_state.contact_force.shape[0]
-    _B = links_state.contact_force.shape[1]
+    """Compute the solution of H @ grad = Mgrad st H = L @ L.T for all environments at once.
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_l, i_b in ti.ndrange(n_links, _B):
-        links_state.contact_force[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+    This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
+    threading. The current implementation only supports n_dofs <= 64 for 64bits precision and n_dofs <= 92 for 32bits
+    precision. See `func_cholesky_factor_direct_tiled` documentation for details.
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        const_start = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+    Note that this implementation leverages warp-level reduction whenever supported, a generic fallback otherwise. At
+    the time of writing, all warp-level intrinsics in `ti.simt.warp` sub-module are CUDA-specific, of which only
+    `shfl_down_f32` is being used here. Although some of these warp-level instrinsics are supposed to be supported by
+    all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), GsTaichi does not provide a unified
+    API for it yet. As a result, warp-level intrinsics are currently disabled if not running on CUDA backend. On top of
+    that, most if not all, Warp-level intrinsics are only supporting 32bits precision.
+    """
+    # Performance is optimal for BLOCK_DIM = 64
+    BLOCK_DIM = ti.static(64)
+    MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
+    ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
+    WARP_SIZE = ti.static(32)
+    NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
 
-        # contact constraints should be after equality and frictionloss constraints and before joint limit constraints
-        for i_c in range(collider_state.n_contacts[i_b]):
-            contact_data_normal = collider_state.contact_data.normal[i_c, i_b]
-            contact_data_friction = collider_state.contact_data.friction[i_c, i_b]
-            contact_data_link_a = collider_state.contact_data.link_a[i_c, i_b]
-            contact_data_link_b = collider_state.contact_data.link_b[i_c, i_b]
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+    n_dofs_2 = n_dofs**2
 
-            force = ti.Vector.zero(gs.ti_float, 3)
-            d1, d2 = gu.ti_orthogonals(contact_data_normal)
-            for i_dir in range(4):
-                d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
-                n = d * contact_data_friction - contact_data_normal
-                force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
+    ti.loop_config(block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        warp_id = tid // WARP_SIZE
+        lane_id = tid % WARP_SIZE
+        if i_b >= _B:
+            continue
 
-            collider_state.contact_data.force[i_c, i_b] = force
+        H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
+        v = ti.simt.block.SharedArray((MAX_DOFS,), gs.ti_float)
+        partial = ti.simt.block.SharedArray(
+            (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.ti_float
+        )
 
-            links_state.contact_force[contact_data_link_a, i_b] = (
-                links_state.contact_force[contact_data_link_a, i_b] - force
-            )
-            links_state.contact_force[contact_data_link_b, i_b] = (
-                links_state.contact_force[contact_data_link_b, i_b] + force
-            )
+        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
+        i_flat = tid
+        while i_flat < n_dofs_2:
+            i_d1 = i_flat // n_dofs
+            i_d2 = i_flat % n_dofs
+            if i_d2 <= i_d1:
+                H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
+            i_flat = i_flat + BLOCK_DIM
+
+        # Copy the gradient to shared memory for efficiency
+        k_d = tid
+        while k_d < n_dofs:
+            v[k_d] = constraint_state.grad[k_d, i_b]
+            k_d = k_d + BLOCK_DIM
+        ti.simt.block.sync()
+
+        # Step 1: Solve w st. L^T @ w = y
+        for i_d in range(n_dofs):
+            dot = gs.ti_float(0.0)
+            j_d = tid
+            while j_d < i_d:
+                dot = dot + H[i_d, j_d] * v[j_d]
+                j_d = j_d + BLOCK_DIM
+            if ti.static(ENABLE_WARP_REDUCTION):
+                for offset in ti.static([16, 8, 4, 2, 1]):
+                    dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
+                if lane_id == 0:
+                    partial[warp_id] = dot
+            else:
+                partial[tid] = dot
+            ti.simt.block.sync()
+
+            if tid == 0:
+                total = gs.ti_float(0.0)
+                for k in ti.static(range(NUM_WARPS)) if ti.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
+                    total = total + partial[k]
+                v[i_d] = (v[i_d] - total) / H[i_d, i_d]
+            ti.simt.block.sync()
+
+        # Step 2: Solve x st. L @ x = z
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            dot = gs.ti_float(0.0)
+            j_d = i_d + 1 + tid
+            while j_d < n_dofs:
+                dot = dot + H[j_d, i_d] * v[j_d]
+                j_d = j_d + BLOCK_DIM
+
+            if ti.static(ENABLE_WARP_REDUCTION):
+                for offset in ti.static([16, 8, 4, 2, 1]):
+                    dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
+                if lane_id == 0:
+                    partial[warp_id] = dot
+            else:
+                partial[tid] = dot
+            ti.simt.block.sync()
+
+            if tid == 0:
+                total = gs.ti_float(0.0)
+                for k in ti.static(range(NUM_WARPS)) if ti.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
+                    total = total + partial[k]
+                v[i_d] = (v[i_d] - total) / H[i_d, i_d]
+            ti.simt.block.sync()
+
+        # Copy the final result back from shared memory
+        k_d = tid
+        while k_d < n_dofs:
+            constraint_state.Mgrad[k_d, i_b] = v[k_d]
+            k_d = k_d + BLOCK_DIM
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
-def func_update_qacc(
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
-    errno: array_class.V_ANNOTATION,
-):
-    n_dofs = dofs_state.acc.shape[0]
-    _B = dofs_state.acc.shape[1]
-
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in ti.ndrange(n_dofs, _B):
-        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000100
-
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        constraint_state.is_warmstart[i_b] = True
-
-
-@ti.kernel(fastcache=gs.use_fastcache)
-def func_solve(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    _B = constraint_state.grad.shape[1]
-
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
-        # t0_start = ti.clock_counter()
-        if constraint_state.n_constraints[i_b] > 0:
-            for _ in range(rigid_global_info.iterations[None]):
-                func_solve_iter(
-                    i_b,
-                    entities_info=entities_info,
-                    dofs_state=dofs_state,
-                    rigid_global_info=rigid_global_info,
-                    constraint_state=constraint_state,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                )
-                if not constraint_state.improved[i_b]:
-                    break
-        else:
-            constraint_state.improved[i_b] = False
-        # t0_end = ti.clock_counter()
-        # constraint_state.timers[0, i_b_] = t0_end - t0_start
+# =====================================================================================================================
+# ==================================================== Linesearch =====================================================
+# =====================================================================================================================
 
 
 @ti.func
@@ -1519,20 +1996,56 @@ def func_ls_point_fn(
 
 
 @ti.func
-def func_no_linesearch(i_b, constraint_state: array_class.ConstraintState):
-    func_ls_init(i_b)
-    n_dofs = constraint_state.search.shape[0]
+def update_bracket(
+    i_b,
+    p_alpha,
+    p_cost,
+    p_deriv_0,
+    p_deriv_1,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    flag = 0
 
-    constraint_state.improved[i_b] = True
-    for i_d in range(n_dofs):
-        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b]
-        constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b]
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b]
+    for i in range(3):
+        if (
+            p_deriv_0 < 0
+            and constraint_state.candidates[4 * i + 2, i_b] < 0
+            and p_deriv_0 < constraint_state.candidates[4 * i + 2, i_b]
+        ):
+            p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
+                constraint_state.candidates[4 * i + 0, i_b],
+                constraint_state.candidates[4 * i + 1, i_b],
+                constraint_state.candidates[4 * i + 2, i_b],
+                constraint_state.candidates[4 * i + 3, i_b],
+            )
+
+            flag = 1
+
+        elif (
+            p_deriv_0 > 0
+            and constraint_state.candidates[4 * i + 2, i_b] > 0
+            and p_deriv_0 > constraint_state.candidates[4 * i + 2, i_b]
+        ):
+            p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
+                constraint_state.candidates[4 * i + 0, i_b],
+                constraint_state.candidates[4 * i + 1, i_b],
+                constraint_state.candidates[4 * i + 2, i_b],
+                constraint_state.candidates[4 * i + 3, i_b],
+            )
+            flag = 2
+
+    p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = p_alpha, p_cost, p_deriv_0, p_deriv_1
+
+    if flag > 0:
+        p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = func_ls_point_fn(
+            i_b, p_alpha - p_deriv_0 / p_deriv_1, constraint_state, rigid_global_info
+        )
+    return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1
 
 
 @ti.func
-def func_linesearch(
+def func_linesearch_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -1675,7 +2188,7 @@ def func_linesearch(
                                 p1_next_deriv_0,
                                 p1_next_deriv_1,
                             ) = update_bracket(
-                                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, i_b, constraint_state, rigid_global_info
+                                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, constraint_state, rigid_global_info
                             )
                             (
                                 b2,
@@ -1688,7 +2201,7 @@ def func_linesearch(
                                 p2_next_deriv_0,
                                 p2_next_deriv_1,
                             ) = update_bracket(
-                                p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, i_b, constraint_state, rigid_global_info
+                                i_b, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, constraint_state, rigid_global_info
                             )
 
                             if b1 == 0 and b2 == 0:
@@ -1712,157 +2225,16 @@ def func_linesearch(
     return res_alpha
 
 
-@ti.func
-def update_bracket(
-    p_alpha,
-    p_cost,
-    p_deriv_0,
-    p_deriv_1,
-    i_b,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-):
-    flag = 0
+# =====================================================================================================================
+# ================================================= Solving Algorithm =================================================
+# =====================================================================================================================
 
-    for i in range(3):
-        if (
-            p_deriv_0 < 0
-            and constraint_state.candidates[4 * i + 2, i_b] < 0
-            and p_deriv_0 < constraint_state.candidates[4 * i + 2, i_b]
-        ):
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
-                constraint_state.candidates[4 * i + 0, i_b],
-                constraint_state.candidates[4 * i + 1, i_b],
-                constraint_state.candidates[4 * i + 2, i_b],
-                constraint_state.candidates[4 * i + 3, i_b],
-            )
 
-            flag = 1
-
-        elif (
-            p_deriv_0 > 0
-            and constraint_state.candidates[4 * i + 2, i_b] > 0
-            and p_deriv_0 > constraint_state.candidates[4 * i + 2, i_b]
-        ):
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
-                constraint_state.candidates[4 * i + 0, i_b],
-                constraint_state.candidates[4 * i + 1, i_b],
-                constraint_state.candidates[4 * i + 2, i_b],
-                constraint_state.candidates[4 * i + 3, i_b],
-            )
-            flag = 2
-
-    p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = p_alpha, p_cost, p_deriv_0, p_deriv_1
-
-    if flag > 0:
-        p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = func_ls_point_fn(
-            i_b, p_alpha - p_deriv_0 / p_deriv_1, constraint_state, rigid_global_info
-        )
-    return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1
+# ====================================================== Helpers ======================================================
 
 
 @ti.func
-def func_solve_iter(
-    i_b,
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
-):
-    n_dofs = constraint_state.qacc.shape[0]
-    alpha = func_linesearch(
-        i_b,
-        entities_info=entities_info,
-        dofs_state=dofs_state,
-        rigid_global_info=rigid_global_info,
-        constraint_state=constraint_state,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
-
-    if ti.abs(alpha) < rigid_global_info.EPS[None]:
-        constraint_state.improved[i_b] = False
-    else:
-        for i_d in range(n_dofs):
-            constraint_state.qacc[i_d, i_b] = (
-                constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
-            )
-            constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
-
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
-
-        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-            for i_d in range(n_dofs):
-                constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
-                constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
-
-        func_update_constraint(
-            i_b,
-            qacc=constraint_state.qacc,
-            Ma=constraint_state.Ma,
-            cost=constraint_state.cost,
-            dofs_state=dofs_state,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            func_nt_hessian_incremental(
-                i_b,
-                entities_info=entities_info,
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-
-        func_update_gradient(
-            i_b,
-            dofs_state=dofs_state,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-        tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
-        improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
-        gradient = gs.ti_float(0.0)
-        for i_d in range(n_dofs):
-            gradient = gradient + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
-        gradient = ti.sqrt(gradient)
-        if gradient < tol_scaled or improvement < tol_scaled:
-            constraint_state.improved[i_b] = False
-        else:
-            constraint_state.improved[i_b] = True
-
-            if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-                for i_d in range(n_dofs):
-                    constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-            else:
-                cg_beta = gs.ti_float(0.0)
-                cg_pg_dot_pMg = gs.ti_float(0.0)
-
-                for i_d in range(n_dofs):
-                    cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
-                        constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
-                    )
-                    cg_pg_dot_pMg = cg_pg_dot_pMg + (
-                        constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
-                    )
-                cg_beta = ti.max(cg_beta / ti.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
-
-                constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
-                constraint_state.cg_beta[i_b] = cg_beta
-
-                for i_d in range(n_dofs):
-                    constraint_state.search[i_d, i_b] = (
-                        -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
-                    )
-
-
-@ti.func
-def func_update_constraint(
+def func_update_constraint_batch(
     i_b,
     qacc: array_class.V_ANNOTATION,
     Ma: array_class.V_ANNOTATION,
@@ -1940,12 +2312,36 @@ def func_update_constraint(
 
 
 @ti.func
-def func_update_gradient(
+def func_update_constraint(
+    qacc: array_class.V_ANNOTATION,
+    Ma: array_class.V_ANNOTATION,
+    cost: array_class.V_ANNOTATION,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_update_constraint_batch(
+            i_b,
+            qacc=qacc,
+            Ma=Ma,
+            cost=cost,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@ti.func
+def func_update_gradient_batch(
     i_b,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
     n_dofs = constraint_state.grad.shape[0]
@@ -1966,8 +2362,138 @@ def func_update_gradient(
             static_rigid_sim_config=static_rigid_sim_config,
             is_backward=False,
         )
+
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        func_nt_chol_solve(i_b, constraint_state=constraint_state)
+        func_cholesky_solve_batch(i_b, constraint_state=constraint_state)
+
+
+@ti.func
+def func_update_gradient_tiled(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+
+    # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in ti.ndrange(n_dofs, _B):
+        constraint_state.grad[i_d, i_b] = (
+            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+        )
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            rigid_solver.func_solve_mass_batch(
+                i_b,
+                constraint_state.grad,
+                constraint_state.Mgrad,
+                array_class.PLACEHOLDER,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
+            )
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
+
+
+@ti.func
+def func_update_gradient(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """
+    Unified implementation of gradient updated optimized for both CPU and GPU backends.
+
+    The tiled optimization is only supported on GPU backend and specifically optimized for it, falling back to the
+    classical batched implementation when running on CPU backend.
+
+    Note that the tiled cholesky factorization and solving is not systematically enabled because it is not always
+    superior in terms of performance and does not support arbitrary matrix sizes. More specifically, tiling gets more
+    beneficial as n_dofs increases, but n_dofs>=96 is not supported for now. It is the responsibility of the calling
+    code to configure the static global flag `enable_tiled_cholesky_hessian` accordingly. Failing to do so will cause
+    the requested shared memory allocation to exceed 48kB and raise an exception.
+    """
+    _B = constraint_state.jac.shape[2]
+
+    if ti.static(
+        not static_rigid_sim_config.enable_tiled_cholesky_hessian or static_rigid_sim_config.backend == gs.cpu
+    ):
+        # CPU
+        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        for i_b in range(_B):
+            func_update_gradient_batch(
+                i_b,
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    else:
+        # GPU
+        func_update_gradient_tiled(
+            dofs_state=dofs_state,
+            entities_info=entities_info,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@ti.func
+def func_terminate_or_update_descent_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    n_dofs = constraint_state.jac.shape[1]
+
+    # Check convergence, i.e. whether the cost function is not longer decreasing or the gradient is flat
+    tol_scaled = (rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)) * rigid_global_info.tolerance[None]
+    improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
+    grad_norm = gs.ti_float(0.0)
+    for i_d in range(n_dofs):
+        grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+    grad_norm = ti.sqrt(grad_norm)
+    improved = grad_norm > tol_scaled and improvement > tol_scaled
+    constraint_state.improved[i_b] = improved
+
+    # Update search direction if necessary
+    if improved:
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            for i_d in range(n_dofs):
+                constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+        else:
+            cg_beta = gs.ti_float(0.0)
+            cg_pg_dot_pMg = gs.ti_float(0.0)
+
+            for i_d in range(n_dofs):
+                cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
+                    constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                )
+                cg_pg_dot_pMg = cg_pg_dot_pMg + (
+                    constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                )
+            cg_beta = ti.max(cg_beta / ti.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
+
+            constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
+            constraint_state.cg_beta[i_b] = cg_beta
+
+            for i_d in range(n_dofs):
+                constraint_state.search[i_d, i_b] = (
+                    -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
+                )
 
 
 @ti.func
@@ -1978,6 +2504,7 @@ def initialize_Jaref(
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -2014,306 +2541,11 @@ def initialize_Ma(
         Ma[i_d1, i_b] = Ma_
 
 
-@ti.func
-def func_tiled_hessian(
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.nt_H.shape[1]
-
-    if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-        for i_b in range(_B):
-            func_nt_hessian_direct(
-                i_b,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-    else:
-        # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64.
-        BLOCK_DIM = ti.static(64)
-        MAX_DOFS_PER_BLOCK = ti.static(64)
-        MAX_CONSTRAINTS_PER_BLOCK = ti.static(32)
-
-        n_lower_tri = n_dofs * (n_dofs + 1) // 2
-
-        # FIXME: Adding `serialize=False` is causing sync failing for some reason...
-        ti.loop_config(block_dim=BLOCK_DIM)
-        for i in range(_B * BLOCK_DIM):
-            tid = i % BLOCK_DIM
-            i_b = i // BLOCK_DIM
-            if i_b >= _B:
-                continue
-
-            jac_row = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
-            jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
-            efc = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
-
-            i_c_start = 0
-            n_c = constraint_state.n_constraints[i_b]
-            while i_c_start < n_c:
-                i_c_ = tid
-                n_conts_tile = ti.min(MAX_CONSTRAINTS_PER_BLOCK, n_c - i_c_start)
-                while i_c_ < n_conts_tile:
-                    efc[i_c_] = (
-                        constraint_state.efc_D[i_c_start + i_c_, i_b] * constraint_state.active[i_c_start + i_c_, i_b]
-                    )
-                    i_c_ = i_c_ + BLOCK_DIM
-
-                i_d1_start = 0
-                while i_d1_start < n_dofs:
-                    n_dofs_tile_row = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d1_start)
-
-                    i_c_ = tid
-                    while i_c_ < n_conts_tile:
-                        for i_d_ in range(n_dofs_tile_row):
-                            jac_row[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d1_start + i_d_, i_b]
-                        i_c_ = i_c_ + BLOCK_DIM
-                    ti.simt.block.sync()
-
-                    i_d2_start = 0
-                    while i_d2_start <= i_d1_start:
-                        n_dofs_tile_col = ti.min(MAX_DOFS_PER_BLOCK, n_dofs - i_d2_start)
-                        is_diag_tile = i_d1_start == i_d2_start
-
-                        if not is_diag_tile:
-                            i_c_ = tid
-                            while i_c_ < n_conts_tile:
-                                for i_d_ in range(n_dofs_tile_col):
-                                    jac_col[i_c_, i_d_] = constraint_state.jac[i_c_start + i_c_, i_d2_start + i_d_, i_b]
-                                i_c_ = i_c_ + BLOCK_DIM
-                            ti.simt.block.sync()
-
-                        pid = tid
-                        numel = n_dofs_tile_row * n_dofs_tile_col
-                        while pid < numel:
-                            i_d1_ = pid // n_dofs_tile_col
-                            i_d2_ = pid % n_dofs_tile_col
-                            i_d1 = i_d1_ + i_d1_start
-                            i_d2 = i_d2_ + i_d2_start
-                            if i_d1 >= i_d2:
-                                coef = gs.ti_float(0.0)
-                                if i_c_start == 0:
-                                    coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                                if is_diag_tile:
-                                    for j_c_ in range(n_conts_tile):
-                                        coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc[j_c_]
-                                else:
-                                    for j_c_ in range(n_conts_tile):
-                                        coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc[j_c_]
-                                if i_c_start == 0:
-                                    constraint_state.nt_H[i_b, i_d1, i_d2] = coef
-                                else:
-                                    constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                                        constraint_state.nt_H[i_b, i_d1, i_d2] + coef
-                                    )
-                            pid = pid + BLOCK_DIM
-                        ti.simt.block.sync()
-
-                        i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
-                    i_d1_start = i_d1_start + MAX_DOFS_PER_BLOCK
-                i_c_start = i_c_start + MAX_CONSTRAINTS_PER_BLOCK
-
-            if n_c == 0:
-                i_pair = tid
-                while i_pair < n_lower_tri:
-                    i_d1 = ti.cast(ti.floor((-1.0 + ti.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.ti_int)
-                    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                    i_pair = i_pair + BLOCK_DIM
-
-
-@ti.func
-def func_tiled_update_gradient(
-    dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    EPS = rigid_global_info.EPS[None]
-
-    _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.nt_H.shape[1]
-
-    if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_gradient(
-                i_b,
-                dofs_state=dofs_state,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-    else:
-        # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64.
-        BLOCK_DIM = ti.static(64)
-
-        n_dofs_2 = n_dofs**2
-        n_lower_tri = n_dofs * (n_dofs + 1) // 2
-
-        if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            BLOCK_DIM = ti.static(64)
-            MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
-            ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
-            WARP_SIZE = ti.static(32)
-            NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
-
-            ti.loop_config(block_dim=BLOCK_DIM)
-            for i in range(_B * BLOCK_DIM):
-                tid = i % BLOCK_DIM
-                i_b = i // BLOCK_DIM
-                if i_b >= _B:
-                    continue
-
-                # Padding +1 to avoid memory bank conflicts that would cause access serialization
-                H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
-
-                i_pair = tid
-                while i_pair < n_lower_tri:
-                    i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
-                    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-                    i_pair = i_pair + BLOCK_DIM
-                ti.simt.block.sync()
-
-                for i_d in range(n_dofs):
-                    if tid == 0:
-                        tmp = H[i_d, i_d]
-                        for j_d in range(i_d):
-                            tmp = tmp - H[i_d, j_d] ** 2
-                        H[i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
-                    ti.simt.block.sync()
-
-                    inv_diag = 1.0 / H[i_d, i_d]
-                    j_d = i_d + 1 + tid
-                    while j_d < n_dofs:
-                        dot = gs.ti_float(0.0)
-                        for k_d in range(i_d):
-                            dot = dot + H[j_d, k_d] * H[i_d, k_d]
-                        H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
-                        j_d = j_d + BLOCK_DIM
-                    ti.simt.block.sync()
-
-                i_pair = tid
-                while i_pair < n_lower_tri:
-                    i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
-                    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-                    constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
-                    i_pair = i_pair + BLOCK_DIM
-
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_d, i_b in ti.ndrange(n_dofs, _B):
-                constraint_state.grad[i_d, i_b] = (
-                    constraint_state.Ma[i_d, i_b]
-                    - dofs_state.force[i_d, i_b]
-                    - constraint_state.qfrc_constraint[i_d, i_b]
-                )
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.grad[i_d, i_b]
-
-            ti.loop_config(block_dim=BLOCK_DIM)
-            for i in range(_B * BLOCK_DIM):
-                tid = i % BLOCK_DIM
-                i_b = i // BLOCK_DIM
-                warp_id = tid // WARP_SIZE
-                lane_id = tid % WARP_SIZE
-                if i_b >= _B:
-                    continue
-
-                H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
-                v = ti.simt.block.SharedArray((MAX_DOFS,), gs.ti_float)
-                partial = ti.simt.block.SharedArray(
-                    (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.ti_float
-                )
-
-                i_flat = tid
-                while i_flat < n_dofs_2:
-                    i_d1 = i_flat // n_dofs
-                    i_d2 = i_flat % n_dofs
-                    if i_d2 <= i_d1:
-                        H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-                    i_flat = i_flat + BLOCK_DIM
-                k_d = tid
-                while k_d < n_dofs:
-                    v[k_d] = constraint_state.Mgrad[k_d, i_b]
-                    k_d = k_d + BLOCK_DIM
-                ti.simt.block.sync()
-
-                for i_d in range(n_dofs):
-                    dot = gs.ti_float(0.0)
-                    j_d = tid
-                    while j_d < i_d:
-                        dot = dot + H[i_d, j_d] * v[j_d]
-                        j_d = j_d + BLOCK_DIM
-                    if ti.static(ENABLE_WARP_REDUCTION):
-                        for offset in ti.static([16, 8, 4, 2, 1]):
-                            dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
-                        if lane_id == 0:
-                            partial[warp_id] = dot
-                    else:
-                        partial[tid] = dot
-                    ti.simt.block.sync()
-
-                    if tid == 0:
-                        total = gs.ti_float(0.0)
-                        for k in ti.static(range(NUM_WARPS)) if ti.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
-                            total = total + partial[k]
-                        v[i_d] = (v[i_d] - total) / H[i_d, i_d]
-                    ti.simt.block.sync()
-
-                for i_d_ in range(n_dofs):
-                    i_d = n_dofs - 1 - i_d_
-                    dot = gs.ti_float(0.0)
-                    j_d = i_d + 1 + tid
-                    while j_d < n_dofs:
-                        dot = dot + H[j_d, i_d] * v[j_d]
-                        j_d = j_d + BLOCK_DIM
-
-                    if ti.static(ENABLE_WARP_REDUCTION):
-                        for offset in ti.static([16, 8, 4, 2, 1]):
-                            dot = dot + ti.simt.warp.shfl_down_f32(ti.u32(0xFFFFFFFF), dot, offset)
-                        if lane_id == 0:
-                            partial[warp_id] = dot
-                    else:
-                        partial[tid] = dot
-                    ti.simt.block.sync()
-
-                    if tid == 0:
-                        total = gs.ti_float(0.0)
-                        for k in ti.static(range(NUM_WARPS)) if ti.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
-                            total = total + partial[k]
-                        v[i_d] = (v[i_d] - total) / H[i_d, i_d]
-                    ti.simt.block.sync()
-
-                k_d = tid
-                while k_d < n_dofs:
-                    constraint_state.Mgrad[k_d, i_b] = v[k_d]
-                    k_d = k_d + BLOCK_DIM
-        else:
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-            for i_b in range(_B):
-                func_nt_chol_factor(i_b, constraint_state, rigid_global_info)
-
-            ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-            for i_b in range(_B):
-                for i_d in range(n_dofs):
-                    constraint_state.grad[i_d, i_b] = (
-                        constraint_state.Ma[i_d, i_b]
-                        - dofs_state.force[i_d, i_b]
-                        - constraint_state.qfrc_constraint[i_d, i_b]
-                    )
-                func_nt_chol_solve(i_b, constraint_state)
+# ======================================================= Core ========================================================
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def func_init_solver(
+def func_solve_init(
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -2340,17 +2572,14 @@ def func_init_solver(
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_constraint(
-                i_b,
-                qacc=constraint_state.qacc_ws,
-                Ma=constraint_state.Ma_ws,
-                cost=constraint_state.cost_ws,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        func_update_constraint(
+            qacc=constraint_state.qacc_ws,
+            Ma=constraint_state.Ma_ws,
+            cost=constraint_state.cost_ws,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
         # Compute cost for current state (assuming constraint-free acceleration)
         initialize_Ma(
@@ -2367,17 +2596,14 @@ def func_init_solver(
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b in range(_B):
-            func_update_constraint(
-                i_b,
-                qacc=dofs_state.acc_smooth,
-                Ma=constraint_state.Ma,
-                cost=constraint_state.cost,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        func_update_constraint(
+            qacc=dofs_state.acc_smooth,
+            Ma=constraint_state.Ma,
+            cost=constraint_state.cost,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
         # Pick the best starting point between current state and warmstart
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -2411,9 +2637,73 @@ def func_init_solver(
         constraint_state=constraint_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
+    func_update_constraint(
+        qacc=constraint_state.qacc,
+        Ma=constraint_state.Ma,
+        cost=constraint_state.cost,
+        dofs_state=dofs_state,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        func_hessian_and_cholesky_factor_direct(
+            entities_info=entities_info,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+    func_update_gradient(
+        dofs_state=dofs_state,
+        entities_info=entities_info,
+        constraint_state=constraint_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_update_constraint(
+    for i_d, i_b in ti.ndrange(n_dofs, _B):
+        constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+
+
+@ti.func
+def func_solve_iter(
+    i_b,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    n_dofs = constraint_state.qacc.shape[0]
+    alpha = func_linesearch_batch(
+        i_b,
+        entities_info=entities_info,
+        dofs_state=dofs_state,
+        rigid_global_info=rigid_global_info,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+    if ti.abs(alpha) < rigid_global_info.EPS[None]:
+        constraint_state.improved[i_b] = False
+    else:
+        for i_d in range(n_dofs):
+            constraint_state.qacc[i_d, i_b] = (
+                constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
+            )
+            constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+            for i_d in range(n_dofs):
+                constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+                constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
+
+        func_update_constraint_batch(
             i_b,
             qacc=constraint_state.qacc,
             Ma=constraint_state.Ma,
@@ -2423,154 +2713,136 @@ def func_init_solver(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-    if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        func_tiled_hessian(
+        if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
+                i_b,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+            if is_degenerated:
+                func_hessian_and_cholesky_factor_direct_batch(
+                    i_b,
+                    entities_info=entities_info,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+
+        func_update_gradient_batch(
+            i_b,
+            dofs_state=dofs_state,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-    func_tiled_update_gradient(
-        dofs_state=dofs_state,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        constraint_state=constraint_state,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
+        func_terminate_or_update_descent_batch(
+            i_b,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def func_solve_body(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    _B = constraint_state.grad.shape[1]
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0:
+            for _ in range(rigid_global_info.iterations[None]):
+                func_solve_iter(
+                    i_b,
+                    entities_info=entities_info,
+                    dofs_state=dofs_state,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                if not constraint_state.improved[i_b]:
+                    break
+        else:
+            constraint_state.improved[i_b] = False
+
+
+# =====================================================================================================================
+# ==================================================== Finalization ===================================================
+# =====================================================================================================================
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def func_update_contact_force(
+    links_state: array_class.LinksState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    n_links = links_state.contact_force.shape[0]
+    _B = links_state.contact_force.shape[1]
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l, i_b in ti.ndrange(n_links, _B):
+        links_state.contact_force[i_l, i_b] = ti.Vector.zero(gs.ti_float, 3)
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        const_start = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+
+        # contact constraints should be after equality and frictionloss constraints and before joint limit constraints
+        for i_c in range(collider_state.n_contacts[i_b]):
+            contact_data_normal = collider_state.contact_data.normal[i_c, i_b]
+            contact_data_friction = collider_state.contact_data.friction[i_c, i_b]
+            contact_data_link_a = collider_state.contact_data.link_a[i_c, i_b]
+            contact_data_link_b = collider_state.contact_data.link_b[i_c, i_b]
+
+            force = ti.Vector.zero(gs.ti_float, 3)
+            d1, d2 = gu.ti_orthogonals(contact_data_normal)
+            for i_dir in range(4):
+                d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
+                n = d * contact_data_friction - contact_data_normal
+                force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
+
+            collider_state.contact_data.force[i_c, i_b] = force
+
+            links_state.contact_force[contact_data_link_a, i_b] = (
+                links_state.contact_force[contact_data_link_a, i_b] - force
+            )
+            links_state.contact_force[contact_data_link_b, i_b] = (
+                links_state.contact_force[contact_data_link_b, i_b] + force
+            )
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
+def func_update_qacc(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+    errno: array_class.V_ANNOTATION,
+):
+    n_dofs = dofs_state.acc.shape[0]
+    _B = dofs_state.acc.shape[1]
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
-        constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-
-
-@ti.kernel(fastcache=gs.use_fastcache)
-def kernel_add_weld_constraint(
-    link1_idx: ti.i32,
-    link2_idx: ti.i32,
-    envs_idx: ti.types.ndarray(),
-    equalities_info: array_class.EqualitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    links_state: array_class.LinksState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-) -> ti.i32:
-    overflow = gs.ti_bool(False)
-
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        i_e = constraint_state.ti_n_equalities[i_b]
-        if i_e == rigid_global_info.n_candidate_equalities[None]:
-            overflow = True
-        else:
-            shared_pos = links_state.pos[link1_idx, i_b]
-            pos1 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, links_state.pos[link1_idx, i_b], links_state.quat[link1_idx, i_b]
-            )
-            pos2 = gu.ti_inv_transform_by_trans_quat(
-                shared_pos, links_state.pos[link2_idx, i_b], links_state.quat[link2_idx, i_b]
-            )
-
-            equalities_info.eq_type[i_e, i_b] = gs.ti_int(gs.EQUALITY_TYPE.WELD)
-            equalities_info.eq_obj1id[i_e, i_b] = link1_idx
-            equalities_info.eq_obj2id[i_e, i_b] = link2_idx
-
-            for i_3 in ti.static(range(3)):
-                equalities_info.eq_data[i_e, i_b][i_3 + 3] = pos1[i_3]
-                equalities_info.eq_data[i_e, i_b][i_3] = pos2[i_3]
-
-            relpose = gu.ti_quat_mul(gu.ti_inv_quat(links_state.quat[link1_idx, i_b]), links_state.quat[link2_idx, i_b])
-
-            for i_4 in ti.static(range(4)):
-                equalities_info.eq_data[i_e, i_b][i_4 + 6] = relpose[i_4]
-
-            equalities_info.eq_data[i_e, i_b][10] = 1.0
-
-            equalities_info.sol_params[i_e, i_b] = ti.Vector(
-                [2 * rigid_global_info.substep_dt[None], 1.0, 0.9, 0.95, 0.001, 0.5, 2.0]
-            )
-
-            constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] + 1
-    return overflow
-
-
-@ti.kernel(fastcache=gs.use_fastcache)
-def kernel_delete_weld_constraint(
-    link1_idx: ti.i32,
-    link2_idx: ti.i32,
-    envs_idx: ti.types.ndarray(),
-    equalities_info: array_class.EqualitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
-        for i_e in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
-            if (
-                equalities_info.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD
-                and equalities_info.eq_obj1id[i_e, i_b] == link1_idx
-                and equalities_info.eq_obj2id[i_e, i_b] == link2_idx
-            ):
-                if i_e < constraint_state.ti_n_equalities[i_b] - 1:
-                    equalities_info.eq_type[i_e, i_b] = equalities_info.eq_type[
-                        constraint_state.ti_n_equalities[i_b] - 1, i_b
-                    ]
-                constraint_state.ti_n_equalities[i_b] = constraint_state.ti_n_equalities[i_b] - 1
-
-
-@ti.kernel(fastcache=gs.use_fastcache)
-def kernel_get_equality_constraints(
-    is_padded: ti.template(),
-    iout: ti.types.ndarray(),
-    fout: ti.types.ndarray(),
-    constraint_state: array_class.ConstraintState,
-    equalities_info: array_class.EqualitiesInfo,
-    static_rigid_sim_config: ti.template(),
-):
-    _B = constraint_state.ti_n_equalities.shape[0]
-    n_eqs_max = gs.ti_int(0)
-
-    # this is a reduction operation (global max), we have to serialize it
-    # TODO: a good unittest and a better implementation from gstaichi for this kind of reduction
-    ti.loop_config(serialize=True)
-    for i_b in range(_B):
-        n_eqs = constraint_state.ti_n_equalities[i_b]
-        if n_eqs > n_eqs_max:
-            n_eqs_max = n_eqs
+        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
+            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000100
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        i_c_start = gs.ti_int(0)
-        i_e_start = gs.ti_int(0)
-        if ti.static(is_padded):
-            i_e_start = i_b * n_eqs_max
-        else:
-            for j_b in range(i_b):
-                i_e_start = i_e_start + constraint_state.ti_n_equalities[j_b]
-
-        for i_e_ in range(constraint_state.ti_n_equalities[i_b]):
-            i_e = i_e_start + i_e_
-
-            iout[i_e, 0] = equalities_info.eq_type[i_e_, i_b]
-            iout[i_e, 1] = equalities_info.eq_obj1id[i_e_, i_b]
-            iout[i_e, 2] = equalities_info.eq_obj2id[i_e_, i_b]
-
-            if equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.CONNECT:
-                for i_c_ in ti.static(range(3)):
-                    i_c = i_c_start + i_c_
-                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
-                i_c_start = i_c_start + 3
-            elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.WELD:
-                for i_c_ in ti.static(range(6)):
-                    i_c = i_c_start + i_c_
-                    fout[i_e, i_c_] = constraint_state.efc_force[i_c, i_b]
-                i_c_start = i_c_start + 6
-            elif equalities_info.eq_type[i_e_, i_b] == gs.EQUALITY_TYPE.JOINT:
-                fout[i_e, 0] = constraint_state.efc_force[i_c_start, i_b]
-                i_c_start = i_c_start + 1
+        constraint_state.is_warmstart[i_b] = True
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
