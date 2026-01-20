@@ -2,7 +2,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.constraint_solver_decomp as constraint_solver_decomp
+import genesis.engine.solvers.rigid.constraint_solver as constraint_solver
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -26,7 +26,7 @@ def _kernel_solve_body_decomposed(
     # Index: 0
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_linesearch_top_level(
+            constraint_solver.func_linesearch_top_level(
                 i_b,
                 entities_info=entities_info,
                 dofs_state=dofs_state,
@@ -43,14 +43,14 @@ def _kernel_solve_body_decomposed(
         # Index: 1 if CG
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                constraint_solver_decomp.func_save_prev_grad(i_b, constraint_state=constraint_state)
+                constraint_solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
 
     # Step 3: Update constraints
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     # Index: 1 if Newton else 2
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_constraint(
+            constraint_solver.func_update_constraint(
                 i_b,
                 qacc=constraint_state.qacc,
                 Ma=constraint_state.Ma,
@@ -66,7 +66,7 @@ def _kernel_solve_body_decomposed(
         # Index: 2 if Newton
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                constraint_solver_decomp.func_nt_hessian_incremental(
+                constraint_solver.func_nt_hessian_incremental(
                     i_b,
                     entities_info=entities_info,
                     constraint_state=constraint_state,
@@ -79,7 +79,7 @@ def _kernel_solve_body_decomposed(
     # Index: 3
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_gradient(
+            constraint_solver.func_update_gradient(
                 i_b,
                 dofs_state=dofs_state,
                 entities_info=entities_info,
@@ -93,7 +93,7 @@ def _kernel_solve_body_decomposed(
     # Index: 4
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_search_direction(
+            constraint_solver.func_update_search_direction(
                 i_b,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
@@ -135,7 +135,7 @@ def _kernel_linesearch_top_level(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_linesearch_top_level(
+            constraint_solver.func_linesearch_top_level(
                 i_b,
                 entities_info=entities_info,
                 dofs_state=dofs_state,
@@ -157,7 +157,7 @@ def _kernel_cg_only_save_prev_grad(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_save_prev_grad(i_b, constraint_state=constraint_state)
+            constraint_solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -172,7 +172,7 @@ def _kernel_update_constraint(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_constraint(
+            constraint_solver.func_update_constraint(
                 i_b,
                 qacc=constraint_state.qacc,
                 Ma=constraint_state.Ma,
@@ -195,7 +195,7 @@ def _kernel_newton_only_nt_hessian_incremental(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_nt_hessian_incremental(
+            constraint_solver.func_nt_hessian_incremental(
                 i_b,
                 entities_info=entities_info,
                 constraint_state=constraint_state,
@@ -217,7 +217,7 @@ def _kernel_update_gradient(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_gradient(
+            constraint_solver.func_update_gradient(
                 i_b,
                 dofs_state=dofs_state,
                 entities_info=entities_info,
@@ -238,7 +238,7 @@ def _kernel_update_search_direction(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_search_direction(
+            constraint_solver.func_update_search_direction(
                 i_b,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
