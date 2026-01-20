@@ -2410,9 +2410,9 @@ def func_update_gradient(
 
     Note that the tiled cholesky factorization and solving is not systematically enabled because it is not always
     superior in terms of performance and does not support arbitrary matrix sizes. More specifically, tiling gets more
-    beneficial as n_dofs increases, but n_dofs>=96 is not supported for now. It is the responsibility of the developper
-    to manually configure the static global flag `enable_tiled_cholesky_hessian` accordingly. Failing to do so will
-    cause the requested shared memory allocation to exceed 48kB and raise an exception.
+    beneficial as n_dofs increases, but n_dofs>=96 is not supported for now. It is the responsibility of the calling
+    code to configure the static global flag `enable_tiled_cholesky_hessian` accordingly. Failing to do so will cause
+    the requested shared memory allocation to exceed 48kB and raise an exception.
     """
     _B = constraint_state.jac.shape[2]
 
