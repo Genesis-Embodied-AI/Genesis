@@ -216,6 +216,11 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     cg_beta: V_ANNOTATION
     cg_pg_dot_pMg: V_ANNOTATION
     # Optional Newton fields
+    # Hessian matrix of the optimization problem as a dense 2D tensor.
+    # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
+    # As a result, the values of the strictly upper triangular part is undefined.
+    # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
+    # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: V_ANNOTATION
     nt_vec: V_ANNOTATION
     # Backward gradients
