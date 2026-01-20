@@ -1771,12 +1771,16 @@ def func_cholesky_solve_tiled(
 ):
     """Compute the solution of H @ grad = Mgrad st H = L @ L.T for all environments at once.
 
-    Note that the current "Warp" reduction is CUDA-specific for now (to be clear, it concerns all warp-level intrinsics
-    in `ti.simt.warp` sub-module, of which only `shfl_down_f32` is being used here). Although "Warp" reduction is
-    supposed to be supported by all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'),
-    GsTaichi does not provide a unified API for it yet. As a result, warp-level intrinsics are currently disabled of not
-    running on CUDA backend. On top of that, most if not all, Warp-level intrinsics are only supporting 32bits
-    precision. A fallback has been implemented if this feature is not available.
+    This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
+    threading. The current implementation only supports n_dofs <= 64 for 64bits precision and n_dofs <= 92 for 32bits
+    precision. See `func_cholesky_factor_direct_tiled` documentation for details.
+
+    Note that this implementation leverages warp-level reduction whenever supported, a generic fallback otherwise. At
+    the time of writing, all warp-level intrinsics in `ti.simt.warp` sub-module are CUDA-specific, of which only
+    `shfl_down_f32` is being used here. Although some of these warp-level instrinsics are supposed to be supported by
+    all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), GsTaichi does not provide a unified
+    API for it yet. As a result, warp-level intrinsics are currently disabled of not running on CUDA backend. On top of
+    that, most if not all, Warp-level intrinsics are only supporting 32bits precision.
     """
     # Performance is optimal for BLOCK_DIM = 64
     BLOCK_DIM = ti.static(64)
