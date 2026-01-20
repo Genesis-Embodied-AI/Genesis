@@ -1292,6 +1292,8 @@ def func_hessian_direct_batch(
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for a given environment `i_b`.
 
     Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    The lower triangular part is left as-is for efficiency. Accordingly, our solver's functions all leverage the
+    symmetry property of the Hessian matrix and only ever use values from the upper triangle.
     """
     EPS = rigid_global_info.EPS[None]
 
