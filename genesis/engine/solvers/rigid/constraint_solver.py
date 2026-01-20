@@ -1769,17 +1769,18 @@ def func_cholesky_solve_tiled(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
+    """Compute the solution of H @ grad = Mgrad st H = L @ L.T for all environments at once.
+
+    Note that the current "Warp" reduction is CUDA-specific for now (to be clear, it concerns all warp-level intrinsics
+    in `ti.simt.warp` sub-module, of which only `shfl_down_f32` is being used here). Although "Warp" reduction is
+    supposed to be supported by all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'),
+    GsTaichi does not provide a unified API for it yet. As a result, warp-level intrinsics are currently disabled of not
+    running on CUDA backend. On top of that, most if not all, Warp-level intrinsics are only supporting 32bits
+    precision. A fallback has been implemented if this feature is not available.
+    """
     # Performance is optimal for BLOCK_DIM = 64
     BLOCK_DIM = ti.static(64)
     MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
-
-    # Note that the current "Warp" reduction is CUDA-specific for now (to be clear, it concerns all warp-level
-    # intrinsics in `ti.simt.warp` sub-module, of which only `shfl_down_f32` is being used here).
-    # Although "Warp" reduction is supposed to be supported by all major GPUs if not all (incl. Apple Silicon chips
-    # under naming 'SIMD-group'), GsTaichi does not provide a unified API for it yet.
-    # As a result, warp-level intrinsics are currently disabled of not running on CUDA backend. On top of that, most
-    # if not all, Warp-level intrinsics are only supporting 32bits precision. A less efficient fallback has been
-    # implemented if this feature is not available.
     ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
     WARP_SIZE = ti.static(32)
     NUM_WARPS = ti.static(BLOCK_DIM // WARP_SIZE)
