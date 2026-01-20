@@ -1006,7 +1006,7 @@ def func_equality_weld(
 
                     t_quat = gu.ti_identity_quat()
                     t_pos = pos_anchor - links_state.root_COM[link, i_b]
-                    ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                    _ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
                     diff = sign * vel
                     jac = diff[i]
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
@@ -1348,8 +1348,10 @@ def func_hessian_direct_tiled(
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for all environment at once.
 
     This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
-    threading. Under the hood, it implements the blocked matrix multiplication algorithm to support arbritrary matrix
-    because shared memory storage is limited to 47Kb. It boils down to classical matrix multiplication if the entire
+    threading.
+
+    Under the hood, it implements a square-block matrix partitioned production algorithm to support arbitrary matrix
+    sizes because shared memory storage is limited to 48kB. It boils down to classical matrix production if the entire
     optimization problem fits in a single block, i.e. n_constraints <= 32 and n_dofs <= 64.
 
     Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
@@ -1365,7 +1367,7 @@ def func_hessian_direct_tiled(
     n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
     # FIXME: Adding `serialize=False` is causing sync failing for some reason...
-    # TODO: Consider moving `H += M` in a dedicated CUDA kernel. It should be bother simpler and faster.
+    # TODO: Consider moving `H += M` in a dedicated CUDA kernel. It should be both simpler and faster.
     ti.loop_config(block_dim=BLOCK_DIM)
     for i in range(_B * BLOCK_DIM):
         tid = i % BLOCK_DIM
@@ -1377,7 +1379,7 @@ def func_hessian_direct_tiled(
         jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
         efc_D = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK,), gs.ti_float)
 
-        # Loop over all the constraints and accumulate their respective contribution to the hessian matrix
+        # Loop over all the constraints and accumulate their respective contributions to the Hessian matrix
         i_c_start = 0
         n_c = constraint_state.n_constraints[i_b]
         while i_c_start < n_c:
@@ -1419,7 +1421,7 @@ def func_hessian_direct_tiled(
                             i_c_ = i_c_ + BLOCK_DIM
                         ti.simt.block.sync()
 
-                    # Compute `H += J.T @ D @ J` for the a single hessian block
+                    # Compute `H += J.T @ D @ J` for a single Hessian block
                     pid = tid
                     numel = n_dofs_tile_row * n_dofs_tile_col
                     while pid < numel:
@@ -1465,7 +1467,7 @@ def func_cholesky_factor_direct_batch(
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for all environments at once.
 
-    Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to sparse memory resources.
+    Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to spare memory resources.
 
     Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
     """
@@ -1496,7 +1498,10 @@ def func_cholesky_factor_direct_tiled(
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
     This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
-    threading. The current implementation only supports n_dofs <= 64 due to shared memory storage being limited to 47Kb.
+    threading. The current implementation only supports n_dofs <= 64 for 64bits precision and n_dofs <= 92 for 32bits
+    precision due to shared memory storage being limited to 48kB. Note that the amount of shared memory available is
+    hardware-specific, but the 48kB default limit without enabling dedicated GPU context flag is hardware-agnostic on
+    modern GPUs.
 
     Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to sparse memory resources.
 
@@ -1576,9 +1581,20 @@ def func_hessian_and_cholesky_factor_direct(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    """
+    Unified implementation of Hessian matrix computation with Cholesky factorization optimized for both CPU and GPU
+    backends.
+
+    The tiled optimization is only supported on GPU backend and specifically optimized for it, falling back to the
+    classical batched implementation when running on CPU backend.
+
+    Note that the sparse implementation has not been optimized using tiling for now, mainly it is largely designed to
+    target CPU rather than GPU backend. In any event, its advantage over the dense implementation is still not clear.
+    """
     _B = constraint_state.jac.shape[2]
 
-    if ti.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.backend == gs.cpu):
+    if ti.static(static_rigid_sim_config.backend == gs.cpu and static_rigid_sim_config.sparse_solve):
+        # CPU
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             func_hessian_and_cholesky_factor_direct_batch(
@@ -1589,13 +1605,10 @@ def func_hessian_and_cholesky_factor_direct(
                 static_rigid_sim_config=static_rigid_sim_config,
             )
     else:
-        _B = constraint_state.jac.shape[2]
-
-        # Compute the hessian matrix
+        # GPU
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
 
         if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            # Compute Cholesky decomposition of the Hessian matrix
             func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
             ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
@@ -1709,6 +1722,9 @@ def func_cholesky_solve_tiled(
     static_rigid_sim_config: ti.template(),
 ):
     # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64.
+    # Note that the current Warp reduction is CUDA-specific for now. Although Warp reduction is supposed to be supported
+    # by all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), GsTaichi does not provide a
+    # unified API for it yet.
     BLOCK_DIM = ti.static(64)
     MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
     ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
@@ -2333,13 +2349,22 @@ def func_update_gradient(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    """
+    Unified implementation of gradient updated optimized for both CPU and GPU backends.
+
+    The tiled optimization is only supported on GPU backend and specifically optimized for it, falling back to the
+    classical batched implementation when running on CPU backend.
+
+    Note that the tiled cholesky factorization and solving is not systematically enabled because it is not always
+    superior in terms of performance and does not support arbitrary matrix sizes. More specifically, tiling gets
+    more beneficial as n_dofs increases, but n_dofs>=96 is not supported for now.
+    """
     _B = constraint_state.jac.shape[2]
 
     if ti.static(
-        not static_rigid_sim_config.enable_tiled_cholesky_hessian
-        or static_rigid_sim_config.sparse_solve
-        or static_rigid_sim_config.backend == gs.cpu
+        not static_rigid_sim_config.enable_tiled_cholesky_hessian or static_rigid_sim_config.backend == gs.cpu
     ):
+        # CPU
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             func_update_gradient_batch(
@@ -2351,6 +2376,7 @@ def func_update_gradient(
                 static_rigid_sim_config=static_rigid_sim_config,
             )
     else:
+        # GPU
         func_update_gradient_tiled(
             dofs_state=dofs_state,
             entities_info=entities_info,
