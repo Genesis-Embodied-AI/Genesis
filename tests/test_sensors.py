@@ -11,10 +11,11 @@ from .utils import assert_allclose, assert_array_equal
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_imu_sensor(show_viewer, tol, n_envs):
-    """Test if the IMU sensor returns the correct data."""
+    """Test if the 9-axis IMU sensor returns the correct accl, gyro, and mag data."""
     GRAVITY = -10.0
     DT = 1e-2
     BIAS = (0.1, 0.2, 0.3)
+    MAG_FIELD = (0.3, 0.0, 0.4)  # magnitude is 0.5
     DELAY_STEPS = 2
 
     scene = gs.Scene(
@@ -39,23 +40,29 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     imu = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
+            magnetic_field=MAG_FIELD,
         )
     )
     imu_delayed = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
+            magnetic_field=MAG_FIELD,
             delay=DT * DELAY_STEPS,
         )
     )
     imu_noisy = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
+            magnetic_field=MAG_FIELD,
             acc_cross_axis_coupling=0.01,
             gyro_cross_axis_coupling=(0.02, 0.03, 0.04),
+            mag_cross_axis_coupling=0.01,
             acc_noise=(0.01, 0.01, 0.01),
             gyro_noise=(0.01, 0.01, 0.01),
+            mag_noise=(0.01, 0.01, 0.01),
             acc_random_walk=(0.001, 0.001, 0.001),
             gyro_random_walk=(0.001, 0.001, 0.001),
+            mag_random_walk=(0.001, 0.001, 0.001),
             delay=DT,
             jitter=DT * 0.1,
             interpolate=True,
@@ -63,7 +70,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     )
 
     scene.build(n_envs=n_envs)
-
+    batch_shape = (n_envs,) if n_envs > 0 else ()
     # box is in freefall
     for _ in range(10):
         scene.step()
@@ -72,15 +79,17 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     # acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
     assert_allclose(imu.read().lin_acc, 0.0, tol=tol)
     assert_allclose(imu.read().ang_vel, 0.0, tol=tol)
+    assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
     assert_allclose(imu_noisy.read().lin_acc, 0.0, tol=1e-1)
     assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=1e-1)
+    assert_allclose(imu_noisy.read().mag, MAG_FIELD, tol=1e-1)
 
     # shift COM to induce angular velocity
     box.set_COM_shift([0.05, 0.05, 0.05])
 
-    # update noise and bias for accelerometer and gyroscope
-    imu_noisy.set_noise((0.01, 0.01, 0.01, 0.02, 0.02, 0.02))
-    imu_noisy.set_bias((0.01, 0.01, 0.01, 0.02, 0.02, 0.02))
+    # update noise and bias for accelerometer, gyroscope and magnetometer
+    imu_noisy.set_noise((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.01, 0.01, 0.01))
+    imu_noisy.set_bias((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.05, 0.05, 0.05))
     imu_noisy.set_jitter(0.001)
 
     for _ in range(10 - DELAY_STEPS):
@@ -90,9 +99,10 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     for _ in range(DELAY_STEPS):
         scene.step()
-
+    print(imu.read().mag)
     assert_array_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
     assert_array_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
+    assert_array_equal(imu_delayed.read().mag, true_imu_delayed_reading.mag)
 
     # check that position offset affects linear acceleration
     imu.set_pos_offset((0.5, 0.0, 0.0))
@@ -102,11 +112,19 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     with np.testing.assert_raises(AssertionError):
         assert_allclose(lin_acc_no_offset, lin_acc_with_offset, atol=0.2)
     imu.set_pos_offset((0.0, 0.0, 0.0))
+    print(imu.read().mag)
+    # check that entity rotation affects magnetometer readings
+    # Rotate 90 deg around y axis -> This should transform (0.3, 0, 0.4) to (-0.4, 0, 0.3)
+    pitch_quat = gu.euler_to_quat(torch.tensor([0.0, 90.0, 0.0]))
+    pitch_quat = torch.as_tensor(pitch_quat, device=gs.device)
+    box.set_quat(torch.tile(pitch_quat, (*batch_shape, 1)))
+    scene.step()
+    assert_allclose(imu.read().mag, torch.tensor([-0.4, 0.0, 0.3]), tol=tol)
 
     # let box collide with ground
     for _ in range(20):
         scene.step()
-
+    print(imu.read().mag)
     assert_array_equal(imu.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
     assert_array_equal(imu.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
 
@@ -117,32 +135,35 @@ def test_imu_sensor(show_viewer, tol, n_envs):
         assert_array_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
 
     box.set_COM_shift([0.0, 0.0, 0.0])
-    box.set_quat([0.0, 0.0, 0.0, 1.0])
+    box.set_quat(torch.tile(torch.tensor([1.0, 0.0, 0.0, 0.0]), (*batch_shape, 1)))
 
     # wait for the box to be stationary on ground
     for _ in range(50):
         scene.step()
 
-    assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=5e-6)
+    assert_allclose(imu.read().lin_acc, torch.tensor([0.0, 0.0, -GRAVITY]), tol=5e-6)
     assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
 
-    # rotate IMU 90 deg around x axis means gravity should be along -y axis
+    # rotate IMU 90 deg around x axis means gravity should be along -y axis, mag in sensor frame: (0.3, 0.4, 0.0)
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
-    imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
-    scene.step()
-    assert_allclose(imu.read().lin_acc, GRAVITY, tol=5e-6)
-    imu.set_quat_offset((0.0, 0.0, 0.0, 1.0))
     imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
-
+    scene.step()
+    assert_allclose(imu.read().lin_acc, torch.tensor([0.0, -GRAVITY, 0.0]), tol=5e-6)
+    assert_allclose(imu.read().mag, torch.tensor([0.3, 0.4, 0.0]), tol=1e-6)
+    imu.set_quat_offset((1.0, 0.0, 0.0, 0.0))
+    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
+    print(imu.read().mag)
     scene.reset()
-
-    assert_allclose(imu.read().lin_acc, 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
-    assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=gs.EPS)
-    assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
-
-    imu.set_bias(BIAS + (0.0, 0.0, 0.0))
+    print(imu.read().mag)
+    zero_param = torch.zeros((*batch_shape, 3))
+    assert_allclose(imu.read().lin_acc, zero_param, tol=gs.EPS)
+    assert_allclose(imu_delayed.read().lin_acc, zero_param, tol=gs.EPS)
+    assert_allclose(imu_noisy.read().ang_vel, zero_param, tol=gs.EPS)
+    print(imu.read().mag)
+    imu.set_bias(BIAS + (0.0, 0.0, 0.0) + (0.05, 0.05, 0.05))
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
+    assert_allclose(imu.read().mag, torch.as_tensor(MAG_FIELD) + 0.05, tol=tol)
 
 
 @pytest.mark.required
@@ -474,49 +495,3 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_magnetometer_sensor(n_envs, tol):
-    """Test if the Magnetometer sensor returns invariant magnitude across rotations."""
-    scene = gs.Scene(show_viewer=False)
-
-    scene.add_entity(gs.morphs.Plane())
-
-    # Test with a 90-degree pitch to ensure axis swapping works
-    box = scene.add_entity(
-        morph=gs.morphs.Box(
-            pos=(0.0, 0.0, 1.0),
-            size=(1.0, 1.0, 1.0),
-            euler=(0.0, 90.0, 0.0),
-        )
-    )
-
-    world_field = (0.3, 0.0, 0.4)  # Magnitude = 0.5
-    mag = scene.add_sensor(
-        gs.sensors.Magnetometer(
-            entity_idx=box.idx,
-            noise=0.0,  # Zero noise for exact math check
-            magnetic_field=world_field,
-        )
-    )
-
-    scene.build(n_envs=n_envs)
-    scene.step()
-
-    # mag.read() returns a MagnetometerData object
-    data = mag.read()
-    measured_field = data.magnetic_field if hasattr(data, "magnetic_field") else data
-    measured_field = measured_field.to(torch.float64)
-
-    magnitudes = torch.norm(measured_field, dim=-1)
-    assert torch.allclose(magnitudes, torch.tensor(0.5, dtype=torch.float64), atol=1e-6)
-
-    # Check directional components (Signs from your successful log)
-    # Expected: x ≈ -0.4, y ≈ 0, z ≈ 0.3
-    val = measured_field[0] if n_envs > 0 else measured_field
-
-    assert torch.abs(val[0] - (-0.4)) < 1e-2
-    assert torch.abs(val[1] - 0.0) < 1e-2
-    assert torch.abs(val[2] - 0.3) < 1e-2
