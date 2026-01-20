@@ -1291,8 +1291,8 @@ def func_hessian_direct_batch(
 ):
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for a given environment `i_b`.
 
-    Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
-    The lower triangular part is left as-is for efficiency. Accordingly, our solver's functions all leverage the
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    The upper triangular part is left as-is for efficiency. Accordingly, our solver's functions all leverage the
     symmetry property of the Hessian matrix and only ever use values from the upper triangle.
     """
     EPS = rigid_global_info.EPS[None]
@@ -1356,7 +1356,7 @@ def func_hessian_direct_tiled(
     sizes because shared memory storage is limited to 48kB. It boils down to classical matrix production if the entire
     optimization problem fits in a single block, i.e. n_constraints <= 32 and n_dofs <= 64.
 
-    Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
@@ -1452,6 +1452,8 @@ def func_hessian_direct_tiled(
                 i_d1_start = i_d1_start + MAX_DOFS_PER_BLOCK
             i_c_start = i_c_start + MAX_CONSTRAINTS_PER_BLOCK
 
+        # If there is no constraint, the main loop will be completely skipped, which means that the Hessian matrix must
+        # be updated separately to store the lower triangular part  of the mass matrix M.
         if n_c == 0:
             i_pair = tid
             while i_pair < n_lower_tri:
@@ -1471,7 +1473,7 @@ def func_cholesky_factor_direct_batch(
 
     Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to spare memory resources.
 
-    Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -1507,7 +1509,7 @@ def func_cholesky_factor_direct_tiled(
 
     Beware the Hessian matrix is re-purposed to stored its Cholesky factorization to sparse memory resources.
 
-    Note that only the upper triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -1720,12 +1722,10 @@ def func_hessian_and_cholesky_factor_incremental_batch(
 ) -> bool:
     is_degenerated = False
     if ti.static(static_rigid_sim_config.sparse_solve):
-        # Sparse
         is_degenerated = func_hessian_and_cholesky_factor_incremental_sparse_batch(
             i_b, constraint_state, rigid_global_info
         )
     else:
-        # Dense
         is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(
             i_b, constraint_state, rigid_global_info
         )
@@ -1790,6 +1790,7 @@ def func_cholesky_solve_tiled(
             (NUM_WARPS if ti.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.ti_float
         )
 
+        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
         i_flat = tid
         while i_flat < n_dofs_2:
             i_d1 = i_flat // n_dofs
@@ -1797,12 +1798,15 @@ def func_cholesky_solve_tiled(
             if i_d2 <= i_d1:
                 H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
             i_flat = i_flat + BLOCK_DIM
+
+        # Copy the gradient to shared memory for efficiency
         k_d = tid
         while k_d < n_dofs:
             v[k_d] = constraint_state.Mgrad[k_d, i_b]
             k_d = k_d + BLOCK_DIM
         ti.simt.block.sync()
 
+        # Step 1: Solve w st. L^T @ w = y
         for i_d in range(n_dofs):
             dot = gs.ti_float(0.0)
             j_d = tid
@@ -1825,6 +1829,7 @@ def func_cholesky_solve_tiled(
                 v[i_d] = (v[i_d] - total) / H[i_d, i_d]
             ti.simt.block.sync()
 
+        # Step 2: Solve x st. L @ x = z
         for i_d_ in range(n_dofs):
             i_d = n_dofs - 1 - i_d_
             dot = gs.ti_float(0.0)
@@ -1849,6 +1854,7 @@ def func_cholesky_solve_tiled(
                 v[i_d] = (v[i_d] - total) / H[i_d, i_d]
             ti.simt.block.sync()
 
+        # Copy the final result back from shared memory
         k_d = tid
         while k_d < n_dofs:
             constraint_state.Mgrad[k_d, i_b] = v[k_d]
@@ -2396,8 +2402,10 @@ def func_update_gradient(
     classical batched implementation when running on CPU backend.
 
     Note that the tiled cholesky factorization and solving is not systematically enabled because it is not always
-    superior in terms of performance and does not support arbitrary matrix sizes. More specifically, tiling gets
-    more beneficial as n_dofs increases, but n_dofs>=96 is not supported for now.
+    superior in terms of performance and does not support arbitrary matrix sizes. More specifically, tiling gets more
+    beneficial as n_dofs increases, but n_dofs>=96 is not supported for now. It is the responsibility of the developper
+    to manually configure the static global flag `enable_tiled_cholesky_hessian` accordingly. Failing to do so will
+    cause the requested shared memory allocation to exceed 48kB and raise an exception.
     """
     _B = constraint_state.jac.shape[2]
 
