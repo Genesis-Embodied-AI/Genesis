@@ -63,9 +63,9 @@ class Mesh(RBC):
 
         if self._surface.requires_uv():  # check uvs here
             if self._uvs is None:
-                if "mesh_path" in metadata:
+                if "mesh_path" in self._metadata:
                     gs.logger.warning(
-                        f"Texture given but asset missing uv info (or failed to load): {metadata['mesh_path']}"
+                        f"Texture given but asset missing uv info (or failed to load): {self._metadata['mesh_path']}"
                     )
                 else:
                     gs.logger.warning("Texture given but asset missing uv info (or failed to load).")

@@ -1465,3 +1465,6 @@ class USD(FileMorph):
                 gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
 
             self.usd_ctx = UsdContext(self.file)
+
+    def _repr_type(self):
+        return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}', prim_path='{self.prim_path}')>"

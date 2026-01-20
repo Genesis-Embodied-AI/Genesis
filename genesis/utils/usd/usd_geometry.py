@@ -11,7 +11,6 @@ from .usd_context import UsdContext
 from .usd_parser_utils import AXES_T
 
 
-
 def geom_exception(geom_type, geom_id, stage_file, reason_msg):
     gs.raise_exception(f"{reason_msg} for {geom_type} {geom_id} in usd file {stage_file}.")
 
@@ -47,10 +46,19 @@ def parse_prim_geoms(
             geom_surface, uv_name = context.apply_surface(surface_id, surface)
         else:
             geom_surface, uv_name, surface_id = surface.copy(), "st", None
+            gprim = UsdGeom.Gprim(prim)
+            display_color = gprim.GetDisplayColorPrimvar().Get()
+            if display_color is not None:
+                display_color = np.asarray(display_color, dtype=np.float32)[0]
+                geom_surface.update_texture(
+                    color_texture=gs.textures.ColorTexture(color=tuple(display_color))
+                )
 
         # parse transform
         geom_Q, geom_S = context.compute_gs_transform(prim, link_prim)
         geom_S *= morph.scale
+        geom_ST = np.eye(4, dtype=geom_S.dtype)
+        geom_ST[:3, :3] = geom_S
         geom_Q[:3, 3] *= morph.scale
         geom_id = context.get_prim_id(prim)
 
@@ -65,8 +73,8 @@ def parse_prim_geoms(
             points = np.array(mesh_prim.GetPointsAttr().Get(), dtype=np.float32)
 
             # parse faces
-            faces_attr = mesh_prim.GetFaceVertexCountsAttr()
-            faces_vertex_counts_attr = mesh_prim.GetFaceVertexIndicesAttr()
+            faces_attr = mesh_prim.GetFaceVertexIndicesAttr()
+            faces_vertex_counts_attr = mesh_prim.GetFaceVertexCountsAttr()
             faces = (
                 np.array(faces_attr.Get(), dtype=np.int32) if faces_attr.HasValue() else np.array([], dtype=np.int32)
             )
@@ -135,7 +143,7 @@ def parse_prim_geoms(
                 visual=trimesh.visual.TextureVisuals(uv=uvs) if uvs is not None else None,
                 process=True,
             )
-            processed_mesh.apply_transform(geom_S)
+            processed_mesh.apply_transform(geom_ST)
             points = processed_mesh.vertices
             triangles = processed_mesh.faces
             normals = processed_mesh.vertex_normals
@@ -187,8 +195,8 @@ def parse_prim_geoms(
                 radius = capsule_prim.GetRadiusAttr().Get()
                 height = capsule_prim.GetHeightAttr().Get()
                 axis_T = AXES_T[capsule_prim.GetAxisAttr().Get() or "Z"]
+                # TODO: create different trimesh for visual and collision
                 tmesh = trimesh.creation.capsule(radius=radius, height=height, count=(8, 12))
-                tmesh.apply_translation([0.0, 0.0, -0.5 * height])
                 tmesh.apply_transform(axis_T)
                 geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
                 gs_type = gs.GEOM_TYPE.CAPSULE
@@ -199,6 +207,7 @@ def parse_prim_geoms(
                 extents = np.array([size, size, size], dtype=np.float32)
                 tmesh = trimesh.creation.box(extents=extents)
                 geom_data = extents * geom_S_diag
+                geom_surface.smooth = False
                 gs_type = gs.GEOM_TYPE.BOX
 
             elif prim.IsA(UsdGeom.Cylinder):
@@ -209,12 +218,16 @@ def parse_prim_geoms(
                 tmesh = trimesh.creation.cylinder(radius=radius, height=height, count=(8, 12))
                 tmesh.apply_transform(axis_T)
                 geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
+                geom_surface.smooth = False
                 gs_type = gs.GEOM_TYPE.CYLINDER
 
             else:
                 gs.raise_exception(f"Unsupported geometry type: {prim.GetTypeName()}")
 
-            tmesh.apply_transform(geom_S)
+            tmesh.apply_transform(geom_ST)
+
+            print("GS_TYPE", gs_type)
+            
             mesh = gs.Mesh.from_trimesh(
                 tmesh,
                 surface=geom_surface,

@@ -4,11 +4,10 @@ USD Parser Context
 Context class for tracking materials, articulations, and rigid bodies during USD parsing.
 """
 
-from collections import deque
-from typing import Set
 from pathlib import Path
 import shutil
 import os
+import io
 import subprocess
 import logging
 
@@ -138,15 +137,21 @@ class UsdContext:
         bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
 
         # parse materials
+        bound_prims = []
         for prim in self._stage.Traverse():
-            if prim.IsA(UsdShade.Material):
-                material_usd = UsdShade.Material(prim)
-                # TODO: material_id is reversed for group_by_material option.
-                material_id = self.get_prim_id(prim)
-                material_dict, uv_name = parse_material_preview_surface(material_usd)
-                self._material_properties[material_id] = material_dict, uv_name
-                if self._need_bake and material_dict is None:
-                    bake_material_paths[material_id] = str(prim.GetPath())
+            if prim.IsA(UsdGeom.Gprim) or prim.IsA(UsdGeom.Subset):
+                bound_prims.append(prim)
+        materials = UsdShade.MaterialBindingAPI.ComputeBoundMaterials(bound_prims)[0]
+        for material in materials:
+            material_prim = material.GetPrim()
+            if material_prim.IsValid():
+                # TODO: material_id is reserved for group_by_material option.
+                material_id = self.get_prim_id(material_prim)
+                if material_id not in self._material_properties:
+                    material_dict, uv_name = parse_material_preview_surface(material)
+                    self._material_properties[material_id] = material_dict, uv_name
+                    if self._need_bake and material_dict is None:
+                        bake_material_paths[material_id] = str(material_prim.GetPath())
         self._material_parsed = True
 
         if not bake_material_paths:
@@ -180,6 +185,8 @@ class UsdContext:
             logging.getLevelName(gs.logger.level).lower(),
         ]
         gs.logger.debug(f"Execute: {' '.join(commands)}")
+
+        print(' '.join(commands))
 
         try:
             result = subprocess.run(

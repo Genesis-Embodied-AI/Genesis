@@ -30,7 +30,7 @@ from genesis.options import (
     ViewerOptions,
     VisOptions,
 )
-from genesis.options.morphs import Morph, Stage
+from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.options.recorders import RecorderOptions

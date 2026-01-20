@@ -63,6 +63,7 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
     import omni.mdl.distill_and_bake
     import omni.replicator.core
     import omni.kit.usd.collect
+    import carb
 
     # open stage
     start_time = time.time()
@@ -83,7 +84,8 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
         material_prim = stage.GetPrimAtPath(usd_material_path)
         distiller = omni.mdl.distill_and_bake.MdlDistillAndBake(material_prim, ouput_folder=output_dir)
         distiller.distill()
-    logs.append(f"\tDistill: {time.time() - start_time}s, {material_prim}.")
+        carb.log_info("Distilled: " + usd_material_path)
+        logs.append(f"\tDistill: {time.time() - start_time}s, {usd_material_path}.")
 
     # export usd
     start_time = time.time()
