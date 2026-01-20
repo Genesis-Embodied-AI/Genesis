@@ -112,7 +112,6 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     with np.testing.assert_raises(AssertionError):
         assert_allclose(lin_acc_no_offset, lin_acc_with_offset, atol=0.2)
     imu.set_pos_offset((0.0, 0.0, 0.0))
-    print(imu.read().mag)
     # check that entity rotation affects magnetometer readings
     # Rotate 90 deg around y axis -> This should transform (0.3, 0, 0.4) to (-0.4, 0, 0.3)
     pitch_quat = gu.euler_to_quat(torch.tensor([0.0, 90.0, 0.0]))
@@ -124,7 +123,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     # let box collide with ground
     for _ in range(20):
         scene.step()
-    print(imu.read().mag)
+        
     assert_array_equal(imu.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
     assert_array_equal(imu.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
 
@@ -152,14 +151,14 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu.read().mag, torch.tensor([0.3, 0.4, 0.0]), tol=1e-6)
     imu.set_quat_offset((1.0, 0.0, 0.0, 0.0))
     imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
-    print(imu.read().mag)
+   
     scene.reset()
-    print(imu.read().mag)
+  
     zero_param = torch.zeros((*batch_shape, 3))
     assert_allclose(imu.read().lin_acc, zero_param, tol=gs.EPS)
     assert_allclose(imu_delayed.read().lin_acc, zero_param, tol=gs.EPS)
     assert_allclose(imu_noisy.read().ang_vel, zero_param, tol=gs.EPS)
-    print(imu.read().mag)
+   
     imu.set_bias(BIAS + (0.0, 0.0, 0.0) + (0.05, 0.05, 0.05))
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
