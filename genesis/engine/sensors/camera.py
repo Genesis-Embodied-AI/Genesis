@@ -624,8 +624,7 @@ class RaytracerCameraSensor(BaseCameraSensor):
 
         # Attach the visualizer camera to the link if this sensor is attached
         if self._link is not None:
-            pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
+            offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
             self._camera_obj.attach(self._link, offset_T)
 
         _B = max(n_envs, 1)

@@ -126,9 +126,7 @@ def compare_joints(mjcf_joints, usd_joints, tol):
         Tolerance for numerical comparisons.
     """
     # Check number of joints
-    assert len(mjcf_joints) == len(usd_joints), (
-        f"Number of joints mismatch: MJCF={len(mjcf_joints)}, USD={len(usd_joints)}"
-    )
+    assert len(mjcf_joints) == len(usd_joints)
 
     # Create dictionaries keyed by joint name for comparison
     mjcf_joints_by_name = {joint.name: joint for joint in mjcf_joints}
@@ -137,7 +135,7 @@ def compare_joints(mjcf_joints, usd_joints, tol):
     # Check that we have matching joint names
     mjcf_joint_names = set(mjcf_joints_by_name.keys())
     usd_joint_names = set(usd_joints_by_name.keys())
-    assert mjcf_joint_names == usd_joint_names, f"Joint names mismatch: MJCF={mjcf_joint_names}, USD={usd_joint_names}"
+    assert mjcf_joint_names == usd_joint_names
 
     # Compare all joint properties by name
     for joint_name in sorted(mjcf_joint_names):
@@ -364,9 +362,9 @@ def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["box_plane_mjcf"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_box_plane_mjcf_vs_usd(xml_path, box_plane_usd, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, box_plane_usd)
@@ -517,9 +515,9 @@ def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["prismatic_joint_mjcf"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_prismatic_joint_mjcf_vs_usd(xml_path, prismatic_joint_usd, tol):
     """Test that MJCF and USD scenes with prismatic joints produce equivalent Genesis entities."""
     mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, prismatic_joint_usd)
@@ -672,9 +670,9 @@ def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["revolute_joint_mjcf"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_revolute_joint_mjcf_vs_usd(xml_path, revolute_joint_usd, tol):
     """Test that MJCF and USD scenes with revolute joints produce equivalent Genesis entities."""
     mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, revolute_joint_usd)
@@ -784,9 +782,9 @@ def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["spherical_joint_mjcf"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, tol):
     """Test that MJCF and USD scenes with spherical joints produce equivalent Genesis entities."""
     mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, spherical_joint_usd)
