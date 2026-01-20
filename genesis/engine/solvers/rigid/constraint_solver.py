@@ -1532,6 +1532,7 @@ def func_cholesky_factor_direct_tiled(
         # Padding +1 to avoid memory bank conflicts that would cause access serialization
         H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
 
+        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
         i_pair = tid
         while i_pair < n_lower_tri:
             i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
@@ -1540,7 +1541,11 @@ def func_cholesky_factor_direct_tiled(
             i_pair = i_pair + BLOCK_DIM
         ti.simt.block.sync()
 
+        # Loop over all columns sequentially, which is an integral part of Cholesky-Crout algorithm and cannot be
+        # avoided.
         for i_d in range(n_dofs):
+            # Compute the diagonal of the Cholesky factor L for the column i being considered, ie
+            # L_{i,i} = sqrt(A_{i,i} - sum_{j=1}^{i-1}(L_{i,j} ** 2 ))
             if tid == 0:
                 tmp = H[i_d, i_d]
                 for j_d in range(i_d):
@@ -1548,6 +1553,8 @@ def func_cholesky_factor_direct_tiled(
                 H[i_d, i_d] = ti.sqrt(ti.max(tmp, EPS))
             ti.simt.block.sync()
 
+            # Compute all the off-diagonal terms of the Cholesky factor L for the column i being considered, ie
+            # L_{j,i} = 1 / L_{i,i} (A_{j,i} - sum_{k=1}^{i-1}(L_{j,k} L_{i,k}), for j > i
             inv_diag = 1.0 / H[i_d, i_d]
             j_d = i_d + 1 + tid
             while j_d < n_dofs:
@@ -1558,6 +1565,7 @@ def func_cholesky_factor_direct_tiled(
                 j_d = j_d + BLOCK_DIM
             ti.simt.block.sync()
 
+        # Copy the final result back from shared memory, only considered the lower triangular part
         i_pair = tid
         while i_pair < n_lower_tri:
             i_d1 = ti.cast((ti.sqrt(8 * i_pair + 1) - 1) // 2, ti.i32)
