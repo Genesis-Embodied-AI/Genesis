@@ -1762,9 +1762,10 @@ def func_cholesky_solve_tiled(
     static_rigid_sim_config: ti.template(),
 ):
     # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64.
-    # Note that the current Warp reduction is CUDA-specific for now. Although Warp reduction is supposed to be supported
-    # by all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), GsTaichi does not provide a
-    # unified API for it yet.
+    # Note that the current "Warp" reduction is CUDA-specific for now (to be clear, it concerns all methods in
+    # `ti.simt.warp` sub-module, but only `shfl_down_f32` is being used here).
+    # Although "Warp" reduction is supposed to be supported by all major GPUs if not all (incl. Apple Silicon chips
+    # under naming 'SIMD-group'), GsTaichi does not provide a unified API for it yet.
     BLOCK_DIM = ti.static(64)
     MAX_DOFS = ti.static(static_rigid_sim_config.tiled_n_dofs)
     ENABLE_WARP_REDUCTION = ti.static(static_rigid_sim_config.backend == gs.cuda and gs.ti_float == ti.f32)
