@@ -8,6 +8,71 @@ from pathlib import Path
 import csv
 
 
+def parse_kv_pairs_str(kv_pairs_str: str) -> dict[str, str]:
+    kv_pairs_str_l = kv_pairs_str.split("-")
+    kv_pairs = {}
+    for kv_pair_str in kv_pairs_str_l:
+        k, _, v = kv_pair_str.partition("=")
+        kv_pairs[k] = v
+    return kv_pairs
+
+
+def parse_benchmark_id(bid: str) -> dict:
+    kv = {}
+    if bid:
+        for token in bid.split("-"):
+            token = token.strip()
+            if token and "=" in token:
+                k, v = token.split("=", 1)
+                kv[k.strip()] = v.strip()
+    return kv
+
+def normalize_benchmark_id(bid: str) -> frozendict[str, str]:
+    return frozendict(parse_benchmark_id(bid))
+
+def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
+    """
+    Merge a list of tuples into a single tuple of keys that:
+    - Preserves the relative order of keys within each tuple
+    - Gives precedence to later tuples when conflicts arise
+    """
+    merged = list(bids[-1])
+    merged_set = set(merged)
+    for tup in bids[:-1]:
+        for key in tup:
+            if key not in merged_set:
+                merged.append(key)
+                merged_set.add(key)
+    return tuple(merged)
+
+def sort_key(d):
+    key_list = []
+    for col in params_name:
+        if col in d:
+            val = d[col]
+            key_list.append((0, val))
+        else:
+            key_list.append((1, None))
+    return key_list
+
+def artifacts_parse_csv_summary(current_txt_path, metric_keys):
+    out = {}
+    for line in current_txt_path.read_text().splitlines():
+        kv = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
+        record = {}
+        for k in metric_keys:
+            try:
+                record[k] = float(kv.pop(k))
+            except (ValueError, TypeError, KeyError):
+                pass
+        nbid = frozendict(kv)
+        out[nbid] = record
+    return out
+
+def fmt_num(v, is_int: bool):
+    return f"{int(v):,}" if is_int else f"{v:.2f}"
+
+
 def main() -> None:
     print('start')
     parser = argparse.ArgumentParser()
@@ -25,6 +90,7 @@ def main() -> None:
     parser.add_argument("--exit-code-regression", type=int, default=42)
     parser.add_argument("--exit-code-alert", type=int, default=43)
     parser.add_argument("--dev-skip-speed", action="store_true")
+    parser.add_argument("--dev-allow-all-branches", action="store_true")
     args = parser.parse_args()
 
     MAX_VALID_REVISIONS = args.max_valid_revisions
@@ -51,84 +117,42 @@ def main() -> None:
     SPEED_METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
     MEM_METRIC_KEYS = ("max_mem_mb")
 
-    def parse_benchmark_id(bid: str) -> dict:
-        kv = {}
-        if bid:
-            for token in bid.split("-"):
-                token = token.strip()
-                if token and "=" in token:
-                    k, v = token.split("=", 1)
-                    kv[k.strip()] = v.strip()
-        return kv
-
-    def normalize_benchmark_id(bid: str) -> frozendict[str, str]:
-        return frozendict(parse_benchmark_id(bid))
-
-    def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
-        """
-        Merge a list of tuples into a single tuple of keys that:
-        - Preserves the relative order of keys within each tuple
-        - Gives precedence to later tuples when conflicts arise
-        """
-        merged = list(bids[-1])
-        merged_set = set(merged)
-        for tup in bids[:-1]:
-            for key in tup:
-                if key not in merged_set:
-                    merged.append(key)
-                    merged_set.add(key)
-        return tuple(merged)
-
-    def sort_key(d):
-        key_list = []
-        for col in params_name:
-            if col in d:
-                val = d[col]
-                key_list.append((0, val))
-            else:
-                key_list.append((1, None))
-        return key_list
-
-    def artifacts_parse_csv_summary(current_txt_path):
-        out = {}
-        for line in current_txt_path.read_text().splitlines():
-            kv = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
-            record = {}
-            for k in SPEED_METRIC_KEYS:
-                try:
-                    record[k] = float(kv.pop(k))
-                except (ValueError, TypeError, KeyError):
-                    pass
-            nbid = frozendict(kv)
-            out[nbid] = record
-        return out
-
-    def fmt_num(v, is_int: bool):
-        return f"{int(v):,}" if is_int else f"{v:.2f}"
-
-    # ----- load artifacts (current results) -----
+    # ----- load speed artifacts (current results) -----
 
     print('load speed tests')
-    current_csv_paths = list(speed_artifacts_dir.rglob("speed_test*.txt"))
-    assert current_csv_paths
+    current_csv_paths_speed = list(speed_artifacts_dir.rglob("speed_test*.txt"))
+    assert current_csv_paths_speed
 
-    current_bm = {}
-    for csv_path in current_csv_paths:
-        current_bm |= artifacts_parse_csv_summary(csv_path)
-    bids_set = frozenset(current_bm.keys())
-    assert bids_set
+    current_bm_speed = {}
+    for csv_path_speed in current_csv_paths_speed:
+        current_bm_speed |= artifacts_parse_csv_summary(csv_path_speed, SPEED_METRIC_KEYS)
+    bids_set_speed = frozenset(current_bm_speed.keys())
+    assert bids_set_speed
+
+    # ----- load mem artifacts (current results) -----
+
+    print('load mem tests')
+    current_csv_paths_mem = list(mem_artifacts_dir.rglob("mem_test*.txt"))
+    assert current_csv_paths_mem
+
+    current_bm_mem = {}
+    for csv_path_mem in current_csv_paths_mem:
+        current_bm_mem |= artifacts_parse_csv_summary(csv_path_mem, MEM_METRIC_KEYS)
+    bids_set_mem = frozenset(current_bm_mem.keys())
+    assert bids_set_mem
 
     # ----- W&B baselines -----
 
     assert "WANDB_API_KEY" in os.environ
 
     ENTITY = os.environ["WANDB_ENTITY"]
-    PROJECT = os.environ["WANDB_PROJECT"]
+    PROJECT_OLD = os.environ["WANDB_PROJECT_OLD_FORMAT"]
+    PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
 
     def fetch_wandb_data_old_format():
         print("fetch_wandb_data_old_format")
         api = wandb.Api()
-        runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
+        runs_iter = api.runs(f"{ENTITY}/{PROJECT_OLD}", order="-created_at")
         print('got runs_iter')
 
         revs = set()
@@ -160,7 +184,7 @@ def main() -> None:
                 # Ignore this run if the revision has been corrupted for some unknown reason
                 continue
             # Ignore runs associated with a commit that is not part of the official repository
-            if not branch.startswith('Genesis-Embodied-AI/'):
+            if not branch.startswith('Genesis-Embodied-AI/') and not args.dev_allow_all_branches:
                 continue
 
             # Skip runs did not finish for some reason
@@ -180,7 +204,7 @@ def main() -> None:
             # Make sure that stats are valid
             try:
                 is_valid = True
-                for k in METRIC_KEYS:
+                for k in SPEED_METRIC_KEYS:
                     v = summary[k]
                     if not isinstance(v, (float, int)) or math.isnan(v):
                         is_valid = False
@@ -193,14 +217,99 @@ def main() -> None:
             # Store all the records into a dict
             nbid = normalize_benchmark_id(bid)
             records_by_rev.setdefault(rev, {})[nbid] = {
-                metric: summary[metric] for metric in METRIC_KEYS
+                metric: summary[metric] for metric in SPEED_METRIC_KEYS
             }
+            return records_by_rev
+
+    def fetch_wandb_data_new_format():
+        print("fetch_wandb_data_new_format")
+        api = wandb.Api()
+        runs_iter = api.runs(f"{ENTITY}/{PROJECT_NEW}", order="-created_at")
+        print('got runs_iter')
+
+        revs = set()
+        records_by_rev = {}
+        for i, run in enumerate(runs_iter):
+            print("i", i, "run", run)
+            # Abort if still not complete after checking enough runs.
+            # This would happen if a new benchmark has been added, and not enough past data is available yet.
+            if len(revs) == MAX_FETCH_REVISIONS:
+                break
+
+            # Early return if enough complete records have been collected
+            records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+            if sum(records_is_complete) == MAX_VALID_REVISIONS:
+                break
+
+            # Load config and summary, with support of legacy runs
+            config, summary = run.config, run.summary
+            if isinstance(config, str):
+                config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
+            if isinstance(summary._json_dict, str):
+                summary = json.loads(summary._json_dict)
+            print('summary', summary)
+
+            # Extract revision commit and branch
+            try:
+                rev, branch = config["revision"].split("@", 1)
+                revs.add(rev)
+            except ValueError:
+                print('didnt find rev')
+                # Ignore this run if the revision has been corrupted for some unknown reason
+                continue
+            print("rev", rev, "branch", branch)
+            # Ignore runs associated with a commit that is not part of the official repository
+            if not branch.startswith('Genesis-Embodied-AI/') and not args.dev_allow_all_branches:
+                print('branch didnt start with Genesis-Embodied-AI')
+                continue
+
+            # Skip runs did not finish for some reason
+            if run.state != "finished":
+                continue
+
+            # Do not store new records if the desired number of revision is already reached
+            if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
+                continue
+
+            for k, v in summary.items():
+                if k.startswith("_"):
+                    continue
+                print('k', k, 'v', v, type(v))
+                metric_name, _, kv_pairs_str = k.partition("-")[0]
+                kv_pairs = parse_kv_pairs_str(kv_pairs_str)
+                # env = kv_pairs[env]
+                records_by_rev.setdefault(rev, {})[k] = {
+                    metric: v
+                }
+
+            # Make sure that stats are valid
+            # try:
+            #     is_valid = True
+            #     for k in MEM_METRIC_KEYS:
+            #         v = summary[k]
+            #         if not isinstance(v, (float, int)) or math.isnan(v):
+            #             is_valid = False
+            #             break
+            #     if not is_valid:
+            #         continue
+            # except KeyError:
+            #     continue
+
+            # Store all the records into a dict
+            # nbid = normalize_benchmark_id(bid)
+            # records_by_rev.setdefault(rev, {})[nbid] = {
+            #     metric: summary[metric] for metric in MEM_METRIC_KEYS
+            # }
+            print('records_by_rev', records_by_rev)
+            adsfasdf
             return records_by_rev
 
     speed_records_by_rev = {}
     if not args.dev_skip_speed:
         speed_records_by_rev = fetch_wandb_data_old_format()
     print('speed_records_by_rev', speed_records_by_rev)
+
+    mem_records_by_rev = fetch_wandb_data_new_format()
 
     # ----- build TWO tables -----
 

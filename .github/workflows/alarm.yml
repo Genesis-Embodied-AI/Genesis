@@ -65,7 +65,8 @@ jobs:
           # --- W&B ---
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
           WANDB_ENTITY: genesis-ai-company
-          WANDB_PROJECT: genesis-benchmarks
+          WANDB_PROJECT_OLD_FORMAT: genesis-benchmarks
+          WANDB_PROJECT_NEW_FORMAT: genesis-benchmarks-2
           WANDB_SILENT: "true"
 
           # --- Parameters ---
