@@ -1,10 +1,11 @@
 """
 Articulated Body Dynamics (ABD) submodule for rigid body simulation.
 
-Contains forward kinematics, forward dynamics, accessor, differentiation, and misc computations.
+Contains forward kinematics, inverse kinematics, forward dynamics, accessor, differentiation, and misc computations.
 """
 
 from .forward_kinematics import *
+from .inverse_kinematics import *
 from .forward_dynamics import *
 from .accessor import *
 from .diff import *
