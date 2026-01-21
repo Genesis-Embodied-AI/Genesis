@@ -34,8 +34,9 @@ class ViewerOptions(Options):
         The up vector of the camera's extrinsic pose.
     camera_fov : float
         The field of view (in degrees) of the camera.
-    viewer_plugin : ViewerPlugin
+    viewer_plugin : ViewerPlugin | None
         Viewer plugin that adds interactive functionality to the viewer.
+        Defaults to DefaultControlsPlugin which provides keyboard shortcuts for recording, changing render modes, etc.
     """
 
     res: tuple | None = None
@@ -46,7 +47,7 @@ class ViewerOptions(Options):
     camera_lookat: tuple = (0.0, 0.0, 0.5)
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
-    viewer_plugin: ViewerPlugin = DefaultControlsPlugin()
+    viewer_plugin: ViewerPlugin | None = DefaultControlsPlugin()
 
 
 class VisOptions(Options):

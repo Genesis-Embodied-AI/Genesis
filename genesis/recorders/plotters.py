@@ -16,10 +16,10 @@ import genesis as gs
 from genesis.options.recorders import (
     BasePlotterOptions,
     LinePlotterMixinOptions,
+    PyQtLinePlot as PyQtLinePlotterOptions,
+    MPLLinePlot as MPLLinePlotterOptions,
+    MPLImagePlot as MPLImagePlotterOptions,
 )
-from genesis.options.recorders import MPLImagePlot as MPLImagePlotterOptions
-from genesis.options.recorders import MPLLinePlot as MPLLinePlotterOptions
-from genesis.options.recorders import PyQtLinePlot as PyQtLinePlotterOptions
 from genesis.utils import has_display, tensor_to_array
 
 from .base_recorder import Recorder
