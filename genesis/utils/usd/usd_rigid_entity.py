@@ -7,6 +7,7 @@ are treated as articulation roots with no child links.
 
 The parser is agnostic to genesis structures, focusing only on USD structure.
 """
+
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -29,18 +30,27 @@ from .usd_parser_utils import (
 DRIVE_NAMES = {
     gs.JOINT_TYPE.REVOLUTE: (("angular",),),
     gs.JOINT_TYPE.PRISMATIC: (("linear",),),
-    gs.JOINT_TYPE.SPHERICAL: (("rotX",), ("rotY",), ("rotZ",),),
+    gs.JOINT_TYPE.SPHERICAL: (
+        ("rotX",),
+        ("rotY",),
+        ("rotZ",),
+    ),
     gs.JOINT_TYPE.FIXED: (),
-    gs.JOINT_TYPE.FREE: (("transX",), ("transY",), ("transZ",), ("rotX",), ("rotY",), ("rotZ",),),
+    gs.JOINT_TYPE.FREE: (
+        ("transX",),
+        ("transY",),
+        ("transZ",),
+        ("rotX",),
+        ("rotY",),
+        ("rotZ",),
+    ),
 }
 
 
 def _parse_joint_axis_pos(
     context: UsdContext, joint: UsdPhysics.Joint, child_link: Usd.Prim, is_body1: bool
 ) -> Tuple[str, np.ndarray, np.ndarray]:
-    joint_pos = usd_pos_to_numpy(
-        (joint.GetLocalPos1Attr() if is_body1 else joint.GetLocalPos0Attr()).Get()
-    )
+    joint_pos = usd_pos_to_numpy((joint.GetLocalPos1Attr() if is_body1 else joint.GetLocalPos0Attr()).Get())
     T = context.compute_transform(child_link)
     joint_pos = gu.transform_by_T(joint_pos, T)
     Q, S = context.compute_gs_transform(child_link)
@@ -48,11 +58,9 @@ def _parse_joint_axis_pos(
     joint_pos = Q_inv[:3, :3] @ (joint_pos - Q[:3, 3])
 
     if isinstance(joint, (UsdPhysics.PrismaticJoint, UsdPhysics.RevoluteJoint)):
-        joint_quat = usd_quat_to_numpy(
-            (joint.GetLocalRot1Attr() if is_body1 else joint.GetLocalRot0Attr()).Get()
-        )
+        joint_quat = usd_quat_to_numpy((joint.GetLocalRot1Attr() if is_body1 else joint.GetLocalRot0Attr()).Get())
         joint_axis_str = joint.GetAxisAttr().Get() or "X"
-        joint_axis = gu.transform_by_quat(AXES_VECTOR[joint_axis_str], joint_quat) 
+        joint_axis = gu.transform_by_quat(AXES_VECTOR[joint_axis_str], joint_quat)
         joint_axis = gu.transform_by_R(joint_axis, T[:3, :3])
         joint_axis = Q_inv[:3, :3] @ joint_axis
         if np.linalg.norm(joint_axis) < gs.EPS:
@@ -71,9 +79,6 @@ def _parse_link(
     links: List[Usd.Prim],
     morph: gs.morphs.USD,
 ):
-    """
-    Parse a link and return a link info dictionary.
-    """
     l_info = {}
     l_info["name"] = str(link.GetPath())
     l_info["invweight"] = np.full((2,), fill_value=-1.0)
@@ -172,42 +177,54 @@ def _parse_link(
             if joint_type == gs.JOINT_TYPE.REVOLUTE:
                 j_info["dofs_motion_ang"] = joint_axis[None]
                 j_info["dofs_motion_vel"] = np.zeros((1, 3), dtype=gs.np_float)
-                j_info["dofs_stiffness"] = np.array([
-                    get_attr_value_by_candidates(
-                        joint_prim,
-                        candidates=morph.revolute_joint_stiffness_attr_candidates,
-                        attr_name="dofs_stiffness",
-                        default_value=0.0,
-                    )
-                ], dtype=gs.np_float)
-                j_info["dofs_damping"] = np.array([
-                    get_attr_value_by_candidates(
-                        joint_prim,
-                        candidates=morph.revolute_joint_damping_attr_candidates,
-                        attr_name="dofs_damping",
-                        default_value=0.0,
-                    )
-                ], dtype=gs.np_float)
+                j_info["dofs_stiffness"] = np.array(
+                    [
+                        get_attr_value_by_candidates(
+                            joint_prim,
+                            candidates=morph.revolute_joint_stiffness_attr_candidates,
+                            attr_name="dofs_stiffness",
+                            default_value=0.0,
+                        )
+                    ],
+                    dtype=gs.np_float,
+                )
+                j_info["dofs_damping"] = np.array(
+                    [
+                        get_attr_value_by_candidates(
+                            joint_prim,
+                            candidates=morph.revolute_joint_damping_attr_candidates,
+                            attr_name="dofs_damping",
+                            default_value=0.0,
+                        )
+                    ],
+                    dtype=gs.np_float,
+                )
                 # NOTE: No idea how to scale the angle limits under non-uniform scaling now.
-            else: # joint_type == gs.JOINT_TYPE.PRISMATIC
+            else:  # joint_type == gs.JOINT_TYPE.PRISMATIC
                 j_info["dofs_motion_ang"] = np.zeros((1, 3), dtype=gs.np_float)
                 j_info["dofs_motion_vel"] = joint_axis[None]
-                j_info["dofs_stiffness"] = np.array([
-                    get_attr_value_by_candidates(
-                        joint_prim,
-                        candidates=morph.prismatic_joint_stiffness_attr_candidates,
-                        attr_name="dofs_stiffness",
-                        default_value=0.0,
-                    )
-                ], dtype=gs.np_float)
-                j_info["dofs_damping"] = np.array([
-                    get_attr_value_by_candidates(
-                        joint_prim,
-                        candidates=morph.prismatic_joint_damping_attr_candidates,
-                        attr_name="dofs_damping",
-                        default_value=0.0,
-                    )
-                ], dtype=gs.np_float)
+                j_info["dofs_stiffness"] = np.array(
+                    [
+                        get_attr_value_by_candidates(
+                            joint_prim,
+                            candidates=morph.prismatic_joint_stiffness_attr_candidates,
+                            attr_name="dofs_stiffness",
+                            default_value=0.0,
+                        )
+                    ],
+                    dtype=gs.np_float,
+                )
+                j_info["dofs_damping"] = np.array(
+                    [
+                        get_attr_value_by_candidates(
+                            joint_prim,
+                            candidates=morph.prismatic_joint_damping_attr_candidates,
+                            attr_name="dofs_damping",
+                            default_value=0.0,
+                        )
+                    ],
+                    dtype=gs.np_float,
+                )
                 j_info["dofs_limit"] *= morph.scale
                 j_info["init_qpos"] *= morph.scale
 
@@ -233,18 +250,26 @@ def _parse_link(
 
         # Only parse joint dynamics and drive API for non-fixed and non-free joints
         if joint_type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE):
-            j_info["dofs_frictionloss"] = np.full((n_dofs,), get_attr_value_by_candidates(
-                joint_prim,
-                candidates=morph.joint_friction_attr_candidates,
-                attr_name="dofs_frictionloss",
-                default_value=0.0,
-            ), dtype=gs.np_float)
-            j_info["dofs_armature"] = np.full((n_dofs,), get_attr_value_by_candidates(
-                joint_prim,
-                candidates=morph.joint_armature_attr_candidates,
-                attr_name="dofs_armature",
-                default_value=0.0,
-            ), dtype=gs.np_float)
+            j_info["dofs_frictionloss"] = np.full(
+                (n_dofs,),
+                get_attr_value_by_candidates(
+                    joint_prim,
+                    candidates=morph.joint_friction_attr_candidates,
+                    attr_name="dofs_frictionloss",
+                    default_value=0.0,
+                ),
+                dtype=gs.np_float,
+            )
+            j_info["dofs_armature"] = np.full(
+                (n_dofs,),
+                get_attr_value_by_candidates(
+                    joint_prim,
+                    candidates=morph.joint_armature_attr_candidates,
+                    attr_name="dofs_armature",
+                    default_value=0.0,
+                ),
+                dtype=gs.np_float,
+            )
 
             # parse drive API
             # References: https://openusd.org/release/api/class_usd_physics_drive_a_p_i.html
@@ -255,7 +280,7 @@ def _parse_link(
             for drive_components in DRIVE_NAMES[joint_type]:
                 dof_kp, dof_kv, max_force = 0.0, 0.0, np.inf
                 if joint_axis_str:
-                    drive_components = drive_components + (joint_axis_str,) 
+                    drive_components = drive_components + (joint_axis_str,)
                 for drive_component in drive_components:
                     if joint_prim.HasAPI(UsdPhysics.DriveAPI, drive_component):
                         drive = UsdPhysics.DriveAPI.Get(joint_prim, drive_component)
@@ -307,9 +332,9 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
     for prim in Usd.PrimRange(entity_prim):
         if prim.IsA(UsdPhysics.Joint):
             joint = UsdPhysics.Joint(prim)
-            body0_targets = joint.GetBody0Rel().GetTargets() # parent
-            body1_targets = joint.GetBody1Rel().GetTargets() # child
-            body0_target_path = body0_targets[0] if body0_targets else None 
+            body0_targets = joint.GetBody0Rel().GetTargets()  # parent
+            body1_targets = joint.GetBody1Rel().GetTargets()  # child
+            body0_target_path = body0_targets[0] if body0_targets else None
             body1_target_path = body1_targets[0] if body1_targets else None
             if body1_target_path:
                 if body0_target_path:
@@ -326,9 +351,9 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
             if not stage.GetPrimAtPath(link_path):
                 gs.raise_exception(f"Link {link_path} not found in stage.")
             links.append(stage.GetPrimAtPath(link_path))
-            link_joints.append([
-                (joint, link_path_to_idx[parent_path], is_body1) for joint, parent_path, is_body1 in joints
-            ])
+            link_joints.append(
+                [(joint, link_path_to_idx[parent_path], is_body1) for joint, parent_path, is_body1 in joints]
+            )
     else:
         links = [entity_prim]
         link_joints = [[]]
@@ -406,9 +431,9 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     if not entity_prim.IsValid():
         gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
     if not (
-        entity_prim.HasAPI(UsdPhysics.RigidBodyAPI) or
-        entity_prim.HasAPI(UsdPhysics.CollisionAPI) or
-        entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
+        entity_prim.HasAPI(UsdPhysics.RigidBodyAPI)
+        or entity_prim.HasAPI(UsdPhysics.CollisionAPI)
+        or entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
     ):
         gs.raise_exception(
             f"Provided prim {entity_prim.GetPath()} is neither an articulation root nor a rigid body. "
@@ -420,6 +445,6 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     links_g_infos = _parse_geoms(context, links, morph, surface)
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
-    eqs_info = [] # USD doesn't support equality constraints
+    eqs_info = []  # USD doesn't support equality constraints
 
     return l_infos, links_j_infos, links_g_infos, eqs_info

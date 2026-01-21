@@ -2,17 +2,15 @@
 USD Parser Utilities
 
 Utility functions for USD parsing, including transform conversions, mesh conversions, and other helper functions.
-
-Reference: ./UsdParserSpec.md
 """
-from typing import Callable, List, Tuple, Literal
+
+from typing import List, Tuple
 
 import numpy as np
 from pxr import Gf, Usd, UsdGeom
 
 import genesis as gs
-
-from .. import geom as gu
+from genesis.utils import geom as gu
 
 
 AXES_VECTOR = {
@@ -51,7 +49,9 @@ def usd_attr_array_to_numpy(attr: Usd.Attribute, dtype: np.dtype, return_none: b
     return None if return_none else np.empty(0, dtype=dtype)
 
 
-def usd_primvar_array_to_numpy(primvar: UsdGeom.Primvar, dtype: np.dtype, return_none: bool = False) -> np.ndarray | None:
+def usd_primvar_array_to_numpy(
+    primvar: UsdGeom.Primvar, dtype: np.dtype, return_none: bool = False
+) -> np.ndarray | None:
     if primvar.IsDefined() and primvar.HasValue():
         return np.array(primvar.ComputeFlattened(), dtype=dtype)
     return None if return_none else np.empty(0, dtype=dtype)
@@ -66,14 +66,12 @@ def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return Q, S
 
 
-def get_attr_value_by_candidates(
-    prim: Usd.Prim, candidates: List[str], attr_name: str, default_value: float
-):
+def get_attr_value_by_candidates(prim: Usd.Prim, candidates: List[str], attr_name: str, default_value: float):
     for candidate in candidates:
         attr_value = prim.GetAttribute(candidate).Get()
         if attr_value is not None:
             return attr_value
-    
+
     gs.logger.debug(
         f"No matching attribute `{attr_name}` found in {prim.GetPath()} "
         f"given candidates: {candidates}. Using default value: {default_value}."
