@@ -181,7 +181,7 @@ class UsdContext:
         for bound_prim, material in zip(bound_prims, materials):
             geom_path = str(bound_prim.GetPath())
             material_prim = material.GetPrim()
-            
+
             if material_prim.IsValid():
                 # TODO: material_id is also reserved for group_by_material option.
                 material_id = self.get_prim_id(material_prim)
@@ -233,8 +233,6 @@ class UsdContext:
             logging.getLevelName(gs.logger.level).lower(),
         ]
         gs.logger.debug(f"Execute: {' '.join(commands)}")
-
-        print(' '.join(commands))
 
         try:
             result = subprocess.run(

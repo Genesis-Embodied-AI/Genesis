@@ -1,10 +1,3 @@
-"""
-USD Stage
-
-Main parser entrance for importing USD stages into Genesis scenes.
-Provides the parse pipeline: materials -> articulations -> rigid bodies.
-"""
-
 from typing import List
 
 import genesis as gs

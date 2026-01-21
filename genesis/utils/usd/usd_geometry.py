@@ -1,9 +1,8 @@
 import re
 
-from numba import none
 import numpy as np
 import trimesh
-from pxr import Usd, UsdGeom, UsdShade
+from pxr import Usd, UsdGeom
 
 import genesis as gs
 from genesis.utils import geom as gu
@@ -34,6 +33,9 @@ def parse_prim_geoms(
 ):
     g_infos = []
 
+    if not prim.IsActive():
+        return g_infos
+
     if not match_visual:
         for pattern in morph.visual_mesh_prim_patterns:
             if re.match(pattern, prim.GetName()):
@@ -51,7 +53,7 @@ def parse_prim_geoms(
         geom_surface, geom_uvname, surface_id = context.apply_surface(prim, surface)
         gprim = UsdGeom.Gprim(prim)
         uvs[geom_uvname] = None
-        
+
         # parse transform
         geom_Q, geom_S = context.compute_gs_transform(prim, link_prim)
         geom_S *= morph.scale
@@ -61,10 +63,10 @@ def parse_prim_geoms(
         geom_id = context.get_prim_id(prim)
 
         # parse geometry
+        meshes = []
         if prim.IsA(UsdGeom.Mesh):
-            meshes = []
             mesh_prim = UsdGeom.Mesh(prim)
-            
+
             # parse vertices
             points = usd_attr_array_to_numpy(mesh_prim.GetPointsAttr(), np.float32)
             if points.size == 0:
@@ -179,7 +181,7 @@ def parse_prim_geoms(
                     subset_uv = processed_mesh.visual.uv
 
                 metadata = {
-                    "mesh_path": context.stage_file, # unbaked file or cache
+                    "mesh_path": context.stage_file,  # unbaked file or cache
                 }
                 mesh = gs.Mesh.from_attrs(
                     verts=subset_points,
@@ -255,18 +257,15 @@ def parse_prim_geoms(
                 gs.raise_exception(f"Unsupported geometry type: {prim.GetTypeName()}")
 
             tmesh.apply_transform(geom_ST)
-            meshes = [gs.Mesh.from_trimesh(tmesh, surface=geom_surface,)]
+            meshes.append(gs.Mesh.from_trimesh(tmesh, geom_surface))
 
         geom_pos = geom_Q[:3, 3]
         geom_quat = gu.R_to_quat(geom_Q[:3, :3])
 
-        is_active = prim.IsActive()
         is_guide = str(gprim.GetPurposeAttr().Get() or "default") == "guide"
         is_visible = str(gprim.ComputeVisibility()) != "invisible"
-        is_visual = (is_active and is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
-        is_collision = (is_active and is_visible) and (match_collision or not (match_collision or match_visual))
-
-        print(f"Parsed geoms: {len(meshes)}, Visual: {is_visual}, Collision: {is_collision}, {gs_type} at {prim.GetPath()}")
+        is_visual = (is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
+        is_collision = (is_visible) and (match_collision or not (match_collision or match_visual))
 
         if is_visual:
             for mesh in meshes:

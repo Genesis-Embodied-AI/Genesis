@@ -1,13 +1,3 @@
-"""
-USD Rigid Entity Parser
-
-Unified parser for extracting rigid entity information from USD stages.
-Treats both articulations and rigid bodies as rigid entities, where rigid bodies
-are treated as articulation roots with no child links.
-
-The parser is agnostic to genesis structures, focusing only on USD structure.
-"""
-
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -306,6 +296,8 @@ def _parse_link(
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         j_infos.append(j_info)
+
+    print(f"Parsed {j_infos[0]['type']} joint {j_infos[0]['name']} for link {l_info['name']}")
 
     if abs(1.0 - morph.scale) > gs.EPS:
         l_info["pos"] *= morph.scale

@@ -1,9 +1,3 @@
-"""
-USD Parser Utilities
-
-Utility functions for USD parsing, including transform conversions, mesh conversions, and other helper functions.
-"""
-
 from typing import List, Tuple
 
 import numpy as np
