@@ -10,6 +10,7 @@ env=anymal 	| constraint_solver=Newton 	| gjk_collision=False 	| batch_size=0 	|
 
 Performance example:
 env=franka 	| batch_size=30000 	| dtype=field 	| backend=cuda 	| compile_time=68.4 	| runtime_fps=20067534.0 	| realtime_factor=200675.3
+env=anymal 	| constraint_solver=Newton 	| gjk_collision=False 	| batch_size=0 	| backend=cpu 	| dtype=ndarray 	|compile_time=3.2 	| runtime_fps=1355.0 	| realtime_factor=3322
 
 ... and check uploads to https://wandb.ai/genesis-ai-company/genesis-benchmarks-mem/table
 """
@@ -92,7 +93,7 @@ def upload_results_to_wandb(results_file_path, project_name, metric_names=None):
             benchmark_id_suffix = pprint_oneline(sorted_params, delimiter='-')
             
             for metric_name, metric_value in metrics.items():
-                benchmark_id = f"benchmark-{metric_name}-{benchmark_id_suffix}"
+                benchmark_id = f"{metric_name}-{benchmark_id_suffix}"
                 print(f"📊 Uploading {benchmark_id}: {metric_value}")
                 run.log({benchmark_id: metric_value})
 
