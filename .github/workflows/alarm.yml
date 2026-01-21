@@ -71,16 +71,15 @@ jobs:
           # --- Parameters ---
           MAX_VALID_REVISIONS: 5
           MAX_FETCH_REVISIONS: 40
-          RUNTIME_REGRESSION_TOLERANCE_PCT: 8
-          COMPILE_REGRESSION_TOLERANCE_PCT: 16
-          MEMORY_REGRESSION_TOLERANCE_PCT: 10
+          RUNTIME_FPS_REGRESSION_TOLERANCE_PCT: 8
+          COMPILE_TIME_REGRESSION_TOLERANCE_PCT: 16
+          MEM_REGRESSION_TOLERANCE_PCT: 10
 
           # Input/Output paths
           SPEED_ARTIFACTS_DIR: ${{ steps.dl_speed.outputs.download-path }}
           MEM_ARTIFACTS_DIR: ${{ steps.dl_mem.outputs.download-path }}
-          CHECK_BODY_PATH: check_output.md
-          CSV_RUNTIME_PATH: runtime_fps.csv
-          CSV_COMPILE_PATH: compile_time.csv
+          CSV_RUNTIME_FPS_PATH: runtime_fps.csv
+          CSV_COMPILE_TIME_PATH: compile_time.csv
           CSV_MEM_PATH: mem.csv
           EXIT_CODE_REGRESSION: 42
           EXIT_CODE_ALERT: 43
@@ -90,12 +89,11 @@ jobs:
             --mem-artifacts-dir "${MEM_ARTIFACTS_DIR}" \
             --max-valid-revisions "${MAX_VALID_REVISIONS}" \
             --max-fetch-revisions "${MAX_FETCH_REVISIONS}" \
-            --runtime-regression-tolerance-pct "${RUNTIME_REGRESSION_TOLERANCE_PCT}" \
-            --compile-regression-tolerance-pct "${COMPILE_REGRESSION_TOLERANCE_PCT}" \
-            --memory-regression-tolerance-pct "${MEMORY_REGRESSION_TOLERANCE_PCT}" \
-            --check-body-path "${CHECK_BODY_PATH}" \
-            --csv-runtime-path "${CSV_RUNTIME_PATH}" \
-            --csv-compile-path "${CSV_COMPILE_PATH}" \
+            --runtime-fps-regression-tolerance-pct "${RUNTIME_FPS_REGRESSION_TOLERANCE_PCT}" \
+            --compile-time-regression-tolerance-pct "${COMPILE_TIME_REGRESSION_TOLERANCE_PCT}" \
+            --mem-regression-tolerance-pct "${MEM_REGRESSION_TOLERANCE_PCT}" \
+            --csv-runtime-fps-path "${CSV_RUNTIME_FPS_PATH}" \
+            --csv-compile-time-path "${CSV_COMPILE_TIME_PATH}" \
             --csv-mem-path "${CSV_MEM_PATH}" \
             --exit-code-regression "${EXIT_CODE_REGRESSION}" \
             --exit-code-alert "${EXIT_CODE_ALERT}"

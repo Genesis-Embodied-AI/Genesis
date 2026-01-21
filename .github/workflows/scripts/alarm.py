@@ -9,6 +9,7 @@ import csv
 
 
 def main() -> None:
+    print('start')
     parser = argparse.ArgumentParser()
     parser.add_argument("--speed-artifacts-dir", type=str, required=True)
     parser.add_argument("--mem-artifacts-dir", type=str, required=True)
@@ -20,9 +21,10 @@ def main() -> None:
     parser.add_argument("--debug-body-output-path", type=str, help="for dev/debug, dumps the markup tables here")
     parser.add_argument("--csv-runtime-fps-path", type=str, required=True)
     parser.add_argument("--csv-compile-time-path", type=str, required=True)
-    parser.add_argument("--csv-mem-pathr", type=str, required=True)
+    parser.add_argument("--csv-mem-path", type=str, required=True)
     parser.add_argument("--exit-code-regression", type=int, default=42)
     parser.add_argument("--exit-code-alert", type=int, default=43)
+    args = parser.parse_args()
 
     MAX_VALID_REVISIONS = args.max_valid_revisions
     MAX_FETCH_REVISIONS = args.max_fetch_revisions
@@ -39,7 +41,7 @@ def main() -> None:
 
     csv_files = {
         "runtime_fps": Path(args.csv_runtime_fps_path).expanduser().resolve(),
-        "compile_time": Path(args.csv_compile_time_fps_path).expanduser().resolve(),
+        "compile_time": Path(args.csv_compile_time_path).expanduser().resolve(),
         "mem": Path(args.csv_mem_path).expanduser().resolve(),
     }
 
@@ -81,7 +83,7 @@ def main() -> None:
         for line in current_txt_path.read_text().splitlines():
             kv = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
             record = {}
-            for k in METRIC_KEYS:
+            for k in SPEED_METRIC_KEYS:
                 try:
                     record[k] = float(kv.pop(k))
                 except (ValueError, TypeError, KeyError):
@@ -95,10 +97,9 @@ def main() -> None:
 
     # ----- load artifacts (current results) -----
 
+    print('load speed tests')
     current_csv_paths = list(speed_artifacts_dir.rglob("speed_test*.txt"))
-    if not current_csv_paths:
-        check_body_path.touch()
-        sys.exit(0)
+    assert current_csv_paths
 
     current_bm = {}
     for csv_path in current_csv_paths:
@@ -108,19 +109,21 @@ def main() -> None:
 
     # ----- W&B baselines -----
 
-    if not "WANDB_API_KEY" in os.environ:
-        print("WANDB_API_KEY is not set")
-        sys.exit(0)
+    assert "WANDB_API_KEY" in os.environ
+
     ENTITY = os.environ["WANDB_ENTITY"]
     PROJECT = os.environ["WANDB_PROJECT"]
 
     def fetch_wandb_data_old_format():
+        print("fetch_wandb_data_old_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
+        print('got runs_iter')
 
         revs = set()
         records_by_rev = {}
         for i, run in enumerate(runs_iter):
+            print("i", i, "run", run)
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
             if len(revs) == MAX_FETCH_REVISIONS:
@@ -184,6 +187,7 @@ def main() -> None:
             return records_by_rev
 
     speed_records_by_rev = fetch_wandb_data_old_format()
+    print('speed_records_by_rev', speed_records_by_rev)
 
     # ----- build TWO tables -----
 
@@ -307,7 +311,6 @@ def main() -> None:
     else:
         comment_body = ""
 
-    # CSV file
     for metric in ("runtime_fps", "compile_time"):
         with csv_files[metric].open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=info.keys())
@@ -315,10 +318,8 @@ def main() -> None:
             for rec in rows_for_csv[metric]:
                 w.writerow(rec)
 
-    # write md results
     check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
-    # Exit with error code
     if reg_found:
         exit_code = int(os.environ["EXIT_CODE_REGRESSION"])
     elif alert_found:
@@ -326,3 +327,7 @@ def main() -> None:
     else:
         exit_code = 0
     sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

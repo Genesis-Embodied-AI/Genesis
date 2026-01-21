@@ -112,6 +112,7 @@ def parse_alarm_yml(alarm_yml_path: Path) -> Tuple[str, Dict[str, str]]:
     print('python_step', python_step)
     python_code = python_step["run"]
     print("python_code", python_code)
+    python_code = python_code.rstrip() + " \\\n --debug-body-output-path ${CHECK_BODY_PATH}"
 
     # # Extract Python code between heredoc delimiters
     # # Looking for: python - << 'PY' ... PY
