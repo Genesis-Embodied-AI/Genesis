@@ -80,7 +80,7 @@ def parse_preview_surface(prim: Usd.Prim, output_name):
         if emissive_uvname is not None and uvname is None:
             uvname = emissive_uvname
 
-        # parse mertalic
+        # parse metallic
         use_specular = get_input_attribute_value(shader, "useSpecularWorkflow", "value")[0]
         if not use_specular:
             metallic_texture, metallic_uvname = parse_component("metallic", "linear")

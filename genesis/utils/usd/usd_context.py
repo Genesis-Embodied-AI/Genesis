@@ -1,9 +1,3 @@
-"""
-USD Parser Context
-
-Context class for tracking materials, articulations, and rigid bodies during USD parsing.
-"""
-
 from pathlib import Path
 import shutil
 import os
@@ -49,24 +43,31 @@ def decompress_usdz(usdz_path: str):
 
 class UsdContext:
     """
-    A context class for USD Parsing.
+    Context manager for USD stage parsing and material processing.
 
-    Tracks:
-    - Materials: rendering materials parsed from the stage
-    - Articulation roots: prims with ArticulationRootAPI
-    - Prims in articulation: flattened set of all prims in articulations
-    - Rigid body top prims: top-most rigid body prims (including CollisionAPI)
+    This class provides a centralized context for parsing USD files, managing materials,
+    computing transforms, and handling asset preprocessing. It supports USDZ decompression,
+    material baking, coordinate system conversion, and asset symlink resolution.
+
+    Parameters
+    ----------
+    stage_file : str
+        Path to the USD stage file (.usd, .usda, .usdc) or USDZ archive (.usdz).
+        If a USDZ file is provided, it will be automatically decompressed.
+    bake_cache : bool, optional
+        If True, enables material baking and uses cached baked assets if available.
+        When enabled, complex MDL materials will be baked to textures using Omniverse Kit.
+        Default is True.
+
+    Notes
+    -----
+    - USDZ files are automatically decompressed to a temporary directory
+    - If bake_cache is True and baked assets exist, they will be used automatically
+    - The stage's up-axis and meter scale are detected and stored for transform computations
+    - Material parsing is lazy (only when find_all_materials() is called)
     """
 
     def __init__(self, stage_file: str, bake_cache: bool = True):
-        """
-        Initialize the parser context.
-
-        Parameters
-        ----------
-        stage : Usd.Stage
-            The USD stage being parsed.
-        """
         # decompress usdz
         if stage_file.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
             stage_file = decompress_usdz(stage_file)
@@ -96,28 +97,44 @@ class UsdContext:
 
     @property
     def stage(self) -> Usd.Stage:
-        """Get the USD stage."""
+        """
+        Get the USD stage object.
+        """
         return self._stage
 
     @property
     def stage_file(self) -> str:
-        """Get the USD stage file."""
+        """
+        Get the path to the USD stage file.
+        """
         return self._stage_file
 
-    def get_prim_id(self, prim: Usd.Prim):
-        """Get a unique identifier for a prim based on its first SpecifierOver spec."""
+    def get_prim_id(self, prim: Usd.Prim) -> str:
+        """
+        Get a unique identifier for a prim based on its layer specification.
+
+        The identifier is constructed from the layer file path and the prim's path
+        string. This ensures uniqueness even when the same prim appears in multiple
+        layers or when using baked stages.
+        """
         prim_stack = prim.GetPrimStack()
         spec = next((s for s in prim_stack if s.specifier == Sdf.SpecifierOver), prim_stack[-1])
         spec_path = self._stage_file if spec.layer.identifier == self._bake_stage_file else spec.layer.identifier
         return spec_path + spec.path.pathString
 
-    def get_binding_material(self, prim: Usd.Prim):
+    def get_binding_material(self, prim: Usd.Prim) -> UsdShade.Material | None:
+        """
+        Get the material bound to a geometry prim.
+        """
         prim_path = str(prim.GetPath())
         if prim_path in self._prim_material_bindings:
             return UsdShade.Material(self._stage.GetPrimAtPath(self._prim_material_bindings[prim_path]))
         return None
 
     def compute_transform(self, prim: Usd.Prim) -> np.ndarray:
+        """
+        Compute the local-to-world transformation matrix for a prim.
+        """
         transform = self._xform_cache.GetLocalToWorldTransform(prim)
         T_usd = np.asarray(transform, dtype=np.float32)  # translation on the bottom row
         if self._is_yup:
@@ -125,7 +142,10 @@ class UsdContext:
         T_usd[:, :3] *= self._meter_scale
         return T_usd.transpose()
 
-    def compute_gs_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None):
+    def compute_gs_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Compute the Genesis transform (pose and scale) for a prim.
+        """
         Q, S = extract_scale(self.compute_transform(prim))
         if ref_prim is None:
             return Q, S
@@ -134,7 +154,12 @@ class UsdContext:
         Q_rel = np.linalg.inv(Q_ref) @ Q
         return Q_rel, S
 
-    def apply_surface(self, geom_prim: Usd.Prim, surface: gs.surfaces.Surface):
+    def apply_surface(
+        self, geom_prim: Usd.Prim, surface: gs.surfaces.Surface
+    ) -> tuple[gs.surfaces.Surface, str, str | None]:
+        """
+        Apply material properties from USD to a Genesis surface object.
+        """
         geom_path = str(geom_prim.GetPath())
         applied_surface = surface.copy()
 
@@ -149,7 +174,7 @@ class UsdContext:
 
     def find_all_rigid_entities(self) -> list[Usd.Prim]:
         """
-        Find all prims with ArticulationRootAPI and RigidBody in the stage.
+        Find all rigid body entities in the USD stage.
         """
         entity_prims = []
         stage_iter = iter(Usd.PrimRange(self._stage.GetPseudoRoot()))
@@ -165,7 +190,7 @@ class UsdContext:
 
     def find_all_materials(self):
         """
-        Parse all materials in the USD stage.
+        Parse all materials in the USD stage and optionally bake complex materials.
         """
         if self._material_parsed:
             return
@@ -259,6 +284,13 @@ class UsdContext:
                 shutil.rmtree(baked_texture_obj)
 
     def replace_asset_symlinks(self):
+        """
+        Replace asset path symlinks with actual file copies when file extensions differ.
+
+        Some USD assets use symlinks that point to files with different extensions
+        (e.g., .png symlink pointing to .exr). This method finds such symlinks and
+        replaces them with actual file copies to ensure compatibility.
+        """
         asset_paths = set()
 
         for prim in self._stage.TraverseAll():
