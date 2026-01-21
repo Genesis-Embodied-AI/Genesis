@@ -14,8 +14,6 @@ l	- Roll Left (Rotate around X)
 ;	- Roll Right (Rotate around X)
 u	- Reset Scene
 space	- Press to close gripper, release to open gripper
-
-Plus all default viewer controls (press 'i' to see them)
 """
 
 import argparse
@@ -85,18 +83,12 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             euler=(0, 0, 0),
         ),
     )
-    scene.sim.coupler.set_ipc_link_filter(
-        entity=entities["robot"],
-        link_names=["left_finger", "right_finger"],
-    )
-
-    material = (
-        gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")
-        if use_ipc
-        else gs.materials.Rigid()
-    )
 
     if use_ipc:
+        scene.sim.coupler.set_ipc_link_filter(
+            entity=entities["robot"],
+            link_names=["left_finger", "right_finger"],
+        )
         cloth = scene.add_entity(
             morph=gs.morphs.Mesh(
                 file="meshes/grid20x20.obj",
@@ -150,11 +142,12 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
 def run_sim(scene, entities, mode="interactive", trajectory_file=None):
     robot = entities["robot"]
     target_entity = entities["target"]
+    is_running = True
 
     robot_init_pos = np.array([0.5, 0, 0.55])
     robot_init_quat = gu.xyz_to_quat(np.array([0, np.pi, 0]))  # Rotation around Y axis
-    target_pos = [robot_init_pos.copy()]  # Use list for mutability in closures
-    target_quat = [robot_init_quat.copy()]  # Use list for mutability in closures
+    target_pos = robot_init_pos.copy()
+    target_quat = robot_init_quat.copy()
 
     n_dofs = robot.n_dofs
     motors_dof = np.arange(n_dofs - 2)
@@ -173,10 +166,10 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
     drot = 0.01
 
     def reset_scene():
-        target_pos[0] = robot_init_pos.copy()
-        target_quat[0] = robot_init_quat.copy()
-        target_entity.set_qpos(np.concatenate([target_pos[0], target_quat[0]]))
-        q = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat[0])
+        target_pos[:] = robot_init_pos
+        target_quat[:] = robot_init_quat
+        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
+        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
         robot.set_qpos(q[:-2], motors_dof)
 
         # entities["cube"].set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
@@ -186,7 +179,7 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
     if mode in ["interactive", "record"]:
 
         def move(dpos_delta: tuple[float, float, float]):
-            target_pos[0] += np.array(dpos_delta, dtype=gs.np_float)
+            target_pos[:] += np.array(dpos_delta, dtype=gs.np_float)
 
         def rotate(axis: str, angle: float):
             # Create rotation quaternion for the specified axis
@@ -194,10 +187,14 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
             axis_map = {"x": 0, "y": 1, "z": 2}
             euler[axis_map[axis]] = angle
             drot_quat = gu.xyz_to_quat(euler)
-            target_quat[0] = gu.transform_quat_by_quat(target_quat[0], drot_quat)
+            target_quat[:] = gu.transform_quat_by_quat(target_quat, drot_quat)
 
         def toggle_gripper(close: bool = True):
             gripper_closed[0] = close
+
+        def stop():
+            nonlocal is_running
+            is_running = False
 
         scene.viewer.register_keybinds(
             Keybind(Key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
@@ -215,6 +212,7 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
             Keybind(Key.U, KeyAction.HOLD, name="reset_scene", callback=reset_scene),
             Keybind(Key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
             Keybind(Key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
+            Keybind(Key.ESCAPE, KeyAction.PRESS, name="quit", callback=stop),
         )
 
     # Load trajectory if in playback mode
@@ -274,13 +272,13 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
     step_count = 0
 
     try:
-        while True:
+        while is_running:
             if mode == "playback":
                 # Playback mode: replay recorded trajectory
                 if step_count < len(trajectory):
                     step_data = trajectory[step_count]
-                    target_pos[0] = step_data["target_pos"]
-                    target_quat[0] = step_data["target_quat"]
+                    target_pos[:] = step_data["target_pos"]
+                    target_quat[:] = step_data["target_quat"]
                     gripper_closed[0] = step_data["gripper_closed"]
                     step_count += 1
                     print(f"\rPlayback step: {step_count}/{len(trajectory)}", end="")
@@ -293,16 +291,16 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
                 # Record current state if recording
                 if recording:
                     step_data = {
-                        "target_pos": target_pos[0].copy(),
-                        "target_quat": target_quat[0].copy(),
+                        "target_pos": target_pos.copy(),
+                        "target_quat": target_quat.copy(),
                         "gripper_closed": gripper_closed[0],
                         "step": step_count,
                     }
                     trajectory.append(step_data)
 
             # control arm
-            target_entity.set_qpos(np.concatenate([target_pos[0], target_quat[0]]))
-            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat[0], return_error=True)
+            target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
             robot.control_dofs_position(q[:-2], motors_dof)
             # control gripper
             if gripper_closed[0]:

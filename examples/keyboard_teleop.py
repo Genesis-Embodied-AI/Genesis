@@ -121,8 +121,7 @@ if __name__ == "__main__":
 
     # Robot teleoperation callback functions
     def move(dpos: tuple[float, float, float]):
-        global target_pos
-        target_pos += np.array(dpos, dtype=gs.np_float)
+        target_pos[:] += np.array(dpos, dtype=gs.np_float)
 
     def rotate(drot: float):
         drot_quat = gu.xyz_to_quat(np.array([0, 0, drot]))

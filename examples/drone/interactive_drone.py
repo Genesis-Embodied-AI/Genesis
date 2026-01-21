@@ -8,34 +8,29 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 class DroneController:
     def __init__(self):
-        self.thrust = 14475.8  # Base hover RPM - constant hover
-        self.rotation_delta = 200.0  # Differential RPM for rotation
+        self.thrust = 14475.8  # Base RPM for constant hover
+        self.rotation_delta = 100.0  # Differential RPM for rotation
         self.thrust_delta = 10.0  # Amount to change thrust by when accelerating/decelerating
-        self.rpms = np.array([self.thrust] * 4)  # front left, front right, back left, back right
         self.cur_dir = np.array([0.0, 0.0, 0.0, 0.0])  # rotor directions
 
     def update_rpms(self):
-        """Update RPMs based on current direction and thrust"""
+        """Compute RPMs based on current direction and thrust"""
         clipped_dir = np.clip(self.cur_dir, -1.0, 1.0)
-        self.rpms = self.thrust + clipped_dir * self.rotation_delta
-        self.rpms = np.clip(self.rpms, 0, 25000)
-        return self.rpms
+        print(clipped_dir)
+        rpms = self.thrust + clipped_dir * self.rotation_delta
+        return np.clip(rpms, 0, 25000)
 
     def add_direction(self, direction: np.ndarray):
         """Add direction vector (on key press)"""
         self.cur_dir += direction
 
     def accelerate(self):
-        """All rotors spin faster"""
-        self.thrust += self.thrust_delta
-        self.rpms = [self.thrust] * 4
-        self.rpms = np.clip(self.rpms, 0, 25000)
+        """Increase base thrust"""
+        self.thrust = min(self.thrust + self.thrust_delta, 25000)
 
     def decelerate(self):
-        """All rotors spin slower"""
-        self.thrust -= self.thrust_delta
-        self.rpms = [self.thrust] * 4
-        self.rpms = np.clip(self.rpms, 0, 25000)
+        """Decrease base thrust"""
+        self.thrust = max(self.thrust - self.thrust_delta, 0)
 
 
 def main():
