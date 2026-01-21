@@ -93,6 +93,13 @@ class CsvInfo:
         self.bids_set = frozenset(self.current_bm.keys())
         assert self.bids_set
 
+        self.params_name = get_param_names(tuple((tuple(kv.keys())) for kv in self.current_bm.keys()))
+
+    def ingest_records_by_rev(self, records_by_rev):
+        self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
+        self.baseline_block = ["**Baselines considered:** " + f"**{len(self.records_by_rev)}** commits"] + blist
+
+
     def get_params_name(self):
         return get_param_names(tuple((tuple(kv.keys())) for kv in self.current_bm.keys()))
 
@@ -377,18 +384,16 @@ def main() -> None:
     # ----- build TWO tables -----
 
     # Parse benchmark IDs into key-value dicts while preserving order
-    params_name = get_param_names(tuple((tuple(kv.keys())) for kv in current_bm.keys()))
 
     reg_found, alert_found = False, False
     tables = {}
-    rows_for_csv = {"runtime_fps": [], "compile_time": []}
+    rows_for_csv = {"runtime_fps": [], "compile_time": [], "mem": []}
     info = {}
     for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
-        tables[metric], rows_for_csv[metric] = build_table(params_name=csv_info.get_params_name())
+        tables[metric], rows_for_csv[metric] = build_table(
+            params_name=csv_info.get_params_name())
 
     # ----- baseline commit list (MD) -----
-    blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(speed_records_by_rev.keys(), 1)]
-    baseline_block = ["**Baselines considered:** " + f"**{len(speed_records_by_rev)}** commits"] + blist
 
     # ----- CHECK body (always) -----
 
