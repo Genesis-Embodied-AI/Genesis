@@ -746,7 +746,7 @@ def box_pyramid_6(solver, n_envs, gjk):
         # ("franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
         # ("franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
         ("franka", None, None, 0, gs.cpu),
-        ("random", None, None, 30000, gs.gpu),
+        # ("random", None, None, 30000, gs.gpu),
         ("box_pyramid_3", None, None, 4096, gs.gpu),
         # ("box_pyramid_4", None, None, 4096, gs.gpu),
         # ("box_pyramid_5", None, None, 4096, gs.gpu),
