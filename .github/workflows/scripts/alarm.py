@@ -115,73 +115,73 @@ def main() -> None:
     PROJECT = os.environ["WANDB_PROJECT"]
 
     def fetch_wandb_data_old_format():
-    api = wandb.Api()
-    runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
+        api = wandb.Api()
+        runs_iter = api.runs(f"{ENTITY}/{PROJECT}", order="-created_at")
 
-    revs = set()
-    records_by_rev = {}
-    for i, run in enumerate(runs_iter):
-        # Abort if still not complete after checking enough runs.
-        # This would happen if a new benchmark has been added, and not enough past data is available yet.
-        if len(revs) == MAX_FETCH_REVISIONS:
-            break
+        revs = set()
+        records_by_rev = {}
+        for i, run in enumerate(runs_iter):
+            # Abort if still not complete after checking enough runs.
+            # This would happen if a new benchmark has been added, and not enough past data is available yet.
+            if len(revs) == MAX_FETCH_REVISIONS:
+                break
 
-        # Early return if enough complete records have been collected
-        records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
-        if sum(records_is_complete) == MAX_VALID_REVISIONS:
-            break
+            # Early return if enough complete records have been collected
+            records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+            if sum(records_is_complete) == MAX_VALID_REVISIONS:
+                break
 
-        # Load config and summary, with support of legacy runs
-        config, summary = run.config, run.summary
-        if isinstance(config, str):
-            config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
-        if isinstance(summary._json_dict, str):
-            summary = json.loads(summary._json_dict)
+            # Load config and summary, with support of legacy runs
+            config, summary = run.config, run.summary
+            if isinstance(config, str):
+                config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
+            if isinstance(summary._json_dict, str):
+                summary = json.loads(summary._json_dict)
 
-        # Extract revision commit and branch
-        try:
-            rev, branch = config["revision"].split("@", 1)
-            revs.add(rev)
-        except ValueError:
-            # Ignore this run if the revision has been corrupted for some unknown reason
-            continue
-        # Ignore runs associated with a commit that is not part of the official repository
-        if not branch.startswith('Genesis-Embodied-AI/'):
-            continue
-
-        # Skip runs did not finish for some reason
-        if run.state != "finished":
-            continue
-
-        # Do not store new records if the desired number of revision is already reached
-        if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
-            continue
-
-        # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
-        # Note that the rigid body benchmark suite is the only one being supported for now.
-        sid, bid = config["benchmark_id"].split("-", 1)
-        if sid != "rigid_body":
-            continue
-
-        # Make sure that stats are valid
-        try:
-            is_valid = True
-            for k in METRIC_KEYS:
-                v = summary[k]
-                if not isinstance(v, (float, int)) or math.isnan(v):
-                    is_valid = False
-                    break
-            if not is_valid:
+            # Extract revision commit and branch
+            try:
+                rev, branch = config["revision"].split("@", 1)
+                revs.add(rev)
+            except ValueError:
+                # Ignore this run if the revision has been corrupted for some unknown reason
                 continue
-        except KeyError:
-            continue
+            # Ignore runs associated with a commit that is not part of the official repository
+            if not branch.startswith('Genesis-Embodied-AI/'):
+                continue
 
-        # Store all the records into a dict
-        nbid = normalize_benchmark_id(bid)
-        records_by_rev.setdefault(rev, {})[nbid] = {
-            metric: summary[metric] for metric in METRIC_KEYS
-        }
-        return records_by_rev
+            # Skip runs did not finish for some reason
+            if run.state != "finished":
+                continue
+
+            # Do not store new records if the desired number of revision is already reached
+            if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
+                continue
+
+            # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
+            # Note that the rigid body benchmark suite is the only one being supported for now.
+            sid, bid = config["benchmark_id"].split("-", 1)
+            if sid != "rigid_body":
+                continue
+
+            # Make sure that stats are valid
+            try:
+                is_valid = True
+                for k in METRIC_KEYS:
+                    v = summary[k]
+                    if not isinstance(v, (float, int)) or math.isnan(v):
+                        is_valid = False
+                        break
+                if not is_valid:
+                    continue
+            except KeyError:
+                continue
+
+            # Store all the records into a dict
+            nbid = normalize_benchmark_id(bid)
+            records_by_rev.setdefault(rev, {})[nbid] = {
+                metric: summary[metric] for metric in METRIC_KEYS
+            }
+            return records_by_rev
 
     speed_records_by_rev = fetch_wandb_data_old_format()
 
@@ -309,11 +309,11 @@ def main() -> None:
 
     # CSV file
     for metric in ("runtime_fps", "compile_time"):
-    with csv_files[metric].open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=info.keys())
-        w.writeheader()
-        for rec in rows_for_csv[metric]:
-            w.writerow(rec)
+        with csv_files[metric].open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=info.keys())
+            w.writeheader()
+            for rec in rows_for_csv[metric]:
+                w.writerow(rec)
 
     # write md results
     check_body_path.write_text(check_body + "\n", encoding="utf-8")
@@ -326,26 +326,3 @@ def main() -> None:
     else:
         exit_code = 0
     sys.exit(exit_code)
-    PY
-
-    # Enable command trace to ease debugging
-    set -o xtrace
-
-    # Expose outputs to later steps
-    if [ -f "$CHECK_BODY_PATH" ]; then
-    {
-        echo 'CHECK_OUTPUT<<__EOF__'
-        cat "$CHECK_BODY_PATH"
-        echo '__EOF__'
-    } >> "$GITHUB_ENV"
-    else
-    echo "CHECK_OUTPUT=" >> "$GITHUB_ENV"
-    fi
-
-    # Export status
-    echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = "$EXIT_CODE_REGRESSION" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
-    echo "HAS_ALERTS=$([ "$EXIT_CODE" = "$EXIT_CODE_ALERT" ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
-
-
-if __name__ == "__main__":
-    main()
