@@ -20,6 +20,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
+from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
@@ -72,19 +73,14 @@ def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
     tuple[float, np.ndarray, np.ndarray]
         (total_mass, center_of_mass, inertia_tensor)
     """
-    from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
-
     total_mass = gs.EPS
     total_com = np.zeros(3, dtype=gs.np_float)
     total_inertia = np.zeros((3, 3), dtype=gs.np_float)
 
     # Use collision geoms if available, otherwise fall back to visual geoms
-    g_infos = cg_infos if cg_infos else vg_infos
-    mesh_key = "mesh" if cg_infos else "vmesh"
-
-    for g_info in g_infos:
-        mesh = g_info.get(mesh_key)
-        if mesh is None:
+    for g_info in cg_infos if cg_infos else vg_infos:
+        mesh = g_info["mesh" if cg_infos else "vmesh"]
+        if g_info["type"] == gs.GEOM_TYPE.PLANE:
             continue
         geom_pos = g_info.get("pos", gu.zero_pos())
         geom_quat = g_info.get("quat", gu.identity_quat())
@@ -605,13 +601,36 @@ class RigidEntity(Entity):
                         is_col = g_info["contype"] or g_info["conaffinity"]
                         if is_col:
                             link_g_infos.append(g_info)
-            except (ValueError, AssertionError):
-                gs.logger.info("Falling back to legacy URDF parser. Default values of physics properties may be off.")
+            except (ValueError, AssertionError) as e:
+                gs.logger.warning(
+                    "Falling back to legacy URDF parser. Default values of physics properties may be off:\n"
+                    + str(e).replace("\n", " - ")
+                )
         elif isinstance(morph, gs.morphs.USD):
             from genesis.utils.usd import parse_usd_rigid_entity
 
             # Unified parser handles both articulations and rigid bodies
             l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_rigid_entity(morph, surface)
+
+        # Make sure that the inertia matrix of all links is valid
+        for l_info in l_infos:
+            inertia_i = l_info.get("inertial_i")
+            if inertia_i is None:
+                continue
+            inertia_diag = np.linalg.eigvals(inertia_i)
+            if (inertia_diag < 0.0).any():
+                gs.raise_exception(
+                    f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
+                )
+            if any(
+                inertia_diag[i] + inertia_diag[(i + 1) % 3] + gs.EPS < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
+                for i in range(3)
+            ):
+                gs.raise_exception(
+                    f"Inertia matrix of link '{l_info['name']}' does not satisfy A+B>=C for all permutations "
+                    f"(eigenvalues: {inertia_diag})."
+                )
+
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))
