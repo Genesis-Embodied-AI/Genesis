@@ -24,7 +24,7 @@ from pathlib import Path
 from utils import get_git_commit_info, pprint_oneline
 
 
-def upload_results_to_wandb(results_file_path, project_name, metric_names=None):
+def upload_results_to_wandb(run_prefix: str | None, results_file_path: str, project_name: str, metric_names=None) -> None:
     """
     Parse results file in pipe-delimited format and upload to W&B.
 
@@ -40,9 +40,12 @@ def upload_results_to_wandb(results_file_path, project_name, metric_names=None):
     skipped_count = 0
 
     # Initialize a single run for all benchmark results
+    name = f"{revision[:12]}"
+    if run_prefix:
+        name = f"{run_prefix}name"
     run = wandb.init(
         project=project_name,
-        name=f"benchmark-{revision[:12]}",
+        name=name,
         config={
             "revision": revision,
         },
@@ -110,6 +113,7 @@ def main():
     parser.add_argument(
         "--project", required=True, help="W&B project name (e.g., genesis-benchmarks-mem or genesis-benchmarks-perf)"
     )
+    parser.add_argument("--run-prefix", help="Added at start of W&B run name, if provided")
     parser.add_argument(
         "--metrics",
         nargs="+",
@@ -117,7 +121,11 @@ def main():
         help="Metric field names to upload (e.g., max_mem_mb compile_time runtime_fps). If not specified, all numeric fields are uploaded.",
     )
     args = parser.parse_args()
-    return upload_results_to_wandb(results_file_path=args.in_file, project_name=args.project, metric_names=args.metrics)
+    return upload_results_to_wandb(
+        run_prefix=args.run_prefix,
+        results_file_path=args.in_file,
+        project_name=args.project,
+        metric_names=args.metrics)
 
 
 if __name__ == "__main__":

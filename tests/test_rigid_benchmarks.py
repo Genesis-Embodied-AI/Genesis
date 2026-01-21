@@ -242,7 +242,7 @@ def factory_logger(stream_writers):
             self.logger = None
 
         def __enter__(self):
-            pass
+            return self
 
         def __exit__(self, exc_type, exc_value, traceback):
             pass
