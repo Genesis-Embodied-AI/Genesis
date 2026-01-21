@@ -41,7 +41,7 @@ class Rigid(Material):
 
     def __init__(
         self,
-        rho=200.0,
+        rho=None,
         friction=None,
         needs_coup=True,
         coup_friction=0.1,
@@ -84,7 +84,7 @@ class Rigid(Material):
         self._sdf_cell_size = float(sdf_cell_size)
         self._sdf_min_res = int(sdf_min_res)
         self._sdf_max_res = int(sdf_max_res)
-        self._rho = float(rho)
+        self._rho = float(rho) if rho is not None else None
         self._gravity_compensation = float(gravity_compensation)
 
     @property

@@ -31,7 +31,7 @@ from ..base_entity import Entity
 from .rigid_equality import RigidEquality
 from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
-from .rigid_link import RigidLink
+from .rigid_link import RigidLink, RHO_OBJECT
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -79,6 +79,10 @@ def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
     total_mass = gs.EPS
     total_com = np.zeros(3, dtype=gs.np_float)
     total_inertia = np.zeros((3, 3), dtype=gs.np_float)
+
+    # Handling of default material density
+    if rho is None:
+        rho = RHO_OBJECT
 
     # Use collision geoms if available, otherwise fall back to visual geoms
     for g_info in cg_infos if cg_infos else vg_infos:
@@ -992,6 +996,7 @@ class RigidEntity(Entity):
             root_idx=root_idx,
             invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
+            is_robot=l_info.get("is_robot", root_idx != -1),
         )
         self._links.append(link)
 
