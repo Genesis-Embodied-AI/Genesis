@@ -1448,8 +1448,8 @@ class USD(FileMorph):
     ]
 
     # Geometry Parsing Options
-    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*", r"^.*"]
-    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
+    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*"]
+    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*"]
 
     # Internal Options
     usd_ctx: Any = None

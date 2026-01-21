@@ -89,6 +89,7 @@ class UsdContext:
         self._stage = Usd.Stage.Open(self._stage_file)
         self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
         self._material_parsed = False
+        self._prim_material_bindings: dict[str, str] = {}  # prim_path -> material_path
         self._xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
         self._is_yup = UsdGeom.GetStageUpAxis(self._stage) == "Y"
         self._meter_scale = UsdGeom.GetStageMetersPerUnit(self._stage)
@@ -110,6 +111,42 @@ class UsdContext:
         spec_path = self._stage_file if spec.layer.identifier == self._bake_stage_file else spec.layer.identifier
         return spec_path + spec.path.pathString
 
+    def get_binding_material(self, prim: Usd.Prim):
+        prim_path = str(prim.GetPath())
+        if prim_path in self._prim_material_bindings:
+            return UsdShade.Material(self._stage.GetPrimAtPath(self._prim_material_bindings[prim_path]))
+        return None
+
+    def compute_transform(self, prim: Usd.Prim) -> np.ndarray:
+        transform = self._xform_cache.GetLocalToWorldTransform(prim)
+        T_usd = np.asarray(transform, dtype=np.float32)  # translation on the bottom row
+        if self._is_yup:
+            T_usd @= mu.Y_UP_TRANSFORM
+        T_usd[:, :3] *= self._meter_scale
+        return T_usd.transpose()
+
+    def compute_gs_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None):
+        Q, S = extract_scale(self.compute_transform(prim))
+        if ref_prim is None:
+            return Q, S
+
+        Q_ref, S_ref = self.compute_gs_transform(ref_prim)
+        Q_rel = np.linalg.inv(Q_ref) @ Q
+        return Q_rel, S
+
+    def apply_surface(self, geom_prim: Usd.Prim, surface: gs.surfaces.Surface):
+        geom_path = str(geom_prim.GetPath())
+        applied_surface = surface.copy()
+
+        if geom_path in self._prim_material_bindings:
+            surface_id = self._prim_material_bindings[geom_path]
+            surface_dict, uv_name = self._material_properties.get(surface_id, ({}, "st"))
+            # accepted keys: color_texture, opacity_texture, roughness_texture, metallic_texture, normal_texture, emissive_texture, ior
+            applied_surface.update_texture(**surface_dict)
+        else:
+            uv_name, surface_id = "st", None
+        return applied_surface, uv_name, surface_id
+
     def find_all_rigid_entities(self) -> list[Usd.Prim]:
         """
         Find all prims with ArticulationRootAPI and RigidBody in the stage.
@@ -124,7 +161,6 @@ class UsdContext:
             elif prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI):
                 entity_prims.append(prim)
                 stage_iter.PruneChildren()
-
         return entity_prims
 
     def find_all_materials(self):
@@ -142,16 +178,28 @@ class UsdContext:
             if prim.IsA(UsdGeom.Gprim) or prim.IsA(UsdGeom.Subset):
                 bound_prims.append(prim)
         materials = UsdShade.MaterialBindingAPI.ComputeBoundMaterials(bound_prims)[0]
-        for material in materials:
+        for bound_prim, material in zip(bound_prims, materials):
+            geom_path = str(bound_prim.GetPath())
             material_prim = material.GetPrim()
+            
             if material_prim.IsValid():
-                # TODO: material_id is reserved for group_by_material option.
+                # TODO: material_id is also reserved for group_by_material option.
                 material_id = self.get_prim_id(material_prim)
                 if material_id not in self._material_properties:
                     material_dict, uv_name = parse_material_preview_surface(material)
                     self._material_properties[material_id] = material_dict, uv_name
                     if self._need_bake and material_dict is None:
                         bake_material_paths[material_id] = str(material_prim.GetPath())
+                self._prim_material_bindings[geom_path] = material_id
+            else:
+                if bound_prim.IsA(UsdGeom.Gprim):
+                    gprim = UsdGeom.Gprim(bound_prim)
+                    display_colors = np.asarray(gprim.GetDisplayColorPrimvar().Get() or [], dtype=np.float32)
+                    if display_colors.size > 0:
+                        material_id = self.get_prim_id(bound_prim)
+                        color_texture = gs.textures.ColorTexture(color=tuple(display_colors[0]))
+                        self._material_properties[material_id] = {"color_texture": color_texture}, "st"
+                        self._prim_material_bindings[geom_path] = material_id
         self._material_parsed = True
 
         if not bake_material_paths:
@@ -237,36 +285,3 @@ class UsdContext:
             if real_path.is_file():
                 gs.logger.warning(f"Replacing symlink {asset_path} with real file {real_path}.")
                 shutil.copy2(real_path, asset_path)
-
-    def apply_surface(self, surface_id: str, surface: gs.surfaces.Surface):
-        applied_surface = surface.copy()
-        surface_dict, uv_name = self._material_properties.get(surface_id, (None, "st"))
-        if surface_dict is not None:
-            applied_surface.update_texture(
-                color_texture=surface_dict.get("color_texture"),
-                opacity_texture=surface_dict.get("opacity_texture"),
-                roughness_texture=surface_dict.get("roughness_texture"),
-                metallic_texture=surface_dict.get("metallic_texture"),
-                normal_texture=surface_dict.get("normal_texture"),
-                emissive_texture=surface_dict.get("emissive_texture"),
-                ior=surface_dict.get("ior"),
-            )
-        return applied_surface, uv_name
-
-    def compute_transform(self, prim: Usd.Prim) -> np.ndarray:
-        transform = self._xform_cache.GetLocalToWorldTransform(prim)
-        T_usd = np.asarray(transform, dtype=np.float32)  # translation on the bottom row
-        if self._is_yup:
-            T_usd @= mu.Y_UP_TRANSFORM
-        T_usd[:, :3] *= self._meter_scale
-        return T_usd.transpose()
-
-    def compute_gs_transform(self, prim: Usd.Prim, ref_prim: Usd.Prim = None):
-        Q, S = extract_scale(self.compute_transform(prim))
-
-        if ref_prim is None:
-            return Q, S
-
-        Q_ref, S_ref = self.compute_gs_transform(ref_prim)
-        Q_rel = np.linalg.inv(Q_ref) @ Q
-        return Q_rel, S

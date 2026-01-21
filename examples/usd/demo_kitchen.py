@@ -39,7 +39,12 @@ def main():
         # vis_mode="collision",
         # visualize_contact=True,
     )
-    print(entities)
+
+    for entity in entities:
+        print(entity.morph.prim_path)
+        for joint in entity.joints:
+            print(joint.name, joint.type)
+
     cam1 = scene.add_camera(
         res=(1280, 960),
         pos=(-3.0, 3.0, 3.0),

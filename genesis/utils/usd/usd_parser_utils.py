@@ -45,6 +45,18 @@ def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     return np.asarray([usd_quat.GetReal(), *usd_quat.GetImaginary()], dtype=gs.np_float)
 
 
+def usd_attr_array_to_numpy(attr: Usd.Attribute, dtype: np.dtype, return_none: bool = False) -> np.ndarray | None:
+    if attr.HasValue():
+        return np.array(attr.Get(), dtype=dtype)
+    return None if return_none else np.empty(0, dtype=dtype)
+
+
+def usd_primvar_array_to_numpy(primvar: UsdGeom.Primvar, dtype: np.dtype, return_none: bool = False) -> np.ndarray | None:
+    if primvar.IsDefined() and primvar.HasValue():
+        return np.array(primvar.ComputeFlattened(), dtype=dtype)
+    return None if return_none else np.empty(0, dtype=dtype)
+
+
 def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     R, S = gu.polar(T[:3, :3], pure_rotation=True, side="right")
     assert np.linalg.det(R) > 0, "Rotation matrix must contain only pure rotations."
