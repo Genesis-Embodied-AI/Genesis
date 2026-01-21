@@ -241,6 +241,12 @@ def factory_logger(stream_writers):
             self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(self.hparams, delimiter="-")))
             self.logger = None
 
+        def __enter__(self):
+            pass
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
         def write(self, items):
             nonlocal stream_writers
 
