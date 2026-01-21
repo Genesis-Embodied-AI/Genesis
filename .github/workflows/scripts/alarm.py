@@ -248,7 +248,6 @@ def main() -> None:
                 config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
             if isinstance(summary._json_dict, str):
                 summary = json.loads(summary._json_dict)
-            # print('summary', summary)
 
             # Extract revision commit and branch
             try:
@@ -272,41 +271,12 @@ def main() -> None:
             if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
                 continue
 
-            # record = records_by_rev[rev]
             for k, v in summary.items():
                 if k.startswith("_"):
                     continue
-                # print('k', k, 'v', v, type(v))
                 metric_name, _, kv_pairs_str = k.partition("-")
-                # kv_pairs = parse_kv_pairs_str(kv_pairs_str)
-                # env = kv_pairs[env]
-                # if rev not in records_by_rev:
-
-                # if kv_pairs_str not in record:
-                #     record[kv_pairs_str] = {}
                 records_by_rev[rev][kv_pairs_str][metric_name] = v                
-                # {})[kv_pairs_str] = {
-                #     metric_name: v
-                # }
 
-            # Make sure that stats are valid
-            # try:
-            #     is_valid = True
-            #     for k in MEM_METRIC_KEYS:
-            #         v = summary[k]
-            #         if not isinstance(v, (float, int)) or math.isnan(v):
-            #             is_valid = False
-            #             break
-            #     if not is_valid:
-            #         continue
-            # except KeyError:
-            #     continue
-
-            # Store all the records into a dict
-            # nbid = normalize_benchmark_id(bid)
-            # records_by_rev.setdefault(rev, {})[nbid] = {
-            #     metric: summary[metric] for metric in MEM_METRIC_KEYS
-            # }
             print('records_by_rev', records_by_rev)
             for rev, records in records_by_rev.items():
                 print('rev')
