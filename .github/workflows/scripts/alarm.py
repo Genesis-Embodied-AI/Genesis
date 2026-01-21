@@ -1,7 +1,8 @@
 # runs from alarm.yml
 
+from collections import defaultdict
 import argparse
-import os, sys, json, re, math, statistics
+import os, sys, json, math, statistics
 import wandb
 from frozendict import frozendict
 from pathlib import Path
@@ -228,7 +229,7 @@ def main() -> None:
         print('got runs_iter')
 
         revs = set()
-        records_by_rev = {}
+        records_by_rev = defaultdict(lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
             print("i", i, "run", run)
             # Abort if still not complete after checking enough runs.
@@ -247,7 +248,7 @@ def main() -> None:
                 config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
             if isinstance(summary._json_dict, str):
                 summary = json.loads(summary._json_dict)
-            print('summary', summary)
+            # print('summary', summary)
 
             # Extract revision commit and branch
             try:
@@ -271,16 +272,22 @@ def main() -> None:
             if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
                 continue
 
+            # record = records_by_rev[rev]
             for k, v in summary.items():
                 if k.startswith("_"):
                     continue
-                print('k', k, 'v', v, type(v))
-                metric_name, _, kv_pairs_str = k.partition("-")[0]
-                kv_pairs = parse_kv_pairs_str(kv_pairs_str)
+                # print('k', k, 'v', v, type(v))
+                metric_name, _, kv_pairs_str = k.partition("-")
+                # kv_pairs = parse_kv_pairs_str(kv_pairs_str)
                 # env = kv_pairs[env]
-                records_by_rev.setdefault(rev, {})[k] = {
-                    metric: v
-                }
+                # if rev not in records_by_rev:
+
+                # if kv_pairs_str not in record:
+                #     record[kv_pairs_str] = {}
+                records_by_rev[rev][kv_pairs_str][metric_name] = v                
+                # {})[kv_pairs_str] = {
+                #     metric_name: v
+                # }
 
             # Make sure that stats are valid
             # try:
@@ -301,7 +308,11 @@ def main() -> None:
             #     metric: summary[metric] for metric in MEM_METRIC_KEYS
             # }
             print('records_by_rev', records_by_rev)
-            adsfasdf
+            for rev, records in records_by_rev.items():
+                print('rev')
+                for k, v in records.items():
+                    print("- ", "record", k, v)
+            # adsfasdf
             return records_by_rev
 
     speed_records_by_rev = {}
