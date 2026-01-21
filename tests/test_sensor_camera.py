@@ -6,12 +6,28 @@ import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
+from genesis.utils.geom import trans_to_T
+
 from .utils import assert_allclose, rgb_array_to_png_bytes
+
+
+try:
+    import LuisaRenderPy
+
+    ENABLE_RAYTRACER = True
+except ImportError:
+    ENABLE_RAYTRACER = False
+try:
+    import gs_madrona
+
+    ENABLE_MADRONA = True
+except ImportError:
+    ENABLE_MADRONA = False
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 1])
-def test_rasterizer_camera_sensor(n_envs, show_viewer):
+def test_rasterizer_non_batched(n_envs, show_viewer):
     scene = gs.Scene(
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -147,12 +163,9 @@ def test_rasterizer_camera_sensor(n_envs, show_viewer):
     assert_allclose(cam_move_dist_offset_T, cam_move_dist, atol=1e-2)
 
 
-# ========================== Multi-environment tests ==========================
-
-
 @pytest.mark.required
 @pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
-def test_rasterizer_camera_sensor_n_envs(show_viewer, png_snapshot):
+def test_rasterizer_batched(show_viewer, png_snapshot):
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -169,7 +182,11 @@ def test_rasterizer_camera_sensor_n_envs(show_viewer, png_snapshot):
     )
     camera = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
-            res=(64, 64), pos=(3.0, 0.0, 1.5), lookat=(0.0, 0.0, 0.5), fov=60.0, draw_debug=show_viewer
+            res=(64, 64),
+            pos=(3.0, 0.0, 1.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=60.0,
+            draw_debug=show_viewer,
         )
     )
     scene.build(n_envs=2)
@@ -192,7 +209,7 @@ def test_rasterizer_camera_sensor_n_envs(show_viewer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
-def test_rasterizer_camera_sensor_n_attached_camera(show_viewer, png_snapshot):
+def test_rasterizer_attached_batched(show_viewer, png_snapshot):
     scene = gs.Scene(show_viewer=show_viewer)
 
     # Add a plane
@@ -237,3 +254,144 @@ def test_rasterizer_camera_sensor_n_attached_camera(show_viewer, png_snapshot):
 
     for i in range(scene.n_envs):
         assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
+def test_batch_renderer(n_envs, png_snapshot):
+    CAM_RES = (128, 256)
+
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.5,
+            pos=(0.0, 0.0, 1.0),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.5, 0.5),
+        ),
+    )
+
+    camera_common_options = dict(
+        res=CAM_RES,
+        pos=(-2.0, 0.0, 1.5),
+        lookat=(0.0, 0.0, 1.0),
+        up=(0.0, 0.0, 1.5),
+        fov=70.0,
+        lights=[
+            dict(
+                pos=(2.0, 2.0, 5.0),
+                color=(1.0, 0.5, 0.25),
+                intensity=1.0,
+                directional=False,
+            )
+        ],
+        use_rasterizer=True,
+    )
+    camera_1 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(**camera_common_options))
+    camera_2 = scene.add_sensor(
+        gs.sensors.BatchRendererCameraOptions(
+            **camera_common_options,
+            entity_idx=sphere.idx,
+            link_idx_local=0,
+            offset_T=trans_to_T(np.array([0.0, 0.0, 3.0])),
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+    for camera in (camera_1, camera_2):
+        data = camera.read()
+        if n_envs > 0:
+            for i in range(n_envs):
+                assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
+        else:
+            assert rgb_array_to_png_bytes(data.rgb) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.parametrize("n_envs", [0, 1])
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+def test_raytracer(n_envs, png_snapshot):
+    CAM_RES = (128, 256)
+
+    scene = gs.Scene(
+        renderer=gs.renderers.RayTracer(
+            env_surface=gs.surfaces.Emission(
+                emissive_texture=gs.textures.ColorTexture(
+                    color=(0.2, 0.3, 0.5),
+                ),
+            ),
+            env_radius=20.0,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.5,
+            pos=(0.0, 0.0, 1.0),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.5, 0.5),
+        ),
+    )
+
+    camera_common_options = dict(
+        res=CAM_RES,
+        pos=(-2.0, 0.0, 1.5),
+        lookat=(0.0, 0.0, 1.0),
+        up=(0.0, 0.0, 1.5),
+        fov=70.0,
+        model="pinhole",
+        spp=64,
+        denoise=False,
+        lights=[
+            dict(
+                pos=(2.0, 2.0, 5.0),
+                color=(10.0, 10.0, 10.0),
+                intensity=1.0,
+            )
+        ],
+    )
+    camera_1 = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            **camera_common_options,
+            env_surface=gs.surfaces.Emission(
+                emissive_texture=gs.textures.ColorTexture(
+                    color=(0.2, 0.3, 0.5),
+                ),
+            ),
+            env_radius=20.0,
+        )
+    )
+    camera_2 = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            **camera_common_options,
+            entity_idx=sphere.idx,
+            link_idx_local=0,
+            offset_T=trans_to_T(np.array([0.0, 0.0, 3.0])),
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+    for camera in (camera_1, camera_2):
+        data = camera.read()
+        if n_envs > 0:
+            for i in range(n_envs):
+                assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
+        else:
+            assert rgb_array_to_png_bytes(data.rgb) == png_snapshot

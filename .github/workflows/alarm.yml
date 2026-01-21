@@ -335,8 +335,10 @@ jobs:
                       **dict(zip(params_name, params_repr)),
                       "current": value_cur,
                       "baseline_last": None,
+                      "baseline_mean": None,
                       "baseline_min": None,
                       "baseline_max": None,
+                      "status": None,
                   }
 
                   values_prev = [

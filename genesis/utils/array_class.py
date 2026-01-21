@@ -216,6 +216,11 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     cg_beta: V_ANNOTATION
     cg_pg_dot_pMg: V_ANNOTATION
     # Optional Newton fields
+    # Hessian matrix of the optimization problem as a dense 2D tensor.
+    # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
+    # As a result, the values of the strictly upper triangular part is undefined.
+    # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
+    # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: V_ANNOTATION
     nt_vec: V_ANNOTATION
     # Backward gradients
@@ -1357,6 +1362,11 @@ class StructLinksInfo(metaclass=BASE_METACLASS):
     inertial_i: V_ANNOTATION
     inertial_mass: V_ANNOTATION
     entity_idx: V_ANNOTATION
+    # Heterogeneous simulation support: per-link geom/vgeom index ranges
+    geom_start: V_ANNOTATION
+    geom_end: V_ANNOTATION
+    vgeom_start: V_ANNOTATION
+    vgeom_end: V_ANNOTATION
 
 
 def get_links_info(solver):
@@ -1381,6 +1391,11 @@ def get_links_info(solver):
         inertial_i=V(dtype=gs.ti_mat3, shape=links_info_shape),
         inertial_mass=V(dtype=gs.ti_float, shape=links_info_shape),
         entity_idx=V(dtype=gs.ti_int, shape=links_info_shape),
+        # Heterogeneous simulation support: per-link geom/vgeom index ranges
+        geom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        geom_end=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_start=V(dtype=gs.ti_int, shape=links_info_shape),
+        vgeom_end=V(dtype=gs.ti_int, shape=links_info_shape),
     )
 
 
@@ -1785,7 +1800,7 @@ class StructRigidAdjointCache(metaclass=BASE_METACLASS):
     # us not to overwrite the values that have been read during the forward pass, so we need to store the intemediate
     # values in this cache to avoid overwriting them. Specifically, after we compute next frame's qpos, dofs_vel, and
     # dofs_acc, we need to store them in this cache because we overwrite the values in the next frame. See how
-    # [kernel_save_adjoint_cache] is used in [rigid_solver_decomp.py] to store the values in this cache.
+    # [kernel_save_adjoint_cache] is used in [rigid_solver.py] to store the values in this cache.
     qpos: V_ANNOTATION
     dofs_vel: V_ANNOTATION
     dofs_acc: V_ANNOTATION
@@ -1814,6 +1829,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool
+    enable_heterogeneous: bool
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
@@ -1881,7 +1897,7 @@ class DataManager:
             self.geoms_state_adjoint_cache = get_geoms_state(solver)
 
         self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
-        self.errno = V_SCALAR_FROM(dtype=gs.ti_int, value=0)
+        self.errno = V(dtype=gs.ti_int, shape=(solver._B,))
 
 
 DofsState = StructDofsState if gs.use_ndarray else ti.template()

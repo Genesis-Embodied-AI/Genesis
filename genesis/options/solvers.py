@@ -294,6 +294,9 @@ class RigidOptions(Options):
         Whether to enable joint limit. Defaults to True.
     enable_self_collision : bool, optional
         Whether to enable self collision within each entity. Defaults to True.
+    enable_neutral_collision : bool, optional
+        Whether to enable self collision occurring in neutral configuration (qpos0) within each entity. Defaults to
+        False.
     enable_adjacent_collision : bool, optional
         Whether to enable collision between successive parent-child body pairs within each entity. Defaults to False.
     disable_constraint: bool, optional
@@ -362,6 +365,7 @@ class RigidOptions(Options):
     enable_collision: bool = True
     enable_joint_limit: bool = True
     enable_self_collision: bool = True
+    enable_neutral_collision: bool = False
     enable_adjacent_collision: bool = False
     disable_constraint: bool = False
     max_collision_pairs: int = 150

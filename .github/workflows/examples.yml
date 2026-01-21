@@ -41,13 +41,15 @@
 #         with:
 #           python-version: "3.12"
 
-#       - name: Install Mesa OpenGL driver for headless rendering
-#         run: |
-#           sudo apt-get update
-#           sudo apt install -y \
-#               libglu1-mesa \
-#               libegl-mesa0 \
-#               libgl1-mesa-dev
+      # - name: Install Mesa OpenGL driver for headless rendering
+      #   run: |
+      #     # fix broken microsoft package source on ubuntu-24.04
+      #     sudo rm -f /etc/apt/sources.list.d/microsoft*.list
+      #     sudo apt-get update
+      #     sudo apt install -y \
+      #         libglu1-mesa \
+      #         libegl-mesa0 \
+      #         libgl1-mesa-dev
 
       # - name: Install Python deps
       #   run: |

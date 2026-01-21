@@ -38,7 +38,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "c50bfe3e354e105b221ef4eb9a79504650709dd2"
-HUGGINGFACE_SNAPSHOT_REVISION = "17d79e7627479ef836524d14449e2fdc4282973d"
+HUGGINGFACE_SNAPSHOT_REVISION = "df9757345148d1469b814f35cde7bb6aa06de66a"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -644,7 +644,7 @@ def check_mujoco_model_consistency(
     tol: float,
 ):
     # Delay import to enable run benchmarks for old Genesis versions that do not have this method
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import _sanitize_sol_params
+    from genesis.engine.solvers.rigid.rigid_solver import _sanitize_sol_params
 
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)

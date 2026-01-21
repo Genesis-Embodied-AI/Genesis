@@ -7,7 +7,7 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-import genesis.utils.sdf_decomp as sdf_decomp
+import genesis.utils.sdf as sdf
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
@@ -389,7 +389,7 @@ class MPMSolver(Solver):
                         for i_g in range(self.sim.rigid_solver.n_geoms):
                             if geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
-                                sdf_normal_cell = sdf_decomp.sdf_func_normal_world(
+                                sdf_normal_cell = sdf.sdf_func_normal_world(
                                     geoms_state=geoms_state,
                                     geoms_info=geoms_info,
                                     rigid_global_info=rigid_global_info,
