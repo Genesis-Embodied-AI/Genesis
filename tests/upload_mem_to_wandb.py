@@ -44,7 +44,7 @@ def parse_test_name(test_name):
     params = {
         "scenario": parts[0],
         "solver": parts[1],
-        "flag": parts[2],
+        "gjk": parts[2],
         "n_envs": parts[3],
         "backend": parts[4],
     }
