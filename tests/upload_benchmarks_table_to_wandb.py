@@ -27,7 +27,7 @@ from utils import get_git_commit_info, pprint_oneline
 def upload_results_to_wandb(results_file_path, project_name, metric_names=None):
     """
     Parse results file in pipe-delimited format and upload to W&B.
-    
+
     Args:
         results_file_path: Path to the results file
         project_name: W&B project name (e.g., "genesis-benchmarks-mem" or "genesis-benchmarks-perf")
@@ -90,8 +90,8 @@ def upload_results_to_wandb(results_file_path, project_name, metric_names=None):
             sorted_params = dict(sorted(params.items()))
 
             # Create benchmark ID matching alarm.yml format
-            benchmark_id_suffix = pprint_oneline(sorted_params, delimiter='-')
-            
+            benchmark_id_suffix = pprint_oneline(sorted_params, delimiter="-")
+
             for metric_name, metric_value in metrics.items():
                 benchmark_id = f"{metric_name}-{benchmark_id_suffix}"
                 print(f"📊 Uploading {benchmark_id}: {metric_value}")
@@ -105,27 +105,19 @@ def upload_results_to_wandb(results_file_path, project_name, metric_names=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Upload benchmark results to W&B"
-    )
+    parser = argparse.ArgumentParser(description="Upload benchmark results to W&B")
     parser.add_argument("--in-file", required=True, help="Path to results file")
     parser.add_argument(
-        "--project",
-        required=True,
-        help="W&B project name (e.g., genesis-benchmarks-mem or genesis-benchmarks-perf)"
+        "--project", required=True, help="W&B project name (e.g., genesis-benchmarks-mem or genesis-benchmarks-perf)"
     )
     parser.add_argument(
         "--metrics",
         nargs="+",
         default=None,
-        help="Metric field names to upload (e.g., max_mem_mb compile_time runtime_fps). If not specified, all numeric fields are uploaded."
+        help="Metric field names to upload (e.g., max_mem_mb compile_time runtime_fps). If not specified, all numeric fields are uploaded.",
     )
     args = parser.parse_args()
-    return upload_results_to_wandb(
-        results_file_path=args.in_file,
-        project_name=args.project,
-        metric_names=args.metrics
-    )
+    return upload_results_to_wandb(results_file_path=args.in_file, project_name=args.project, metric_names=args.metrics)
 
 
 if __name__ == "__main__":
