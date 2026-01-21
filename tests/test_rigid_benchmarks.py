@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
+import wandb
 
 import genesis as gs
 
@@ -239,16 +240,66 @@ def factory_logger(stream_writers):
                 "backend": str(gs.backend.name),
             }
             self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(self.hparams, delimiter="-")))
+
             self.logger = None
+            self.wandb_run = None
 
         def __enter__(self):
+            nonlocal stream_writers
+
+            if "WANDB_API_KEY" in os.environ:
+                assert gs.backend is not None
+                revision, timestamp = get_git_commit_info()
+
+                hardware_fringerprint = get_hardware_fingerprint(include_gpu=(gs.backend != gs.cpu))
+                platform_fringerprint = get_platform_fingerprint()
+                machine_uuid = hashlib.md5(
+                    "-".join((hardware_fringerprint, platform_fringerprint)).encode("UTF-8")
+                ).hexdigest()
+
+                benchmark_uuid = hashlib.md5(self.benchmark_id.encode("UTF-8")).hexdigest()
+
+                run_uuid = hashlib.md5(
+                    "-".join((hardware_fringerprint, platform_fringerprint, self.benchmark_id, revision)).encode(
+                        "UTF-8"
+                    )
+                ).hexdigest()
+
+                self.wandb_run = wandb.init(
+                    project="genesis-benchmarks",
+                    name="-".join((self.benchmark_id, revision)),
+                    id=run_uuid,
+                    tags=[BENCHMARK_NAME, benchmark_uuid],
+                    config={
+                        "revision": revision,
+                        "timestamp": timestamp,
+                        "machine_uuid": machine_uuid,
+                        "hardware": hardware_fringerprint,
+                        "platform": platform_fringerprint,
+                        "benchmark_id": self.benchmark_id,
+                        **self.hparams,
+                    },
+                    settings=wandb.Settings(
+                        x_disable_stats=True,
+                        console="off",
+                    ),
+                )
             return self
 
         def __exit__(self, exc_type, exc_value, traceback):
-            pass
+            if self.wandb_run is not None:
+                self.wandb_run.finish()
 
         def write(self, items):
             nonlocal stream_writers
+
+            if self.wandb_run is not None:
+                self.wandb_run.log(
+                    {
+                        "timestamp": self.wandb_run.config["timestamp"],
+                        **items,
+                    }
+                )
 
             if stream_writers:
                 msg = (
