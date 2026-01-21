@@ -474,3 +474,58 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+def test_lidar_cache_offset_parallel_env(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    cube = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 1.0),
+            pos=(0.0, 0.0, 0.5),
+        ),
+    )
+
+    sensors = [
+        scene.add_sensor(
+            gs.sensors.Raycaster(
+                pattern=gs.sensors.raycaster.SphericalPattern(
+                    n_points=(2, 2),
+                ),
+                entity_idx=cube.idx,
+                return_world_frame=False,
+            )
+        ),
+        scene.add_sensor(
+            gs.sensors.Raycaster(
+                pattern=gs.sensors.raycaster.SphericalPattern(
+                    n_points=(2, 2),
+                ),
+                entity_idx=cube.idx,
+                return_world_frame=False,
+            )
+        ),
+        scene.add_sensor(
+            gs.sensors.Raycaster(
+                pattern=gs.sensors.raycaster.SphericalPattern(
+                    n_points=(2, 2),
+                ),
+                entity_idx=cube.idx,
+                return_world_frame=False,
+            )
+        ),
+    ]
+
+    scene.build()
+
+    scene.step()
+    for sensor in sensors:
+        sensor_data = sensor.read()
+        assert (sensor_data.distances > gs.EPS).any()
+        assert (sensor_data.points.abs() > gs.EPS).any()
