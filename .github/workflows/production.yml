@@ -171,11 +171,6 @@ jobs:
                 --project genesis-benchmarks-2 \
                 --metrics max_mem_mb \
                 --run-prefix mem
-            python tests/upload_benchmarks_table_to_wandb.py \
-                --in-file "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt" \
-                --project genesis-benchmarks-2 \
-                --metrics compile_time runtime_fps realtime_factor \
-                --run-prefix perf
           EOF
       - name: Kill Slurm job
         if: always()
