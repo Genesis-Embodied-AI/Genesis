@@ -68,8 +68,8 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
     Shared metadata between all IMU sensors.
     """
 
-    alignment_rot_matrix: torch.Tensor = make_tensor_field((0, 0, 3, 3, 3))
-    magnetic_field_vector: torch.Tensor = make_tensor_field((0, 3))
+    alignment_rot_matrix: torch.Tensor = make_tensor_field((0, 0, 3, 3))
+    magnetic_field_vector: torch.Tensor = make_tensor_field((0, 0, 3))  # added another dimension to match data layout
     acc_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
     gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
     mag_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
@@ -153,8 +153,8 @@ class IMUSensor(
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.gyro_cross_axis_coupling),
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.mag_cross_axis_coupling),
                 ],
-            ).unsqueeze(0),
-            expand=(self._manager._sim._B, 1, 3, 3, 3),  # 3 sub-matrices after adding mag
+            ),
+            expand=(self._manager._sim._B, 3, 3, 3),  # 3 sub-matrices after adding mag
             dim=1,
         )
 
@@ -166,8 +166,8 @@ class IMUSensor(
         self._shared_metadata.magnetic_field_vector = concat_with_tensor(
             self._shared_metadata.magnetic_field_vector,
             default_field,
-            expand=(self._manager._sim._B, 3),
-            dim=0,
+            expand=(self._manager._sim._B, 1, 3),
+            dim=1,
         )
 
         if self._options.draw_debug:
@@ -216,9 +216,8 @@ class IMUSensor(
         local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
 
-        n_envs = quats.shape[0]
-        B_world = shared_metadata.magnetic_field_vector.reshape(n_envs, -1, 3)
-        local_mag = inv_transform_by_quat(B_world, offset_quats)
+        # is now already (n_envs, n_imus, 3), no need for a reshape
+        local_mag = inv_transform_by_quat(shared_metadata.magnetic_field_vector, offset_quats)
 
         # cache shape: (B, n_imus * 6)
         *batch_size, n_imus, _ = local_acc.shape
@@ -248,12 +247,11 @@ class IMUSensor(
             shared_metadata.interpolate,
         )
 
-        # shared_cache_xyz_view = shared_cache.view(shared_cache.shape[0], -1, 3)
-        vectors = shared_cache.reshape(-1, 3, 1)  # flatten cache
-        rot_mats = shared_metadata.alignment_rot_matrix.reshape(-1, 3, 3)
-        # vectors = shared_cache_xyz_view.reshape(-1, 3).unsqueeze(-1)
-        transformed = torch.bmm(rot_mats, vectors)
-        shared_cache.copy_(transformed.reshape(shared_cache.shape))
+        # apply rotation matrix to the shared cache
+        shared_cache_xyz_view = shared_cache.view(shared_cache.shape[0], -1, 3)
+        shared_cache_xyz_view.copy_(
+            torch.matmul(shared_metadata.alignment_rot_matrix, shared_cache_xyz_view.unsqueeze(-1)).squeeze(-1)
+        )
 
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)

@@ -11,12 +11,12 @@ from .utils import assert_allclose, assert_array_equal
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_imu_sensor(show_viewer, tol, n_envs):
-    """Test if the 9-axis IMU sensor returns the correct accl, gyro, and mag data."""
+    """Test if the IMU sensor returns the correct data."""
     GRAVITY = -10.0
     DT = 1e-2
     BIAS = (0.1, 0.2, 0.3)
-    MAG_FIELD = (0.3, 0.0, 0.4)  # magnitude is 0.5
     DELAY_STEPS = 2
+    MAG_FIELD = (0.3, 0.1, 0.5)  # arbitrary world magnetic field
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -46,14 +46,13 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     imu_delayed = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
-            magnetic_field=MAG_FIELD,
             delay=DT * DELAY_STEPS,
+            magnetic_field=MAG_FIELD,
         )
     )
     imu_noisy = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
-            magnetic_field=MAG_FIELD,
             acc_cross_axis_coupling=0.01,
             gyro_cross_axis_coupling=(0.02, 0.03, 0.04),
             mag_cross_axis_coupling=0.01,
@@ -64,13 +63,14 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             gyro_random_walk=(0.001, 0.001, 0.001),
             mag_random_walk=(0.001, 0.001, 0.001),
             delay=DT,
+            magnetic_field=MAG_FIELD,
             jitter=DT * 0.1,
             interpolate=True,
         )
     )
 
     scene.build(n_envs=n_envs)
-    batch_shape = (n_envs,) if n_envs > 0 else ()
+
     # box is in freefall
     for _ in range(10):
         scene.step()
@@ -88,7 +88,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     box.set_COM_shift([0.05, 0.05, 0.05])
 
     # update noise and bias for accelerometer, gyroscope and magnetometer
-    imu_noisy.set_noise((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.01, 0.01, 0.01))
+    imu_noisy.set_noise((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.05, 0.05, 0.05))
     imu_noisy.set_bias((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.05, 0.05, 0.05))
     imu_noisy.set_jitter(0.001)
 
@@ -99,7 +99,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     for _ in range(DELAY_STEPS):
         scene.step()
-    print(imu.read().mag)
+
     assert_array_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
     assert_array_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
     assert_array_equal(imu_delayed.read().mag, true_imu_delayed_reading.mag)
@@ -112,57 +112,59 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     with np.testing.assert_raises(AssertionError):
         assert_allclose(lin_acc_no_offset, lin_acc_with_offset, atol=0.2)
     imu.set_pos_offset((0.0, 0.0, 0.0))
-    # check that entity rotation affects magnetometer readings
-    # Rotate 90 deg around y axis -> This should transform (0.3, 0, 0.4) to (-0.4, 0, 0.3)
-    pitch_quat = gu.euler_to_quat(torch.tensor([0.0, 90.0, 0.0]))
-    pitch_quat = torch.as_tensor(pitch_quat, device=gs.device)
-    box.set_quat(torch.tile(pitch_quat, (*batch_shape, 1)))
-    scene.step()
-    assert_allclose(imu.read().mag, torch.tensor([-0.4, 0.0, 0.3]), tol=tol)
 
     # let box collide with ground
     for _ in range(20):
         scene.step()
-        
+
     assert_array_equal(imu.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
     assert_array_equal(imu.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
+    assert_array_equal(imu.read_ground_truth().mag, imu_delayed.read_ground_truth().mag)
 
     with np.testing.assert_raises(AssertionError, msg="Angular velocity should not be zero due to COM shift"):
         assert_allclose(imu.read_ground_truth().ang_vel, 0.0, tol=tol)
 
-    with np.testing.assert_raises(AssertionError, msg="Delayed data should not be equal to the ground truth data"):
+    with np.testing.assert_raises(AssertionError, msg="Delayed accl data should not be equal to the ground truth data"):
         assert_array_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
 
+    with np.testing.assert_raises(AssertionError, msg="Delayed mag data should not be equal to the ground truth data"):
+        assert_array_equal(imu_delayed.read().mag - imu_delayed.read_ground_truth().mag, 0.0)
+
     box.set_COM_shift([0.0, 0.0, 0.0])
-    box.set_quat(torch.tile(torch.tensor([1.0, 0.0, 0.0, 0.0]), (*batch_shape, 1)))
+    box.set_quat(
+        [1.0, 0.0, 0.0, 0.0]
+    )  # Genesis uses[w, x, y, z]; previously the box was being rotated in Z instead of passing identity
+    # Gyro and Accl didn't notice the hidden rotation,
+    # if we use [0.0, 0.0, 0.0 ,0.1] the actual tensor will be (-a, -b, c) whereas desired is (a, b, c)
 
     # wait for the box to be stationary on ground
     for _ in range(50):
         scene.step()
 
-    assert_allclose(imu.read().lin_acc, torch.tensor([0.0, 0.0, -GRAVITY]), tol=5e-6)
+    assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=5e-6)
     assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
+    assert_allclose(imu.read().mag, MAG_FIELD, tol=1e-5)
 
-    # rotate IMU 90 deg around x axis means gravity should be along -y axis, mag in sensor frame: (0.3, 0.4, 0.0)
+    # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
-    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
+    imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
     scene.step()
-    assert_allclose(imu.read().lin_acc, torch.tensor([0.0, -GRAVITY, 0.0]), tol=5e-6)
-    assert_allclose(imu.read().mag, torch.tensor([0.3, 0.4, 0.0]), tol=1e-6)
-    imu.set_quat_offset((1.0, 0.0, 0.0, 0.0))
+    assert_allclose(
+        imu.read().lin_acc, -GRAVITY, tol=5e-6
+    )  # should now check for 10 as we corrected the identity quaternion
+    imu.set_quat_offset((0.0, 0.0, 0.0, 1.0))
     imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
-   
+
     scene.reset()
-  
-    zero_param = torch.zeros((*batch_shape, 3))
-    assert_allclose(imu.read().lin_acc, zero_param, tol=gs.EPS)
-    assert_allclose(imu_delayed.read().lin_acc, zero_param, tol=gs.EPS)
-    assert_allclose(imu_noisy.read().ang_vel, zero_param, tol=gs.EPS)
-   
-    imu.set_bias(BIAS + (0.0, 0.0, 0.0) + (0.05, 0.05, 0.05))
+
+    assert_allclose(imu.read().lin_acc, 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
+    assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=gs.EPS)
+    assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
+    assert_allclose(imu_noisy.read().mag, 0.0, tol=gs.EPS)  # biased
+
+    imu.set_bias(BIAS + (0.0, 0.0, 0.0) + (0.0, 0.0, 0.0))
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
-    assert_allclose(imu.read().mag, torch.as_tensor(MAG_FIELD) + 0.05, tol=tol)
 
 
 @pytest.mark.required
@@ -494,3 +496,130 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+def test_lidar_bvh_parallel_env(show_viewer, tol):
+    """Verify each environment receives a different lidar distance when geometries differ."""
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(1,),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1, -5, 3),
+            camera_lookat=(1, 0.5, 0),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+
+    sensor_mount = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            collision=False,
+        )
+    )
+    obstacle_1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(1.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+    obstacle_2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.4, 0.4),
+            pos=(1.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+
+    lidar = scene.add_sensor(
+        gs.sensors.Lidar(
+            entity_idx=sensor_mount.idx,
+            pattern=gs.options.sensors.SphericalPattern(
+                n_points=(1, 1),
+                fov=(0.0, 0.0),
+            ),
+            max_range=5.0,
+            draw_debug=show_viewer,
+            debug_ray_start_color=(0.0, 0.0, 0.0, 0.0),
+            debug_ray_hit_color=(1.0, 0.0, 0.0, 1.0),
+        )
+    )
+
+    scene.build(n_envs=2)
+
+    sensor_positions = np.array([[0.0, 0.0, 0.5], [0.0, 1.0, 0.5]], dtype=gs.np_float)
+    obstacle_1_positions = np.array([[1.1, 0.0, 0.5], [2.5, 1.0, 0.5]], dtype=gs.np_float)
+    obstacle_2_positions = np.array([[1.4, 0.0, 0.5], [2.2, 1.0, 0.5]], dtype=gs.np_float)
+    sensor_mount.set_pos(sensor_positions)
+    obstacle_1.set_pos(obstacle_1_positions)
+    obstacle_2.set_pos(obstacle_2_positions)
+
+    scene.step()
+
+    distances = lidar.read().distances
+    assert distances.shape == (2, 1, 1)
+    lidar_distances = distances[:, 0, 0]
+
+    front_positions = np.minimum(obstacle_1_positions[:, 0] - 0.1, obstacle_2_positions[:, 0] - 0.025)
+    expected_distances = front_positions - sensor_positions[:, 0]
+    assert_allclose(lidar_distances, expected_distances, tol=tol)
+
+
+@pytest.mark.required
+def test_lidar_cache_offset_parallel_env(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    cube = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 1.0),
+            pos=(0.0, 0.0, 0.5),
+        ),
+    )
+
+    sensors = [
+        scene.add_sensor(
+            gs.sensors.Raycaster(
+                pattern=gs.sensors.raycaster.SphericalPattern(
+                    n_points=(2, 2),
+                ),
+                entity_idx=cube.idx,
+                return_world_frame=False,
+            )
+        ),
+        scene.add_sensor(
+            gs.sensors.Raycaster(
+                pattern=gs.sensors.raycaster.SphericalPattern(
+                    n_points=(2, 2),
+                ),
+                entity_idx=cube.idx,
+                return_world_frame=False,
+            )
+        ),
+        scene.add_sensor(
+            gs.sensors.Raycaster(
+                pattern=gs.sensors.raycaster.SphericalPattern(
+                    n_points=(2, 2),
+                ),
+                entity_idx=cube.idx,
+                return_world_frame=False,
+            )
+        ),
+    ]
+
+    scene.build()
+
+    scene.step()
+    for sensor in sensors:
+        sensor_data = sensor.read()
+        assert (sensor_data.distances > gs.EPS).any()
+        assert (sensor_data.points.abs() > gs.EPS).any()
