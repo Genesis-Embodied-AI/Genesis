@@ -72,9 +72,30 @@ def build_sort_key(params_name: Iterable[str]) -> Callable:
     return sort_key
 
 
-def artifacts_parse_csv_summary(current_txt_path: Path, metric_keys: Iterable[str]):
+def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> dict[frozendict[str, str], dict[str, float]]]:
+    """
+    results file path should have lines in pipeline format, like:
+    solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5
+    solver=PBD | backend=gpu | n_envs=1024 | compile_time=2.54 | runtime_fps=985.0 | realtime_factor=49.3
+    solver=MPM | backend=cpu | n_envs=64 | compile_time=2.53 | runtime_fps=988.0 | realtime_factor=49.4
+
+    This function returns a dict of dicts, something like:
+    {
+        FrozenDict({"solver": "PBD", "backend": "cpu"}): {
+            "compile_time": 2.52,
+            "runtime_fps": 990.0,
+        }
+    }
+    So:
+    - the keys of the top level dict are frozen dicts representing all the key value pairs in a results row
+      EXCEPT the metric key value pairs
+    - the values are dicts where the keys are names of the metrics in metric_keys, and the values are
+      the measured value of that metric
+
+    Question: why do we use a frozendict as the key, instead of a string?
+    """
     out = {}
-    for line in current_txt_path.read_text().splitlines():
+    for line in results_file_path.read_text().splitlines():
         kv = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
         record = {}
         for k in metric_keys:
@@ -113,7 +134,7 @@ class BenchmarkRunUnderTest:
 
         self.results = {}
         for self.result_file_path in self.result_file_paths:
-            self.results |= artifacts_parse_csv_summary(self.result_file_path, self.metric_keys)
+            self.results |= parse_results_file(self.result_file_path, self.metric_keys)
         self.benchmark_ids_set = frozenset(self.results.keys())
         assert self.benchmark_ids_set
 
