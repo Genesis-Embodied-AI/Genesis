@@ -241,28 +241,6 @@ def factory_logger(stream_writers):
             self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(self.hparams, delimiter="-")))
             self.logger = None
 
-        def __enter__(self):
-            nonlocal stream_writers
-
-            if "WANDB_API_KEY" in os.environ:
-                assert gs.backend is not None
-                revision, timestamp = get_git_commit_info()
-
-                hardware_fringerprint = get_hardware_fingerprint(include_gpu=(gs.backend != gs.cpu))
-                platform_fringerprint = get_platform_fingerprint()
-                machine_uuid = hashlib.md5(
-                    "-".join((hardware_fringerprint, platform_fringerprint)).encode("UTF-8")
-                ).hexdigest()
-
-                benchmark_uuid = hashlib.md5(self.benchmark_id.encode("UTF-8")).hexdigest()
-
-                run_uuid = hashlib.md5(
-                    "-".join((hardware_fringerprint, platform_fringerprint, self.benchmark_id, revision)).encode(
-                        "UTF-8"
-                    )
-                ).hexdigest()
-            return self
-
         def write(self, items):
             nonlocal stream_writers
 
