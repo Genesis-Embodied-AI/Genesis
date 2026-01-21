@@ -474,3 +474,75 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+def test_lidar_bvh_parallel_env(show_viewer, tol):
+    """Verify each environment receives a different lidar distance when geometries differ."""
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(1,),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1, -5, 3),
+            camera_lookat=(1, 0.5, 0),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+
+    sensor_mount = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            collision=False,
+        )
+    )
+    obstacle_1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(1.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+    obstacle_2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.4, 0.4),
+            pos=(1.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+
+    lidar = scene.add_sensor(
+        gs.sensors.Lidar(
+            entity_idx=sensor_mount.idx,
+            pattern=gs.options.sensors.SphericalPattern(
+                n_points=(1, 1),
+                fov=(0.0, 0.0),
+            ),
+            max_range=5.0,
+            draw_debug=show_viewer,
+            debug_ray_start_color=(0.0, 0.0, 0.0, 0.0),
+            debug_ray_hit_color=(1.0, 0.0, 0.0, 1.0),
+        )
+    )
+
+    scene.build(n_envs=2)
+
+    sensor_positions = np.array([[0.0, 0.0, 0.5], [0.0, 1.0, 0.5]], dtype=gs.np_float)
+    obstacle_1_positions = np.array([[1.1, 0.0, 0.5], [2.5, 1.0, 0.5]], dtype=gs.np_float)
+    obstacle_2_positions = np.array([[1.4, 0.0, 0.5], [2.2, 1.0, 0.5]], dtype=gs.np_float)
+    sensor_mount.set_pos(sensor_positions)
+    obstacle_1.set_pos(obstacle_1_positions)
+    obstacle_2.set_pos(obstacle_2_positions)
+
+    scene.step()
+
+    distances = lidar.read().distances
+    assert distances.shape == (2, 1, 1)
+    lidar_distances = distances[:, 0, 0]
+
+    front_positions = np.minimum(obstacle_1_positions[:, 0] - 0.1, obstacle_2_positions[:, 0] - 0.025)
+    expected_distances = front_positions - sensor_positions[:, 0]
+    assert_allclose(lidar_distances, expected_distances, tol=tol)
