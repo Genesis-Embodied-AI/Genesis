@@ -25,10 +25,10 @@ from datetime import datetime
 
 import numpy as np
 from huggingface_hub import snapshot_download
-from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
-from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
+import genesis.utils.geom as gu
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 
 def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
@@ -152,9 +152,9 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
     target_entity = entities["target"]
 
     robot_init_pos = np.array([0.5, 0, 0.55])
-    robot_init_R = R.from_euler("y", np.pi)
+    robot_init_quat = gu.xyz_to_quat(np.array([0, np.pi, 0]))  # Rotation around Y axis
     target_pos = [robot_init_pos.copy()]  # Use list for mutability in closures
-    target_R = [robot_init_R]  # Use list for mutability in closures
+    target_quat = [robot_init_quat.copy()]  # Use list for mutability in closures
 
     n_dofs = robot.n_dofs
     motors_dof = np.arange(n_dofs - 2)
@@ -174,10 +174,9 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
 
     def reset_scene():
         target_pos[0] = robot_init_pos.copy()
-        target_R[0] = robot_init_R
-        target_quat = target_R[0].as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos[0], target_quat]))
-        q = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat)
+        target_quat[0] = robot_init_quat.copy()
+        target_entity.set_qpos(np.concatenate([target_pos[0], target_quat[0]]))
+        q = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat[0])
         robot.set_qpos(q[:-2], motors_dof)
 
         # entities["cube"].set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
@@ -190,29 +189,32 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
             target_pos[0] += np.array(dpos_delta, dtype=gs.np_float)
 
         def rotate(axis: str, angle: float):
-            target_R[0] = R.from_euler(axis, angle) * target_R[0]
+            # Create rotation quaternion for the specified axis
+            euler = np.zeros(3)
+            axis_map = {"x": 0, "y": 1, "z": 2}
+            euler[axis_map[axis]] = angle
+            drot_quat = gu.xyz_to_quat(euler)
+            target_quat[0] = gu.transform_quat_by_quat(target_quat[0], drot_quat)
 
         def toggle_gripper(close: bool = True):
             gripper_closed[0] = close
 
-        from pyglet.window import key
-
         scene.viewer.register_keybinds(
-            Keybind(key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
-            Keybind(key.DOWN, KeyAction.HOLD, name="move_backward", callback=move, args=((dpos, 0, 0),)),
-            Keybind(key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
-            Keybind(key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
-            Keybind(key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
-            Keybind(key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
-            Keybind(key.J, KeyAction.HOLD, name="yaw_left", callback=rotate, args=("z", drot)),
-            Keybind(key.K, KeyAction.HOLD, name="yaw_right", callback=rotate, args=("z", -drot)),
-            Keybind(key.I, KeyAction.HOLD, name="pitch_up", callback=rotate, args=("y", drot)),
-            Keybind(key.O, KeyAction.HOLD, name="pitch_down", callback=rotate, args=("y", -drot)),
-            Keybind(key.L, KeyAction.HOLD, name="roll_left", callback=rotate, args=("x", drot)),
-            Keybind(key.SEMICOLON, KeyAction.HOLD, name="roll_right", callback=rotate, args=("x", -drot)),
-            Keybind(key.U, KeyAction.HOLD, name="reset_scene", callback=reset_scene),
-            Keybind(key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
-            Keybind(key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
+            Keybind(Key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
+            Keybind(Key.DOWN, KeyAction.HOLD, name="move_backward", callback=move, args=((dpos, 0, 0),)),
+            Keybind(Key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
+            Keybind(Key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
+            Keybind(Key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
+            Keybind(Key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
+            Keybind(Key.J, KeyAction.HOLD, name="yaw_left", callback=rotate, args=("z", drot)),
+            Keybind(Key.K, KeyAction.HOLD, name="yaw_right", callback=rotate, args=("z", -drot)),
+            Keybind(Key.I, KeyAction.HOLD, name="pitch_up", callback=rotate, args=("y", drot)),
+            Keybind(Key.O, KeyAction.HOLD, name="pitch_down", callback=rotate, args=("y", -drot)),
+            Keybind(Key.L, KeyAction.HOLD, name="roll_left", callback=rotate, args=("x", drot)),
+            Keybind(Key.SEMICOLON, KeyAction.HOLD, name="roll_right", callback=rotate, args=("x", -drot)),
+            Keybind(Key.U, KeyAction.HOLD, name="reset_scene", callback=reset_scene),
+            Keybind(Key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
+            Keybind(Key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
         )
 
     # Load trajectory if in playback mode
@@ -278,7 +280,7 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
                 if step_count < len(trajectory):
                     step_data = trajectory[step_count]
                     target_pos[0] = step_data["target_pos"]
-                    target_R[0] = R.from_quat(step_data["target_quat"])
+                    target_quat[0] = step_data["target_quat"]
                     gripper_closed[0] = step_data["gripper_closed"]
                     step_count += 1
                     print(f"\rPlayback step: {step_count}/{len(trajectory)}", end="")
@@ -292,16 +294,15 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
                 if recording:
                     step_data = {
                         "target_pos": target_pos[0].copy(),
-                        "target_quat": target_R[0].as_quat(),  # x,y,z,w format
+                        "target_quat": target_quat[0].copy(),
                         "gripper_closed": gripper_closed[0],
                         "step": step_count,
                     }
                     trajectory.append(step_data)
 
             # control arm
-            target_quat = target_R[0].as_quat(scalar_first=True)
-            target_entity.set_qpos(np.concatenate([target_pos[0], target_quat]))
-            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat, return_error=True)
+            target_entity.set_qpos(np.concatenate([target_pos[0], target_quat[0]]))
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos[0], quat=target_quat[0], return_error=True)
             robot.control_dofs_position(q[:-2], motors_dof)
             # control gripper
             if gripper_closed[0]:

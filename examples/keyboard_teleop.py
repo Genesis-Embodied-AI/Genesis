@@ -18,10 +18,10 @@ Plus all default viewer controls (press 'i' to see them)
 import random
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
-from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
+import genesis.utils.geom as gu
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 if __name__ == "__main__":
     ########################## init ##########################
@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
     # Initialize robot control state
     robot_init_pos = np.array([0.5, 0, 0.55])
-    robot_init_R = R.from_euler("y", np.pi)
+    robot_init_quat = gu.xyz_to_quat(np.array([0, np.pi, 0]))  # Rotation around Y axis
 
     # Get DOF indices
     n_dofs = robot.n_dofs
@@ -96,7 +96,7 @@ if __name__ == "__main__":
 
     # Initialize target pose
     target_pos = robot_init_pos.copy()
-    target_R = [robot_init_R]  # Use list to make it mutable in closures
+    target_quat = [robot_init_quat.copy()]  # Use list to make it mutable in closures
 
     # Control parameters
     dpos = 0.002
@@ -106,15 +106,15 @@ if __name__ == "__main__":
     def reset_robot():
         """Reset robot and cube to initial positions."""
         target_pos[:] = robot_init_pos.copy()
-        target_R[0] = robot_init_R
-        target_quat = target_R[0].as_quat(scalar_first=True)
-        target.set_qpos(np.concatenate([target_pos, target_quat]))
-        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
+        target_quat[0] = robot_init_quat.copy()
+        target.set_qpos(np.concatenate([target_pos, target_quat[0]]))
+        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat[0])
         robot.set_qpos(q[:-2], motors_dof)
 
         # Randomize cube position
         cube.set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
-        cube.set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
+        random_angle = random.uniform(0, np.pi * 2)
+        cube.set_quat(gu.xyz_to_quat(np.array([0, 0, random_angle])))
 
     # Initialize robot pose
     reset_robot()
@@ -125,38 +125,36 @@ if __name__ == "__main__":
         target_pos += np.array(dpos, dtype=gs.np_float)
 
     def rotate(drot: float):
-        target_R[0] = R.from_euler("z", drot) * target_R[0]
+        drot_quat = gu.xyz_to_quat(np.array([0, 0, drot]))
+        target_quat[0] = gu.transform_quat_by_quat(target_quat[0], drot_quat)
 
     def toggle_gripper(close: bool = True):
         pos = -1.0 if close else 1.0
         robot.control_dofs_force(np.array([pos, pos]), fingers_dof)
 
     # Register robot teleoperation keybindings
-    from pyglet.window import key
-
     scene.viewer.register_keybinds(
-        Keybind(key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
-        Keybind(key.DOWN, KeyAction.HOLD, name="move_back", callback=move, args=((dpos, 0, 0),)),
-        Keybind(key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
-        Keybind(key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
-        Keybind(key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
-        Keybind(key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
-        Keybind(key.J, KeyAction.HOLD, name="rotate_ccw", callback=rotate, args=(drot,)),
-        Keybind(key.K, KeyAction.HOLD, name="rotate_cw", callback=rotate, args=(-drot,)),
-        Keybind(key.U, KeyAction.HOLD, name="reset_scene", callback=reset_robot),
-        Keybind(key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
-        Keybind(key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
+        Keybind(Key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
+        Keybind(Key.DOWN, KeyAction.HOLD, name="move_back", callback=move, args=((dpos, 0, 0),)),
+        Keybind(Key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
+        Keybind(Key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
+        Keybind(Key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
+        Keybind(Key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
+        Keybind(Key.J, KeyAction.HOLD, name="rotate_ccw", callback=rotate, args=(drot,)),
+        Keybind(Key.K, KeyAction.HOLD, name="rotate_cw", callback=rotate, args=(-drot,)),
+        Keybind(Key.U, KeyAction.HOLD, name="reset_scene", callback=reset_robot),
+        Keybind(Key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
+        Keybind(Key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
     )
 
     ########################## run simulation ##########################
     try:
         while True:
             # Update target entity visualization
-            target_quat = target_R[0].as_quat(scalar_first=True)
-            target.set_qpos(np.concatenate([target_pos, target_quat]))
+            target.set_qpos(np.concatenate([target_pos, target_quat[0]]))
 
             # Control arm with inverse kinematics
-            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat[0], return_error=True)
             robot.control_dofs_position(q[:-2], motors_dof)
 
             scene.step()

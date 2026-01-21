@@ -10,10 +10,10 @@ import OpenGL.platform
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.ext import pyrender
-from genesis.ext.pyrender.interaction import KeyAction, Keybind
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.utils.tools import Rate
+from genesis.vis.keybindings import KeyAction, Keybind
 
 if TYPE_CHECKING:
     from genesis.options.vis import ViewerOptions

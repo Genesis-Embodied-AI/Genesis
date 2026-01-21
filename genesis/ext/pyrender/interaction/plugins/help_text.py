@@ -1,13 +1,12 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pyglet
 from typing_extensions import override
 
 from genesis.options.viewer_plugins import HelpTextPlugin as HelpTextPluginOptions
+from genesis.vis.keybindings import Key, KeyAction, Keybind, get_keycode_string
 
 from ...constants import TEXT_PADDING, TextAlign
-from ..keybindings import KeyAction, Keybind, get_keycode_string
 from ..viewer_plugin import ViewerPlugin, register_viewer_plugin
 
 if TYPE_CHECKING:
@@ -34,7 +33,7 @@ class HelpTextPlugin(ViewerPlugin):
 
         if self.options.display_instructions:
             self.viewer.register_keybinds(
-                (Keybind(key_code=pyglet.window.key.I, name=INSTR_KEYBIND_NAME, callback=self._toggle_instructions),)
+                (Keybind(key_code=Key.I, name=INSTR_KEYBIND_NAME, callback=self._toggle_instructions),)
             )
             self._collapse_instructions = True
             self._instr_texts: tuple[list[str], list[str]] = ([], [])

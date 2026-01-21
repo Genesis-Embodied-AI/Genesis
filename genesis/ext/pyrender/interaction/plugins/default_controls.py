@@ -1,12 +1,10 @@
 import os
 from typing import TYPE_CHECKING
 
-import pyglet
-
 import genesis as gs
 from genesis.options.viewer_plugins import DefaultControlsPlugin as DefaultControlsOptions
+from genesis.vis.keybindings import Key, Keybind
 
-from ..keybindings import Keybind
 from ..viewer_plugin import register_viewer_plugin
 from .help_text import HelpTextPlugin
 
@@ -36,19 +34,19 @@ class DefaultControls(HelpTextPlugin):
 
         self.viewer.register_keybinds(
             (
-                Keybind(key_code=pyglet.window.key.R, name="record_video", callback=self._toggle_record_video),
-                Keybind(key_code=pyglet.window.key.S, name="save_image", callback=self._save_image),
-                Keybind(key_code=pyglet.window.key.Z, name="reset_camera", callback=self._reset_camera),
-                Keybind(key_code=pyglet.window.key.A, name="camera_rotation", callback=self._toggle_cam_rotation),
-                Keybind(key_code=pyglet.window.key.H, name="shadow", callback=self._toggle_shadow),
-                Keybind(key_code=pyglet.window.key.F, name="face_normals", callback=self._toggle_face_normals),
-                Keybind(key_code=pyglet.window.key.V, name="vertex_normals", callback=self._toggle_vertex_normals),
-                Keybind(key_code=pyglet.window.key.W, name="world_frame", callback=self._toggle_world_frame),
-                Keybind(key_code=pyglet.window.key.L, name="link_frame", callback=self._toggle_link_frame),
-                Keybind(key_code=pyglet.window.key.D, name="wireframe", callback=self._toggle_wireframe),
-                Keybind(key_code=pyglet.window.key.C, name="camera_frustum", callback=self._toggle_camera_frustum),
-                Keybind(key_code=pyglet.window.key.P, name="reload_shader", callback=self._reload_shader),
-                Keybind(key_code=pyglet.window.key.F11, name="fullscreen_mode", callback=self._toggle_fullscreen),
+                Keybind(key_code=Key.R, name="record_video", callback=self._toggle_record_video),
+                Keybind(key_code=Key.S, name="save_image", callback=self._save_image),
+                Keybind(key_code=Key.Z, name="reset_camera", callback=self._reset_camera),
+                Keybind(key_code=Key.A, name="camera_rotation", callback=self._toggle_cam_rotation),
+                Keybind(key_code=Key.H, name="shadow", callback=self._toggle_shadow),
+                Keybind(key_code=Key.F, name="face_normals", callback=self._toggle_face_normals),
+                Keybind(key_code=Key.V, name="vertex_normals", callback=self._toggle_vertex_normals),
+                Keybind(key_code=Key.W, name="world_frame", callback=self._toggle_world_frame),
+                Keybind(key_code=Key.L, name="link_frame", callback=self._toggle_link_frame),
+                Keybind(key_code=Key.D, name="wireframe", callback=self._toggle_wireframe),
+                Keybind(key_code=Key.C, name="camera_frustum", callback=self._toggle_camera_frustum),
+                Keybind(key_code=Key.P, name="reload_shader", callback=self._reload_shader),
+                Keybind(key_code=Key.F11, name="fullscreen_mode", callback=self._toggle_fullscreen),
             )
         )
 

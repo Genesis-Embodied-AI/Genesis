@@ -4,8 +4,8 @@ import os
 import numpy as np
 
 import genesis as gs
-from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
 from genesis.utils.geom import euler_to_quat
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 # Position and angle increments for keyboard teleop control
 KEY_DPOS = 0.1
@@ -178,22 +178,20 @@ def main():
         target_euler[2] -= KEY_DANGLE
 
     # Register keybindings
-    from pyglet.window import key
-
     scene.viewer.register_keybinds(
-        Keybind(key_code=key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=move_forward),
-        Keybind(key_code=key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback=move_backward),
-        Keybind(key_code=key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=move_right),
-        Keybind(key_code=key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=move_left),
-        Keybind(key_code=key.J, key_action=KeyAction.HOLD, name="move_down", callback=move_down),
-        Keybind(key_code=key.K, key_action=KeyAction.HOLD, name="move_up", callback=move_up),
-        Keybind(key_code=key.N, key_action=KeyAction.HOLD, name="roll_ccw", callback=roll_ccw),
-        Keybind(key_code=key.M, key_action=KeyAction.HOLD, name="roll_cw", callback=roll_cw),
-        Keybind(key_code=key.COMMA, key_action=KeyAction.HOLD, name="pitch_up", callback=pitch_up),
-        Keybind(key_code=key.PERIOD, key_action=KeyAction.HOLD, name="pitch_down", callback=pitch_down),
-        Keybind(key_code=key.O, key_action=KeyAction.HOLD, name="yaw_ccw", callback=yaw_ccw),
-        Keybind(key_code=key.P, key_action=KeyAction.HOLD, name="yaw_cw", callback=yaw_cw),
-        Keybind(key_code=key.BACKSLASH, key_action=KeyAction.HOLD, name="reset", callback=reset_pose),
+        Keybind(key_code=Key.UP, key_action=KeyAction.HOLD, name="move_forward", callback=move_forward),
+        Keybind(key_code=Key.DOWN, key_action=KeyAction.HOLD, name="move_backward", callback=move_backward),
+        Keybind(key_code=Key.RIGHT, key_action=KeyAction.HOLD, name="move_right", callback=move_right),
+        Keybind(key_code=Key.LEFT, key_action=KeyAction.HOLD, name="move_left", callback=move_left),
+        Keybind(key_code=Key.J, key_action=KeyAction.HOLD, name="move_down", callback=move_down),
+        Keybind(key_code=Key.K, key_action=KeyAction.HOLD, name="move_up", callback=move_up),
+        Keybind(key_code=Key.N, key_action=KeyAction.HOLD, name="roll_ccw", callback=roll_ccw),
+        Keybind(key_code=Key.M, key_action=KeyAction.HOLD, name="roll_cw", callback=roll_cw),
+        Keybind(key_code=Key.COMMA, key_action=KeyAction.HOLD, name="pitch_up", callback=pitch_up),
+        Keybind(key_code=Key.PERIOD, key_action=KeyAction.HOLD, name="pitch_down", callback=pitch_down),
+        Keybind(key_code=Key.O, key_action=KeyAction.HOLD, name="yaw_ccw", callback=yaw_ccw),
+        Keybind(key_code=Key.P, key_action=KeyAction.HOLD, name="yaw_cw", callback=yaw_cw),
+        Keybind(key_code=Key.BACKSLASH, key_action=KeyAction.HOLD, name="reset", callback=reset_pose),
     )
 
     # Print controls

@@ -4,7 +4,7 @@ import pyglet
 import pytest
 
 import genesis as gs
-from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import rgb_array_to_png_bytes
@@ -54,14 +54,12 @@ def test_default_viewer_plugin(monkeypatch, png_snapshot):
         nonlocal flag
         flag = True
 
-    scene.viewer.register_keybinds(
-        Keybind(key_code=pyglet.window.key._0, key_action=KeyAction.PRESS, callback=toggle_flag)
-    )
+    scene.viewer.register_keybinds(Keybind(key_code=Key._0, key_action=KeyAction.PRESS, callback=toggle_flag))
 
     # Press key to toggle flag on
-    pyrender_viewer.dispatch_event("on_key_press", pyglet.window.key._0, 0)
+    pyrender_viewer.dispatch_event("on_key_press", Key._0, 0)
     # Press key to turn off shadows
-    pyrender_viewer.dispatch_event("on_key_press", pyglet.window.key.H, 0)
+    pyrender_viewer.dispatch_event("on_key_press", Key.H, 0)
 
     scene.step()
 

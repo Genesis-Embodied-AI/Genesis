@@ -15,8 +15,7 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-
-from .interaction.keybindings import KeyAction, Keybind, Keybindings
+from genesis.vis.keybindings import KeyAction, Keybind, Keybindings
 
 # Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.

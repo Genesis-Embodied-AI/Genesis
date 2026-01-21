@@ -1,6 +1,35 @@
 from enum import IntEnum
 from typing import Callable, NamedTuple
 
+
+class _LazyPygletKeyModule:
+    """
+    Lazy load pyglet to avoid premature initialization.
+
+    Note
+    ----
+    Importing pyglet before OpenGL context is created can lead to segmentation faults on some platforms.
+    """
+
+    _module = None
+
+    def __getattr__(self, name):
+        if type(self)._module is None:
+            from pyglet.window import key as pyglet_key
+
+            type(self)._module = pyglet_key
+        return getattr(type(self)._module, name)
+
+    def __dir__(self):
+        if type(self)._module is None:
+            from pyglet.window import key as pyglet_key
+
+            type(self)._module = pyglet_key
+        return dir(type(self)._module)
+
+
+Key = _LazyPygletKeyModule()
+
 KEY_STRING_TO_CHAR = {
     "backslash": "\\",
     "slash": "/",

@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Type
 
@@ -157,16 +158,23 @@ class IMUSensor(
         """
         # Extract acceleration and gravity in world frame
         assert shared_metadata.solver is not None
+        time0 = time.perf_counter()
         gravity = shared_metadata.solver.get_gravity()
+        time1 = time.perf_counter()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
+        time2 = time.perf_counter()
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
+        time3 = time.perf_counter()
         ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
+        time4 = time.perf_counter()
         if acc.ndim == 2:  # n_envs = 0
             acc = acc[None]
             ang = ang[None]
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
+        time5 = time.perf_counter()
 
+        time6 = time.perf_counter()
         # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
         if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
             ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
@@ -177,16 +185,33 @@ class IMUSensor(
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
             acc += tangential_acc + centripetal_acc
 
+        time7 = time.perf_counter()
+
         # Subtract gravity then move to local frame
         # acc/ang shape: (B, n_imus, 3)
         local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
+
+        time8 = time.perf_counter()
 
         # cache shape: (B, n_imus * 6)
         *batch_size, n_imus, _ = local_acc.shape
         strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 2, 3))
         strided_ground_truth_cache[..., 0, :].copy_(local_acc)
         strided_ground_truth_cache[..., 1, :].copy_(local_ang)
+
+        time9 = time.perf_counter()
+
+        print(f"Gravity fetch time: {time1 - time0:.6f} s")
+        print(f"Quat fetch time: {time2 - time1:.6f} s")
+        print(f"Acc fetch time: {time3 - time2:.6f} s")
+        print(f"Ang fetch time: {time4 - time3:.6f} s")
+        print(f"Offset quat time: {time5 - time4:.6f} s")
+        print(f"Offset pos time: {time7 - time6:.6f} s")
+        print(f"Inv transform time: {time8 - time7:.6f} s")
+        print(f"Cache copy time: {time9 - time8:.6f} s")
+        print(f"total time: {time9 - time0:.6f} s")
+        print("-----")
 
     @classmethod
     def _update_shared_cache(

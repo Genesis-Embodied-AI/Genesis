@@ -3,7 +3,7 @@ import os
 import numpy as np
 
 import genesis as gs
-from genesis.ext.pyrender.interaction.keybindings import KeyAction, Keybind
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 
 class DroneController:
@@ -79,8 +79,6 @@ def main():
     scene.build()
 
     # Register keybindings
-    from pyglet.window import key
-
     def direction_keybinds(key_code, name: str, direction: tuple[float, float, float, float]):
         """Helper to create press/release keybinds for a direction"""
         dir_arr = np.array(direction)
@@ -102,12 +100,12 @@ def main():
         ]
 
     scene.viewer.register_keybinds(
-        *direction_keybinds(key.UP, "move_forward", (1.0, 1.0, -1.0, -1.0)),
-        *direction_keybinds(key.DOWN, "move_backward", (-1.0, -1.0, 1.0, 1.0)),
-        *direction_keybinds(key.LEFT, "move_left", (-1.0, 1.0, -1.0, 1.0)),
-        *direction_keybinds(key.RIGHT, "move_right", (1.0, -1.0, 1.0, -1.0)),
-        Keybind(key.SPACE, KeyAction.HOLD, name="accelerate", callback=controller.accelerate),
-        Keybind(key.LSHIFT, KeyAction.HOLD, name="decelerate", callback=controller.decelerate),
+        *direction_keybinds(Key.UP, "move_forward", (1.0, 1.0, -1.0, -1.0)),
+        *direction_keybinds(Key.DOWN, "move_backward", (-1.0, -1.0, 1.0, 1.0)),
+        *direction_keybinds(Key.LEFT, "move_left", (-1.0, 1.0, -1.0, 1.0)),
+        *direction_keybinds(Key.RIGHT, "move_right", (1.0, -1.0, 1.0, -1.0)),
+        Keybind(Key.SPACE, KeyAction.HOLD, name="accelerate", callback=controller.accelerate),
+        Keybind(Key.LSHIFT, KeyAction.HOLD, name="decelerate", callback=controller.decelerate),
     )
 
     # Print control instructions
