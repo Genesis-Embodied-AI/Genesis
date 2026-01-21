@@ -1,6 +1,7 @@
-import platform
 import io
+import numbers
 import os
+import platform
 import re
 import subprocess
 import time
@@ -8,13 +9,12 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from functools import cache
 from itertools import chain
 from pathlib import Path
 from types import GeneratorType
 from typing import Literal, Sequence
-from enum import Enum
-import numbers
 
 import cpuinfo
 import numpy as np
