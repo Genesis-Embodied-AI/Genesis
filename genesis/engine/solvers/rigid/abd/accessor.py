@@ -14,7 +14,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .util import func_apply_link_external_force, func_apply_link_external_torque
+from .misc import func_apply_link_external_force, func_apply_link_external_torque
 
 
 @ti.kernel(fastcache=gs.use_fastcache)

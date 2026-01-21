@@ -19,7 +19,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .kinematics import func_update_cartesian_space
+from .forward_kinematics import func_update_cartesian_space
 
 
 @ti.func

@@ -26,7 +26,7 @@ from genesis.utils.sdf import SDF
 from ..base_solver import Solver
 from .collider import Collider
 from .constraint import ConstraintSolver, ConstraintSolverIsland
-from .articulation.util import (
+from .abd.misc import (
     func_wakeup_entity_and_its_temp_island,
     kernel_init_invweight,
     kernel_init_meaninertia,
@@ -60,7 +60,7 @@ from .articulation.util import (
     func_check_index_range,
     kernel_clear_external_force,
 )
-from .articulation.kinematics import (
+from .abd.forward_kinematics import (
     kernel_forward_kinematics_links_geoms,
     kernel_masked_forward_kinematics_links_geoms,
     kernel_forward_velocity,
@@ -91,7 +91,7 @@ from .articulation.kinematics import (
     func_update_cartesian_space,
     kernel_update_cartesian_space,
 )
-from .articulation.dynamics import (
+from .abd.forward_dynamics import (
     update_qacc_from_qvel_delta,
     update_qvel,
     kernel_compute_mass_matrix,
@@ -115,7 +115,7 @@ from .articulation.dynamics import (
     kernel_forward_dynamics_without_qacc,
     func_implicit_damping,
 )
-from .articulation.control import (
+from .abd.accessor import (
     kernel_get_state,
     kernel_set_state,
     kernel_get_state_grad,
@@ -154,7 +154,7 @@ from .articulation.control import (
     kernel_set_geom_friction,
     kernel_set_geoms_friction,
 )
-from .articulation.backward import (
+from .abd.diff import (
     func_copy_next_to_curr,
     func_copy_next_to_curr_grad,
     kernel_save_adjoint_cache,

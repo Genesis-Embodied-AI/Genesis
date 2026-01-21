@@ -19,7 +19,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .util import (
+from .misc import (
     func_wakeup_entity_and_its_temp_island,
     func_check_index_range,
     func_add_safe_backward,
