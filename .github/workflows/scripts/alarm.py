@@ -29,10 +29,18 @@ def parse_kv_pairs_str(kv_pairs_str: str) -> dict[str, str]:
     return kv_pairs
 
 
-def parse_benchmark_id(bid: str) -> dict:
+def parse_benchmark_id_to_kv_pairs(benchmark_id: str) -> dict[str, str]:
+    """
+    Expects a benchmark id in the strin format like:
+    solver=PBD | backend=cpu | n_envs=128
+
+    Returns this as an (unfrozen) dict of key value pairs.
+
+    Note that the values are strings, not converted into numbers.
+    """
     kv = {}
-    if bid:
-        for token in bid.split("-"):
+    if benchmark_id:
+        for token in benchmark_id.split("-"):
             token = token.strip()
             if token and "=" in token:
                 k, v = token.split("=", 1)
@@ -40,7 +48,13 @@ def parse_benchmark_id(bid: str) -> dict:
     return kv
 
 def normalize_benchmark_id(benchmark_id: str) -> frozendict[str, str]:
-    return frozendict(parse_benchmark_id(benchmark_id))
+    """
+    Converts a string benchmark id into a frozendict benchmark id, which is
+    hashable.
+
+    Questoin: why do we do this?
+    """
+    return frozendict(parse_benchmark_id_to_kv_pairs(benchmark_id))
 
 def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
     """
