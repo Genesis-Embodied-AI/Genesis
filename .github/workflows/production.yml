@@ -164,7 +164,7 @@ jobs:
             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
                    --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-            python .github/workflows/scripts/upload_mem_to_wandb.py "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv"
+            python tests/upload_mem_to_wandb.py "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv"
           EOF
       - name: Kill Slurm job
         if: always()
