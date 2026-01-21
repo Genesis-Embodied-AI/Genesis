@@ -385,7 +385,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         # These fields are used to properly index into the big cache tensor in kernel_cast_rays
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
-            self._shared_metadata.sensor_cache_offsets, self._cache_size
+            self._shared_metadata.sensor_cache_offsets, self._cache_size * (self._idx + 1)
         )
         self._shared_metadata.sensor_point_offsets = concat_with_tensor(
             self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays
