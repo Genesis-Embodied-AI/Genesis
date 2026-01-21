@@ -18,12 +18,13 @@ def main() -> None:
     parser.add_argument("--runtime-fps-regression-tolerance-pct", type=float, default=10)
     parser.add_argument("--compile-time-regression-tolerance-pct", type=float, default=10)
     parser.add_argument("--mem-regression-tolerance-pct", type=float, default=10)
-    parser.add_argument("--debug-body-output-path", type=str, help="for dev/debug, dumps the markup tables here")
+    parser.add_argument("--check-body-path", type=str, required=True)
     parser.add_argument("--csv-runtime-fps-path", type=str, required=True)
     parser.add_argument("--csv-compile-time-path", type=str, required=True)
     parser.add_argument("--csv-mem-path", type=str, required=True)
     parser.add_argument("--exit-code-regression", type=int, default=42)
     parser.add_argument("--exit-code-alert", type=int, default=43)
+    parser.add_argument("--dev-skip-speed", action="store_true")
     args = parser.parse_args()
 
     MAX_VALID_REVISIONS = args.max_valid_revisions
@@ -37,7 +38,7 @@ def main() -> None:
 
     speed_artifacts_dir = Path(args.speed_artifacts_dir).expanduser().resolve()
     mem_artifacts_dir = Path(args.mem_artifacts_dir).expanduser().resolve()
-    debug_body_output_path = Path(args.debug_body_output_path).expanduser()
+    check_body_path = Path(args.check_body_path).expanduser()
 
     csv_files = {
         "runtime_fps": Path(args.csv_runtime_fps_path).expanduser().resolve(),
@@ -77,6 +78,16 @@ def main() -> None:
                     merged.append(key)
                     merged_set.add(key)
         return tuple(merged)
+
+    def sort_key(d):
+        key_list = []
+        for col in params_name:
+            if col in d:
+                val = d[col]
+                key_list.append((0, val))
+            else:
+                key_list.append((1, None))
+        return key_list
 
     def artifacts_parse_csv_summary(current_txt_path):
         out = {}
@@ -186,7 +197,9 @@ def main() -> None:
             }
             return records_by_rev
 
-    speed_records_by_rev = fetch_wandb_data_old_format()
+    speed_records_by_rev = {}
+    if not args.dev_skip_speed:
+        speed_records_by_rev = fetch_wandb_data_old_format()
     print('speed_records_by_rev', speed_records_by_rev)
 
     # ----- build TWO tables -----
@@ -229,7 +242,7 @@ def main() -> None:
 
             values_prev = [
                 record[bid][metric]
-                for record in records_by_rev.values()
+                for record in speed_records_by_rev.values()
                 if bid in record
             ]
             if values_prev:
@@ -277,8 +290,8 @@ def main() -> None:
         tables[metric] = [header, align] + rows_md
 
     # ----- baseline commit list (MD) -----
-    blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
-    baseline_block = ["**Baselines considered:** " + f"**{len(records_by_rev)}** commits"] + blist
+    blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(speed_records_by_rev.keys(), 1)]
+    baseline_block = ["**Baselines considered:** " + f"**{len(speed_records_by_rev)}** commits"] + blist
 
     # ----- CHECK body (always) -----
 
@@ -318,6 +331,7 @@ def main() -> None:
             for rec in rows_for_csv[metric]:
                 w.writerow(rec)
 
+    # write md results
     check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
     if reg_found:

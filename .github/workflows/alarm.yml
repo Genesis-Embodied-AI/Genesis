@@ -78,6 +78,7 @@ jobs:
           # Input/Output paths
           SPEED_ARTIFACTS_DIR: ${{ steps.dl_speed.outputs.download-path }}
           MEM_ARTIFACTS_DIR: ${{ steps.dl_mem.outputs.download-path }}
+          CHECK_BODY_PATH: check_output.md
           CSV_RUNTIME_FPS_PATH: runtime_fps.csv
           CSV_COMPILE_TIME_PATH: compile_time.csv
           CSV_MEM_PATH: mem.csv
@@ -95,6 +96,7 @@ jobs:
             --csv-runtime-fps-path "${CSV_RUNTIME_FPS_PATH}" \
             --csv-compile-time-path "${CSV_COMPILE_TIME_PATH}" \
             --csv-mem-path "${CSV_MEM_PATH}" \
+            --check-body-path "${CHECK_BODY_PATH}" \
             --exit-code-regression "${EXIT_CODE_REGRESSION}" \
             --exit-code-alert "${EXIT_CODE_ALERT}"
       - name: Upload benchmark comparisons in CSV

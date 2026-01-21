@@ -112,7 +112,7 @@ def parse_alarm_yml(alarm_yml_path: Path) -> Tuple[str, Dict[str, str]]:
     print('python_step', python_step)
     python_code = python_step["run"]
     print("python_code", python_code)
-    python_code = python_code.rstrip() + " \\\n --debug-body-output-path ${CHECK_BODY_PATH}"
+    # python_code = python_code.rstrip() + " \\\n --debug-body-output-path ${CHECK_BODY_PATH}"
 
     # # Extract Python code between heredoc delimiters
     # # Looking for: python - << 'PY' ... PY
@@ -140,7 +140,7 @@ def parse_alarm_yml(alarm_yml_path: Path) -> Tuple[str, Dict[str, str]]:
     return python_code, clean_env
 
 
-def run_alarm_script(artifacts_dir: Path, output_dir: Path, alarm_yml_path: Path):
+def run_alarm_script(artifacts_dir: Path, output_dir: Path, alarm_yml_path: Path, skip_speed: bool):
     python_code, yaml_env = parse_alarm_yml(alarm_yml_path)
     env = {
         **yaml_env,
@@ -153,6 +153,8 @@ def run_alarm_script(artifacts_dir: Path, output_dir: Path, alarm_yml_path: Path
     }
     for k, v in env.items():
         python_code = python_code.replace(f"${{{k}}}", v)
+    if skip_speed:
+        python_code = python_code.rstrip() + " --dev-skip-speed"
     print(python_code)
     old_env = os.environ.copy()
     os.environ.update(env)
@@ -186,6 +188,7 @@ def main():
         choices=["ok", "regression", "alert", "compile_regression", "new_benchmark"],
         default="ok",
     )
+    parser.add_argument("--skip-speed", action="store_true")
     parser.add_argument("--temp-dir", type=Path)
 
     args = parser.parse_args()
@@ -205,7 +208,12 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     create_sample_artifacts(artifacts_dir, args.scenario)
-    exit_code = run_alarm_script(artifacts_dir, output_dir, alarm_yml_path)
+    exit_code = run_alarm_script(
+        artifacts_dir=artifacts_dir,
+        output_dir=output_dir,
+        alarm_yml_path=alarm_yml_path,
+        skip_speed=args.skip_speed
+    )
     if exit_code == 42:
         print("   Status: ❌ REGRESSION DETECTED")
     elif exit_code == 43:
