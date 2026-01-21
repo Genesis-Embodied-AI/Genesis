@@ -1,5 +1,15 @@
 # runs from alarm.yml
 
+"""
+Terminology:
+- benchmark suite results: the results of running all benchmark tests once, for a specific code base
+- the code base could be conceptually:
+    - the current code under test
+    - some past revision of the code, described by a git commit hash
+- there are actually multiple benchmark test suites, identified by a suite_id
+    - in this script, we are only interested in the rigid benchmark suite
+"""
+
 from collections import defaultdict
 import argparse
 import os, sys, json, math, statistics
@@ -29,8 +39,8 @@ def parse_benchmark_id(bid: str) -> dict:
                 kv[k.strip()] = v.strip()
     return kv
 
-def normalize_benchmark_id(bid: str) -> frozendict[str, str]:
-    return frozendict(parse_benchmark_id(bid))
+def normalize_benchmark_id(benchmark_id: str) -> frozendict[str, str]:
+    return frozendict(parse_benchmark_id(benchmark_id))
 
 def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
     """
@@ -80,33 +90,49 @@ def fmt_num(v, is_int: bool):
     return f"{int(v):,}" if is_int else f"{v:.2f}"
 
 
-class CsvInfo:
+class BenchmarkRunUnderTest:
+    """
+    This class contains the data about the benchmark run under test, which we will then
+    compare with historical data. This data is loaded from text files in pipe format.
+    | foo=123 | bar=456 | ...
+
+    Note: currently this class is kind of a mess, but we will make it contain what the previous
+    paragraph just described.
+    """
     def __init__(self, artifacts_dir: Path, metric_keys: Iterable[str], filename_glob: str) -> None:
-        self.current_csv_paths = list(artifacts_dir.rglob(filename_glob))
-        assert self.current_csv_paths
+        """
+        metric_keys: the keys corresponding to values being measured, such as runtime_fps
+        filename_globa: how to locate the data files with the data for the benchmark run
+        under test.
+        """
+        self.result_file_paths = list(artifacts_dir.rglob(filename_glob))
+        # make sure we do actually have some current benchmark data to read
+        assert self.result_file_paths
 
         self.metric_keys = metric_keys
 
-        self.current_bm = {}
-        for self.csv_path in self.current_csv_paths:
-            self.current_bm |= artifacts_parse_csv_summary(self.csv_path, self.metric_keys)
-        self.bids_set = frozenset(self.current_bm.keys())
-        assert self.bids_set
+        self.results = {}
+        for self.result_file_path in self.result_file_paths:
+            self.results |= artifacts_parse_csv_summary(self.result_file_path, self.metric_keys)
+        self.benchmark_ids_set = frozenset(self.results.keys())
+        assert self.benchmark_ids_set
 
-        self.params_name = get_param_names(tuple((tuple(kv.keys())) for kv in self.current_bm.keys()))
+        self.params_name = get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
-    def ingest_records_by_rev(self, records_by_rev):
-        self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_rev.keys(), 1)]
-        self.baseline_block = ["**Baselines considered:** " + f"**{len(self.records_by_rev)}** commits"] + blist
+    def ingest_records_by_commit_hash(self, records_by_commit_hash):
+        self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
+        self.baseline_block = ["**Baselines considered:** " + f"**{len(self.ingest_records_by_commit_hash)}** commits"] + blist
 
 
     def get_params_name(self):
-        return get_param_names(tuple((tuple(kv.keys())) for kv in self.current_bm.keys()))
+        return get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
-def build_table(params_name: str, alias: str, csv_info: CsvInfo, records_by_rev) -> None:
-    rows_md = []
+def build_table(params_name: str, alias: str, csv_info: BenchmarkUnderTest, records_by_commit_hash) -> None:
+    # together these rows contain the text of the markdwon
+    markdown_rows = []
     rows = []
 
+    # the labels in the header row of the table
     header_cells = (
         "status",
         *params_name,
@@ -117,12 +143,12 @@ def build_table(params_name: str, alias: str, csv_info: CsvInfo, records_by_rev)
     header = "| " + " | ".join(header_cells) + " |"
     align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
 
-    for bid in sorted(csv_info.current_bm.keys(), key=sort_key):
-        value_cur = csv_info.current_bm[bid][metric]
+    for benchmark_id in sorted(csv_info.current_bm.keys(), key=sort_key):
+        value_cur = csv_info.current_bm[benchmark_id][metric]
         is_int = isinstance(value_cur, int) or value_cur.is_integer()
         value_repr = fmt_num(value_cur, is_int)
 
-        params_repr = [bid.get(k, "-") for k in params_name]
+        params_repr = [benchmark_id.get(k, "-") for k in params_name]
         info = {
             **dict(zip(params_name, params_repr)),
             "current": value_cur,
@@ -134,9 +160,9 @@ def build_table(params_name: str, alias: str, csv_info: CsvInfo, records_by_rev)
         }
 
         values_prev = [
-            record[bid][metric]
-            for record in records_by_rev.values()
-            if bid in record
+            record[benchmark_id][metric]
+            for record in records_by_commit_hash.values()
+            if benchmark_id in record
         ]
         if values_prev:
             value_last = values_prev[0]
@@ -177,10 +203,10 @@ def build_table(params_name: str, alias: str, csv_info: CsvInfo, records_by_rev)
         else:
             picto, stats_repr, delta_repr = "ℹ️", "---", "---"
 
-        rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
+        markdown_rows.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
         rows.append(info)
 
-    return [header, align] + rows_md, rows
+    return [header, align] + markdown_rows, rows
     # tables[metric] = [header, align] + rows_md
 
 
@@ -189,7 +215,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--speed-artifacts-dir", type=str, required=True)
     parser.add_argument("--mem-artifacts-dir", type=str, required=True)
-    parser.add_argument("--max-valid-revisions", type=int, default=10)
+    parser.add_argument("--max-valid-revisions", type=int, default=10, help="limits how many git commits are used to build the baseline statistics")
     parser.add_argument("--max-fetch-revisions", type=int, default=10)
     parser.add_argument("--runtime-fps-regression-tolerance-pct", type=float, default=10)
     parser.add_argument("--compile-time-regression-tolerance-pct", type=float, default=10)
@@ -228,8 +254,8 @@ def main() -> None:
     SPEED_METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
     MEM_METRIC_KEYS = ("max_mem_mb")
 
-    csv_info_speed = CsvInfo(artifacts_dir=speed_artifacts_dir, metric_keys=SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
-    csv_info_mem = CsvInfo(artifacts_dir=mem_artifacts_dir, metric_keys=MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
+    csv_info_speed = BenchmarkUnderTest(artifacts_dir=speed_artifacts_dir, metric_keys=SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
+    csv_info_mem = BenchmarkUnderTest(artifacts_dir=mem_artifacts_dir, metric_keys=MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
 
     # ----- W&B baselines -----
 
@@ -239,23 +265,23 @@ def main() -> None:
     PROJECT_OLD = os.environ["WANDB_PROJECT_OLD_FORMAT"]
     PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
 
-    def fetch_wandb_data_old_format(csv_info: CsvInfo):
+    def fetch_wandb_data_old_format(csv_info: BenchmarkUnderTest):
         print("fetch_wandb_data_old_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{ENTITY}/{PROJECT_OLD}", order="-created_at")
         print('got runs_iter')
 
-        revs = set()
-        records_by_rev = {}
+        commit_hashes = set()
+        records_by_commit_hash = {}
         for i, run in enumerate(runs_iter):
             print("i", i, "run", run)
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            if len(revs) == MAX_FETCH_REVISIONS:
+            if len(commit_hashes) == MAX_FETCH_REVISIONS:
                 break
 
             # Early return if enough complete records have been collected
-            records_is_complete = [csv_info.bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+            records_is_complete = [csv_info.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
             if sum(records_is_complete) == MAX_VALID_REVISIONS:
                 break
 
@@ -268,8 +294,8 @@ def main() -> None:
 
             # Extract revision commit and branch
             try:
-                rev, branch = config["revision"].split("@", 1)
-                revs.add(rev)
+                commit_hash, branch = config["revision"].split("@", 1)
+                commit_hashes.add(commit_hash)
             except ValueError:
                 # Ignore this run if the revision has been corrupted for some unknown reason
                 continue
@@ -282,13 +308,13 @@ def main() -> None:
                 continue
 
             # Do not store new records if the desired number of revision is already reached
-            if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
+            if len(records_by_commit_hash) == MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
                 continue
 
             # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
             # Note that the rigid body benchmark suite is the only one being supported for now.
-            sid, bid = config["benchmark_id"].split("-", 1)
-            if sid != "rigid_body":
+            suite_id, benchmark_id = config["benchmark_id"].split("-", 1)
+            if suite_id != "rigid_body":
                 continue
 
             # Make sure that stats are valid
@@ -305,29 +331,29 @@ def main() -> None:
                 continue
 
             # Store all the records into a dict
-            nbid = normalize_benchmark_id(bid)
-            records_by_rev.setdefault(rev, {})[nbid] = {
+            nbid = normalize_benchmark_id(benchmark_id)
+            records_by_commit_hash.setdefault(commit_hash, {})[nbid] = {
                 metric: summary[metric] for metric in SPEED_METRIC_KEYS
             }
-            return records_by_rev
+            return records_by_commit_hash
 
-    def fetch_wandb_data_new_format(csv_info: CsvInfo):
+    def fetch_wandb_data_new_format(csv_info: BenchmarkUnderTest):
         print("fetch_wandb_data_new_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{ENTITY}/{PROJECT_NEW}", order="-created_at")
         print('got runs_iter')
 
-        revs = set()
-        records_by_rev = defaultdict(lambda: defaultdict(dict))
+        commit_hashes = set()
+        records_by_commit_hash = defaultdict(lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
             print("i", i, "run", run)
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            if len(revs) == MAX_FETCH_REVISIONS:
+            if len(commit_hashes) == MAX_FETCH_REVISIONS:
                 break
 
             # Early return if enough complete records have been collected
-            records_is_complete = [csv_info.bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+            records_is_complete = [csv_info.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
             if sum(records_is_complete) == MAX_VALID_REVISIONS:
                 break
 
@@ -340,13 +366,13 @@ def main() -> None:
 
             # Extract revision commit and branch
             try:
-                rev, branch = config["revision"].split("@", 1)
-                revs.add(rev)
+                commit_hash, branch = config["revision"].split("@", 1)
+                commit_hashes.add(commit_hash)
             except ValueError:
                 print('didnt find rev')
                 # Ignore this run if the revision has been corrupted for some unknown reason
                 continue
-            print("rev", rev, "branch", branch)
+            print("commit_hash", commit_hash, "branch", branch)
             # Ignore runs associated with a commit that is not part of the official repository
             if not branch.startswith('Genesis-Embodied-AI/') and not args.dev_allow_all_branches:
                 print('branch didnt start with Genesis-Embodied-AI')
@@ -357,29 +383,29 @@ def main() -> None:
                 continue
 
             # Do not store new records if the desired number of revision is already reached
-            if len(records_by_rev) == MAX_VALID_REVISIONS and rev not in records_by_rev:
+            if len(records_by_commit_hash) == MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
                 continue
 
             for k, v in summary.items():
                 if k.startswith("_"):
                     continue
                 metric_name, _, kv_pairs_str = k.partition("-")
-                records_by_rev[rev][kv_pairs_str][metric_name] = v                
+                records_by_commit_hash[commit_hash][kv_pairs_str][metric_name] = v                
 
-            print('records_by_rev', records_by_rev)
-            for rev, records in records_by_rev.items():
-                print('rev')
+            print('records_by_commit_hash', records_by_commit_hash)
+            for commit_hash, records in records_by_commit_hash.items():
+                print('commit_hash')
                 for k, v in records.items():
                     print("- ", "record", k, v)
             # adsfasdf
-            return records_by_rev
+            return records_by_commit_hash
 
-    speed_records_by_rev = {}
+    speed_records_by_commit_hash = {}
     if not args.dev_skip_speed:
-        speed_records_by_rev = fetch_wandb_data_old_format(csv_info=csv_info_speed)
-    print('speed_records_by_rev', speed_records_by_rev)
+        speed_records_by_commit_hash = fetch_wandb_data_old_format(csv_info=csv_info_speed)
+    print('speed_records_by_commit_hash', speed_records_by_commit_hash)
 
-    mem_records_by_rev = fetch_wandb_data_new_format(csv_info=csv_info_mem)
+    mem_records_by_commit_hash = fetch_wandb_data_new_format(csv_info=csv_info_mem)
 
     # ----- build TWO tables -----
 
@@ -414,7 +440,7 @@ def main() -> None:
             "### Compile Time",
             *tables["compile_time"],
             "",
-            f"- (*1) last: last commit on main, mean/std: stats over revs {MAX_VALID_REVISIONS} commits if available.",
+            f"- (*1) last: last commit on main, mean/std: stats over commit hashes {MAX_VALID_REVISIONS} commits if available.",
             f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
         ]
     )
