@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
-import wandb
 
 import genesis as gs
 
@@ -240,9 +239,7 @@ def factory_logger(stream_writers):
                 "backend": str(gs.backend.name),
             }
             self.benchmark_id = "-".join((BENCHMARK_NAME, pprint_oneline(self.hparams, delimiter="-")))
-
             self.logger = None
-            self.wandb_run = None
 
         def __enter__(self):
             nonlocal stream_writers
@@ -264,42 +261,10 @@ def factory_logger(stream_writers):
                         "UTF-8"
                     )
                 ).hexdigest()
-
-                self.wandb_run = wandb.init(
-                    project="genesis-benchmarks",
-                    name="-".join((self.benchmark_id, revision)),
-                    id=run_uuid,
-                    tags=[BENCHMARK_NAME, benchmark_uuid],
-                    config={
-                        "revision": revision,
-                        "timestamp": timestamp,
-                        "machine_uuid": machine_uuid,
-                        "hardware": hardware_fringerprint,
-                        "platform": platform_fringerprint,
-                        "benchmark_id": self.benchmark_id,
-                        **self.hparams,
-                    },
-                    settings=wandb.Settings(
-                        x_disable_stats=True,
-                        console="off",
-                    ),
-                )
             return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            if self.wandb_run is not None:
-                self.wandb_run.finish()
 
         def write(self, items):
             nonlocal stream_writers
-
-            if self.wandb_run is not None:
-                self.wandb_run.log(
-                    {
-                        "timestamp": self.wandb_run.config["timestamp"],
-                        **items,
-                    }
-                )
 
             if stream_writers:
                 msg = (
