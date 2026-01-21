@@ -219,7 +219,7 @@ def kernel_cast_rays(
                 if node.left == -1:  # is leaf node
                     # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
-                    i_f = ti.cast(bvh_morton_codes[0, sorted_leaf_idx][1], ti.i32)
+                    i_f = ti.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], ti.i32)
 
                     tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
                     for i in ti.static(range(3)):
