@@ -95,7 +95,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
                 sys.executable,
                 "tests/monitor_test_mem.py",
                 "--die-with-parent",
-                "--out-csv-filepath",
+                "--out-file",
                 mem_filepath,
                 "--extra-key-values",
                 *config.getoption("--mem-monitoring-extra-result-key-values"),
