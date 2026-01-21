@@ -3,6 +3,7 @@
 from collections import defaultdict
 import argparse
 import os, sys, json, math, statistics
+from typing import Iterable
 import wandb
 from frozendict import frozendict
 from pathlib import Path
@@ -46,17 +47,22 @@ def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
                 merged_set.add(key)
     return tuple(merged)
 
-def sort_key(d):
-    key_list = []
-    for col in params_name:
-        if col in d:
-            val = d[col]
-            key_list.append((0, val))
-        else:
-            key_list.append((1, None))
-    return key_list
 
-def artifacts_parse_csv_summary(current_txt_path, metric_keys):
+def build_sort_key(params_name: Iterable[str]) -> Callable:
+    def sort_key(d):
+        nonlocal params_name
+        key_list = []
+        for col in params_name:
+            if col in d:
+                val = d[col]
+                key_list.append((0, val))
+            else:
+                key_list.append((1, None))
+        return key_list
+    return sort_key
+
+
+def artifacts_parse_csv_summary(current_txt_path: Path, metric_keys: Iterable[str]):
     out = {}
     for line in current_txt_path.read_text().splitlines():
         kv = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
@@ -72,6 +78,103 @@ def artifacts_parse_csv_summary(current_txt_path, metric_keys):
 
 def fmt_num(v, is_int: bool):
     return f"{int(v):,}" if is_int else f"{v:.2f}"
+
+
+class CsvInfo:
+    def __init__(self, artifacts_dir: Path, metric_keys: Iterable[str], filename_glob: str) -> None:
+        self.current_csv_paths = list(artifacts_dir.rglob(filename_glob))
+        assert self.current_csv_paths
+
+        self.metric_keys = metric_keys
+
+        self.current_bm = {}
+        for self.csv_path in self.current_csv_paths:
+            self.current_bm |= artifacts_parse_csv_summary(self.csv_path, self.metric_keys)
+        self.bids_set = frozenset(self.current_bm.keys())
+        assert self.bids_set
+
+    def get_params_name(self):
+        return get_param_names(tuple((tuple(kv.keys())) for kv in self.current_bm.keys()))
+
+def build_table(params_name: str, alias: str, csv_info: CsvInfo, records_by_rev) -> None:
+    rows_md = []
+    rows = []
+
+    header_cells = (
+        "status",
+        *params_name,
+        f"current {alias}",
+        f"baseline {alias} [last (mean ± std)] (*1)",
+        f"Δ {alias} (*2)"
+    )
+    header = "| " + " | ".join(header_cells) + " |"
+    align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
+
+    for bid in sorted(csv_info.current_bm.keys(), key=sort_key):
+        value_cur = csv_info.current_bm[bid][metric]
+        is_int = isinstance(value_cur, int) or value_cur.is_integer()
+        value_repr = fmt_num(value_cur, is_int)
+
+        params_repr = [bid.get(k, "-") for k in params_name]
+        info = {
+            **dict(zip(params_name, params_repr)),
+            "current": value_cur,
+            "baseline_last": None,
+            "baseline_mean": None,
+            "baseline_min": None,
+            "baseline_max": None,
+            "status": None,
+        }
+
+        values_prev = [
+            record[bid][metric]
+            for record in records_by_rev.values()
+            if bid in record
+        ]
+        if values_prev:
+            value_last = values_prev[0]
+            value_ref = statistics.fmean(values_prev)
+            delta = (value_cur - value_last) / value_last * 100.0
+
+            info["baseline_last"] = int(value_last) if is_int else float(value_last)
+
+            stats_repr = f"{fmt_num(value_last, is_int)}"
+            delta_repr = f"{delta:+.1f}%"
+            if len(values_prev) == MAX_VALID_REVISIONS:
+                info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
+                info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
+                info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
+
+                value_std = statistics.stdev(values_prev)
+                stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
+                if sign * delta < - METRICS_TOL[metric]:
+                    info["status"] = "regression"
+
+                    delta_repr = f"**{delta_repr}**"
+                    picto = "🔴"
+                    reg_found = True
+                elif sign * delta > METRICS_TOL[metric]:
+                    info["status"] = "alert"
+
+                    delta_repr = f"**{delta_repr}**"
+                    picto = "⚠️"
+                    alert_found = True
+                else:
+                    info["status"] = "ok"
+
+                    picto = "✅"
+            else:
+                info["status"] = "n/a"
+
+                picto = "ℹ️"
+        else:
+            picto, stats_repr, delta_repr = "ℹ️", "---", "---"
+
+        rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
+        rows.append(info)
+
+    return [header, align] + rows_md, rows
+    # tables[metric] = [header, align] + rows_md
 
 
 def main() -> None:
@@ -107,40 +210,19 @@ def main() -> None:
     mem_artifacts_dir = Path(args.mem_artifacts_dir).expanduser().resolve()
     check_body_path = Path(args.check_body_path).expanduser()
 
-    csv_files = {
+    speed_csv_files = {
         "runtime_fps": Path(args.csv_runtime_fps_path).expanduser().resolve(),
         "compile_time": Path(args.csv_compile_time_path).expanduser().resolve(),
+    }
+    mem_csv_files = {
         "mem": Path(args.csv_mem_path).expanduser().resolve(),
     }
-
-    # ---------- helpers ----------
 
     SPEED_METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
     MEM_METRIC_KEYS = ("max_mem_mb")
 
-    # ----- load speed artifacts (current results) -----
-
-    print('load speed tests')
-    current_csv_paths_speed = list(speed_artifacts_dir.rglob("speed_test*.txt"))
-    assert current_csv_paths_speed
-
-    current_bm_speed = {}
-    for csv_path_speed in current_csv_paths_speed:
-        current_bm_speed |= artifacts_parse_csv_summary(csv_path_speed, SPEED_METRIC_KEYS)
-    bids_set_speed = frozenset(current_bm_speed.keys())
-    assert bids_set_speed
-
-    # ----- load mem artifacts (current results) -----
-
-    print('load mem tests')
-    current_csv_paths_mem = list(mem_artifacts_dir.rglob("mem_test*.txt"))
-    assert current_csv_paths_mem
-
-    current_bm_mem = {}
-    for csv_path_mem in current_csv_paths_mem:
-        current_bm_mem |= artifacts_parse_csv_summary(csv_path_mem, MEM_METRIC_KEYS)
-    bids_set_mem = frozenset(current_bm_mem.keys())
-    assert bids_set_mem
+    csv_info_speed = CsvInfo(artifacts_dir=speed_artifacts_dir, metric_keys=SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
+    csv_info_mem = CsvInfo(artifacts_dir=mem_artifacts_dir, metric_keys=MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
 
     # ----- W&B baselines -----
 
@@ -150,7 +232,7 @@ def main() -> None:
     PROJECT_OLD = os.environ["WANDB_PROJECT_OLD_FORMAT"]
     PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
 
-    def fetch_wandb_data_old_format():
+    def fetch_wandb_data_old_format(csv_info: CsvInfo):
         print("fetch_wandb_data_old_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{ENTITY}/{PROJECT_OLD}", order="-created_at")
@@ -166,7 +248,7 @@ def main() -> None:
                 break
 
             # Early return if enough complete records have been collected
-            records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+            records_is_complete = [csv_info.bids_set.issubset(record.keys()) for record in records_by_rev.values()]
             if sum(records_is_complete) == MAX_VALID_REVISIONS:
                 break
 
@@ -222,7 +304,7 @@ def main() -> None:
             }
             return records_by_rev
 
-    def fetch_wandb_data_new_format():
+    def fetch_wandb_data_new_format(csv_info: CsvInfo):
         print("fetch_wandb_data_new_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{ENTITY}/{PROJECT_NEW}", order="-created_at")
@@ -238,7 +320,7 @@ def main() -> None:
                 break
 
             # Early return if enough complete records have been collected
-            records_is_complete = [bids_set.issubset(record.keys()) for record in records_by_rev.values()]
+            records_is_complete = [csv_info.bids_set.issubset(record.keys()) for record in records_by_rev.values()]
             if sum(records_is_complete) == MAX_VALID_REVISIONS:
                 break
 
@@ -287,10 +369,10 @@ def main() -> None:
 
     speed_records_by_rev = {}
     if not args.dev_skip_speed:
-        speed_records_by_rev = fetch_wandb_data_old_format()
+        speed_records_by_rev = fetch_wandb_data_old_format(csv_info=csv_info_speed)
     print('speed_records_by_rev', speed_records_by_rev)
 
-    mem_records_by_rev = fetch_wandb_data_new_format()
+    mem_records_by_rev = fetch_wandb_data_new_format(csv_info=csv_info_mem)
 
     # ----- build TWO tables -----
 
@@ -302,82 +384,7 @@ def main() -> None:
     rows_for_csv = {"runtime_fps": [], "compile_time": []}
     info = {}
     for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
-        rows_md = []
-
-        header_cells = (
-            "status",
-            *params_name,
-            f"current {alias}",
-            f"baseline {alias} [last (mean ± std)] (*1)",
-            f"Δ {alias} (*2)"
-        )
-        header = "| " + " | ".join(header_cells) + " |"
-        align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
-
-        for bid in sorted(current_bm.keys(), key=sort_key):
-            value_cur = current_bm[bid][metric]
-            is_int = isinstance(value_cur, int) or value_cur.is_integer()
-            value_repr = fmt_num(value_cur, is_int)
-
-            params_repr = [bid.get(k, "-") for k in params_name]
-            info = {
-                **dict(zip(params_name, params_repr)),
-                "current": value_cur,
-                "baseline_last": None,
-                "baseline_mean": None,
-                "baseline_min": None,
-                "baseline_max": None,
-                "status": None,
-            }
-
-            values_prev = [
-                record[bid][metric]
-                for record in speed_records_by_rev.values()
-                if bid in record
-            ]
-            if values_prev:
-                value_last = values_prev[0]
-                value_ref = statistics.fmean(values_prev)
-                delta = (value_cur - value_last) / value_last * 100.0
-
-                info["baseline_last"] = int(value_last) if is_int else float(value_last)
-
-                stats_repr = f"{fmt_num(value_last, is_int)}"
-                delta_repr = f"{delta:+.1f}%"
-                if len(values_prev) == MAX_VALID_REVISIONS:
-                    info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
-                    info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
-                    info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
-
-                    value_std = statistics.stdev(values_prev)
-                    stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                    if sign * delta < - METRICS_TOL[metric]:
-                        info["status"] = "regression"
-
-                        delta_repr = f"**{delta_repr}**"
-                        picto = "🔴"
-                        reg_found = True
-                    elif sign * delta > METRICS_TOL[metric]:
-                        info["status"] = "alert"
-
-                        delta_repr = f"**{delta_repr}**"
-                        picto = "⚠️"
-                        alert_found = True
-                    else:
-                        info["status"] = "ok"
-
-                        picto = "✅"
-                else:
-                    info["status"] = "n/a"
-
-                    picto = "ℹ️"
-            else:
-                picto, stats_repr, delta_repr = "ℹ️", "---", "---"
-
-            rows_md.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
-            rows_for_csv[metric].append(info)
-
-        tables[metric] = [header, align] + rows_md
+        tables[metric], rows_for_csv[metric] = build_table(params_name=csv_info.get_params_name())
 
     # ----- baseline commit list (MD) -----
     blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(speed_records_by_rev.keys(), 1)]
