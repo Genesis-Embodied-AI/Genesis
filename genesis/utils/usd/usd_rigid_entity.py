@@ -129,9 +129,7 @@ def _parse_link(
                     joint_type = gs.JOINT_TYPE.SPHERICAL
                     joint = UsdPhysics.SphericalJoint(joint_prim)
                     n_dofs, n_qs = 3, 4
-                elif joint_prim.IsA(UsdPhysics.FixedJoint):
-                    pass
-                elif joint_prim.IsA(UsdPhysics.Joint):
+                elif joint_prim.GetTypeName() == "PhysicsJoint":
                     joint_type = gs.JOINT_TYPE.FREE
                     joint = UsdPhysics.Joint(joint_prim)
                     n_dofs, n_qs = 6, 7
