@@ -476,6 +476,7 @@ def test_raycaster_hits(show_viewer, n_envs):
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
 
 
+@pytest.mark.required
 def test_lidar_bvh_parallel_env(show_viewer, tol):
     """Verify each environment receives a different lidar distance when geometries differ."""
     scene = gs.Scene(
@@ -546,7 +547,8 @@ def test_lidar_bvh_parallel_env(show_viewer, tol):
     expected_distances = front_positions - sensor_positions[:, 0]
     assert_allclose(lidar_distances, expected_distances, tol=tol)
 
-    
+
+@pytest.mark.required
 def test_lidar_cache_offset_parallel_env(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
