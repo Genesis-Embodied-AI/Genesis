@@ -24,7 +24,9 @@ from pathlib import Path
 from utils import get_git_commit_info, pprint_oneline
 
 
-def upload_results_to_wandb(run_prefix: str | None, results_file_path: str, project_name: str, metric_names=None) -> None:
+def upload_results_to_wandb(
+    run_prefix: str | None, results_file_path: str, project_name: str, metric_names=None
+) -> None:
     """
     Parse results file in pipe-delimited format and upload to W&B.
 
@@ -122,10 +124,8 @@ def main():
     )
     args = parser.parse_args()
     return upload_results_to_wandb(
-        run_prefix=args.run_prefix,
-        results_file_path=args.in_file,
-        project_name=args.project,
-        metric_names=args.metrics)
+        run_prefix=args.run_prefix, results_file_path=args.in_file, project_name=args.project, metric_names=args.metrics
+    )
 
 
 if __name__ == "__main__":
