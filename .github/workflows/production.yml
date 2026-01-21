@@ -166,7 +166,14 @@ jobs:
                    --print -x -m "benchmarks" ./tests \
                    --mem-monitoring-extra-result-key-values "dtype=${DTYPE}"
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-            python .github/workflows/scripts/upload_mem_to_wandb.py "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv"
+            python tests/upload_benchmarks_table_to_wandb.py \
+                --in-file "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
+                --project genesis-benchmarks-2 \
+                --metrics compile_time runtime_fps realtime_factor
+            python tests/upload_benchmarks_table_to_wandb.py \
+                --in-file "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt" \
+                --project genesis-benchmarks-2 \
+                --metrics max_mem_db
           EOF
       - name: Kill Slurm job
         if: always()
