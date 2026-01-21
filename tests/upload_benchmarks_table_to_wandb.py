@@ -42,7 +42,7 @@ def upload_results_to_wandb(run_prefix: str | None, results_file_path: str, proj
     # Initialize a single run for all benchmark results
     name = f"{revision[:12]}"
     if run_prefix:
-        name = f"{run_prefix}name"
+        name = f"{run_prefix}{name}"
     run = wandb.init(
         project=project_name,
         name=name,
