@@ -8,8 +8,8 @@ import genesis.utils.geom as gu
 
 import genesis.utils.array_class as array_class
 
-from .contact_island import ContactIsland
-from .rigid_solver_util import func_wakeup_entity_and_its_temp_island
+from ..collider.contact_island import ContactIsland
+from ..abd.misc import func_wakeup_entity_and_its_temp_island
 
 if TYPE_CHECKING:
     from genesis.engine.colliders.collider import Collider

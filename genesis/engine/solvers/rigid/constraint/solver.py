@@ -7,10 +7,10 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.backward_constraint_solver as backward_constraint_solver
+from . import backward as backward_constraint_solver
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-import genesis.engine.solvers.rigid.constraint_noslip as constraint_noslip
-from genesis.engine.solvers.rigid.contact_island import ContactIsland
+from . import noslip as constraint_noslip
+from ..collider.contact_island import ContactIsland
 from genesis.utils.misc import ti_to_torch
 
 if TYPE_CHECKING:
