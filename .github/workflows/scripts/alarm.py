@@ -280,7 +280,6 @@ class Alarm:
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
         rows_for_csv_by_metric_name = {"runtime_fps": [], "compile_time": [], "max_mem_mb": []}
-        info = {}
         reg_found, alert_found = False, False
         for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
             ("runtime_fps", "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
@@ -325,12 +324,12 @@ class Alarm:
             ]
         )
 
-        for metric_ in ("runtime_fps", "compile_time", "max_mem_mb"):
-            with self.csv_out_file_by_metric_name[metric_].open("w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=info.keys())
-                w.writeheader()
-                for rec in rows_for_csv_by_metric_name[metric_]:
-                    w.writerow(rec)
+        # for metric_ in ("runtime_fps", "compile_time", "max_mem_mb"):
+        #     with self.csv_out_file_by_metric_name[metric_].open("w", newline="", encoding="utf-8") as f:
+        #         w = csv.DictWriter(f, fieldnames=info.keys())
+        #         w.writeheader()
+        #         for rec in rows_for_csv_by_metric_name[metric_]:
+        #             w.writerow(rec)
 
         self.check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
@@ -373,8 +372,8 @@ class Alarm:
         config, summary = run.config, run.summary  # type: ignore
         if isinstance(config, str):
             config = {k: v["value"] for k, v in json.loads(config).items() if not k.startswith("_")}
-        if isinstance(summary._json_dict, str):
-            summary = json.loads(summary._json_dict)
+        if isinstance(summary._json_dict, str):  # type: ignore
+            summary = json.loads(summary._json_dict)  # type: ignore
 
         # Extract revision commit and branch
         try:
@@ -517,6 +516,7 @@ class Alarm:
         header = "| " + " | ".join(header_cells) + " |"
         align  = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
 
+        row_data = {}
         for config_params_fdict in sorted(benchmark_run_under_test.results.keys(), key=build_sort_key_fn(
             config_param_names=config_param_names
         )):
@@ -527,7 +527,7 @@ class Alarm:
             value_repr = fmt_num(value_cur, is_int)
 
             params_repr = [config_params_fdict.get(k, "-") for k in config_param_names]
-            info = {
+            row_data = {
                 **dict(zip(config_param_names, params_repr)),
                 "current": value_cur,
                 "baseline_last": None,
@@ -547,45 +547,52 @@ class Alarm:
                 value_ref = statistics.fmean(values_prev)
                 delta = (value_cur - value_last) / value_last * 100.0
 
-                info["baseline_last"] = int(value_last) if is_int else float(value_last)
+                row_data["baseline_last"] = int(value_last) if is_int else float(value_last)
 
                 stats_repr = f"{fmt_num(value_last, is_int)}"
                 delta_repr = f"{delta:+.1f}%"
                 if len(values_prev) == self.MAX_VALID_REVISIONS:
-                    info["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
-                    info["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
-                    info["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
+                    row_data["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
+                    row_data["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
+                    row_data["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
 
                     value_std = statistics.stdev(values_prev)
                     stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
                     if sign * delta < - self.METRICS_TOL[metric]:
-                        info["status"] = "regression"
+                        row_data["status"] = "regression"
 
                         delta_repr = f"**{delta_repr}**"
                         picto = "🔴"
                         reg_found = True
                     elif sign * delta > self.METRICS_TOL[metric]:
-                        info["status"] = "alert"
+                        row_data["status"] = "alert"
 
                         delta_repr = f"**{delta_repr}**"
                         picto = "⚠️"
                         alert_found = True
                     else:
-                        info["status"] = "ok"
+                        row_data["status"] = "ok"
 
                         picto = "✅"
                 else:
-                    info["status"] = "n/a"
+                    row_data["status"] = "n/a"
 
                     picto = "ℹ️"
             else:
                 picto, stats_repr, delta_repr = "ℹ️", "---", "---"
 
             markdown_rows.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
-            rows.append(info)
+            rows.append(row_data)
 
         blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
         baseline_block = ["**Baselines considered:** " + f"**{len(records_by_commit_hash)}** commits"] + blist
+
+        # for metric_ in ("runtime_fps", "compile_time", "max_mem_mb"):
+        with self.csv_out_file_by_metric_name[metric].open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=row_data.keys())
+            w.writeheader()
+            for rec in rows:
+                w.writerow(rec)
 
         # return [header, align] + markdown_rows, rows
         return Table(markdown_rows=[header, align] + markdown_rows + baseline_block), rows, reg_found, alert_found
