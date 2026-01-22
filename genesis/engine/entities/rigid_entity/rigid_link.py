@@ -167,8 +167,6 @@ class RigidLink(RBC):
                 if inertia_mesh.volume < -gs.EPS:
                     inertia_mesh.invert()
 
-                print(inertia_mesh.is_watertight, "volume:", inertia_mesh.volume)
-
                 geom_mass = inertia_mesh.volume * rho
                 geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
 
