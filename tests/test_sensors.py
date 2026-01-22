@@ -131,7 +131,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
         assert_array_equal(imu_delayed.read().mag - imu_delayed.read_ground_truth().mag, 0.0)
 
     box.set_COM_shift((0.0, 0.0, 0.0))
-    box.set_quat((0.0, 0.0, 0.0, 1.0))
+    box.set_quat((0.0, 0.0, 0.0, 1.0))  # pi rotation around z-axis
 
     # wait for the box to be stationary on ground
     for _ in range(50):
@@ -139,16 +139,25 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=5e-6)
     assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
-    assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[1], MAG_FIELD[2]), tol=1e-5)
+    assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[1], MAG_FIELD[2]), tol=tol)
 
     # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
+    scene.step()
+    assert_allclose(imu.read().lin_acc, (0.0, GRAVITY, 0.0), tol=5e-6)
+    assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[2], -MAG_FIELD[1]), tol=tol)
+
     imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
     scene.step()
-    assert_allclose(imu.read().lin_acc, -GRAVITY, tol=5e-6)
-    imu.set_quat_offset((0.0, 0.0, 0.0, 1.0))
-    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
+    assert_allclose(imu.read().lin_acc, GRAVITY, tol=5e-6)
 
+    scene.reset()
+    box.set_dofs_velocity((1.0, 2.0, 3.0), dofs_idx_local=slice(3, None))
+    scene.step()
+    assert_allclose(imu.read_ground_truth().ang_vel, (1.0, 3.0, -2.0), tol=0.1)
+
+    imu.set_quat_offset((1.0, 0.0, 0.0, 0.0))
+    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
     scene.reset()
 
     assert_allclose(imu.read().lin_acc, 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
@@ -156,9 +165,10 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
     assert_allclose(imu_noisy.read().mag, 0.0, tol=gs.EPS)  # biased
 
-    imu.set_bias(BIAS)
+    imu.set_bias(BIAS + 2 * (0.0, 0.0, 0.0))
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
+    assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
 
 
 @pytest.mark.required
