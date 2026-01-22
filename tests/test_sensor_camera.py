@@ -318,6 +318,81 @@ def test_batch_renderer(n_envs, png_snapshot):
 
 
 @pytest.mark.required
+def test_cameras_share_metadata():
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+    cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    assert cam1._shared_metadata is cam2._shared_metadata
+    assert len(cam1._shared_metadata.sensors) == 2
+
+
+@pytest.mark.required
+def test_camera_destroy_cleans_shared_metadata():
+    import gc
+    import weakref
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+
+    scene.build()
+    camera.read()
+
+    shared_metadata = camera._shared_metadata
+    renderer = shared_metadata.renderer
+    offscreen_renderer = renderer._renderer
+    offscreen_renderer_ref = weakref.ref(offscreen_renderer)
+
+    scene.destroy()
+
+    assert shared_metadata.renderer is None
+    assert shared_metadata.context is None
+    assert shared_metadata.sensors is None
+    assert renderer._renderer is None
+
+    del offscreen_renderer
+    gc.collect()
+    assert offscreen_renderer_ref() is None
+
+
+@pytest.mark.required
+def test_multiple_cameras_destroy_cleans_shared_renderer():
+    import gc
+    import weakref
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+    cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    shared_metadata = cam1._shared_metadata
+    offscreen_renderer = shared_metadata.renderer._renderer
+    offscreen_renderer_ref = weakref.ref(offscreen_renderer)
+
+    scene.destroy()
+
+    assert shared_metadata.renderer is None
+    assert shared_metadata.sensors is None
+
+    del offscreen_renderer
+    gc.collect()
+    assert offscreen_renderer_ref() is None
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 1])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
