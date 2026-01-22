@@ -93,7 +93,7 @@ def merge_string_tuples(tuples: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
     return tuple(merged_keys)
 
 
-def build_sort_key(config_param_names: Iterable[str]) -> Callable:
+def build_sort_key_fn(config_param_names: Iterable[str]) -> Callable:
     """
     Builds a sort key function that can be used to order
     dictionaries of values. The sort key function returns
@@ -440,7 +440,7 @@ class Alarm:
     def fetch_wandb_data_new_format(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
-    ) -> dict[str, dict[str, dict[str, float | int]]]:
+    ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
         print("fetch_wandb_data_new_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
@@ -539,12 +539,14 @@ class Alarm:
         header = "| " + " | ".join(header_cells) + " |"
         align  = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
 
-        for benchmark_id in sorted(benchmark_run_under_test.current_bm.keys(), key=sort_key):
-            value_cur = benchmark_run_under_test.current_bm[benchmark_id][metric]
+        for config_params_str in sorted(benchmark_run_under_test.results.keys(), key=build_sort_key_fn(
+            config_param_names=config_param_names
+        )):
+            value_cur = benchmark_run_under_test.results[config_params_str][metric]
             is_int = isinstance(value_cur, int) or value_cur.is_integer()
             value_repr = fmt_num(value_cur, is_int)
 
-            params_repr = [benchmark_id.get(k, "-") for k in config_param_names]
+            params_repr = [config_params_str.get(k, "-") for k in config_param_names]
             info = {
                 **dict(zip(config_param_names, params_repr)),
                 "current": value_cur,
@@ -556,9 +558,9 @@ class Alarm:
             }
 
             values_prev = [
-                record[benchmark_id][metric]
+                record[config_params_str][metric]
                 for record in records_by_commit_hash.values()
-                if benchmark_id in record
+                if config_params_str in record
             ]
             if values_prev:
                 value_last = values_prev[0]
