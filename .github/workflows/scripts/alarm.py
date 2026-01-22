@@ -339,17 +339,23 @@ class Alarm:
         print("i", i, "run", run)
         # Abort if still not complete after checking enough runs.
         # This would happen if a new benchmark has been added, and not enough past data is available yet.
+        print("len(commimt_hashes)", len(commit_hashes))
         if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
             return False, "", {}, {}
 
         # Early return if enough complete records have been collected
         complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
+        print("sum complee reocrds", sum(complete_records), "len complete records", len(complete_records))
         if sum(complete_records) == self.MAX_VALID_REVISIONS:
             return False, "", {}, {}
 
         # Load config and summary, with support of legacy runs
         summary: dict[str, Any]
-        config, summary = run.config, run.summary  # type: ignore
+        try:
+            config, summary = run.config, run.summary  # type: ignore
+        except Exception as e:
+            print(e)
+            return False, "", {}, {}
         if isinstance(config, str):
             config = {k: v["value"] for k, v in json.loads(config).items() if not k.startswith("_")}
         if isinstance(summary._json_dict, str):  # type: ignore
