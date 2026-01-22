@@ -229,6 +229,12 @@ class WandbParserOldFormat(WandbParser):
         }
 
 
+def dev_dump_records_by_commit_hash(records_by_commit_hash):
+    for commit, records in records_by_commit_hash.items():
+        print('commit', commit)
+        for config_params_fdict, metrics in records.items():
+            print('  config_params_fdict', config_params_fdict, 'metrics', metrics)
+
 class WandbParserNewFormat(WandbParser):
     @property
     def project(self):
@@ -242,12 +248,16 @@ class WandbParserNewFormat(WandbParser):
         summary,
         commit_hash: str,
     ) -> None:
+        print("records_by_commit_hash before update:")
+        dev_dump_records_by_commit_hash(records_by_commit_hash)
         for k, v in summary.items():
             if k.startswith("_"):
                 continue
             metric_name, _, kv_pairs_str = k.partition("-")
             kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
             records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v
+        print("records_by_commit_hash after update:")
+        dev_dump_records_by_commit_hash(records_by_commit_hash)
 
 
 class BenchmarkRunUnderTest:
@@ -542,7 +552,7 @@ class Alarm:
 
                 stats_repr = f"{fmt_num(value_last, is_int)}"
                 delta_repr = f"{delta:+.1f}%"
-                if len(values_prev) >= 2:
+                if len(values_prev) >= self.MAX_VALID_REVISIONS:
                     row_data["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
                     row_data["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
                     row_data["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
