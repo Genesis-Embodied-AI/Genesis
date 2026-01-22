@@ -1,6 +1,5 @@
 import os
 import platform
-from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -372,12 +371,15 @@ def test_usd_bake(usd_file, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("mesh_file", ["yup_zup_coverage/cannon_z.glb", "yup_zup_coverage/cannon_y_-z.stl"])
-def test_urdf_yup(mesh_file, tmp_path):
+@pytest.mark.parametrize(
+    "mesh_file, file_meshes_are_zup",
+    [("yup_zup_coverage/cannon_z.glb", True), ("yup_zup_coverage/cannon_y_-z.stl", False)],
+)
+def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
     asset_path = get_hf_dataset(pattern=mesh_file)
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
-        f"""<robot name="shoe">
+        f"""<robot name="cannon">
               <link name="base">
                 <visual>
                   <geometry><mesh filename="{os.path.join(asset_path, mesh_file)}"/></geometry>
@@ -387,22 +389,26 @@ def test_urdf_yup(mesh_file, tmp_path):
          """
     )
 
-    scene = gs.Scene()
+    scene = gs.Scene(show_viewer=show_viewer)
     robot = scene.add_entity(
         gs.morphs.URDF(
             file=urdf_path,
-            file_meshes_are_zup=False,
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=file_meshes_are_zup,
         ),
     )
     mesh = robot.vgeoms[0].vmesh
 
-    with pytest.raises(AssertionError) if mesh_file == "yup_zup_coverage/cannon_z.glb" else nullcontext():
-        assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+    if show_viewer:
+        scene.build()
+
+    assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
 
 
 @pytest.mark.required
-def test_obj_morphes_yup():
-    scene = gs.Scene()
+def test_obj_morphes_yup(show_viewer):
+    scene = gs.Scene(show_viewer=show_viewer)
 
     asset_path = get_hf_dataset(pattern="yup_zup_coverage/*")
 
@@ -411,7 +417,7 @@ def test_obj_morphes_yup():
             file=f"{asset_path}/yup_zup_coverage/cannon_y.glb",
             convexify=False,
             fixed=True,
-            file_meshes_are_zup=True,
+            file_meshes_are_zup=False,
         ),
     )
     glb_mesh_y = glb_y.vgeoms[0].vmesh
@@ -459,16 +465,18 @@ def test_obj_morphes_yup():
     )
     obj_mesh_z = obj_z.vgeoms[0].vmesh
 
+    if show_viewer:
+        scene.build()
+
     assert not glb_mesh_y.metadata["imported_as_zup"]
-    assert not glb_mesh_z.metadata["imported_as_zup"]
+    assert glb_mesh_z.metadata["imported_as_zup"]
     assert not stl_mesh_y.metadata["imported_as_zup"]
     assert stl_mesh_z.metadata["imported_as_zup"]
     assert not obj_mesh_y.metadata["imported_as_zup"]
     assert obj_mesh_z.metadata["imported_as_zup"]
 
     for mesh in (glb_mesh_y, glb_mesh_z, stl_mesh_y, stl_mesh_z, obj_mesh_y, obj_mesh_z):
-        with pytest.raises(AssertionError) if mesh is glb_mesh_z else nullcontext():
-            assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+        assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
 
 
 @pytest.mark.required
