@@ -255,9 +255,6 @@ class BenchmarkRunUnderTest:
     This class contains the data about the benchmark run under test, which we will then
     compare with historical data. This data is loaded from text files in pipe format.
     | foo=123 | bar=456 | ...
-
-    Note: currently this class is kind of a mess, but we will make it contain what the previous
-    paragraph just described.
     """
 
     def __init__(self, artifacts_dir: Path, metric_keys: Iterable[str], filename_glob: str) -> None:
