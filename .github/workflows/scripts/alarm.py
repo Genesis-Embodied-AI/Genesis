@@ -258,6 +258,10 @@ class Alarm:
 
         mem_records_by_commit_hash = self.fetch_wandb_data_new_format(
             benchmark_under_test=results_under_test_mem, run_name_prefix="mem-")
+        for commit_hash, records in mem_records_by_commit_hash.items():
+            print("commit_hash", commit_hash)
+            for config_params_fdict, metrics in records.items():
+                print("config_params_fdict", config_params_fdict, "metrics", metrics)
 
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
@@ -453,7 +457,8 @@ class Alarm:
                 if k.startswith("_"):
                     continue
                 metric_name, _, kv_pairs_str = k.partition("-")
-                records_by_commit_hash[commit_hash][kv_pairs_str][metric_name] = v                
+                kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
+                records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v                
         return records_by_commit_hash
 
     def build_table(
@@ -488,8 +493,9 @@ class Alarm:
             config_param_names=config_param_names
         )):
             print("config_params_fdict", config_params_fdict)
-            print("benchmark_run_under_test.results.keys", benchmark_run_under_test.results.keys())
+            # print("benchmark_run_under_test.results.keys", benchmark_run_under_test.results.keys())
             value_cur = benchmark_run_under_test.results[config_params_fdict][metric]
+            print('value_cur', value_cur)
             is_int = isinstance(value_cur, int) or value_cur.is_integer()
             value_repr = fmt_num(value_cur, is_int)
 
@@ -504,11 +510,18 @@ class Alarm:
                 "status": None,
             }
 
+            metrics_prev = [
+                record[config_params_fdict]
+                for record in records_by_commit_hash.values()
+                if config_params_fdict in record
+            ]
+            print('metrics_prev', metrics_prev)
             values_prev = [
                 record[config_params_fdict][metric]
                 for record in records_by_commit_hash.values()
                 if config_params_fdict in record
             ]
+            print('values prev', values_prev)
             if values_prev:
                 value_last = values_prev[0]
                 value_ref = statistics.fmean(values_prev)
