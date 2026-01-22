@@ -601,4 +601,3 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
         sensor_data = sensor.read()
         assert (sensor_data.distances > gs.EPS).any()
         assert (sensor_data.points.abs() > gs.EPS).any()
-
