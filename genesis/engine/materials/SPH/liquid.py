@@ -32,7 +32,7 @@ class Liquid(Base):
         exponent=7.0,
         mu=0.005,
         gamma=0.01,
-        sampler='regular',
+        sampler="regular",
     ):
         super().__init__(sampler)
 
