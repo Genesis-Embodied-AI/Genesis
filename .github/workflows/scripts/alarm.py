@@ -410,150 +410,150 @@ class Alarm:
 
         return 0
 
-    def fetch_wandb_data_loop_common(
-        self,
-        i: int,
-        run: Run,
-        commit_hashes: set[str],
-        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
-        all_config_param_fdicts: frozenset[frozendict[str, str]],
-    ) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
-        """
-        The common part of the loop over runs, that is the same for both
-        old and new format
+    # def fetch_wandb_data_loop_common(
+    #     self,
+    #     i: int,
+    #     run: Run,
+    #     commit_hashes: set[str],
+    #     records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
+    #     all_config_param_fdicts: frozenset[frozendict[str, str]],
+    # ) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
+    #     """
+    #     The common part of the loop over runs, that is the same for both
+    #     old and new format
 
-        If returns False, then the calling for loop should do 'continue'
-        """
-        print("i", i, "run", run)
-        # Abort if still not complete after checking enough runs.
-        # This would happen if a new benchmark has been added, and not enough past data is available yet.
-        print("len(commimt_hashes)", len(commit_hashes))
-        if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-            return False, "", {}, {}
+    #     If returns False, then the calling for loop should do 'continue'
+    #     """
+    #     print("i", i, "run", run)
+    #     # Abort if still not complete after checking enough runs.
+    #     # This would happen if a new benchmark has been added, and not enough past data is available yet.
+    #     print("len(commimt_hashes)", len(commit_hashes))
+    #     if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
+    #         return False, "", {}, {}
 
-        # Early return if enough complete records have been collected
-        complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
-        print("sum complee reocrds", sum(complete_records), "len complete records", len(complete_records))
-        if sum(complete_records) == self.MAX_VALID_REVISIONS:
-            return False, "", {}, {}
+    #     # Early return if enough complete records have been collected
+    #     complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
+    #     print("sum complee reocrds", sum(complete_records))
+    #     if sum(complete_records) == self.MAX_VALID_REVISIONS:
+    #         return False, "", {}, {}
 
-        # Load config and summary, with support of legacy runs
-        summary: dict[str, Any]
-        try:
-            config, summary = run.config, run.summary  # type: ignore
-        except Exception as e:
-            print(e)
-            return False, "", {}, {}
-        if isinstance(config, str):
-            config = {k: v["value"] for k, v in json.loads(config).items() if not k.startswith("_")}
-        if isinstance(summary._json_dict, str):  # type: ignore
-            summary = json.loads(summary._json_dict)  # type: ignore
+    #     # Load config and summary, with support of legacy runs
+    #     summary: dict[str, Any]
+    #     try:
+    #         config, summary = run.config, run.summary  # type: ignore
+    #     except Exception as e:
+    #         print(e)
+    #         return False, "", {}, {}
+    #     if isinstance(config, str):
+    #         config = {k: v["value"] for k, v in json.loads(config).items() if not k.startswith("_")}
+    #     if isinstance(summary._json_dict, str):  # type: ignore
+    #         summary = json.loads(summary._json_dict)  # type: ignore
 
-        # Extract revision commit and branch
-        try:
-            commit_hash, branch = config["revision"].split("@", 1)
-            commit_hashes.add(commit_hash)
-        except ValueError:
-            # Ignore this run if the revision has been corrupted for some unknown reason
-            return False, "", {}, {}
+    #     # Extract revision commit and branch
+    #     try:
+    #         commit_hash, branch = config["revision"].split("@", 1)
+    #         commit_hashes.add(commit_hash)
+    #     except ValueError:
+    #         # Ignore this run if the revision has been corrupted for some unknown reason
+    #         return False, "", {}, {}
 
-        # Ignore runs associated with a commit that is not part of the official repository
-        if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-            return False, "", {}, {}
+    #     # Ignore runs associated with a commit that is not part of the official repository
+    #     if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
+    #         return False, "", {}, {}
 
-        # Skip runs did not finish for some reason
-        if run.state != "finished":
-            return False, "", {}, {}
+    #     # Skip runs did not finish for some reason
+    #     if run.state != "finished":
+    #         return False, "", {}, {}
 
-        # Do not store new records if the desired number of revision is already reached
-        if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-            return False, "", {}, {}
+    #     # Do not store new records if the desired number of revision is already reached
+    #     if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
+    #         return False, "", {}, {}
 
-        return True, commit_hash, config, summary
+    #     return True, commit_hash, config, summary
 
-    def fetch_wandb_data_old_format(
-        self,
-        benchmark_under_test: BenchmarkRunUnderTest,
-    ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
-        print("fetch_wandb_data_old_format")
-        api = wandb.Api()
-        runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
-        print('got runs_iter')
+    # def fetch_wandb_data_old_format(
+    #     self,
+    #     benchmark_under_test: BenchmarkRunUnderTest,
+    # ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
+    #     print("fetch_wandb_data_old_format")
+    #     api = wandb.Api()
+    #     runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
+    #     print('got runs_iter')
 
-        commit_hashes = set()
-        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
-        for i, run in enumerate(runs_iter):
-            should_continue_, commit_hash, config, summary = self.fetch_wandb_data_loop_common(
-                i=i,
-                run=run,
-                commit_hashes=commit_hashes,
-                records_by_commit_hash=records_by_commit_hash,
-                all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
-            )
-            if not should_continue_:
-                continue
+    #     commit_hashes = set()
+    #     records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
+    #     for i, run in enumerate(runs_iter):
+    #         should_continue_, commit_hash, config, summary = self.fetch_wandb_data_loop_common(
+    #             i=i,
+    #             run=run,
+    #             commit_hashes=commit_hashes,
+    #             records_by_commit_hash=records_by_commit_hash,
+    #             all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
+    #         )
+    #         if not should_continue_:
+    #             continue
 
-            # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
-            # Note that the rigid body benchmark suite is the only one being supported for now.
-            suite_id, config_params_str = config["benchmark_id"].split("-", 1)
-            if suite_id != "rigid_body":
-                continue
+    #         # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
+    #         # Note that the rigid body benchmark suite is the only one being supported for now.
+    #         suite_id, config_params_str = config["benchmark_id"].split("-", 1)
+    #         if suite_id != "rigid_body":
+    #             continue
 
-            # Make sure that stats are valid
-            try:
-                is_valid = True
-                for k in self.SPEED_METRIC_KEYS:
-                    v = summary[k]
-                    if not isinstance(v, (float, int)) or math.isnan(v):
-                        is_valid = False
-                        break
-                if not is_valid:
-                    continue
-            except KeyError:
-                continue
+    #         # Make sure that stats are valid
+    #         try:
+    #             is_valid = True
+    #             for k in self.SPEED_METRIC_KEYS:
+    #                 v = summary[k]
+    #                 if not isinstance(v, (float, int)) or math.isnan(v):
+    #                     is_valid = False
+    #                     break
+    #             if not is_valid:
+    #                 continue
+    #         except KeyError:
+    #             continue
 
-            # Store all the records into a dict
-            config_params_fdict = config_params_str_to_fdict(config_params_str)
-            records_by_commit_hash.setdefault(commit_hash, {})[config_params_fdict] = {
-                metric: run.summary[metric] for metric in self.SPEED_METRIC_KEYS
-            }
-        return records_by_commit_hash
+    #         # Store all the records into a dict
+    #         config_params_fdict = config_params_str_to_fdict(config_params_str)
+    #         records_by_commit_hash.setdefault(commit_hash, {})[config_params_fdict] = {
+    #             metric: run.summary[metric] for metric in self.SPEED_METRIC_KEYS
+    #         }
+    #     return records_by_commit_hash
 
-    def fetch_wandb_data_new_format(
-        self,
-        benchmark_under_test: BenchmarkRunUnderTest,
-        run_name_prefix: str,
-    ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
-        print("fetch_wandb_data_new_format")
-        api = wandb.Api()
-        runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
-        print('got runs_iter')
+    # def fetch_wandb_data_new_format(
+    #     self,
+    #     benchmark_under_test: BenchmarkRunUnderTest,
+    #     run_name_prefix: str,
+    # ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
+    #     print("fetch_wandb_data_new_format")
+    #     api = wandb.Api()
+    #     runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
+    #     print('got runs_iter')
 
-        commit_hashes = set()
-        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
-            lambda: defaultdict(dict))
-        for i, run in enumerate(runs_iter):
-            if not run.name.startswith(run_name_prefix):
-                continue
-            print('run name', run.name)
+    #     commit_hashes = set()
+    #     records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
+    #         lambda: defaultdict(dict))
+    #     for i, run in enumerate(runs_iter):
+    #         if not run.name.startswith(run_name_prefix):
+    #             continue
+    #         print('run name', run.name)
 
-            should_continue_, commit_hash, _config, _summary = self.fetch_wandb_data_loop_common(
-                i=i,
-                run=run,
-                commit_hashes=commit_hashes,
-                records_by_commit_hash=records_by_commit_hash,
-                all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
-            )
-            if not should_continue_:
-                continue
+    #         should_continue_, commit_hash, _config, _summary = self.fetch_wandb_data_loop_common(
+    #             i=i,
+    #             run=run,
+    #             commit_hashes=commit_hashes,
+    #             records_by_commit_hash=records_by_commit_hash,
+    #             all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
+    #         )
+    #         if not should_continue_:
+    #             continue
 
-            for k, v in run.summary.items():
-                if k.startswith("_"):
-                    continue
-                metric_name, _, kv_pairs_str = k.partition("-")
-                kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
-                records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v                
-        return records_by_commit_hash
+    #         for k, v in run.summary.items():
+    #             if k.startswith("_"):
+    #                 continue
+    #             metric_name, _, kv_pairs_str = k.partition("-")
+    #             kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
+    #             records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v                
+    #     return records_by_commit_hash
 
     def fetch_wandb_data(
         self,
