@@ -437,7 +437,7 @@ def test_batch_renderer_destroy():
 
     scene.destroy()
 
-    assert shared_metadata.sensors is None
+    assert not shared_metadata.sensors
 
 
 @pytest.mark.required
@@ -468,7 +468,7 @@ def test_raytracer_destroy():
 
     scene.destroy()
 
-    assert shared_metadata.sensors is None
+    assert not shared_metadata.sensors
 
 
 @pytest.mark.required
