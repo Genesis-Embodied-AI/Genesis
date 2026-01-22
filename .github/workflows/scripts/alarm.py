@@ -147,6 +147,9 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
     Conceptually the keys are config_param_fdict's, and the values are a dictionary of metric names and
     values.
     """
+    print("parse reslts file metrics", metric_keys)
+    # easy to accidentally sned a string instead of a tuple
+    assert isinstance(metric_keys, tuple)
     results: dict[frozendict[str, str], dict[str, int | float]] = {}
     for line in results_file_path.read_text().splitlines():
         config_param_dict: dict[str, str] = dict(  # type: ignore
@@ -246,7 +249,7 @@ class Alarm:
         }
 
         self.SPEED_METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
-        self.MEM_METRIC_KEYS = ("max_mem_mb")
+        self.MEM_METRIC_KEYS = ("max_mem_mb",)
 
         self.dev_skip_speed = args.dev_skip_speed
         self.dev_allow_all_branches = args.dev_allow_all_branches
@@ -260,6 +263,9 @@ class Alarm:
     def run(self) -> int:
         results_under_test_speed = BenchmarkRunUnderTest(artifacts_dir=self.speed_artifacts_dir, metric_keys=self.SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
         results_under_test_mem = BenchmarkRunUnderTest(artifacts_dir=self.mem_artifacts_dir, metric_keys=self.MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
+
+        print("results_under_test_speed", results_under_test_speed.results)
+        print("results_under_test_mem", results_under_test_mem.results)
 
         # ----- W&B baselines -----
 
@@ -344,7 +350,7 @@ class Alarm:
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
         all_config_param_fdicts: frozenset[frozendict[str, str]],
         # check_benchmark_suite: bool = True
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
         """
         The common part of the loop over runs, that is the same for both
         old and new format
@@ -355,15 +361,16 @@ class Alarm:
         # Abort if still not complete after checking enough runs.
         # This would happen if a new benchmark has been added, and not enough past data is available yet.
         if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-            return False, ""
+            return False, "", {}, {}
 
         # Early return if enough complete records have been collected
         complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
         if sum(complete_records) == self.MAX_VALID_REVISIONS:
-            return False, ""
+            return False, "", {}, {}
 
         # Load config and summary, with support of legacy runs
-        config, summary = run.config, run.summary
+        summary: dict[str, Any]
+        config, summary = run.config, run.summary  # type: ignore
         if isinstance(config, str):
             config = {k: v["value"] for k, v in json.loads(config).items() if not k.startswith("_")}
         if isinstance(summary._json_dict, str):
@@ -375,23 +382,23 @@ class Alarm:
             commit_hashes.add(commit_hash)
         except ValueError:
             # Ignore this run if the revision has been corrupted for some unknown reason
-            return False, ""
+            return False, "", {}, {}
 
         # Ignore runs associated with a commit that is not part of the official repository
         if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-            return False, ""
+            return False, "", {}, {}
 
         # Skip runs did not finish for some reason
         if run.state != "finished":
-            return False, ""
+            return False, "", {}, {}
 
         # Do not store new records if the desired number of revision is already reached
         if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-            return False, ""
+            return False, "", {}, {}
 
         # if check_benchmark_suite:
 
-        return True, commit_hash
+        return True, commit_hash, config, summary
 
     def fetch_wandb_data_old_format(
         self,
@@ -405,7 +412,7 @@ class Alarm:
         commit_hashes = set()
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
         for i, run in enumerate(runs_iter):
-            should_continue_, commit_hash = self.fetch_wandb_data_loop_common(
+            should_continue_, commit_hash, config, summary = self.fetch_wandb_data_loop_common(
                 i=i,
                 run=run,
                 commit_hashes=commit_hashes,
@@ -417,7 +424,7 @@ class Alarm:
 
             # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
             # Note that the rigid body benchmark suite is the only one being supported for now.
-            suite_id, config_params_str = run.config["benchmark_id"].split("-", 1)
+            suite_id, config_params_str = config["benchmark_id"].split("-", 1)
             if suite_id != "rigid_body":
                 continue
 
@@ -425,7 +432,7 @@ class Alarm:
             try:
                 is_valid = True
                 for k in self.SPEED_METRIC_KEYS:
-                    v = run.summary[k]
+                    v = summary[k]
                     if not isinstance(v, (float, int)) or math.isnan(v):
                         is_valid = False
                         break
@@ -459,7 +466,7 @@ class Alarm:
                 continue
             print('run name', run.name)
 
-            should_continue_, commit_hash = self.fetch_wandb_data_loop_common(
+            should_continue_, commit_hash, _config, _summary = self.fetch_wandb_data_loop_common(
                 i=i,
                 run=run,
                 commit_hashes=commit_hashes,
@@ -492,6 +499,8 @@ class Alarm:
         records_by_commit_hash: dict[str, Any],
         sign: int,
     ) -> tuple[Table, list[dict[str, Any]], bool, bool]:
+        print("=================================")
+        print('alias', alias)
         # together these rows contain the text of the markdwon
         markdown_rows = []
         rows = []
@@ -508,14 +517,16 @@ class Alarm:
         header = "| " + " | ".join(header_cells) + " |"
         align  = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
 
-        for config_params_str in sorted(benchmark_run_under_test.results.keys(), key=build_sort_key_fn(
+        for config_params_fdict in sorted(benchmark_run_under_test.results.keys(), key=build_sort_key_fn(
             config_param_names=config_param_names
         )):
-            value_cur = benchmark_run_under_test.results[config_params_str][metric]
+            print("config_params_fdict", config_params_fdict)
+            print("benchmark_run_under_test.results.keys", benchmark_run_under_test.results.keys())
+            value_cur = benchmark_run_under_test.results[config_params_fdict][metric]
             is_int = isinstance(value_cur, int) or value_cur.is_integer()
             value_repr = fmt_num(value_cur, is_int)
 
-            params_repr = [config_params_str.get(k, "-") for k in config_param_names]
+            params_repr = [config_params_fdict.get(k, "-") for k in config_param_names]
             info = {
                 **dict(zip(config_param_names, params_repr)),
                 "current": value_cur,
@@ -527,9 +538,9 @@ class Alarm:
             }
 
             values_prev = [
-                record[config_params_str][metric]
+                record[config_params_fdict][metric]
                 for record in records_by_commit_hash.values()
-                if config_params_str in record
+                if config_params_fdict in record
             ]
             if values_prev:
                 value_last = values_prev[0]
