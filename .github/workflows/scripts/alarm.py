@@ -218,7 +218,7 @@ class BenchmarkRunUnderTest:
 @dataclasses.dataclass
 class Table:
     markdown_rows: list[str]
-    rows: list[dict[str, Any]]
+    # rows: list[dict[str, Any]]
 
 
 class Alarm:
@@ -248,17 +248,17 @@ class Alarm:
         self.dev_skip_speed = args.dev_skip_speed
         self.dev_allow_all_branches = args.dev_allow_all_branches
 
+        assert "WANDB_API_KEY" in os.environ
+
+        self.ENTITY = os.environ["WANDB_ENTITY"]
+        self.PROJECT_OLD = os.environ["WANDB_PROJECT_OLD_FORMAT"]
+        self.PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
+
     def run(self) -> int:
         results_under_test_speed = BenchmarkRunUnderTest(artifacts_dir=self.speed_artifacts_dir, metric_keys=self.SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
         results_under_test_mem = BenchmarkRunUnderTest(artifacts_dir=self.mem_artifacts_dir, metric_keys=self.MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
 
         # ----- W&B baselines -----
-
-        assert "WANDB_API_KEY" in os.environ
-
-        ENTITY = os.environ["WANDB_ENTITY"]
-        PROJECT_OLD = os.environ["WANDB_PROJECT_OLD_FORMAT"]
-        PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
 
         speed_records_by_commit_hash = {}
         if not self.dev_skip_speed:
@@ -283,6 +283,8 @@ class Alarm:
             table_by_metric_name[metric], rows_for_csv_by_metric_name[metric] = self.build_table(
                 config_param_names=results_under_test_.get_config_param_names(),
                 alias=alias,
+                metric=metric,
+                sign=sign,
                 benchmark_run_under_test=results_under_test_,
                 records_by_commit_hash=)
 
@@ -329,7 +331,6 @@ class Alarm:
                 for rec in rows_for_csv_by_metric_name[metric_]:
                     w.writerow(rec)
 
-        # write md results
         self.check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
         if reg_found:
@@ -355,12 +356,12 @@ class Alarm:
         print("i", i, "run", run)
         # Abort if still not complete after checking enough runs.
         # This would happen if a new benchmark has been added, and not enough past data is available yet.
-        if len(commit_hashes) == MAX_FETCH_REVISIONS:
+        if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
             return False
 
         # Early return if enough complete records have been collected
         records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
-        if sum(records_is_complete) == MAX_VALID_REVISIONS:
+        if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
             return False
 
         # Load config and summary, with support of legacy runs
@@ -387,7 +388,7 @@ class Alarm:
             return False
 
         # Do not store new records if the desired number of revision is already reached
-        if len(records_by_commit_hash) == MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
+        if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
             return False
 
         # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
@@ -400,11 +401,11 @@ class Alarm:
 
     def fetch_wandb_data_old_format(
         self,
-        benchmark_under_test: BenchmarkUnderTest
+        benchmark_under_test: BenchmarkRunUnderTest,
     ):
         print("fetch_wandb_data_old_format")
         api = wandb.Api()
-        runs_iter = api.runs(f"{ENTITY}/{PROJECT_OLD}", order="-created_at")
+        runs_iter = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
         print('got runs_iter')
 
         commit_hashes = set()
@@ -413,7 +414,7 @@ class Alarm:
             # Make sure that stats are valid
             try:
                 is_valid = True
-                for k in SPEED_METRIC_KEYS:
+                for k in self.SPEED_METRIC_KEYS:
                     v = summary[k]
                     if not isinstance(v, (float, int)) or math.isnan(v):
                         is_valid = False
@@ -426,18 +427,17 @@ class Alarm:
             # Store all the records into a dict
             nbid = normalize_benchmark_id(benchmark_id)
             records_by_commit_hash.setdefault(commit_hash, {})[nbid] = {
-                metric: summary[metric] for metric in SPEED_METRIC_KEYS
+                metric: summary[metric] for metric in self.SPEED_METRIC_KEYS
             }
             return records_by_commit_hash
 
-
     def fetch_wandb_data_new_format(
         self,
-        benchmark_under_test: BenchmarkUnderTest
+        benchmark_under_test: BenchmarkRunUnderTest,
     ):
         print("fetch_wandb_data_new_format")
         api = wandb.Api()
-        runs_iter = api.runs(f"{ENTITY}/{PROJECT_NEW}", order="-created_at")
+        runs_iter = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
         print('got runs_iter')
 
         commit_hashes = set()
@@ -446,12 +446,12 @@ class Alarm:
             print("i", i, "run", run)
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            if len(commit_hashes) == MAX_FETCH_REVISIONS:
+            if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
                 break
 
             # Early return if enough complete records have been collected
             records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
-            if sum(records_is_complete) == MAX_VALID_REVISIONS:
+            if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
                 break
 
             # Load config and summary, with support of legacy runs
@@ -505,7 +505,7 @@ class Alarm:
         benchmark_run_under_test: BenchmarkRunUnderTest,
         records_by_commit_hash: dict[str, Any],
         sign: int,
-    ) -> Table:
+    ) -> tuple[Table, list[dict[str, Any]]]:
         # together these rows contain the text of the markdwon
         markdown_rows = []
         rows = []
@@ -585,7 +585,7 @@ class Alarm:
             rows.append(info)
 
         # return [header, align] + markdown_rows, rows
-        return Table(markdown_rows=[header, align] + markdown_rows, rows=rows, )
+        return Table(markdown_rows=[header, align] + markdown_rows), rows
         # tables[metric] = [header, align] + rows_md
 
 
