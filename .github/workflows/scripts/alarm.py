@@ -130,7 +130,7 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
     values.
     """
     print("parse reslts file metrics", metric_keys)
-    # easy to accidentally sned a string instead of a tuple
+    # easy to accidentally send a string instead of a tuple
     assert isinstance(metric_keys, tuple)
     results: dict[frozendict[str, str], dict[str, int | float]] = {}
     for line in results_file_path.read_text().splitlines():
@@ -328,28 +328,18 @@ class Alarm:
         results_under_test_speed = BenchmarkRunUnderTest(artifacts_dir=self.speed_artifacts_dir, metric_keys=self.SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
         results_under_test_mem = BenchmarkRunUnderTest(artifacts_dir=self.mem_artifacts_dir, metric_keys=self.MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
 
-        print("results_under_test_speed", results_under_test_speed.results)
-        print("results_under_test_mem", results_under_test_mem.results)
-
         speed_records_by_commit_hash = {}
         if not self.dev_skip_speed:
-            print('fetching speed from wandb')
             speed_records_by_commit_hash = self.fetch_wandb_data(
                 benchmark_under_test=results_under_test_speed,
                 run_name_prefix=None,
                 wandb_parser=WandbParserOldFormat(metric_keys=self.SPEED_METRIC_KEYS)
             )
-        print('speed_records_by_commit_hash', speed_records_by_commit_hash)
 
-        print("fetching mem")
         mem_records_by_commit_hash = self.fetch_wandb_data(
             benchmark_under_test=results_under_test_mem,
             run_name_prefix="mem-",
             wandb_parser=WandbParserNewFormat())
-        for commit_hash, records in mem_records_by_commit_hash.items():
-            print("commit_hash", commit_hash)
-            for config_params_fdict, metrics in records.items():
-                print("config_params_fdict", config_params_fdict, "metrics", metrics)
 
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
@@ -410,164 +400,16 @@ class Alarm:
 
         return 0
 
-    # def fetch_wandb_data_loop_common(
-    #     self,
-    #     i: int,
-    #     run: Run,
-    #     commit_hashes: set[str],
-    #     records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
-    #     all_config_param_fdicts: frozenset[frozendict[str, str]],
-    # ) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
-    #     """
-    #     The common part of the loop over runs, that is the same for both
-    #     old and new format
-
-    #     If returns False, then the calling for loop should do 'continue'
-    #     """
-    #     print("i", i, "run", run)
-    #     # Abort if still not complete after checking enough runs.
-    #     # This would happen if a new benchmark has been added, and not enough past data is available yet.
-    #     print("len(commimt_hashes)", len(commit_hashes))
-    #     if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-    #         return False, "", {}, {}
-
-    #     # Early return if enough complete records have been collected
-    #     complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
-    #     print("sum complee reocrds", sum(complete_records))
-    #     if sum(complete_records) == self.MAX_VALID_REVISIONS:
-    #         return False, "", {}, {}
-
-    #     # Load config and summary, with support of legacy runs
-    #     summary: dict[str, Any]
-    #     try:
-    #         config, summary = run.config, run.summary  # type: ignore
-    #     except Exception as e:
-    #         print(e)
-    #         return False, "", {}, {}
-    #     if isinstance(config, str):
-    #         config = {k: v["value"] for k, v in json.loads(config).items() if not k.startswith("_")}
-    #     if isinstance(summary._json_dict, str):  # type: ignore
-    #         summary = json.loads(summary._json_dict)  # type: ignore
-
-    #     # Extract revision commit and branch
-    #     try:
-    #         commit_hash, branch = config["revision"].split("@", 1)
-    #         commit_hashes.add(commit_hash)
-    #     except ValueError:
-    #         # Ignore this run if the revision has been corrupted for some unknown reason
-    #         return False, "", {}, {}
-
-    #     # Ignore runs associated with a commit that is not part of the official repository
-    #     if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-    #         return False, "", {}, {}
-
-    #     # Skip runs did not finish for some reason
-    #     if run.state != "finished":
-    #         return False, "", {}, {}
-
-    #     # Do not store new records if the desired number of revision is already reached
-    #     if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-    #         return False, "", {}, {}
-
-    #     return True, commit_hash, config, summary
-
-    # def fetch_wandb_data_old_format(
-    #     self,
-    #     benchmark_under_test: BenchmarkRunUnderTest,
-    # ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
-    #     print("fetch_wandb_data_old_format")
-    #     api = wandb.Api()
-    #     runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
-    #     print('got runs_iter')
-
-    #     commit_hashes = set()
-    #     records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
-    #     for i, run in enumerate(runs_iter):
-    #         should_continue_, commit_hash, config, summary = self.fetch_wandb_data_loop_common(
-    #             i=i,
-    #             run=run,
-    #             commit_hashes=commit_hashes,
-    #             records_by_commit_hash=records_by_commit_hash,
-    #             all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
-    #         )
-    #         if not should_continue_:
-    #             continue
-
-    #         # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
-    #         # Note that the rigid body benchmark suite is the only one being supported for now.
-    #         suite_id, config_params_str = config["benchmark_id"].split("-", 1)
-    #         if suite_id != "rigid_body":
-    #             continue
-
-    #         # Make sure that stats are valid
-    #         try:
-    #             is_valid = True
-    #             for k in self.SPEED_METRIC_KEYS:
-    #                 v = summary[k]
-    #                 if not isinstance(v, (float, int)) or math.isnan(v):
-    #                     is_valid = False
-    #                     break
-    #             if not is_valid:
-    #                 continue
-    #         except KeyError:
-    #             continue
-
-    #         # Store all the records into a dict
-    #         config_params_fdict = config_params_str_to_fdict(config_params_str)
-    #         records_by_commit_hash.setdefault(commit_hash, {})[config_params_fdict] = {
-    #             metric: run.summary[metric] for metric in self.SPEED_METRIC_KEYS
-    #         }
-    #     return records_by_commit_hash
-
-    # def fetch_wandb_data_new_format(
-    #     self,
-    #     benchmark_under_test: BenchmarkRunUnderTest,
-    #     run_name_prefix: str,
-    # ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
-    #     print("fetch_wandb_data_new_format")
-    #     api = wandb.Api()
-    #     runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
-    #     print('got runs_iter')
-
-    #     commit_hashes = set()
-    #     records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
-    #         lambda: defaultdict(dict))
-    #     for i, run in enumerate(runs_iter):
-    #         if not run.name.startswith(run_name_prefix):
-    #             continue
-    #         print('run name', run.name)
-
-    #         should_continue_, commit_hash, _config, _summary = self.fetch_wandb_data_loop_common(
-    #             i=i,
-    #             run=run,
-    #             commit_hashes=commit_hashes,
-    #             records_by_commit_hash=records_by_commit_hash,
-    #             all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
-    #         )
-    #         if not should_continue_:
-    #             continue
-
-    #         for k, v in run.summary.items():
-    #             if k.startswith("_"):
-    #                 continue
-    #             metric_name, _, kv_pairs_str = k.partition("-")
-    #             kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
-    #             records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v                
-    #     return records_by_commit_hash
-
     def fetch_wandb_data(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
         run_name_prefix: str | None,
         wandb_parser: WandbParser,
     ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
-        print("fetch_wandb_data_old_format")
         api = wandb.Api()
         runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{wandb_parser.project}", order="-created_at")
-        print('got runs_iter')
 
         commit_hashes = set()
-        # records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
             lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
@@ -578,13 +420,13 @@ class Alarm:
 
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            print("len(commimt_hashes)", len(commit_hashes))
+            print("len(commit_hashes)", len(commit_hashes))
             if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
                 break
 
             # Early return if enough complete records have been collected
             complete_records = [benchmark_under_test.all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
-            print("sum complee reocrds", sum(complete_records), "len complete records", len(complete_records))
+            print("sum complete reocrds", sum(complete_records))
             if sum(complete_records) == self.MAX_VALID_REVISIONS:
                 break
 
@@ -639,8 +481,6 @@ class Alarm:
         records_by_commit_hash: dict[str, Any],
         sign: int,
     ) -> tuple[Table, bool, bool]:
-        print("=================================")
-        print('alias', alias)
         # together these rows contain the text of the markdwon
         markdown_rows = []
         rows = []
@@ -661,10 +501,7 @@ class Alarm:
         for config_params_fdict in sorted(benchmark_run_under_test.results.keys(), key=build_sort_key_fn(
             config_param_names=config_param_names
         )):
-            print("config_params_fdict", config_params_fdict)
-            # print("benchmark_run_under_test.results.keys", benchmark_run_under_test.results.keys())
             value_cur = benchmark_run_under_test.results[config_params_fdict][metric]
-            print('value_cur', value_cur)
             is_int = isinstance(value_cur, int) or value_cur.is_integer()
             value_repr = fmt_num(value_cur, is_int)
 
@@ -679,18 +516,11 @@ class Alarm:
                 "status": None,
             }
 
-            metrics_prev = [
-                record[config_params_fdict]
-                for record in records_by_commit_hash.values()
-                if config_params_fdict in record
-            ]
-            print('metrics_prev', metrics_prev)
             values_prev = [
                 record[config_params_fdict][metric]
                 for record in records_by_commit_hash.values()
                 if config_params_fdict in record
             ]
-            print('values prev', values_prev)
             if values_prev:
                 value_last = values_prev[0]
                 value_ref = statistics.fmean(values_prev)
@@ -746,7 +576,6 @@ class Alarm:
 
 
 def main() -> None:
-    print('start')
     parser = argparse.ArgumentParser()
     parser.add_argument("--speed-artifacts-dir", type=str, required=True)
     parser.add_argument("--mem-artifacts-dir", type=str, required=True)
