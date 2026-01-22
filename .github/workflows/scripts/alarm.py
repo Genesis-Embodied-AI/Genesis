@@ -147,10 +147,12 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
     Conceptually the keys are config_param_fdict's, and the values are a dictionary of metric names and
     values.
     """
-    results = {}
+    results: dict[frozendict[str, str], dict[str, int | float]] = {}
     for line in results_file_path.read_text().splitlines():
-        config_param_dict = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
-        metrics = {}
+        config_param_dict: dict[str, str] = dict(  # type: ignore
+            map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p  # type: ignore
+        )
+        metrics: dict[str, float | int] = {}
         for k in metric_keys:
             try:
                 # removes metric keys from the config param dict, and adds
@@ -158,7 +160,7 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
                 metrics[k] = float(config_param_dict.pop(k))
             except (ValueError, TypeError, KeyError):
                 pass
-        config_param_fdict = frozendict(config_param_dict)
+        config_param_fdict: frozendict[str, str] = frozendict(config_param_dict)
         results[config_param_fdict] = metrics
     return results
 
@@ -265,33 +267,30 @@ class Alarm:
 
         mem_records_by_commit_hash = self.fetch_wandb_data_new_format(benchmark_under_test=results_under_test_mem)
 
-        # ----- build TWO tables -----
-
-        # Parse benchmark IDs into key-value dicts while preserving order
-
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
         rows_for_csv_by_metric_name = {"runtime_fps": [], "compile_time": [], "max_mem_mb": []}
         info = {}
         reg_found, alert_found = False, False
-        for metric, alias, sign, results_under_test_ in (
-            ("runtime_fps", "FPS", 1, results_under_test_speed),
-            ("compile_time", "compile", -1, results_under_test_speed),
-            ("max_mem_mb", "memory", -1, results_under_test_mem),
+        for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
+            ("runtime_fps", "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
+            ("compile_time", "compile", -1, results_under_test_speed, speed_records_by_commit_hash),
+            ("max_mem_mb", "memory", -1, results_under_test_mem, mem_records_by_commit_hash),
         ):
-            table_by_metric_name[metric], rows_for_csv_by_metric_name[metric], reg_found_, alert_found_ = self.build_table(
+            (
+                table_by_metric_name[metric],
+                rows_for_csv_by_metric_name[metric],
+                reg_found_,
+                alert_found_
+            ) = self.build_table(
                 config_param_names=results_under_test_.get_config_param_names(),
                 alias=alias,
                 metric=metric,
                 sign=sign,
                 benchmark_run_under_test=results_under_test_,
-                records_by_commit_hash=)
+                records_by_commit_hash=records_by_commit_hash_)
             reg_found |= reg_found_
             alert_found |= alert_found_
-
-        # ----- baseline commit list (MD) -----
-
-        # ----- CHECK body (always) -----
 
         thr_repr = ", ".join(
             f"{alias} ± {self.METRICS_TOL[metric]:.0f}%"
@@ -372,7 +371,7 @@ class Alarm:
             return False
 
         # Ignore runs associated with a commit that is not part of the official repository
-        if not branch.startswith('Genesis-Embodied-AI/') and not args.dev_allow_all_branches:
+        if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
             return False
 
         # Skip runs did not finish for some reason
@@ -394,20 +393,21 @@ class Alarm:
     def fetch_wandb_data_old_format(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
-    ):
+    ) -> dict[str, dict[str, dict[str, float | int]]]:
         print("fetch_wandb_data_old_format")
         api = wandb.Api()
-        runs_iter = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
+        runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
         print('got runs_iter')
 
         commit_hashes = set()
-        records_by_commit_hash = {}
+        records_by_commit_hash: dict[str, dict[str, dict[str, int | float]]] = {}
         for i, run in enumerate(runs_iter):
+
             # Make sure that stats are valid
             try:
                 is_valid = True
                 for k in self.SPEED_METRIC_KEYS:
-                    v = summary[k]
+                    v = run.summary[k]
                     if not isinstance(v, (float, int)) or math.isnan(v):
                         is_valid = False
                         break
@@ -419,21 +419,21 @@ class Alarm:
             # Store all the records into a dict
             nbid = normalize_benchmark_id(benchmark_id)
             records_by_commit_hash.setdefault(commit_hash, {})[nbid] = {
-                metric: summary[metric] for metric in self.SPEED_METRIC_KEYS
+                metric: run.summary[metric] for metric in self.SPEED_METRIC_KEYS
             }
-            return records_by_commit_hash
+        return records_by_commit_hash
 
     def fetch_wandb_data_new_format(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
-    ):
+    ) -> dict[str, dict[str, dict[str, float | int]]]:
         print("fetch_wandb_data_new_format")
         api = wandb.Api()
         runs_iter = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
         print('got runs_iter')
 
         commit_hashes = set()
-        records_by_commit_hash = defaultdict(lambda: defaultdict(dict))
+        records_by_commit_hash: dict[str, dict[str, dict[str, float | int]]] = defaultdict(lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
             print("i", i, "run", run)
             # Abort if still not complete after checking enough runs.
@@ -487,11 +487,11 @@ class Alarm:
                 for k, v in records.items():
                     print("- ", "record", k, v)
             # adsfasdf
-            return records_by_commit_hash
+        return records_by_commit_hash
 
     def build_table(
         self,
-        config_param_names: str,
+        config_param_names: tuple[str, ...],
         alias: str,
         metric: str,
         benchmark_run_under_test: BenchmarkRunUnderTest,
