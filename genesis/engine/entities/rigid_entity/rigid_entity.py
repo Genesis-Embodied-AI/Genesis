@@ -502,24 +502,6 @@ class RigidEntity(Entity):
         )
         return g_infos
 
-    # def _load_usd_rigid_body(self, morph, surface):
-    #     """
-    #     Load a USD rigid body, similar to _load_mesh but parsing from USD file.
-    #     """
-    #     from genesis.utils.usd import parse_usd_rigid_body
-
-    #     # Parse USD rigid body to get l_info, j_infos, and g_infos
-    #     l_info, j_infos, g_infos = parse_usd_rigid_body(morph, surface)
-
-    #     # Create link and joint using _add_by_info
-    #     self._add_by_info(
-    #         l_info=l_info,
-    #         j_infos=j_infos,
-    #         g_infos=g_infos,
-    #         morph=morph,
-    #         surface=surface,
-    #     )
-
     def _load_terrain(self, morph, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
@@ -972,7 +954,6 @@ class RigidEntity(Entity):
                 dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
                 dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
-                dofs_target=j_info.get("dofs_target", np.zeros(n_dofs)),
             )
             joints.append(joint)
 

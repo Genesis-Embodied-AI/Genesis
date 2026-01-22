@@ -1,0 +1,64 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 1.0
+    upAxis = "Z"
+)
+
+def "Root" (
+    prepend apiSchemas = ["PhysicsCollisionAPI"]
+)
+{
+    def Material "MatDirect"
+    {
+        token outputs:surface.connect = </Root/MatDirect/Preview.outputs:surface>
+
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:surface
+
+            # A touch of realism: a base color input
+            color3f inputs:diffuseColor = (0.8, 0.2, 0.2)
+        }
+    }
+
+    def Material "MatGraph"
+    {
+        token outputs:surface.connect = </Root/MatGraph/Graph.outputs:surface>
+
+        def NodeGraph "Graph"
+        {
+            token outputs:surface.connect = </Root/MatGraph/Graph/Inner.outputs:surface>
+
+            def Shader "Inner"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                token outputs:surface
+                color3f inputs:diffuseColor = (0.2, 0.6, 0.9)
+            }
+        }
+    }
+
+    def Xform "Geom"
+    {
+        def Mesh "MeshDirect"
+        {
+            # A simple square made of 2 triangles
+            int[] faceVertexCounts = [3, 3]
+            int[] faceVertexIndices = [0, 1, 2, 2, 3, 0]
+            point3f[] points = [(-1, -1, 0), (0, -1, 0), (0, 0, 0), (-1, 0, 0)]
+
+            rel material:binding = </Root/MatDirect>
+        }
+
+        def Mesh "MeshGraph"
+        {
+            int[] faceVertexCounts = [3, 3]
+            int[] faceVertexIndices = [0, 1, 2, 2, 3, 0]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+
+            rel material:binding = </Root/MatGraph>
+        }
+    }
+}

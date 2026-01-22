@@ -480,7 +480,7 @@ class Scene(RBC):
 
         Parameters
         ----------
-        stage : gs.morphs.Stage
+        stage : gs.morphs.USD
             The stage to add to the scene.
         material : gs.materials.Material | None, optional
             The material of the stage. If None, use ``gs.materials.Rigid()`` for all morphs.

@@ -38,7 +38,6 @@ class RigidJoint(RBC):
         dofs_kp,
         dofs_kv,
         dofs_force_range,
-        dofs_target,
     ):
         self._name = name
         self._entity = entity
@@ -68,7 +67,6 @@ class RigidJoint(RBC):
         self._dofs_kp = dofs_kp
         self._dofs_kv = dofs_kv
         self._dofs_force_range = dofs_force_range
-        self._dofs_target = dofs_target
 
     def __getattr__(self, name):
         # Must be implemented to throw deprecation warnings when accessing old properties, ignoring introspection
@@ -427,13 +425,6 @@ class RigidJoint(RBC):
         Returns the force range of the dofs of the joint.
         """
         return self._dofs_force_range
-
-    @property
-    def dofs_target(self):
-        """
-        Returns the target positions of the dofs of the joint.
-        """
-        return self._dofs_target
 
     @property
     def is_built(self):

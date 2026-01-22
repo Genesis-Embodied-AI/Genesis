@@ -1147,7 +1147,6 @@ class StructDofsInfo(metaclass=BASE_METACLASS):
     kp: V_ANNOTATION
     kv: V_ANNOTATION
     force_range: V_ANNOTATION
-    target: V_ANNOTATION
 
 
 def get_dofs_info(solver):

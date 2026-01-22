@@ -1048,7 +1048,7 @@ class Drone(FileMorph):
         sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
         module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
         and `False` for other deformable entities.
-    decompose_nonconvex : float, optional
+    decompose_nonconvex : bool, optional
         This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the

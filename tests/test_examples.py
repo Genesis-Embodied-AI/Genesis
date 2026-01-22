@@ -31,9 +31,6 @@ if sys.platform != "linux":
     IGNORE_SCRIPT_NAMES |= {
         "cut_dragon.py",
     }
-# Skip USD examples on ARM since USD is not supported on ARM platforms
-if platform.machine() == "aarch64":
-    IGNORE_SCRIPT_NAMES |= {"import_stage.py"}
 
 # Map example scripts to their required optional dependencies
 # Empty list means no optional dependencies required
