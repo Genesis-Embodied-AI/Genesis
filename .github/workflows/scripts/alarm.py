@@ -18,6 +18,9 @@ Terminology/variable names:
       - by comparison with config_str, two identical config_params_fdict's always represent the same configuration
       - note that config_params_fdict's are hashable
       - (fdict is an abbreviation for 'frozendict')
+- config_param_names: ordered list of the config parameter names, that we have almost certainly derived
+  from a config_params_fdict, by simply returning the ordered list of keys (though we may have merged
+  such a list over multiple config_params_fdict's)
 - 'pipeline format':
    a string having format like:
    "solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5"
@@ -88,13 +91,13 @@ def fdicts_to_key_names(dicts: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
     return tuple(merged_keys)
 
 
-def build_sort_key(param_names: Iterable[str]) -> Callable:
+def build_sort_key(config_param_names: Iterable[str]) -> Callable:
     """
     Builds a sort key function that can be used to order
     dictionaries of values. The sort key function returns
     a list of tuples of (0|1, value | None), where the sequence of
-    (0|1, value) matches that of param_names and:
-    - only keys in param_names are considered in the sorting
+    (0|1, value) matches that of config_param_names and:
+    - only keys in config_param_names are considered in the sorting
       (in the context of this script, this lets us ignore the values of
       metrics during sorting)
     - when a param_name is present in the dictionary, the tuple
@@ -107,9 +110,9 @@ def build_sort_key(param_names: Iterable[str]) -> Callable:
       be placed after the dicts with that param name, since 1 is after 0.
     """
     def sort_key(d: dict[str, Any]):
-        nonlocal param_names
+        nonlocal config_param_names
         key_list = []
-        for col in param_names:
+        for col in config_param_names:
             if col in d:
                 val = d[col]
                 key_list.append((0, val))
@@ -197,16 +200,19 @@ class BenchmarkRunUnderTest:
         assert self.config_param_fdict_set
 
         # ordered list of the config parameter names
-        self.param_names = get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
+        self.config_param_names = get_config_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
     def ingest_records_by_commit_hash(self, records_by_commit_hash):
         self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
         self.baseline_block = ["**Baselines considered:** " + f"**{len(self.ingest_records_by_commit_hash)}** commits"] + blist
 
-    def get_param_names(self):
-        return get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
+    def get_config_param_names(self):
+        """
+        Returns an ordered list of the config param names (i.e. not including metric names)
+        """
+        return get_config_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
-def build_table(param_names: str, alias: str, csv_info: BenchmarkUnderTest, records_by_commit_hash) -> None:
+def build_table(config_param_names: str, alias: str, csv_info: BenchmarkUnderTest, records_by_commit_hash) -> None:
     # together these rows contain the text of the markdwon
     markdown_rows = []
     rows = []
@@ -214,22 +220,22 @@ def build_table(param_names: str, alias: str, csv_info: BenchmarkUnderTest, reco
     # the labels in the header row of the table
     header_cells = (
         "status",
-        *param_names,
+        *config_param_names,
         f"current {alias}",
         f"baseline {alias} [last (mean ± std)] (*1)",
         f"Δ {alias} (*2)"
     )
     header = "| " + " | ".join(header_cells) + " |"
-    align  = "|:------:|" + "|".join([":---" for _ in param_names]) + "|---:|---:|---:|"
+    align  = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
 
     for benchmark_id in sorted(csv_info.current_bm.keys(), key=sort_key):
         value_cur = csv_info.current_bm[benchmark_id][metric]
         is_int = isinstance(value_cur, int) or value_cur.is_integer()
         value_repr = fmt_num(value_cur, is_int)
 
-        params_repr = [benchmark_id.get(k, "-") for k in param_names]
+        params_repr = [benchmark_id.get(k, "-") for k in config_param_names]
         info = {
-            **dict(zip(param_names, params_repr)),
+            **dict(zip(config_param_names, params_repr)),
             "current": value_cur,
             "baseline_last": None,
             "baseline_mean": None,
@@ -496,7 +502,7 @@ def main() -> None:
     info = {}
     for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
         tables[metric], rows_for_csv[metric] = build_table(
-            param_names=csv_info.get_param_names())
+            config_param_names=csv_info.get_config_param_names())
 
     # ----- baseline commit list (MD) -----
 
