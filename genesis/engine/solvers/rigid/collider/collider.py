@@ -6,32 +6,26 @@ including broad-phase (sweep-and-prune), narrow-phase (convex-convex, SDF-based,
 terrain), and contact management.
 """
 
-import sys
 from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 import trimesh
 
-import gstaichi as ti
-
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.sdf as sdf
+import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
+from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
+from genesis.utils.sdf import SDF
+
 from . import gjk
 from . import diff_gjk
 from . import mpr
-import genesis.utils.sdf as sdf
 from . import support_field
-import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
-
 from .mpr import MPR
 from .gjk import GJK
-from genesis.utils.sdf import SDF
 from .support_field import SupportField
-
-from enum import IntEnum
 
 # Import and re-export from submodules for backward compatibility
 from .broadphase import (
@@ -44,8 +38,6 @@ from .broadphase import (
 )
 
 from .contact import (
-    rotaxis,
-    rotmatx,
     collider_kernel_reset,
     kernel_collider_clear,
     collider_kernel_get_contacts,
@@ -81,6 +73,10 @@ if TYPE_CHECKING:
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
+
+NEUTRAL_COLLISION_RES_ABS = 0.01
+NEUTRAL_COLLISION_RES_REL = 0.05
 
 
 class Collider:
@@ -285,7 +281,7 @@ class Collider:
                     if not self._solver._enable_adjacent_collision:
                         is_adjacent = False
                         link_a_, link_b_ = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
-                        while link_b_.parent_idx > 0:
+                        while link_b_.parent_idx != -1:
                             if link_b_.parent_idx == link_a_.idx:
                                 is_adjacent = True
                                 break
@@ -298,17 +294,21 @@ class Collider:
                     # active in neutral configuration (qpos0)
                     is_self_colliding = False
                     for i_b in range(1 if not self._solver._enable_neutral_collision else 0):
-                        mesh_a = trimesh.Trimesh(
-                            vertices=geoms_verts[i_ga][i_b], faces=geom_a.init_faces, process=False
-                        )
-                        mesh_b = trimesh.Trimesh(
-                            vertices=geoms_verts[i_gb][i_b], faces=geom_b.init_faces, process=False
-                        )
+                        verts_a = geoms_verts[i_ga][i_b]
+                        mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
+                        verts_b = geoms_verts[i_gb][i_b]
+                        mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
                         bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
                         if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
-                            if (mesh_a.is_watertight and mesh_a.contains(mesh_b.vertices).any()) or (
-                                mesh_b.is_watertight and mesh_b.contains(mesh_a.vertices).any()
-                            ):
+                            voxels_a = mesh_a.voxelized(
+                                pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_a.extents))
+                            )
+                            voxels_b = mesh_b.voxelized(
+                                pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_b.extents))
+                            )
+                            coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
+                            coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
+                            if voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any():
                                 is_self_colliding = True
                                 self_colliding_pairs.append((i_ga, i_gb))
                                 break
