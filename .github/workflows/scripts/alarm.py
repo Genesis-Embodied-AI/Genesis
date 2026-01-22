@@ -268,7 +268,8 @@ class Alarm:
             speed_records_by_commit_hash = self.fetch_wandb_data_old_format(benchmark_under_test=results_under_test_speed)
         print('speed_records_by_commit_hash', speed_records_by_commit_hash)
 
-        mem_records_by_commit_hash = self.fetch_wandb_data_new_format(benchmark_under_test=results_under_test_mem)
+        mem_records_by_commit_hash = self.fetch_wandb_data_new_format(
+            benchmark_under_test=results_under_test_mem, run_name_prefix="mem-")
 
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
@@ -443,66 +444,30 @@ class Alarm:
     def fetch_wandb_data_new_format(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
+        run_name_prefix: str,
     ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
         print("fetch_wandb_data_new_format")
         api = wandb.Api()
-        runs_iter = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
+        runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_NEW}", order="-created_at")
         print('got runs_iter')
 
         commit_hashes = set()
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
             lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
+            if not run.name.startswith(run_name_prefix):
+                continue
+            print('run name', run.name)
+
             should_continue_, commit_hash = self.fetch_wandb_data_loop_common(
                 i=i,
                 run=run,
                 commit_hashes=commit_hashes,
                 records_by_commit_hash=records_by_commit_hash,
                 all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
-                # check_benchmark_suite=False,
             )
             if not should_continue_:
                 continue
-
-            # print("i", i, "run", run)
-            # # Abort if still not complete after checking enough runs.
-            # # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            # if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-            #     break
-
-            # # Early return if enough complete records have been collected
-            # records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
-            # if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
-            #     break
-
-            # # Load config and summary, with support of legacy runs
-            # config, summary = run.config, run.summary
-            # if isinstance(config, str):
-            #     config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
-            # if isinstance(summary._json_dict, str):
-            #     summary = json.loads(summary._json_dict)
-
-            # # Extract revision commit and branch
-            # try:
-            #     commit_hash, branch = config["revision"].split("@", 1)
-            #     commit_hashes.add(commit_hash)
-            # except ValueError:
-            #     print('didnt find rev')
-            #     # Ignore this run if the revision has been corrupted for some unknown reason
-            #     continue
-            # print("commit_hash", commit_hash, "branch", branch)
-            # # Ignore runs associated with a commit that is not part of the official repository
-            # if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-            #     print('branch didnt start with Genesis-Embodied-AI')
-            #     continue
-
-            # # Skip runs did not finish for some reason
-            # if run.state != "finished":
-            #     continue
-
-            # # Do not store new records if the desired number of revision is already reached
-            # if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-            #     continue
 
             for k, v in run.summary.items():
                 if k.startswith("_"):
