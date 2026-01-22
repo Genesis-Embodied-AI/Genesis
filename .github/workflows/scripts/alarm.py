@@ -398,7 +398,7 @@ class Alarm:
                 *table_by_metric_name[self.metric_max_mem_mb].markdown_rows,
                 "",
                 f"- (*1) last: last commit on main, mean/std: stats over commit hashes {self.MAX_VALID_REVISIONS} commits if available.",
-                f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
+                "- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
             ]
         )
 
