@@ -204,9 +204,7 @@ class BenchmarkRunUnderTest:
         # ordered list of the config parameter names
         self.config_param_names = dicts_to_key_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
-    def ingest_records_by_commit_hash(self, records_by_commit_hash):
-        self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
-        self.baseline_block = ["**Baselines considered:** " + f"**{len(self.ingest_records_by_commit_hash)}** commits"] + blist
+    # def ingest_records_by_commit_hash(self, records_by_commit_hash):
 
     def get_config_param_names(self):
         """
@@ -275,18 +273,21 @@ class Alarm:
         table_by_metric_name: dict[str, Table] = {}
         rows_for_csv_by_metric_name = {"runtime_fps": [], "compile_time": [], "max_mem_mb": []}
         info = {}
+        reg_found, alert_found = False, False
         for metric, alias, sign, results_under_test_ in (
             ("runtime_fps", "FPS", 1, results_under_test_speed),
             ("compile_time", "compile", -1, results_under_test_speed),
             ("max_mem_mb", "memory", -1, results_under_test_mem),
         ):
-            table_by_metric_name[metric], rows_for_csv_by_metric_name[metric] = self.build_table(
+            table_by_metric_name[metric], rows_for_csv_by_metric_name[metric], reg_found_, alert_found_ = self.build_table(
                 config_param_names=results_under_test_.get_config_param_names(),
                 alias=alias,
                 metric=metric,
                 sign=sign,
                 benchmark_run_under_test=results_under_test_,
                 records_by_commit_hash=)
+            reg_found |= reg_found_
+            alert_found |= alert_found_
 
         # ----- baseline commit list (MD) -----
 
@@ -299,8 +300,6 @@ class Alarm:
 
         check_body = "\n".join(
             [
-                *baseline_block,
-                "",
                 f"Thresholds: {thr_repr}",
                 "",
                 "### Runtime FPS",
@@ -505,10 +504,11 @@ class Alarm:
         benchmark_run_under_test: BenchmarkRunUnderTest,
         records_by_commit_hash: dict[str, Any],
         sign: int,
-    ) -> tuple[Table, list[dict[str, Any]]]:
+    ) -> tuple[Table, list[dict[str, Any]], bool, bool]:
         # together these rows contain the text of the markdwon
         markdown_rows = []
         rows = []
+        alert_found, reg_found = False, False
 
         # the labels in the header row of the table
         header_cells = (
@@ -584,8 +584,11 @@ class Alarm:
             markdown_rows.append("| " + " | ".join((picto, *params_repr, value_repr, stats_repr, delta_repr)) + " |")
             rows.append(info)
 
+        blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
+        baseline_block = ["**Baselines considered:** " + f"**{len(records_by_commit_hash)}** commits"] + blist
+
         # return [header, align] + markdown_rows, rows
-        return Table(markdown_rows=[header, align] + markdown_rows), rows
+        return Table(markdown_rows=[header, align] + markdown_rows + baseline_block), rows, reg_found, alert_found
         # tables[metric] = [header, align] + rows_md
 
 
