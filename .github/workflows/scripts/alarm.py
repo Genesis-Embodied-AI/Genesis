@@ -77,16 +77,16 @@ def config_params_str_to_fdict(config_params_str: str) -> frozendict[str, str]:
 #     return frozendict(parse_benchmark_id_to_kv_pairs(benchmark_id))
 
 
-def dicts_to_key_names(dicts: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+def merge_string_tuples(tuples: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
     """
-    Merge a tuple of dicts (could be frozen) into a single tuple of keys that:
-    - Preserves the relative order of keys within each tuple
-    - Gives precedence to later tuples when conflicts arise
+    Merge tuples of strings into a single tuple of strings which:
+    - preserves the relative order of keys within each tuple
+    - gives precedence to later tuples when conflicts arise
     """
-    merged_keys: list[str] = list(dicts[-1])
+    merged_keys = list(tuples[-1])
     merged_keys_set = set(merged_keys)
-    for dict_ in dicts[:-1]:
-        for key in dict_:
+    for tuple_ in tuples[:-1]:
+        for key in tuple_:
             if key not in merged_keys_set:
                 merged_keys.append(key)
                 merged_keys_set.add(key)
@@ -204,7 +204,7 @@ class BenchmarkRunUnderTest:
         assert self.config_param_fdict_set
 
         # ordered list of the config parameter names
-        self.config_param_names = dicts_to_key_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
+        self.config_param_names = merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
     # def ingest_records_by_commit_hash(self, records_by_commit_hash):
 
@@ -212,7 +212,7 @@ class BenchmarkRunUnderTest:
         """
         Returns an ordered list of the config param names (i.e. not including metric names)
         """
-        return dicts_to_key_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
+        return merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
 
 @dataclasses.dataclass
