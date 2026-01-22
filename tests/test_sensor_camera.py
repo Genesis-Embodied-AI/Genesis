@@ -418,6 +418,7 @@ def test_multiple_cameras_destroy_cleans_shared_renderer():
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
 def test_batch_renderer_destroy():
     scene = gs.Scene(show_viewer=False)
@@ -441,6 +442,7 @@ def test_batch_renderer_destroy():
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer_destroy():
     scene = gs.Scene(
