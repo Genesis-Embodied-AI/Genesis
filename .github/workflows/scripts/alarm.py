@@ -316,13 +316,6 @@ class Alarm:
             ]
         )
 
-        # ----- COMMENT body (only if regressions) -----
-
-        if reg_found:
-            comment_body = "\n".join([":warning: **Benchmark Regression Detected**", *check_body])
-        else:
-            comment_body = ""
-
         for metric_ in ("runtime_fps", "compile_time", "max_mem_mb"):
             with self.csv_out_file_by_metric_name[metric_].open("w", newline="", encoding="utf-8") as f:
                 w = csv.DictWriter(f, fieldnames=info.keys())
