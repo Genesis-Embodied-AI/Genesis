@@ -138,7 +138,6 @@ def parse_results_file(
     Conceptually the keys are config_param_fdict's, and the values are a dictionary of metric names and
     values.
     """
-    print("parse reslts file metrics", metric_keys)
     # easy to accidentally send a string instead of a tuple
     assert isinstance(metric_keys, tuple)
     results: dict[frozendict[str, str], dict[str, int | float]] = {}
