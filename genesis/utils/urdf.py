@@ -6,6 +6,7 @@ import numpy as np
 import trimesh
 
 import genesis as gs
+import genesis.utils.gltf as gltf_utils
 from genesis.ext import urdfpy
 
 from . import geom as gu
@@ -100,69 +101,78 @@ def parse_urdf(morph, surface):
             l_info["inertial_i"] = link.inertial.inertia
             l_info["inertial_mass"] = link.inertial.mass
 
-        for geom in (*link.collisions, *link.visuals):
+        for geom_prop in (*link.collisions, *link.visuals):
             link_g_infos_ = []
-            geom_is_col = not isinstance(geom, urdfpy.Visual)
-            if isinstance(geom.geometry.geometry, urdfpy.Mesh):
+            geom_is_col = not isinstance(geom_prop, urdfpy.Visual)
+            geometry = geom_prop.geometry.geometry
+            if isinstance(geometry, urdfpy.Mesh):
                 geom_type = gs.GEOM_TYPE.MESH
                 geom_data = None
 
+                # Compute the absolute scale of the geometry
+                scale = float(morph.scale)
+                if geometry.scale is not None:
+                    scale *= geometry.scale
+
+                # Overwrite surface color by original color specified in URDF file only if necessary
+                if geom_is_col:
+                    geom_surface = gs.surfaces.Collision()
+                elif (
+                    not geom_is_col
+                    and getattr(geom_prop, "material") is not None
+                    and geom_prop.material.color is not None
+                    and (morph.prioritize_urdf_material or surface.color is None)
+                ):
+                    geom_surface = surface.copy()
+                    geom_surface.color = geom_prop.material.color
+                else:
+                    geom_surface = surface
+
+                mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geometry.filename)
+                if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
+                    group_material = True
+                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, morph.scale, geom_surface)
+                    geometry._meshes = [mesh.trimesh for mesh in meshes]
+
                 # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
-                for tmesh in geom.geometry.meshes:
-                    scale = float(morph.scale)
-                    if geom.geometry.geometry.scale is not None:
-                        scale *= geom.geometry.geometry.scale
-
-                    # Overwrite surface color by original color specified in URDF file only if necessary
-                    if (
-                        not geom_is_col
-                        and getattr(geom, "material") is not None
-                        and geom.material.color is not None
-                        and (morph.prioritize_urdf_material or surface.color is None)
-                    ):
-                        surface = surface.copy()
-                        surface.color = geom.material.color
-
-                    mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geom.geometry.geometry.filename)
+                for i, tmesh in enumerate(geometry.meshes):
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
                         scale=scale,
-                        surface=gs.surfaces.Collision() if geom_is_col else surface,
+                        surface=geom_surface,
                         metadata={"mesh_path": mesh_path},
                     )
 
-                    # If the file is a gltf, we have to convert it to zup
                     if not morph.file_meshes_are_zup:
                         mesh.convert_to_zup()
-                        gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
+                        if i == 0:
+                            gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)
             else:
                 # Each geometry primitive is one RigidGeom in genesis
-                if isinstance(geom.geometry.geometry, urdfpy.Box):
-                    tmesh = trimesh.creation.box(extents=geom.geometry.geometry.size)
+                if isinstance(geometry, urdfpy.Box):
+                    tmesh = trimesh.creation.box(extents=geometry.size)
                     geom_type = gs.GEOM_TYPE.BOX
-                    geom_data = np.array(geom.geometry.geometry.size)
-                elif isinstance(geom.geometry.geometry, urdfpy.Capsule):
-                    tmesh = trimesh.creation.capsule(
-                        radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
-                    )
+                    geom_data = np.array(geometry.size)
+                elif isinstance(geometry, urdfpy.Capsule):
+                    tmesh = trimesh.creation.capsule(radius=geometry.radius, height=geometry.length)
                     geom_type = gs.GEOM_TYPE.CAPSULE
-                    geom_data = np.array([geom.geometry.geometry.radius, geom.geometry.geometry.length])
-                elif isinstance(geom.geometry.geometry, urdfpy.Cylinder):
-                    tmesh = trimesh.creation.cylinder(
-                        radius=geom.geometry.geometry.radius, height=geom.geometry.geometry.length
-                    )
+                    geom_data = np.array([geometry.radius, geometry.length])
+                elif isinstance(geometry, urdfpy.Cylinder):
+                    tmesh = trimesh.creation.cylinder(radius=geometry.radius, height=geometry.length)
                     geom_type = gs.GEOM_TYPE.CYLINDER
-                    geom_data = np.array([geom.geometry.geometry.radius, geom.geometry.geometry.length])
-                elif isinstance(geom.geometry.geometry, urdfpy.Sphere):
+                    geom_data = np.array([geometry.radius, geometry.length])
+                elif isinstance(geometry, urdfpy.Sphere):
                     if geom_is_col:
-                        tmesh = trimesh.creation.icosphere(radius=geom.geometry.geometry.radius, subdivisions=2)
+                        tmesh = trimesh.creation.icosphere(radius=geometry.radius, subdivisions=2)
                     else:
-                        tmesh = trimesh.creation.icosphere(radius=geom.geometry.geometry.radius)
+                        tmesh = trimesh.creation.icosphere(radius=geometry.radius)
                     geom_type = gs.GEOM_TYPE.SPHERE
-                    geom_data = np.array([geom.geometry.geometry.radius])
+                    geom_data = np.array([geometry.radius])
+                else:
+                    gs.raise_exception(f"Unsupported primitive geometry: {geometry}")
 
                 mesh = gs.Mesh.from_trimesh(
                     tmesh,
@@ -171,8 +181,8 @@ def parse_urdf(morph, surface):
                 )
 
                 if not geom_is_col:
-                    if geom.material is not None and geom.material.color is not None:
-                        mesh.set_color(geom.material.color)
+                    if geom_prop.material is not None and geom_prop.material.color is not None:
+                        mesh.set_color(geom_prop.material.color)
 
                 g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                 link_g_infos_.append(g_info)
@@ -180,8 +190,8 @@ def parse_urdf(morph, surface):
             for g_info in link_g_infos_:
                 g_info["type"] = geom_type
                 g_info["data"] = geom_data
-                g_info["pos"] = geom.origin[:3, 3].copy()
-                g_info["quat"] = gu.R_to_quat(geom.origin[:3, :3])
+                g_info["pos"] = geom_prop.origin[:3, 3].copy()
+                g_info["quat"] = gu.R_to_quat(geom_prop.origin[:3, :3])
                 g_info["contype"] = 1 if geom_is_col else 0
                 g_info["conaffinity"] = 1 if geom_is_col else 0
                 g_info["friction"] = gu.default_friction()

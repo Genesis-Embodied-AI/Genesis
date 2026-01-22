@@ -675,8 +675,6 @@ class Mesh(FileMorph, TetGenMixin):
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
-    parse_glb_with_trimesh : bool, optional
-        Whether to use trimesh to load glb files. Defaults to False, in which case pygltflib will be used.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
@@ -721,8 +719,6 @@ class Mesh(FileMorph, TetGenMixin):
         Whether to force re-tetraheralization. Defaults to False.
         **This is only used for Volumetric Entity that requires tetraheralization.**
     """
-
-    parse_glb_with_trimesh: bool = False
 
     # Rigid specific
     fixed: bool = False

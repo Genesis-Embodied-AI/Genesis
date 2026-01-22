@@ -342,7 +342,7 @@ class Mesh(RBC):
         """
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
-                if morph.is_format(gs.options.morphs.GLTF_FORMATS) and not morph.parse_glb_with_trimesh:
+                if morph.is_format(gs.options.morphs.GLTF_FORMATS):
                     meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
                 else:
                     meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
@@ -398,7 +398,8 @@ class Mesh(RBC):
         """
         Convert the mesh to z-up.
         """
-        self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
+        if self._metadata["imported_as_zup"]:
+            self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
         self._metadata["imported_as_zup"] = False
 
     def apply_transform(self, T):
