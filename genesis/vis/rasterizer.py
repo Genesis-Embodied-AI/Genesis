@@ -59,7 +59,7 @@ class Rasterizer(RBC):
         self._context.update_camera_frustum(camera)
 
     def remove_camera(self, camera):
-        self._context.removenode(self._camera_nodes[camera.uid])
+        self._context.remove_node(self._camera_nodes[camera.uid])
         del self._camera_nodes[camera.uid]
         if self._offscreen:
             self._camera_targets[camera.uid].delete()
