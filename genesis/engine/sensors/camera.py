@@ -427,6 +427,21 @@ class RasterizerCameraSensor(BaseCameraSensor):
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
+    def destroy(self):
+        self._shared_metadata.sensors.remove(self)
+        self._shared_metadata.renderer.remove_camera(self._camera_wrapper)
+        # TODO: should remove the camera from the renderer too.
+        # A sort of reference counting to destroy the renderer once there are no more cameras.
+        if not self._shared_metadata.sensors:
+            self._shared_metadata.renderer.destroy()
+            self._shared_metadata.renderer = None
+            self._shared_metadata.context.destroy()
+            self._shared_metadata.context = None
+            self._shared_metadata.lights = None
+            self._shared_metadata.image_cache = None
+            # Make sure a new one is created next time a camera is built.
+            self._shared_metadata.sensors = None
+
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
         if not scene.sim._rigid_only and scene.n_envs > 1:
