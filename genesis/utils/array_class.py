@@ -1165,7 +1165,6 @@ def get_dofs_info(solver):
         kp=V(dtype=gs.ti_float, shape=shape),
         kv=V(dtype=gs.ti_float, shape=shape),
         force_range=V(dtype=gs.ti_vec2, shape=shape),
-        target=V(dtype=gs.ti_float, shape=shape),
     )
 
 
