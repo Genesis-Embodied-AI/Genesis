@@ -16,6 +16,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     DT = 1e-2
     BIAS = (0.1, 0.2, 0.3)
     DELAY_STEPS = 2
+    MAG_FIELD = (0.3, 0.1, 0.5)  # arbitrary world magnetic field
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -39,12 +40,14 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     imu = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
+            magnetic_field=MAG_FIELD,
         )
     )
     imu_delayed = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
             delay=DT * DELAY_STEPS,
+            magnetic_field=MAG_FIELD,
         )
     )
     imu_noisy = scene.add_sensor(
@@ -52,11 +55,15 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             entity_idx=box.idx,
             acc_cross_axis_coupling=0.01,
             gyro_cross_axis_coupling=(0.02, 0.03, 0.04),
+            mag_cross_axis_coupling=0.01,
             acc_noise=(0.01, 0.01, 0.01),
             gyro_noise=(0.01, 0.01, 0.01),
+            mag_noise=(0.01, 0.01, 0.01),
             acc_random_walk=(0.001, 0.001, 0.001),
             gyro_random_walk=(0.001, 0.001, 0.001),
+            mag_random_walk=(0.001, 0.001, 0.001),
             delay=DT,
+            magnetic_field=MAG_FIELD,
             jitter=DT * 0.1,
             interpolate=True,
         )
@@ -72,15 +79,17 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     # acc_classical_lin_z = - theta_dot ** 2 - cos(theta) * g
     assert_allclose(imu.read().lin_acc, 0.0, tol=tol)
     assert_allclose(imu.read().ang_vel, 0.0, tol=tol)
+    assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
     assert_allclose(imu_noisy.read().lin_acc, 0.0, tol=1e-1)
     assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=1e-1)
+    assert_allclose(imu_noisy.read().mag, MAG_FIELD, tol=1e-1)
 
     # shift COM to induce angular velocity
     box.set_COM_shift([0.05, 0.05, 0.05])
 
-    # update noise and bias for accelerometer and gyroscope
-    imu_noisy.set_noise((0.01, 0.01, 0.01, 0.02, 0.02, 0.02))
-    imu_noisy.set_bias((0.01, 0.01, 0.01, 0.02, 0.02, 0.02))
+    # update noise and bias for accelerometer, gyroscope and magnetometer
+    imu_noisy.set_noise((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.05, 0.05, 0.05))
+    imu_noisy.set_bias((0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.05, 0.05, 0.05))
     imu_noisy.set_jitter(0.001)
 
     for _ in range(10 - DELAY_STEPS):
@@ -93,6 +102,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     assert_array_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
     assert_array_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
+    assert_array_equal(imu_delayed.read().mag, true_imu_delayed_reading.mag)
 
     # check that position offset affects linear acceleration
     imu.set_pos_offset((0.5, 0.0, 0.0))
@@ -109,15 +119,19 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     assert_array_equal(imu.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
     assert_array_equal(imu.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
+    assert_array_equal(imu.read_ground_truth().mag, imu_delayed.read_ground_truth().mag)
 
     with np.testing.assert_raises(AssertionError, msg="Angular velocity should not be zero due to COM shift"):
         assert_allclose(imu.read_ground_truth().ang_vel, 0.0, tol=tol)
 
-    with np.testing.assert_raises(AssertionError, msg="Delayed data should not be equal to the ground truth data"):
+    with np.testing.assert_raises(AssertionError, msg="Delayed accl data should not be equal to the ground truth data"):
         assert_array_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
 
-    box.set_COM_shift([0.0, 0.0, 0.0])
-    box.set_quat([0.0, 0.0, 0.0, 1.0])
+    with np.testing.assert_raises(AssertionError, msg="Delayed mag data should not be equal to the ground truth data"):
+        assert_array_equal(imu_delayed.read().mag - imu_delayed.read_ground_truth().mag, 0.0)
+
+    box.set_COM_shift((0.0, 0.0, 0.0))
+    box.set_quat((0.0, 0.0, 0.0, 1.0))  # pi rotation around z-axis
 
     # wait for the box to be stationary on ground
     for _ in range(50):
@@ -125,24 +139,36 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=5e-6)
     assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
+    assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[1], MAG_FIELD[2]), tol=tol)
 
     # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
+    scene.step()
+    assert_allclose(imu.read().lin_acc, (0.0, GRAVITY, 0.0), tol=5e-6)
+    assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[2], -MAG_FIELD[1]), tol=tol)
+
     imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
     scene.step()
     assert_allclose(imu.read().lin_acc, GRAVITY, tol=5e-6)
-    imu.set_quat_offset((0.0, 0.0, 0.0, 1.0))
-    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
 
+    scene.reset()
+    box.set_dofs_velocity((1.0, 2.0, 3.0), dofs_idx_local=slice(3, None))
+    scene.step()
+    assert_allclose(imu.read_ground_truth().ang_vel, (1.0, 3.0, -2.0), tol=0.1)
+
+    imu.set_quat_offset((1.0, 0.0, 0.0, 0.0))
+    imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
     scene.reset()
 
     assert_allclose(imu.read().lin_acc, 0.0, tol=gs.EPS)  # biased, but cache hasn't been updated yet
     assert_allclose(imu_delayed.read().lin_acc, 0.0, tol=gs.EPS)
     assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
+    assert_allclose(imu_noisy.read().mag, 0.0, tol=gs.EPS)  # biased
 
-    imu.set_bias(BIAS + (0.0, 0.0, 0.0))
+    imu.set_bias(BIAS + 2 * (0.0, 0.0, 0.0))
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
+    assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
 
 
 @pytest.mark.required
