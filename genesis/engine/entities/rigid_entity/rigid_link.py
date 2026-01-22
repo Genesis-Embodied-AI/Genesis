@@ -111,7 +111,11 @@ class RigidLink(RBC):
         if inertial_quat is not None:
             inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
         self._inertial_quat: "np.typing.ArrayLike | None" = inertial_quat
+        if inertial_mass is not None:
+            inertial_mass = float(inertial_mass)
         self._inertial_mass: float | None = inertial_mass
+        if inertial_i is not None:
+            inertial_i = np.asarray(inertial_i, dtype=gs.np_float)
         self._inertial_i: "np.typing.ArrayLike | None" = inertial_i
         self._invweight: float | None = invweight
 
@@ -213,12 +217,10 @@ class RigidLink(RBC):
                         f"Link mass is not specified and collision geoms can not be found for link '{self.name}'. "
                         f"Using visual geoms to compute inertial properties."
                     )
-            if self._inertial_mass is None:
-                self._inertial_mass = hint_mass
-            if self._inertial_pos is None:
-                self._inertial_pos = hint_com
-            if self._inertial_i is None:
-                self._inertial_i = hint_inertia
+            self._inertial_mass = hint_mass
+            self._inertial_pos = hint_com
+            self._inertial_quat = gu.identity_quat()
+            self._inertial_i = hint_inertia
 
         # FIXME: Setting zero mass even for fixed links breaks physics for some reason...
         # For non-fixed links, it must be non-zero in case for coupling with deformable body solvers.
