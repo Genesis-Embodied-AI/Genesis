@@ -200,8 +200,11 @@ class BenchmarkRunUnderTest:
         self.results: dict[frozendict[str, str], dict[str, float]] = {}
         for self.result_file_path in self.result_file_paths:
             self.results |= parse_results_file(self.result_file_path, self.metric_keys)
-        self.config_param_fdict_set = frozenset(self.results.keys())
-        assert self.config_param_fdict_set
+        # all the config_param_fdicts that we need to check for a 'complete set', when looking
+        # at historical data (some earlier runs might be missing some of the newer benchmark
+        # runs)
+        self.all_config_param_fdicts = frozenset(self.results.keys())
+        assert self.all_config_param_fdicts
 
         # ordered list of the config parameter names
         self.config_param_names = merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
@@ -337,7 +340,8 @@ class Alarm:
         i: int,
         run: Run,
         commit_hashes: set[str],
-        records_by_commit_hash: dict[str, dict[str, dict[str, int | float]]],
+        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
+        all_config_param_fdicts: frozenset[frozendict[str, str]],
     ) -> tuple[bool, str, str]:
         """
         The common part of the loop over runs, that is the same for both
@@ -352,8 +356,8 @@ class Alarm:
             return False, "", ""
 
         # Early return if enough complete records have been collected
-        records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
-        if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
+        complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
+        if sum(complete_records) == self.MAX_VALID_REVISIONS:
             return False, "", ""
 
         # Load config and summary, with support of legacy runs
@@ -408,6 +412,7 @@ class Alarm:
                 run=run,
                 commit_hashes=commit_hashes,
                 records_by_commit_hash=records_by_commit_hash,
+                all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
             )
             if not should_continue_:
                 continue
@@ -442,13 +447,15 @@ class Alarm:
         print('got runs_iter')
 
         commit_hashes = set()
-        records_by_commit_hash: dict[str, dict[str, dict[str, float | int]]] = defaultdict(lambda: defaultdict(dict))
+        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
+            lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
             should_continue_, config_params_str, commit_hash = self.fetch_wandb_data_loop_common(
                 i=i,
                 run=run,
                 commit_hashes=commit_hashes,
                 records_by_commit_hash=records_by_commit_hash,
+                all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
             )
             if not should_continue_:
                 continue
