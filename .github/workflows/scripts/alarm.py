@@ -75,9 +75,9 @@ def config_params_str_to_fdict(config_params_str: str) -> frozendict[str, str]:
 #     return frozendict(parse_benchmark_id_to_kv_pairs(benchmark_id))
 
 
-def fdicts_to_key_names(dicts: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+def dicts_to_key_names(dicts: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
     """
-    Merge a tuple of dicts into a single tuple of keys that:
+    Merge a tuple of dicts (could be frozen) into a single tuple of keys that:
     - Preserves the relative order of keys within each tuple
     - Gives precedence to later tuples when conflicts arise
     """
@@ -350,6 +350,13 @@ def fetch_wandb_data_new_format(benchmark_under_test: BenchmarkUnderTest):
         # adsfasdf
         return records_by_commit_hash
 
+
+def build_table(
+    config_param_names: str,
+    alias: str,
+    benchmark_run_under_test: BenchmarkRunUnderTest,
+    records_by_commit_hash: dict[str, Any],
+) -> None:
     # together these rows contain the text of the markdwon
     markdown_rows = []
     rows = []
@@ -365,8 +372,8 @@ def fetch_wandb_data_new_format(benchmark_under_test: BenchmarkUnderTest):
     header = "| " + " | ".join(header_cells) + " |"
     align  = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
 
-    for benchmark_id in sorted(csv_info.current_bm.keys(), key=sort_key):
-        value_cur = csv_info.current_bm[benchmark_id][metric]
+    for benchmark_id in sorted(benchmark_run_under_test.current_bm.keys(), key=sort_key):
+        value_cur = benchmark_run_under_test.current_bm[benchmark_id][metric]
         is_int = isinstance(value_cur, int) or value_cur.is_integer()
         value_repr = fmt_num(value_cur, is_int)
 
@@ -476,8 +483,8 @@ def main() -> None:
     SPEED_METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
     MEM_METRIC_KEYS = ("max_mem_mb")
 
-    csv_info_speed = BenchmarkUnderTest(artifacts_dir=speed_artifacts_dir, metric_keys=SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
-    csv_info_mem = BenchmarkUnderTest(artifacts_dir=mem_artifacts_dir, metric_keys=MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
+    results_under_test_speed = BenchmarkUnderTest(artifacts_dir=speed_artifacts_dir, metric_keys=SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
+    results_under_test_mem = BenchmarkUnderTest(artifacts_dir=mem_artifacts_dir, metric_keys=MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
 
     # ----- W&B baselines -----
 
@@ -489,22 +496,26 @@ def main() -> None:
 
     speed_records_by_commit_hash = {}
     if not args.dev_skip_speed:
-        speed_records_by_commit_hash = fetch_wandb_data_old_format(csv_info=csv_info_speed)
+        speed_records_by_commit_hash = fetch_wandb_data_old_format(benchmark_under_test=results_under_test_speed)
     print('speed_records_by_commit_hash', speed_records_by_commit_hash)
 
-    mem_records_by_commit_hash = fetch_wandb_data_new_format(csv_info=csv_info_mem)
+    mem_records_by_commit_hash = fetch_wandb_data_new_format(benchmark_under_test=results_under_test_mem)
 
     # ----- build TWO tables -----
 
     # Parse benchmark IDs into key-value dicts while preserving order
 
     reg_found, alert_found = False, False
-    tables = {}
-    rows_for_csv = {"runtime_fps": [], "compile_time": [], "mem": []}
+    table_by_metric_name = {}
+    rows_for_csv_by_metric_name = {"runtime_fps": [], "compile_time": [], "max_mem_mb": []}
     info = {}
-    for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
-        tables[metric], rows_for_csv[metric] = build_table(
-            config_param_names=csv_info.get_config_param_names())
+    for metric, alias, sign, results_under_test_ in (
+        ("runtime_fps", "FPS", 1, results_under_test_speed),
+        ("compile_time", "compile", -1, results_under_test_speed),
+        ("max_mem_mb", "memory", -1, results_under_test_mem),
+    ):
+        table_by_metric_name[metric], rows_for_csv_by_metric_name[metric] = build_table(
+            config_param_names=results_under_test_.get_config_param_names())
 
     # ----- baseline commit list (MD) -----
 
@@ -522,10 +533,13 @@ def main() -> None:
             f"Thresholds: {thr_repr}",
             "",
             "### Runtime FPS",
-            *tables["runtime_fps"],
+            *table_by_metric_name["runtime_fps"],
             "",
             "### Compile Time",
-            *tables["compile_time"],
+            *table_by_metric_name["compile_time"],
+            "",
+            "### Memory usage",
+            *table_by_metric_name["max_mem_mb"],
             "",
             f"- (*1) last: last commit on main, mean/std: stats over commit hashes {MAX_VALID_REVISIONS} commits if available.",
             f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
