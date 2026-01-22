@@ -9,7 +9,7 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 class SupportField:
@@ -395,3 +395,8 @@ def _func_count_supports_box(
     d_box = gu.ti_inv_transform_by_quat(d, g_quat)
 
     return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()
+
+
+from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
+
+create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.support_field_decomp")

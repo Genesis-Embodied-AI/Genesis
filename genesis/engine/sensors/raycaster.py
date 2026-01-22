@@ -219,7 +219,7 @@ def kernel_cast_rays(
                 if node.left == -1:  # is leaf node
                     # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
                     sorted_leaf_idx = node_idx - (n_triangles - 1)
-                    i_f = ti.cast(bvh_morton_codes[0, sorted_leaf_idx][1], ti.i32)
+                    i_f = ti.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], ti.i32)
 
                     tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
                     for i in ti.static(range(3)):
@@ -329,7 +329,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         """Rebuild BVH from current geometry in the scene."""
-        from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
+        from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
 
         kernel_update_all_verts(
             geoms_info=shared_metadata.solver.geoms_info,
@@ -385,7 +385,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         # These fields are used to properly index into the big cache tensor in kernel_cast_rays
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
-            self._shared_metadata.sensor_cache_offsets, self._cache_size
+            self._shared_metadata.sensor_cache_offsets, self._cache_size * (self._idx + 1)
         )
         self._shared_metadata.sensor_point_offsets = concat_with_tensor(
             self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays

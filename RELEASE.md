@@ -1,5 +1,70 @@
 # Genesis Release Note
 
+## 0.3.13
+
+This small release adds user-friendly diagnosis of invalid Rigid physics properties and improves support of GLTF meshes.
+
+### Breaking changes
+
+* Apply 'FileMorph.file_meshes_are_zup' to all meshes including GLTF. (@duburcqa) (#2275)
+* Do not officially support importing GLTF morph Mesh as Z-UP. (@duburcqa) (#2279)
+
+### New Features
+
+* Add Magnetometer measurement to IMU Sensor. (@sunkmechie) (#2265)
+* Check validity of links spatial inertia and support forcing computation from geoms. (@duburcqa) (#2273, #2276)
+
+### Bug Fixes
+
+* Improve support of attached RigidEntity. (@duburcqa) (#2256, #2259)
+* Fix attaching RayTracer camera sensor. (@duburcqa) (#2266)
+* Fix empty data when adding more than 3 Raycast Sensors. (@JackLowry) (#2268)
+* Fix Raycast Sensor for batched environments. (@d-corsi) (#2269)
+* More robust filtering of self-collision in neutral configuration.  (@duburcqa) (#2278)
+
+### Miscellaneous
+
+* Improve performance and add torch support to 'utils.geom.slerp'. (@Kashu7100) (#2260)
+
+## 0.3.12
+
+This PR focuses on performance improvements (x4 faster for complex scenes with 64 < n_dofs < 96 and n_envs=4096 compared to 0.3.10). Besides, initial support of heterogenous object and USD stage import for rigid body simulation has been introduced.
+
+### New Features
+
+* Add method to compute axis-aligned bounding boxes of visual geometries. (@duburcqa) (#2185)
+* Add partial support of batched camera sensor with Rasterizer. (@Narsil) (#2207, #2212)
+* Add support for attaching MPM particles to rigid links. (@YilingQiao) (#2205)
+* Add support of USD import for Rigid Body. (@alanray-tech) (#2067)
+* Add support of batched textures to BatchRenderer. (@ACMLCZH) (#2077)
+* Add support of fisheye camera mode to BatchRenderer. (@ACMLCZH) (#2138)
+* Add batched simulation of heterogeneous objects. (@YilingQiao) (#2202)
+* Filter out self-collision pairs active in neutral configuration. (@duburcqa) (#2251)
+
+### Bug Fixes
+
+* Fix zero-copy for fields on Apple Metal. (@duburcqa) (#2188, #2223)
+* Fix compatibility with 'numpy<2.0'. (@duburcqa) (#2197)
+* Fix invalid default particle sampler on Linux ARM. (@duburcqa) (#2211)
+* Fix 'RigidGeom.get_(pos|quat)' invalid shape. (@duburcqa) (#2218)
+* Fix various sensor bugs and add zero-copy to contact force sensors. (@duburcqa) (#2232, #2235)
+* Clear dynamic weld at scene reset. (@YilingQiao) (#2233)
+* Fix viewer not closed at scene destroy if running in background thread. (@duburcqa) (#2236)
+* More robust handling of corrupted cache. (@duburcqa) (#2241)
+
+### Miscellaneous
+
+* More intuitive visualisation of camera frustum in interactive viewer. (@duburcqa) (#2180)
+* Remove broken and unmaintained Avatar Solver. (@duburcqa) (#2181)
+* Speedup non-tiled hessian cholesky factor and solve. (@duburcqa) (#2182, #2183)
+* Force public getters to return by-value to avoid mistake. (@duburcqa) (#2184)
+* Improve CI infrastructure. (@hughperkins, @duburcqa) (#1981, #2166, #2190, #2194, #2195, #2242, #2245, #2250)
+* Add Ruff format. (@Narsil) (#2213, #2214, #2215)
+* Store texture path for primitive morphs as metadata. (@Rush2k) (#2227)
+* Improve import logics of y-up vs z-up file meshes. (@AnisB) (#2237)
+* Simplify boolean contact sensors update logics. (@duburcqa) (#2238)
+* Rigid methods set_qpos,set_dofs_position now clear error code. (@duburcqa) (#2253)
+
 ## 0.3.11
 
 The main focus of this release is to improve scaling of the simulation wrt the complexity of the scene, and better leverage GPUn compute for small to moderate batch sizes (0<=n_envs<=8192). As usual, a bunch of minor bugs have been fixed.

@@ -18,7 +18,7 @@ from genesis.utils.misc import tensor_to_array, ti_to_torch, DeprecationError
 if TYPE_CHECKING:
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
     from genesis.engine.mesh import Mesh
-    from genesis.engine.solvers.rigid.rigid_solver_decomp import RigidSolver
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
     from .rigid_entity import RigidEntity
     from .rigid_link import RigidLink
@@ -66,8 +66,8 @@ class RigidGeom(RBC):
         self._friction: float = friction
         self._sol_params = sol_params
         self._needs_coup: bool = needs_coup
-        self._contype = contype
-        self._conaffinity = conaffinity
+        self._contype = int(contype)
+        self._conaffinity = int(conaffinity)
         self._is_convex: bool = mesh.is_convex
         self._cell_start: int = cell_start
         self._vert_start: int = vert_start
@@ -81,6 +81,10 @@ class RigidGeom(RBC):
 
         self._init_pos: np.ndarray = init_pos
         self._init_quat: np.ndarray = init_quat
+
+        # For heterogeneous simulation: which environments this geom is active in (None = all envs)
+        self.active_envs_mask: torch.Tensor | None = None
+        self.active_envs_idx: np.ndarray | None = None
 
         self._init_verts = mesh.verts
         self._init_faces = mesh.faces
@@ -349,7 +353,7 @@ class RigidGeom(RBC):
             gs.raise_exception("`friction` must be non-negative.")
         self._friction = friction
 
-        if self.is_built:
+        if self._solver.is_built:
             self._solver.set_geom_friction(friction, self._idx)
 
     # ------------------------------------------------------------------------------------
@@ -400,7 +404,7 @@ class RigidGeom(RBC):
         """
         Set the solver parameters of this geometry.
         """
-        if self.is_built:
+        if self._solver.is_built:
             self._solver.set_sol_params(sol_params, geoms_idx=self._idx, envs_idx=None)
         else:
             self._sol_params = sol_params
@@ -410,7 +414,7 @@ class RigidGeom(RBC):
         """
         Get the solver parameters of this geometry.
         """
-        if self.is_built:
+        if self._solver.is_built:
             return self._solver.get_sol_params(geoms_idx=self._idx, envs_idx=None)[0]
         return self._sol_params
 
@@ -500,7 +504,7 @@ class RigidGeom(RBC):
         return self._needs_coup
 
     @property
-    def contype(self):
+    def contype(self) -> int:
         """
         Get the contact type of the geometry for collision pair filtering.
 
@@ -512,7 +516,7 @@ class RigidGeom(RBC):
         return self._contype
 
     @property
-    def conaffinity(self):
+    def conaffinity(self) -> int:
         """
         Get the contact affinity of the geometry for collision pair filtering.
 
@@ -847,6 +851,10 @@ class RigidVisGeom(RBC):
 
         self._init_pos = init_pos
         self._init_quat = init_quat
+
+        # For heterogeneous simulation: which environments this vgeom is active in (None = all envs)
+        self.active_envs_mask: torch.Tensor | None = None
+        self.active_envs_idx: np.ndarray | None = None
 
         self._init_vverts = vmesh.verts
         self._init_vfaces = vmesh.faces

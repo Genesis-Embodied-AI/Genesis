@@ -141,7 +141,7 @@ class RigidJoint(RBC):
         """
         Set the solver parameters of this joint.
         """
-        if self.is_built:
+        if self._solver.is_built:
             self._solver.set_sol_params(sol_params, joints_idx=self._idx, envs_idx=None)
         else:
             self._sol_params = sol_params
@@ -149,9 +149,9 @@ class RigidJoint(RBC):
     @property
     def sol_params(self):
         """
-        Retruns the solver parameters of the joint.
+        Returns the solver parameters of the joint.
         """
-        if self.is_built:
+        if self._solver.is_built:
             return self._solver.get_sol_params(joints_idx=self._idx, envs_idx=None)[..., 0, :]
         return self._sol_params
 

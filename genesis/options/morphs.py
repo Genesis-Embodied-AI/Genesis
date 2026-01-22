@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 import genesis as gs
+import genesis.utils.geom as gu
 import genesis.utils.misc as mu
 
 from .misc import CoacdOptions
@@ -19,8 +20,8 @@ from .options import Options
 
 URDF_FORMAT = ".urdf"
 MJCF_FORMAT = ".xml"
-MESH_FORMATS = (".obj", ".stl")
 GLTF_FORMATS = (".glb", ".gltf")
+MESH_FORMATS = (".obj", ".stl", *GLTF_FORMATS)
 USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
 
 
@@ -522,13 +523,13 @@ class FileMorph(Morph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
-    parse_glb_with_zup : bool, optional
-        This parameter is deprecated, see file_meshes_are_zup.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -556,11 +557,11 @@ class FileMorph(Morph):
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
     parse_glb_with_zup: Optional[bool] = None
-    file_meshes_are_zup: bool = True
+    file_meshes_are_zup: bool | None = True
     batch_fixed_verts: bool = False
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         if self.decompose_nonconvex is not None:
             if self.decompose_nonconvex:
@@ -669,6 +670,9 @@ class Mesh(FileMorph, TetGenMixin):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     merge_submeshes_for_collision : bool, optional
         Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
     visualization : bool, optional
@@ -681,15 +685,15 @@ class Mesh(FileMorph, TetGenMixin):
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
-    parse_glb_with_trimesh : bool, optional
-        Whether to use trimesh to load glb files. Defaults to False, in which case pygltflib will be used.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). If None, then it will default
+        to True for all mesh formats except GLTF/GLB, as they are defined as Y-up by the standard. Beware that setting
+        this option to True for GLTF/GLB is not supported and will rather apply a rotation on the morph. Default to
+        None.
     fixed : bool, optional
         Whether the object should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -729,14 +733,33 @@ class Mesh(FileMorph, TetGenMixin):
         **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
-    parse_glb_with_trimesh: bool = False
-
     # Rigid specific
+    file_meshes_are_zup: bool | None = None
     fixed: bool = False
     contype: int = 0xFFFF
     conaffinity: int = 0xFFFF
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        if self.is_format(gs.options.morphs.GLTF_FORMATS):
+            if self.file_meshes_are_zup:
+                gs.logger.warning(
+                    "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
+                    "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
+                )
+                quat = (0.707, -0.707, 0.0, 0.0)
+                if self.quat is None:
+                    self.quat = quat
+                else:
+                    self.quat = gu.transform_quat_by_quat(
+                        np.array(quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
+                    )
+            self.file_meshes_are_zup = False
+        elif self.file_meshes_are_zup is None:
+            self.file_meshes_are_zup = True
 
 
 class MeshSet(Mesh):
@@ -819,13 +842,15 @@ class MJCF(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -930,13 +955,15 @@ class URDF(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -1033,13 +1060,15 @@ class Drone(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.

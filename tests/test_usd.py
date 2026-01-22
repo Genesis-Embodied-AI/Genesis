@@ -122,9 +122,7 @@ def compare_joints(compared_joints, usd_joints, tol):
         Tolerance for numerical comparisons.
     """
     # Check number of joints
-    assert len(compared_joints) == len(usd_joints), (
-        f"Number of joints mismatch: compared={len(compared_joints)}, USD={len(usd_joints)}"
-    )
+    assert len(compared_joints) == len(usd_joints)
 
     # Create dictionaries keyed by joint name for comparison
     compared_joints_by_name = {joint.name: joint for joint in compared_joints}
@@ -133,9 +131,7 @@ def compare_joints(compared_joints, usd_joints, tol):
     # Check that we have matching joint names
     compared_joint_names = set(compared_joints_by_name.keys())
     usd_joint_names = set(usd_joints_by_name.keys())
-    assert compared_joint_names == usd_joint_names, (
-        f"Joint names mismatch: compared={compared_joint_names}, USD={usd_joint_names}"
-    )
+    assert compared_joint_names == usd_joint_names
 
     # Compare all joint properties by name
     for joint_name in sorted(compared_joint_names):
@@ -443,10 +439,10 @@ def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["box_plane_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_box_plane_mjcf_vs_usd(xml_path, box_plane_usd, scale, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
@@ -598,10 +594,10 @@ def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["prismatic_joint_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_prismatic_joint_mjcf_vs_usd(xml_path, prismatic_joint_usd, scale, tol):
     """Test that MJCF and USD scenes with prismatic joints produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
@@ -755,10 +751,10 @@ def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["revolute_joint_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_revolute_joint_mjcf_vs_usd(xml_path, revolute_joint_usd, scale, tol):
     """Test that MJCF and USD scenes with revolute joints produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
@@ -869,10 +865,10 @@ def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["spherical_joint_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, scale, tol):
     """Test that MJCF and USD scenes with spherical joints produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
@@ -881,9 +877,9 @@ def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, scale, tol):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_visual_parse(model_name):
     glb_file = os.path.join(get_hf_dataset(pattern=f"{model_name}.glb"), f"{model_name}.glb")
     usd_file = os.path.join(get_hf_dataset(pattern=f"{model_name}.usdz"), f"{model_name}.usdz")
@@ -893,9 +889,9 @@ def test_usd_visual_parse(model_name):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
     usd_file = os.path.join(asset_path, usd_file)
@@ -909,13 +905,13 @@ def test_usd_parse_nodegraph(usd_file):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="OmniKit support not available")
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
 @pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="OmniKit support not available")
 def test_usd_bake(usd_file):
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
     usd_file = os.path.join(asset_path, usd_file)

@@ -342,20 +342,14 @@ class Mesh(RBC):
         """
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
-                meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
+                if morph.is_format(gs.options.morphs.GLTF_FORMATS):
+                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                else:
+                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
                 if not morph.file_meshes_are_zup:
                     for mesh in meshes:
                         mesh.convert_to_zup()
                     gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
-            elif morph.is_format(gs.options.morphs.GLTF_FORMATS):
-                if morph.parse_glb_with_trimesh:
-                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
-                else:
-                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
-                # The GLF spec defines that all meshes are Yup, ignoring the FileMorph.file_meshes_are_zup option.
-                for mesh in meshes:
-                    mesh.convert_to_zup()
-                gs.logger.debug(f"Converting the GLTF geometry to zup '{morph.file}'")
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
@@ -400,7 +394,8 @@ class Mesh(RBC):
         """
         Convert the mesh to z-up.
         """
-        self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
+        if self._metadata["imported_as_zup"]:
+            self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
         self._metadata["imported_as_zup"] = False
 
     def apply_transform(self, T):

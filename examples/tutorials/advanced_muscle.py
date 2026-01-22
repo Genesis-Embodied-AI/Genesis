@@ -66,7 +66,7 @@ robot_fem = scene.add_entity(
 )
 
 ########################## build ##########################
-scene.build(n_envs=2)
+scene.build(n_envs=0)
 
 ########################## run ##########################
 horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
