@@ -208,11 +208,11 @@ class BenchmarkRunUnderTest:
 
     # def ingest_records_by_commit_hash(self, records_by_commit_hash):
 
-    def get_config_param_names(self):
-        """
-        Returns an ordered list of the config param names (i.e. not including metric names)
-        """
-        return merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
+    # def get_config_param_names(self):
+    #     """
+    #     Returns an ordered list of the config param names (i.e. not including metric names)
+    #     """
+    #     return merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
 
 @dataclasses.dataclass
@@ -283,7 +283,7 @@ class Alarm:
                 reg_found_,
                 alert_found_
             ) = self.build_table(
-                config_param_names=results_under_test_.get_config_param_names(),
+                config_param_names=results_under_test_.config_param_names,
                 alias=alias,
                 metric=metric,
                 sign=sign,
@@ -337,7 +337,8 @@ class Alarm:
         i: int,
         run: Run,
         commit_hashes: set[str],
-    ) -> bool:
+        records_by_commit_hash: dict[str, dict[str, dict[str, int | float]]],
+    ) -> tuple[bool, str, str]:
         """
         The common part of the loop over runs, that is the same for both
         old and new format
@@ -348,12 +349,12 @@ class Alarm:
         # Abort if still not complete after checking enough runs.
         # This would happen if a new benchmark has been added, and not enough past data is available yet.
         if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-            return False
+            return False, "", ""
 
         # Early return if enough complete records have been collected
         records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
         if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
-            return False
+            return False, "", ""
 
         # Load config and summary, with support of legacy runs
         config, summary = run.config, run.summary
@@ -368,40 +369,48 @@ class Alarm:
             commit_hashes.add(commit_hash)
         except ValueError:
             # Ignore this run if the revision has been corrupted for some unknown reason
-            return False
+            return False, "", ""
 
         # Ignore runs associated with a commit that is not part of the official repository
         if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-            return False
+            return False, "", ""
 
         # Skip runs did not finish for some reason
         if run.state != "finished":
-            return False
+            return False, "", ""
 
         # Do not store new records if the desired number of revision is already reached
         if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-            return False
+            return False, "", ""
 
         # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
         # Note that the rigid body benchmark suite is the only one being supported for now.
-        suite_id, benchmark_id = config["benchmark_id"].split("-", 1)
+        suite_id, config_params_str = config["benchmark_id"].split("-", 1)
         if suite_id != "rigid_body":
-            return False
+            return False, "", ""
 
-        return True
+        return True, config_params_str, commit_hash
 
     def fetch_wandb_data_old_format(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
-    ) -> dict[str, dict[str, dict[str, float | int]]]:
+    ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
         print("fetch_wandb_data_old_format")
         api = wandb.Api()
         runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{self.PROJECT_OLD}", order="-created_at")
         print('got runs_iter')
 
         commit_hashes = set()
-        records_by_commit_hash: dict[str, dict[str, dict[str, int | float]]] = {}
+        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
         for i, run in enumerate(runs_iter):
+            should_continue_, config_params_str, commit_hash = self.fetch_wandb_data_loop_common(
+                i=i,
+                run=run,
+                commit_hashes=commit_hashes,
+                records_by_commit_hash=records_by_commit_hash,
+            )
+            if not should_continue_:
+                continue
 
             # Make sure that stats are valid
             try:
@@ -417,8 +426,8 @@ class Alarm:
                 continue
 
             # Store all the records into a dict
-            nbid = normalize_benchmark_id(benchmark_id)
-            records_by_commit_hash.setdefault(commit_hash, {})[nbid] = {
+            config_params_fdict = config_params_str_to_fdict(config_params_str)
+            records_by_commit_hash.setdefault(commit_hash, {})[config_params_fdict] = {
                 metric: run.summary[metric] for metric in self.SPEED_METRIC_KEYS
             }
         return records_by_commit_hash
@@ -435,47 +444,56 @@ class Alarm:
         commit_hashes = set()
         records_by_commit_hash: dict[str, dict[str, dict[str, float | int]]] = defaultdict(lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
-            print("i", i, "run", run)
-            # Abort if still not complete after checking enough runs.
-            # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-                break
-
-            # Early return if enough complete records have been collected
-            records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
-            if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
-                break
-
-            # Load config and summary, with support of legacy runs
-            config, summary = run.config, run.summary
-            if isinstance(config, str):
-                config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
-            if isinstance(summary._json_dict, str):
-                summary = json.loads(summary._json_dict)
-
-            # Extract revision commit and branch
-            try:
-                commit_hash, branch = config["revision"].split("@", 1)
-                commit_hashes.add(commit_hash)
-            except ValueError:
-                print('didnt find rev')
-                # Ignore this run if the revision has been corrupted for some unknown reason
-                continue
-            print("commit_hash", commit_hash, "branch", branch)
-            # Ignore runs associated with a commit that is not part of the official repository
-            if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-                print('branch didnt start with Genesis-Embodied-AI')
+            should_continue_, config_params_str, commit_hash = self.fetch_wandb_data_loop_common(
+                i=i,
+                run=run,
+                commit_hashes=commit_hashes,
+                records_by_commit_hash=records_by_commit_hash,
+            )
+            if not should_continue_:
                 continue
 
-            # Skip runs did not finish for some reason
-            if run.state != "finished":
-                continue
+            # print("i", i, "run", run)
+            # # Abort if still not complete after checking enough runs.
+            # # This would happen if a new benchmark has been added, and not enough past data is available yet.
+            # if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
+            #     break
 
-            # Do not store new records if the desired number of revision is already reached
-            if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-                continue
+            # # Early return if enough complete records have been collected
+            # records_is_complete = [benchmark_under_test.benchmark_ids_set.issubset(record.keys()) for record in records_by_commit_hash.values()]
+            # if sum(records_is_complete) == self.MAX_VALID_REVISIONS:
+            #     break
 
-            for k, v in summary.items():
+            # # Load config and summary, with support of legacy runs
+            # config, summary = run.config, run.summary
+            # if isinstance(config, str):
+            #     config = {k: v["value"] for k, v in json.loads(run.config).items() if not k.startswith("_")}
+            # if isinstance(summary._json_dict, str):
+            #     summary = json.loads(summary._json_dict)
+
+            # # Extract revision commit and branch
+            # try:
+            #     commit_hash, branch = config["revision"].split("@", 1)
+            #     commit_hashes.add(commit_hash)
+            # except ValueError:
+            #     print('didnt find rev')
+            #     # Ignore this run if the revision has been corrupted for some unknown reason
+            #     continue
+            # print("commit_hash", commit_hash, "branch", branch)
+            # # Ignore runs associated with a commit that is not part of the official repository
+            # if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
+            #     print('branch didnt start with Genesis-Embodied-AI')
+            #     continue
+
+            # # Skip runs did not finish for some reason
+            # if run.state != "finished":
+            #     continue
+
+            # # Do not store new records if the desired number of revision is already reached
+            # if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
+            #     continue
+
+            for k, v in run.summary.items():
                 if k.startswith("_"):
                     continue
                 metric_name, _, kv_pairs_str = k.partition("-")
