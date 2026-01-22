@@ -121,9 +121,20 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     )
 
     if use_ipc:
+        # Cloth using Cloth material
+        # Note: Using coarse grid mesh to avoid IPC thickness violations
+        # The built-in cloth.obj is too dense for IPC's contact detection
+        asset_path = snapshot_download(
+            repo_type="dataset",
+            repo_id="Genesis-Intelligence/assets",
+            revision="72b04f7125e21df1bebd54a7f7b39d1cd832331c",
+            allow_patterns="grid20x20.obj",
+            max_workers=1,
+        )
+
         cloth = scene.add_entity(
             morph=gs.morphs.Mesh(
-                file="meshes/grid20x20.obj",
+                file=f"{asset_path}/grid20x20.obj",
                 scale=0.5,
                 pos=(0.5, 0.0, 0.1),
                 euler=(90, 0, 0),

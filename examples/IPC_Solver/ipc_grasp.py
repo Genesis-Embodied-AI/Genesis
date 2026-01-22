@@ -102,7 +102,7 @@ def main():
         quat=np.array([0, 1, 0, 0]),
     )
 
-    for i in range(int(0.2 / dt)):
+    for i in range(int(0.2 / dt) * 10):
         franka.control_dofs_position(qpos[:-2], motors_dof)
         franka.control_dofs_position(np.array([finder_pos, finder_pos]), fingers_dof)
         scene.step()

@@ -243,7 +243,7 @@ class IPCCoupler(RBC):
 
     def _add_fem_entities_to_ipc(self):
         """Add FEM entities to the existing IPC scene (includes both volumetric FEM and cloth)"""
-        from uipc.constitution import ElasticModuli
+        from uipc.constitution import ElasticModuli, ElasticModuli2D
         from uipc.geometry import label_surface, tetmesh, trimesh
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
@@ -292,18 +292,19 @@ class IPCCoupler(RBC):
 
                 label_surface(mesh)
 
-                # Apply material constitution based on type
-                moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
+                # Apply material constitution based on type                
                 if is_cloth:
                     # Apply shell material for cloth
+                    moduli_2d = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)                    
                     nks.apply_to(
-                        mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
+                        mesh, moduli=moduli_2d, mass_density=entity.material.rho, thickness=entity.material.thickness
                     )
                     # Apply bending stiffness if specified
                     if entity.material.bending_stiffness is not None:
                         dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
                 else:
-                    # Apply volumetric material for FEM
+                    # Apply volumetric material for FEM                    
+                    moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                     stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
 
                 # Add metadata to identify geometry type
