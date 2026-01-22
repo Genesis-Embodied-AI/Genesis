@@ -130,12 +130,8 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     with np.testing.assert_raises(AssertionError, msg="Delayed mag data should not be equal to the ground truth data"):
         assert_array_equal(imu_delayed.read().mag - imu_delayed.read_ground_truth().mag, 0.0)
 
-    box.set_COM_shift([0.0, 0.0, 0.0])
-    box.set_quat(
-        [1.0, 0.0, 0.0, 0.0]
-    )  # Genesis uses[w, x, y, z]; previously the box was being rotated in Z instead of passing identity
-    # Gyro and Accl didn't notice the hidden rotation,
-    # if we use [0.0, 0.0, 0.0 ,0.1] the actual tensor will be (-a, -b, c) whereas desired is (a, b, c)
+    box.set_COM_shift((0.0, 0.0, 0.0))
+    box.set_quat((0.0, 0.0, 0.0, 1.0))
 
     # wait for the box to be stationary on ground
     for _ in range(50):
@@ -143,15 +139,13 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
     assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=5e-6)
     assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
-    assert_allclose(imu.read().mag, MAG_FIELD, tol=1e-5)
+    assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[1], MAG_FIELD[2]), tol=1e-5)
 
     # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
     imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
     scene.step()
-    assert_allclose(
-        imu.read().lin_acc, -GRAVITY, tol=5e-6
-    )  # should now check for 10 as we corrected the identity quaternion
+    assert_allclose(imu.read().lin_acc, -GRAVITY, tol=5e-6)
     imu.set_quat_offset((0.0, 0.0, 0.0, 1.0))
     imu.set_acc_cross_axis_coupling((0.0, 0.0, 0.0))
 
@@ -162,7 +156,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu_noisy.read().ang_vel, 0.0, tol=gs.EPS)
     assert_allclose(imu_noisy.read().mag, 0.0, tol=gs.EPS)  # biased
 
-    imu.set_bias(BIAS + (0.0, 0.0, 0.0) + (0.0, 0.0, 0.0))
+    imu.set_bias(BIAS)
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
 
