@@ -917,10 +917,16 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
     return T
 
 
-def T_to_trans_quat(T, *, out=None):
-    trans = T[..., :3, 3]
-    quat = R_to_quat(T[..., :3, :3])
-    return trans, quat
+def T_to_trans(T):
+    return T[..., :3, 3]
+
+
+def T_to_quat(T):
+    return R_to_quat(T[..., :3, :3])
+
+
+def T_to_trans_quat(T):
+    return T_to_trans(T), T_to_quat(T)
 
 
 @nb.jit(nopython=True, cache=True)
@@ -1174,7 +1180,7 @@ def inv_transform_by_T(pos, T):
     return transform_by_R(pos - trans, R_inv)
 
 
-def _tc_polar(A: torch.Tensor, pure_rotation: bool, side: Literal["right", "left"]):
+def _tc_polar(A: torch.Tensor, pure_rotation: bool, side: Literal["right", "left"], eps: float):
     """Torch implementation of polar decomposition with batched support."""
     if A.ndim < 2:
         gs.raise_exception(f"Input must be at least 2D. got: {A.ndim=} dimensions")
@@ -1202,14 +1208,14 @@ def _tc_polar(A: torch.Tensor, pure_rotation: bool, side: Literal["right", "left
         col_idx = torch.arange(N, device=U_svd.device).unsqueeze(0).expand(batch_size, -1)  # (batch_size, N)
         max_vals = U_flat[batch_idx, max_indices_flat, col_idx]  # (batch_size, N)
         max_vals_abs = torch.abs(max_vals)
-        signs = torch.where(max_vals_abs > 1e-10, torch.sign(max_vals), torch.ones_like(max_vals))
+        signs = torch.where(max_vals_abs > eps, torch.sign(max_vals), torch.ones_like(max_vals))
         signs = signs.reshape(*batch_dims, N)
     else:
         # For single matrix case
         max_indices = torch.argmax(torch.abs(U_svd), dim=0)  # Shape: (N,)
         max_vals = U_svd[max_indices, torch.arange(N, device=U_svd.device)]  # (N,)
         max_vals_abs = torch.abs(max_vals)
-        signs = torch.where(max_vals_abs > 1e-10, torch.sign(max_vals), torch.ones_like(max_vals))
+        signs = torch.where(max_vals_abs > eps, torch.sign(max_vals), torch.ones_like(max_vals))
 
     U_svd = U_svd * signs.unsqueeze(-2) if is_batched else U_svd * signs
     Vt = Vt * signs.unsqueeze(-1) if is_batched else Vt * signs.unsqueeze(-1)
@@ -1297,7 +1303,7 @@ def _np_polar_core_single(A, pure_rotation: bool, side_int: int):
     signs = np.empty(N, dtype=U_svd.dtype)
     for j in range(N):
         max_val = np.abs(U_svd[max_indices[j], j])
-        if max_val > 1e-10:
+        if max_val > gs.EPS:
             signs[j] = np.sign(U_svd[max_indices[j], j])
         else:
             signs[j] = 1.0
@@ -1438,11 +1444,75 @@ def polar(A, pure_rotation: bool = True, side: Literal["right", "left"] = "right
         - P : The positive semi-definite matrix (scaling part). For 'right' decomposition,
           P has shape (N, N) or (*batch, N, N). For 'left' decomposition, P has shape (M, M) or (*batch, M, M).
     """
-    if isinstance(A, torch.Tensor):
-        return _tc_polar(A, pure_rotation, side)
     if isinstance(A, np.ndarray):
         return _np_polar(A, pure_rotation, side)
+    if isinstance(A, torch.Tensor):
+        return _tc_polar(A, pure_rotation, side, gs.EPS)
     gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(A)=}")
+
+
+@nb.jit(nopython=True, cache=True)
+def _np_slerp(q0, q1, t):
+    q0_norm = np.sqrt(np.sum(np.square(q0.reshape((-1, 4))), -1).reshape((*q0.shape[:-1], 1)))
+    q0 = q0 / q0_norm
+    q1_norm = np.sqrt(np.sum(np.square(q1.reshape((-1, 4))), -1).reshape((*q1.shape[:-1], 1)))
+    q1 = q1 / q1_norm
+
+    d = q0 * q1
+    dot = np.sum(d.reshape((-1, 4)), -1).reshape((*d.shape[:-1], 1))
+    dot_abs = np.abs(dot)
+    t = t.reshape(dot.shape)
+
+    theta = np.arccos(dot_abs)
+    sin_theta_inv = 1.0 / np.sqrt(1.0 - dot_abs**2)
+
+    is_theta_eps = dot_abs > 1.0 - gs.EPS
+    s0 = np.where(is_theta_eps, 1.0 - t, np.sin((1.0 - t) * theta) * sin_theta_inv)
+    s1 = np.where(is_theta_eps, t, np.sin(t * theta) * sin_theta_inv) * np.where(dot < 0.0, -1.0, 1.0)
+    return s0 * q0 + s1 * q1
+
+
+@torch.jit.script
+def _tc_slerp(q0, q1, t, eps: float):
+    q0 = q0 / torch.linalg.norm(q0, dim=-1, keepdim=True)
+    q1 = q1 / torch.linalg.norm(q1, dim=-1, keepdim=True)
+
+    dot = torch.sum(q0 * q1, dim=-1, keepdim=True)
+    dot_abs = dot.abs()
+    t = t.reshape(dot.shape)
+
+    theta = torch.acos(dot_abs)
+    sin_theta_inv = 1.0 / torch.sqrt(1.0 - dot_abs**2)
+
+    is_theta_eps = dot_abs > 1.0 - eps
+    s0 = torch.where(is_theta_eps, 1.0 - t, torch.sin((1.0 - t) * theta) * sin_theta_inv)
+    s1 = torch.where(is_theta_eps, t, torch.sin(t * theta) * sin_theta_inv) * torch.where(dot < 0.0, -1.0, 1.0)
+    return s0 * q0 + s1 * q1
+
+
+def slerp(q0, q1, t):
+    """
+    Perform spherical linear interpolation between two quaternions.
+
+    Parameters
+    ----------
+    q0 : numpy.array | torch.Tensor
+        The start quaternion (w, x, y, z), can be batched.
+    q1 : numpy.array | torch.Tensor
+        The end quaternion (w, x, y, z), can be batched.
+    t : numpy.array | torch.Tensor
+        The interpolation parameter between 0 and 1.
+
+    Returns
+    -------
+    numpy.array | torch.Tensor
+        The interpolated quaternion (w, x, y, z).
+    """
+    if isinstance(q0, np.ndarray):
+        return _np_slerp(q0, q1, t)
+    if isinstance(q0, torch.Tensor):
+        return _tc_slerp(q0, q1, torch.as_tensor(t, dtype=gs.tc_float, device=gs.device), gs.EPS)
+    gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(q0)=}")
 
 
 # ------------------------------------------------------------------------------------
@@ -1891,48 +1961,6 @@ def spherical_to_cartesian(theta: torch.Tensor, phi: torch.Tensor) -> tuple[torc
     z = torch.sin(phi)  # up
 
     return torch.stack([x, y, z], dim=-1)
-
-
-def slerp(q0, q1, t):
-    """
-    Perform spherical linear interpolation between two quaternions.
-
-    Parameters:
-    q0 : numpy.array
-        The start quaternion (4-dimensional vector).
-    q1 : numpy.array
-        The end quaternion (4-dimensional vector).
-    t : float
-        The interpolation parameter between 0 and 1.
-
-    Returns:
-    numpy.array
-        The interpolated quaternion (4-dimensional vector).
-    """
-    q0 = q0 / np.linalg.norm(q0)
-    q1 = q1 / np.linalg.norm(q1)
-
-    dot_product = np.dot(q0, q1)
-
-    if dot_product < 0.0:
-        q1 = -q1
-        dot_product = -dot_product
-
-    dot_product = np.clip(dot_product, -1.0, 1.0)
-
-    theta_0 = np.arccos(dot_product)
-    sin_theta_0 = np.sin(theta_0)
-
-    if sin_theta_0 < 1e-6:
-        return (1.0 - t) * q0 + t * q1
-
-    theta = theta_0 * t
-    sin_theta = np.sin(theta)
-
-    s0 = np.cos(theta) - dot_product * sin_theta / sin_theta_0
-    s1 = sin_theta / sin_theta_0
-
-    return s0 * q0 + s1 * q1
 
 
 def random_quaternion(batch_size):

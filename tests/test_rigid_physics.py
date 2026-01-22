@@ -2071,8 +2071,8 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
-            quat=(0.707, -0.707, 0, 0),
             fixed=True,
+            file_meshes_are_zup=True,
         ),
         vis_mode="collision",
     )

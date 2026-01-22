@@ -3,7 +3,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.engine.solvers.rigid.support_field as support_field
+from . import support_field
 
 
 class MPR:
