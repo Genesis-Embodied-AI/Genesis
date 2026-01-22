@@ -342,7 +342,8 @@ class Alarm:
         commit_hashes: set[str],
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
         all_config_param_fdicts: frozenset[frozendict[str, str]],
-    ) -> tuple[bool, str, str]:
+        # check_benchmark_suite: bool = True
+    ) -> tuple[bool, str]:
         """
         The common part of the loop over runs, that is the same for both
         old and new format
@@ -353,12 +354,12 @@ class Alarm:
         # Abort if still not complete after checking enough runs.
         # This would happen if a new benchmark has been added, and not enough past data is available yet.
         if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
-            return False, "", ""
+            return False, ""
 
         # Early return if enough complete records have been collected
         complete_records = [all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
         if sum(complete_records) == self.MAX_VALID_REVISIONS:
-            return False, "", ""
+            return False, ""
 
         # Load config and summary, with support of legacy runs
         config, summary = run.config, run.summary
@@ -373,27 +374,23 @@ class Alarm:
             commit_hashes.add(commit_hash)
         except ValueError:
             # Ignore this run if the revision has been corrupted for some unknown reason
-            return False, "", ""
+            return False, ""
 
         # Ignore runs associated with a commit that is not part of the official repository
         if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
-            return False, "", ""
+            return False, ""
 
         # Skip runs did not finish for some reason
         if run.state != "finished":
-            return False, "", ""
+            return False, ""
 
         # Do not store new records if the desired number of revision is already reached
         if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
-            return False, "", ""
+            return False, ""
 
-        # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
-        # Note that the rigid body benchmark suite is the only one being supported for now.
-        suite_id, config_params_str = config["benchmark_id"].split("-", 1)
-        if suite_id != "rigid_body":
-            return False, "", ""
+        # if check_benchmark_suite:
 
-        return True, config_params_str, commit_hash
+        return True, commit_hash
 
     def fetch_wandb_data_old_format(
         self,
@@ -407,7 +404,7 @@ class Alarm:
         commit_hashes = set()
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]] = {}
         for i, run in enumerate(runs_iter):
-            should_continue_, config_params_str, commit_hash = self.fetch_wandb_data_loop_common(
+            should_continue_, commit_hash = self.fetch_wandb_data_loop_common(
                 i=i,
                 run=run,
                 commit_hashes=commit_hashes,
@@ -415,6 +412,12 @@ class Alarm:
                 all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
             )
             if not should_continue_:
+                continue
+
+            # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
+            # Note that the rigid body benchmark suite is the only one being supported for now.
+            suite_id, config_params_str = run.config["benchmark_id"].split("-", 1)
+            if suite_id != "rigid_body":
                 continue
 
             # Make sure that stats are valid
@@ -450,12 +453,13 @@ class Alarm:
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
             lambda: defaultdict(dict))
         for i, run in enumerate(runs_iter):
-            should_continue_, config_params_str, commit_hash = self.fetch_wandb_data_loop_common(
+            should_continue_, commit_hash = self.fetch_wandb_data_loop_common(
                 i=i,
                 run=run,
                 commit_hashes=commit_hashes,
                 records_by_commit_hash=records_by_commit_hash,
                 all_config_param_fdicts=benchmark_under_test.all_config_param_fdicts,
+                # check_benchmark_suite=False,
             )
             if not should_continue_:
                 continue
