@@ -20,34 +20,34 @@ Terminology/variable names:
       - (fdict is an abbreviation for 'frozendict')
 - 'pipeline format':
    a string having format like:
-   solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5
+   "solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5"
 """
 
 from collections import defaultdict
 import argparse
 import os, sys, json, math, statistics
-from typing import Iterable
+from typing import Iterable, Any
 import wandb
 from frozendict import frozendict
 from pathlib import Path
 import csv
 
 
-def parse_kv_pairs_str(kv_pairs_str: str) -> dict[str, str]:
-    kv_pairs_str_l = kv_pairs_str.split("-")
-    kv_pairs = {}
-    for kv_pair_str in kv_pairs_str_l:
-        k, _, v = kv_pair_str.partition("=")
-        kv_pairs[k] = v
-    return kv_pairs
+# def parse_kv_pairs_str(kv_pairs_str: str) -> dict[str, str]:
+#     kv_pairs_str_l = kv_pairs_str.split("-")
+#     kv_pairs = {}
+#     for kv_pair_str in kv_pairs_str_l:
+#         k, _, v = kv_pair_str.partition("=")
+#         kv_pairs[k] = v
+#     return kv_pairs
 
 
-def parse_benchmark_id_to_kv_pairs(benchmark_id: str) -> dict[str, str]:
+def config_params_str_to_fdict(config_params_str: str) -> frozendict[str, str]:
     """
-    Expects a benchmark id in the strin format like:
-    solver=PBD | backend=cpu | n_envs=128
+    Expects a config_params_str in the string format like:
+    solver=PBD-backend=cpu-n_envs=128
 
-    Returns this as an (unfrozen) dict of key value pairs.
+    Returns this as a frozen dict of key value pairs.
 
     Note that the values are strings, not converted into numbers.
     """
@@ -58,38 +58,58 @@ def parse_benchmark_id_to_kv_pairs(benchmark_id: str) -> dict[str, str]:
             if token and "=" in token:
                 k, v = token.split("=", 1)
                 kv[k.strip()] = v.strip()
-    return kv
+    return frozendict(kv)
 
-def normalize_benchmark_id(benchmark_id: str) -> frozendict[str, str]:
-    """
-    Converts a string benchmark id into a frozendict benchmark id, which is
-    hashable.
 
-    Questoin: why do we do this?
-    """
-    return frozendict(parse_benchmark_id_to_kv_pairs(benchmark_id))
+# def normalize_benchmark_id(benchmark_id: str) -> frozendict[str, str]:
+#     """
+#     Converts a string benchmark id into a frozendict benchmark id, which is
+#     hashable.
 
-def get_param_names(bids: tuple[frozendict]) -> tuple[str, ...]:
+#     Questoin: why do we do this?
+#     """
+#     return frozendict(parse_benchmark_id_to_kv_pairs(benchmark_id))
+
+
+def fdicts_to_key_names(dicts: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
     """
-    Merge a list of tuples into a single tuple of keys that:
+    Merge a tuple of dicts into a single tuple of keys that:
     - Preserves the relative order of keys within each tuple
     - Gives precedence to later tuples when conflicts arise
     """
-    merged = list(bids[-1])
-    merged_set = set(merged)
-    for tup in bids[:-1]:
-        for key in tup:
-            if key not in merged_set:
-                merged.append(key)
-                merged_set.add(key)
-    return tuple(merged)
+    merged_keys: list[str] = list(dicts[-1])
+    merged_keys_set = set(merged_keys)
+    dict_
+    for dict_ in dicts[:-1]:
+        for key in dict_:
+            if key not in merged_keys_set:
+                merged_keys.append(key)
+                merged_keys_set.add(key)
+    return tuple(merged_keys)
 
 
-def build_sort_key(params_name: Iterable[str]) -> Callable:
-    def sort_key(d):
-        nonlocal params_name
+def build_sort_key(param_names: Iterable[str]) -> Callable:
+    """
+    Builds a sort key function that can be used to order
+    dictionaries of values. The sort key function returns
+    a list of tuples of (0|1, value | None), where the sequence of
+    (0|1, value) matches that of param_names and:
+    - only keys in param_names are considered in the sorting
+      (in the context of this script, this lets us ignore the values of
+      metrics during sorting)
+    - when a param_name is present in the dictionary, the tuple
+      contains (0, value), otherwise (1, None)
+    
+    Since the resulting tuples will be used for sorting, the result
+    is that we will first sort the incoming dictionaries by the first param_name,
+    then the second, etc
+    - for a particular param_name, the dicts without that param_name will
+      be placed after the dicts with that param name, since 1 is after 0.
+    """
+    def sort_key(d: dict[str, Any]):
+        nonlocal param_names
         key_list = []
-        for col in params_name:
+        for col in param_names:
             if col in d:
                 val = d[col]
                 key_list.append((0, val))
@@ -163,17 +183,17 @@ class BenchmarkRunUnderTest:
         self.benchmark_ids_set = frozenset(self.results.keys())
         assert self.benchmark_ids_set
 
-        self.params_name = get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
+        self.param_names = get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
     def ingest_records_by_commit_hash(self, records_by_commit_hash):
         self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
         self.baseline_block = ["**Baselines considered:** " + f"**{len(self.ingest_records_by_commit_hash)}** commits"] + blist
 
 
-    def get_params_name(self):
+    def get_param_names(self):
         return get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
-def build_table(params_name: str, alias: str, csv_info: BenchmarkUnderTest, records_by_commit_hash) -> None:
+def build_table(param_names: str, alias: str, csv_info: BenchmarkUnderTest, records_by_commit_hash) -> None:
     # together these rows contain the text of the markdwon
     markdown_rows = []
     rows = []
@@ -181,22 +201,22 @@ def build_table(params_name: str, alias: str, csv_info: BenchmarkUnderTest, reco
     # the labels in the header row of the table
     header_cells = (
         "status",
-        *params_name,
+        *param_names,
         f"current {alias}",
         f"baseline {alias} [last (mean ± std)] (*1)",
         f"Δ {alias} (*2)"
     )
     header = "| " + " | ".join(header_cells) + " |"
-    align  = "|:------:|" + "|".join([":---" for _ in params_name]) + "|---:|---:|---:|"
+    align  = "|:------:|" + "|".join([":---" for _ in param_names]) + "|---:|---:|---:|"
 
     for benchmark_id in sorted(csv_info.current_bm.keys(), key=sort_key):
         value_cur = csv_info.current_bm[benchmark_id][metric]
         is_int = isinstance(value_cur, int) or value_cur.is_integer()
         value_repr = fmt_num(value_cur, is_int)
 
-        params_repr = [benchmark_id.get(k, "-") for k in params_name]
+        params_repr = [benchmark_id.get(k, "-") for k in param_names]
         info = {
-            **dict(zip(params_name, params_repr)),
+            **dict(zip(param_names, params_repr)),
             "current": value_cur,
             "baseline_last": None,
             "baseline_mean": None,
@@ -463,7 +483,7 @@ def main() -> None:
     info = {}
     for metric, alias, sign in (("runtime_fps", "FPS", 1), ("compile_time", "compile", -1)):
         tables[metric], rows_for_csv[metric] = build_table(
-            params_name=csv_info.get_params_name())
+            param_names=csv_info.get_param_names())
 
     # ----- baseline commit list (MD) -----
 
