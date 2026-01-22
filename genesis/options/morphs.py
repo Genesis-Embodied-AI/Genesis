@@ -7,6 +7,7 @@ rigid object / MPM object / FEM object.
 
 import os
 from typing import Any, List, Optional, Sequence, Tuple, Union, Literal
+from pathlib import Path
 
 import numpy as np
 
@@ -611,10 +612,9 @@ class FileMorph(Morph):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
 
     def is_format(self, format):
-        if isinstance(self.file, str):
-            return self.file.lower().endswith(format)
-        else:
+        if not isinstance(self.file, (str, os.PathLike, Path)):
             return False
+        return str(self.file).lower().endswith(format)
 
 
 class Mesh(FileMorph, TetGenMixin):
@@ -1368,37 +1368,10 @@ class USD(FileMorph):
     -------------------------
     collision_mesh_prim_patterns : List[str], optional
         List of regex patterns to match collision mesh prim names. Patterns are tried in order.
-        Defaults to [r"^([cC]ollision).*", r"^.*"].
+        Defaults to [r"^([cC]ollision).*"].
     visual_mesh_prim_patterns : List[str], optional
         List of regex patterns to match visual mesh prim names. Patterns are tried in order.
-        Defaults to [r"^([vV]isual).*", r"^.*"].
-
-    Geometry Decomposition Options
-    -------------------------------
-    convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
-        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
-        sufficient to meet the desired accuracy. The module 'coacd' is used for this decomposition process.
-        If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
-    decompose_object_error_threshold : float, optional
-        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threshold.
-        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : float, optional
-        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threshold.
-        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
-    coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
-    decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
-    decimate_face_num : int, optional
-        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
-    decimate_aggressiveness : int, optional
-        How hard the decimation process will try to match the target number of faces, as an integer ranging from 0 to 8.
-        0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
-        **This is only used for RigidEntity.**
+        Defaults to [r"^([vV]isual).*"].
 
     Internal Options
     ----------------
@@ -1406,6 +1379,10 @@ class USD(FileMorph):
         The parsing target prim path. Defaults to None.
     usd_ctx : Any, optional
         The parser context. Defaults to None.
+    geometry_only: bool, optional
+        Whether to skip rigid/articulation validation for the specified prim. Defaults to False.
+    use_bake_cache: bool, optional
+        Whether to use cached baked assets. Defaults to True.
     """
 
     # Joint Dynamics Options
@@ -1454,6 +1431,8 @@ class USD(FileMorph):
     # Internal Options
     usd_ctx: Any = None
     prim_path: Optional[str] = None
+    geometry_only: bool = False
+    use_bake_cache: bool = True
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -1464,7 +1443,7 @@ class USD(FileMorph):
             if not self.is_format(USD_FORMATS):
                 gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
 
-            self.usd_ctx = UsdContext(self.file)
+            self.usd_ctx = UsdContext(self.file, self.use_bake_cache)
 
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}', prim_path='{self.prim_path}')>"

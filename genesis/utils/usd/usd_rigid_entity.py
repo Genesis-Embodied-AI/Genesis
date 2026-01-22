@@ -105,6 +105,7 @@ def _parse_link(
             l_info["parent_idx"] = parent_idx
             l_info["pos"] = Q[:3, 3]
             l_info["quat"] = gu.R_to_quat(Q[:3, :3])
+
         elif l_info["parent_idx"] != parent_idx:
             gs.raise_exception(f"Link {link.GetPath()} has multiple parents: {l_info['parent_idx']} and {parent_idx}.")
 
@@ -146,7 +147,7 @@ def _parse_link(
                 n_dofs, n_qs = 6, 7
             joint = None
             joint_axis_str, joint_axis, joint_pos = None, None, gu.zero_pos()
-            joint_name = f"{l_info['name']}_root_joint"
+            joint_name = f"{l_info['name']}_joint"
 
         j_info = {
             "name": joint_name,
@@ -159,9 +160,7 @@ def _parse_link(
         }
 
         if joint_type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
-            lower_limit = np.deg2rad(joint.GetLowerLimitAttr().Get() or -np.inf)
-            upper_limit = np.deg2rad(joint.GetUpperLimitAttr().Get() or np.inf)
-            j_info["dofs_limit"] = np.asarray([[lower_limit, upper_limit]], dtype=gs.np_float)
+            # TODO: use attribute "state:<INSTANCE_NAME>:physics:positiion" to parse init_qpos (but it is IsaacSim specific)
             j_info["init_qpos"] = np.zeros(n_qs, dtype=gs.np_float)
 
             if joint_type == gs.JOINT_TYPE.REVOLUTE:
@@ -190,6 +189,11 @@ def _parse_link(
                     dtype=gs.np_float,
                 )
                 # NOTE: No idea how to scale the angle limits under non-uniform scaling now.
+                lower_limit_attr = joint.GetLowerLimitAttr()
+                upper_limit_attr = joint.GetUpperLimitAttr()
+                lower_limit = np.deg2rad(lower_limit_attr.Get()) if lower_limit_attr.HasValue() else -np.inf
+                upper_limit = np.deg2rad(upper_limit_attr.Get()) if upper_limit_attr.HasValue() else np.inf
+                j_info["dofs_limit"] = np.asarray([[lower_limit, upper_limit]], dtype=gs.np_float)
             else:  # joint_type == gs.JOINT_TYPE.PRISMATIC
                 j_info["dofs_motion_ang"] = np.zeros((1, 3), dtype=gs.np_float)
                 j_info["dofs_motion_vel"] = joint_axis[None]
@@ -215,7 +219,11 @@ def _parse_link(
                     ],
                     dtype=gs.np_float,
                 )
-                j_info["dofs_limit"] *= morph.scale
+                lower_limit_attr = joint.GetLowerLimitAttr()
+                upper_limit_attr = joint.GetUpperLimitAttr()
+                lower_limit = lower_limit_attr.Get() if lower_limit_attr.HasValue() else -np.inf
+                upper_limit = upper_limit_attr.Get() if upper_limit_attr.HasValue() else np.inf
+                j_info["dofs_limit"] = np.asarray([[lower_limit, upper_limit]], dtype=gs.np_float) * morph.scale
                 j_info["init_qpos"] *= morph.scale
 
         else:
@@ -297,19 +305,19 @@ def _parse_link(
 
         j_infos.append(j_info)
 
-    print(f"Parsed {j_infos[0]['type']} joint {j_infos[0]['name']} for link {l_info['name']}")
-
     if abs(1.0 - morph.scale) > gs.EPS:
         l_info["pos"] *= morph.scale
         l_info["inertial_pos"] *= morph.scale
-        l_info["inertial_mass"] *= morph.scale**3
-        l_info["inertial_i"] *= morph.scale**5
+        if l_info["inertial_mass"] is not None:
+            l_info["inertial_mass"] *= morph.scale**3
+        if l_info["inertial_i"] is not None:
+            l_info["inertial_i"] *= morph.scale**5
         l_info["invweight"][:] = -1.0
         for j_info in j_infos:
             j_info["pos"] *= morph.scale
-            # TODO: parse actuator in USD articulation
-            # j_info["dofs_kp"] *= morph.scale**3
-            # j_info["dofs_kv"] *= morph.scale**3
+            # TODO: parse actuator in USD articulation, now all joints are considered to have actuators
+            j_info["dofs_kp"] *= morph.scale**3
+            j_info["dofs_kv"] *= morph.scale**3
             j_info["dofs_invweight"][:] = -1.0
 
     return l_info, j_infos
@@ -321,13 +329,13 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
     # TODO: we only assume that all links are under the subtree of the articulation root now.
     # To parse the accurate articulation structure, we need to search through the BodyRel.
     link_path_joints = {}
-    for prim in Usd.PrimRange(entity_prim):
+    for prim in Usd.PrimRange(entity_prim):  # will not iterate inactive prims
         if prim.IsA(UsdPhysics.Joint):
             joint = UsdPhysics.Joint(prim)
             body0_targets = joint.GetBody0Rel().GetTargets()  # parent
             body1_targets = joint.GetBody1Rel().GetTargets()  # child
-            body0_target_path = body0_targets[0] if body0_targets else None
-            body1_target_path = body1_targets[0] if body1_targets else None
+            body0_target_path = str(body0_targets[0]) if body0_targets else None
+            body1_target_path = str(body1_targets[0]) if body1_targets else None
             if body1_target_path:
                 if body0_target_path:
                     link_path_joints.setdefault(body0_target_path, [])
@@ -349,22 +357,23 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
     else:
         links = [entity_prim]
         link_joints = [[]]
+        link_path_to_idx = {None: -1, str(entity_prim.GetPath()): 0}
     for joints in link_joints:
         if not joints:
             joints.append((None, -1, False))
 
-    return links, link_joints
+    return links, link_joints, link_path_to_idx
 
 
 def _parse_geoms(
     context: UsdContext,
-    links: List[Usd.Prim],
+    entity_prim: Usd.Prim,
+    link_path_to_idx: Dict[str, int],
     morph: gs.morphs.USD,
     surface: gs.surfaces.Surface,
 ) -> List[List[Dict]]:
-    links_g_infos = []
-    for link in links:
-        links_g_infos.append(parse_prim_geoms(context, link, link, morph, surface))
+    links_g_infos = [[] for _ in range(len(link_path_to_idx))]
+    parse_prim_geoms(context, entity_prim, None, links_g_infos, link_path_to_idx, morph, surface)
     return links_g_infos
 
 
@@ -409,32 +418,31 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     eqs_info : list
         List of equality constraint info dictionaries.
     """
-    # Validate scale
-    # if morph.scale is not None and morph.scale != 1.0:
-    #     gs.logger.warning("USD rigid entity parsing currently only supports scale=1.0. Scale will be set to 1.0.")
-    # morph.scale = 1.0
     context: UsdContext = morph.usd_ctx
     context.find_all_materials()
     stage: Usd.Stage = context.stage
 
     if morph.prim_path is None:
-        gs.raise_exception("USD rigid entity must have a prim path.")
-    entity_prim: Usd.Prim = stage.GetPrimAtPath(morph.prim_path)
+        gs.logger.info("USD morph has no prim path. Fallback to its default prim path.")
+        entity_prim = stage.GetDefaultPrim()
+    else:
+        entity_prim = stage.GetPrimAtPath(morph.prim_path)
     if not entity_prim.IsValid():
         gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
-    if not (
+
+    if not morph.geometry_only and not (
         entity_prim.HasAPI(UsdPhysics.RigidBodyAPI)
         or entity_prim.HasAPI(UsdPhysics.CollisionAPI)
         or entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
     ):
         gs.raise_exception(
             f"Provided prim {entity_prim.GetPath()} is neither an articulation root nor a rigid body. "
-            f"APIs found: {entity_prim.GetAppliedSchemas()}"
+            f"If the selected prim does not have any RigidBody API, use 'geometry_only=True'."
         )
 
     # find joints
-    links, link_joints = _parse_articulation_structure(stage, entity_prim)
-    links_g_infos = _parse_geoms(context, links, morph, surface)
+    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim)
+    links_g_infos = _parse_geoms(context, entity_prim, link_path_to_idx, morph, surface)
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
     eqs_info = []  # USD doesn't support equality constraints

@@ -3,6 +3,7 @@ from copy import copy
 from itertools import chain
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
+import os
 
 import gstaichi as ti
 import numpy as np
@@ -291,7 +292,7 @@ class RigidEntity(Entity):
                     )
                 )
 
-        link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
+        link_name = os.path.basename(morph.file).replace(".", "_")
 
         self._add_by_info(
             l_info=dict(

@@ -1,4 +1,5 @@
 import re
+from typing import List, Dict
 
 import numpy as np
 import trimesh
@@ -26,15 +27,18 @@ def parse_prim_geoms(
     context: UsdContext,
     prim: Usd.Prim,
     link_prim: Usd.Prim,
+    links_g_infos: List[List[Dict]],
+    link_path_to_idx: Dict[str, int],
     morph: gs.morphs.USD,
     surface: gs.surfaces.Surface,
     match_visual=False,
     match_collision=False,
 ):
-    g_infos = []
-
     if not prim.IsActive():
-        return g_infos
+        return
+
+    if str(prim.GetPath()) in link_path_to_idx:
+        link_prim = prim
 
     if not match_visual:
         for pattern in morph.visual_mesh_prim_patterns:
@@ -47,12 +51,11 @@ def parse_prim_geoms(
                 match_collision = True
                 break
 
-    if prim.IsA(UsdGeom.Gprim):
+    if link_prim is not None and prim.IsA(UsdGeom.Gprim):
         # parse materials
-        uvs = {}
-        geom_surface, geom_uvname, surface_id = context.apply_surface(prim, surface)
+        geom_surface, geom_uvname, surface_id, bake_success = context.apply_surface(prim, surface)
         gprim = UsdGeom.Gprim(prim)
-        uvs[geom_uvname] = None
+        uvs = {geom_uvname: None}
 
         # parse transform
         geom_Q, geom_S = context.compute_gs_transform(prim, link_prim)
@@ -98,14 +101,17 @@ def parse_prim_geoms(
                     if subset_face_ids.size == 0:
                         continue
                     face_used_mask[subset_face_ids] = True
-                    subset_surface, subset_uvname, _ = context.apply_surface(subset_prim, surface)
-                    subset_infos.append((subset_face_ids, subset_surface, subset_uvname))
+                    subset_surface, subset_uvname, _, subset_bake_success = context.apply_surface(subset_prim, surface)
+                    subset_geom_id = context.get_prim_id(subset_prim)
+                    subset_infos.append(
+                        (subset_face_ids, subset_surface, subset_uvname, subset_geom_id, subset_bake_success)
+                    )
                     uvs[subset_uvname] = None
                 else:
                     gs.logger.warning(f"Unsupported geom subset element type: {elem_type} for {geom_id}")
             subset_unused = ~face_used_mask
             if subset_unused.any():
-                subset_infos.append((subset_unused, geom_surface, geom_uvname))
+                subset_infos.append((subset_unused, geom_surface, geom_uvname, geom_id, bake_success))
 
             # parse UVs
             for uvname in uvs.keys():
@@ -158,7 +164,7 @@ def parse_prim_geoms(
                     face_triangle_starts = np.arange(len(face_vertex_counts), dtype=np.int32)
 
             # process mesh
-            for subset_face_ids, subset_surface, subset_uvname in subset_infos:
+            for subset_face_ids, subset_surface, subset_uvname, subset_geom_id, subset_bake_success in subset_infos:
                 tri_starts = face_triangle_starts[subset_face_ids]
                 tri_counts = face_vertex_counts[subset_face_ids] - 2
                 tri_ids = get_triangle_ids(tri_starts, tri_counts)
@@ -170,8 +176,9 @@ def parse_prim_geoms(
                     faces=subset_triangles,
                     vertex_normals=normals,
                     visual=trimesh.visual.TextureVisuals(uv=subset_uv) if subset_uv is not None else None,
-                    process=False,
+                    process=True,
                 )
+                # TODO: use a more efficient custom function to remove unreferenced vertices
                 processed_mesh.remove_unreferenced_vertices()
                 processed_mesh.apply_transform(geom_ST)
                 subset_points = processed_mesh.vertices
@@ -180,9 +187,6 @@ def parse_prim_geoms(
                 if subset_uv is not None:
                     subset_uv = processed_mesh.visual.uv
 
-                metadata = {
-                    "mesh_path": context.stage_file,  # unbaked file or cache
-                }
                 mesh = gs.Mesh.from_attrs(
                     verts=subset_points,
                     faces=subset_triangles,
@@ -190,7 +194,13 @@ def parse_prim_geoms(
                     surface=subset_surface,
                     uvs=subset_uv,
                 )
-                mesh.metadata.update(metadata)
+                mesh.metadata.update(
+                    {
+                        "mesh_path": context.stage_file,  # unbaked file or cache
+                        "name": subset_geom_id,
+                        "bake_success": subset_bake_success,
+                    }
+                )
                 meshes.append(mesh)
 
             geom_data = None
@@ -257,7 +267,11 @@ def parse_prim_geoms(
                 gs.raise_exception(f"Unsupported geometry type: {prim.GetTypeName()}")
 
             tmesh.apply_transform(geom_ST)
-            meshes.append(gs.Mesh.from_trimesh(tmesh, geom_surface))
+            metadata = {
+                "name": geom_id,
+                "bake_success": bake_success,
+            }
+            meshes.append(gs.Mesh.from_trimesh(tmesh, surface=geom_surface, metadata=metadata))
 
         geom_pos = geom_Q[:3, 3]
         geom_quat = gu.R_to_quat(geom_Q[:3, :3])
@@ -267,6 +281,7 @@ def parse_prim_geoms(
         is_visual = (is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
         is_collision = (is_visible) and (match_collision or not (match_collision or match_visual))
 
+        g_infos = links_g_infos[link_path_to_idx[str(link_prim.GetPath())]]
         if is_visual:
             for mesh in meshes:
                 g_infos.append(
@@ -281,7 +296,7 @@ def parse_prim_geoms(
                     )
                 )
         if is_collision:
-            # TODO: use "physics:material:binding" to extract frictions
+            # TODO: use "physics:material:binding" (UsdPhysicsMaterialAPI) to extract frictions
             for mesh in meshes:
                 g_infos.append(
                     dict(
@@ -298,6 +313,6 @@ def parse_prim_geoms(
                 )
 
     for child in prim.GetChildren():
-        g_infos.extend(parse_prim_geoms(context, child, link_prim, morph, surface, match_visual, match_collision))
-
-    return g_infos
+        parse_prim_geoms(
+            context, child, link_prim, links_g_infos, link_path_to_idx, morph, surface, match_visual, match_collision
+        )

@@ -8,33 +8,33 @@ from genesis.utils import geom as gu
 
 
 AXES_VECTOR = {
-    "X": np.array([1, 0, 0], dtype=gs.np_float),
-    "Y": np.array([0, 1, 0], dtype=gs.np_float),
-    "Z": np.array([0, 0, 1], dtype=gs.np_float),
+    "X": np.array([1, 0, 0], dtype=np.float32),
+    "Y": np.array([0, 1, 0], dtype=np.float32),
+    "Z": np.array([0, 0, 1], dtype=np.float32),
 }
 
 
 AXES_T = {
     "X": np.array(
-        [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=gs.np_float
+        [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
     ),
     "Y": np.array(
-        [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=gs.np_float
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
     ),
-    "Z": np.eye(4, dtype=gs.np_float),
+    "Z": np.eye(4, dtype=np.float32),
 }
 
 
 def usd_pos_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray:
     if usd_pos is None:
         return gu.zero_pos()
-    return np.asarray(usd_pos, dtype=gs.np_float)
+    return np.asarray(usd_pos, dtype=np.float32)
 
 
 def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
     if usd_quat is None:
         return gu.identity_quat()
-    return np.asarray([usd_quat.GetReal(), *usd_quat.GetImaginary()], dtype=gs.np_float)
+    return np.asarray([usd_quat.GetReal(), *usd_quat.GetImaginary()], dtype=np.float32)
 
 
 def usd_attr_array_to_numpy(attr: Usd.Attribute, dtype: np.dtype, return_none: bool = False) -> np.ndarray | None:
@@ -53,7 +53,8 @@ def usd_primvar_array_to_numpy(
 
 def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     R, S = gu.polar(T[:3, :3], pure_rotation=True, side="right")
-    assert np.linalg.det(R) > 0, "Rotation matrix must contain only pure rotations."
+    if np.linalg.det(R) <= 0:
+        gs.raise_exception(f"Negative determinant of rotation matrix detected. Got {np.linalg.det(R)}.")
     Q = np.eye(4, dtype=T.dtype)
     Q[:3, :3] = R
     Q[:3, 3] = T[:3, 3]

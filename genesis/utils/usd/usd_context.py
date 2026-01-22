@@ -14,13 +14,29 @@ import genesis.utils.mesh as mu
 from .usd_material import parse_material_preview_surface
 from .usd_parser_utils import extract_scale
 
+# Check for Omniverse Kit support (required for USD baking)
+# Note: CI workflows should set OMNI_KIT_ACCEPT_EULA=yes in their env section
+try:
+    import omni.kit_app
+
+    device, *_ = gs.utils.get_device(gs.cuda)
+    HAS_OMNIVERSE_KIT_SUPPORT = True
+except ImportError:
+    gs.logger.warning(
+        "omniverse-kit not found. USD baking will be disabled. Please install it with `pip install omniverse-kit`."
+    )
+    HAS_OMNIVERSE_KIT_SUPPORT = False
+except gs.GenesisException as e:
+    gs.logger.warning("USD baking requires CUDA GPU. USD baking will be disabled.")
+    HAS_OMNIVERSE_KIT_SUPPORT = False
+
 
 def decompress_usdz(usdz_path: str):
     usdz_folder = mu.get_usd_zip_path(usdz_path)
 
     # The first file in the package must be a native usd file.
     # See https://openusd.org/docs/Usdz-File-Format-Specification.html
-    zip_files = Usd.ZipFile.Open(usdz_path)
+    zip_files = Sdf.ZipFile.Open(usdz_path)
     zip_filelist = zip_files.GetFileNames()
     root_file = zip_filelist[0]
     if not root_file.lower().endswith(gs.options.morphs.USD_FORMATS[:-1]):
@@ -54,42 +70,38 @@ class UsdContext:
     stage_file : str
         Path to the USD stage file (.usd, .usda, .usdc) or USDZ archive (.usdz).
         If a USDZ file is provided, it will be automatically decompressed.
-    bake_cache : bool, optional
-        If True, enables material baking and uses cached baked assets if available.
-        When enabled, complex MDL materials will be baked to textures using Omniverse Kit.
+    usd_bake_cache : bool, optional
+        If True, enables material baking and uses last time baked assets if available.
+        Otherwise, will re-bake materials every time.
         Default is True.
 
     Notes
     -----
     - USDZ files are automatically decompressed to a temporary directory
-    - If bake_cache is True and baked assets exist, they will be used automatically
     - The stage's up-axis and meter scale are detected and stored for transform computations
     - Material parsing is lazy (only when find_all_materials() is called)
     """
 
-    def __init__(self, stage_file: str, bake_cache: bool = True):
+    def __init__(self, stage_file: str, use_bake_cache: bool = True):
         # decompress usdz
         if stage_file.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
             stage_file = decompress_usdz(stage_file)
 
         # detect bake file caches
-        if bake_cache:
-            self._need_bake = True
-            self._bake_folder = mu.get_usd_bake_path(stage_file)
-            self._bake_stage_file = os.path.join(self._bake_folder, os.path.basename(stage_file))
+        self._need_bake = HAS_OMNIVERSE_KIT_SUPPORT
+        self._bake_folder = mu.get_usd_bake_path(stage_file)
+        self._bake_stage_file = os.path.join(self._bake_folder, os.path.basename(stage_file))
+        if use_bake_cache:
             if os.path.exists(self._bake_stage_file):
                 self._need_bake = False
                 gs.logger.info(f"Baked assets detected and used: {self._bake_stage_file}")
                 stage_file = self._bake_stage_file
-        else:
-            self._need_bake = False
-            self._bake_folder = None
-            self._bake_stage_file = None
 
         self._stage_file = stage_file
         self._stage = Usd.Stage.Open(self._stage_file)
         self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
         self._material_parsed = False
+        self._bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
         self._prim_material_bindings: dict[str, str] = {}  # prim_path -> material_path
         self._xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
         self._is_yup = UsdGeom.GetStageUpAxis(self._stage) == "Y"
@@ -154,9 +166,7 @@ class UsdContext:
         Q_rel = np.linalg.inv(Q_ref) @ Q
         return Q_rel, S
 
-    def apply_surface(
-        self, geom_prim: Usd.Prim, surface: gs.surfaces.Surface
-    ) -> tuple[gs.surfaces.Surface, str, str | None]:
+    def apply_surface(self, geom_prim: Usd.Prim, surface: gs.surfaces.Surface):
         """
         Apply material properties from USD to a Genesis surface object.
         """
@@ -168,9 +178,15 @@ class UsdContext:
             surface_dict, uv_name = self._material_properties.get(surface_id, ({}, "st"))
             # accepted keys: color_texture, opacity_texture, roughness_texture, metallic_texture, normal_texture, emissive_texture, ior
             applied_surface.update_texture(**surface_dict)
+            if surface_id in self._bake_material_paths:
+                bake_success = True if surface_dict else False
+            else:
+                bake_success = None
         else:
             uv_name, surface_id = "st", None
-        return applied_surface, uv_name, surface_id
+            bake_success = None
+
+        return applied_surface, uv_name, surface_id, bake_success
 
     def find_all_rigid_entities(self) -> list[Usd.Prim]:
         """
@@ -179,7 +195,6 @@ class UsdContext:
         entity_prims = []
         stage_iter = iter(Usd.PrimRange(self._stage.GetPseudoRoot()))
         for prim in stage_iter:
-            # Early break if we come across an ArticulationRootAPI (don't go deeper)
             if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
                 entity_prims.append(prim)
                 stage_iter.PruneChildren()
@@ -194,8 +209,6 @@ class UsdContext:
         """
         if self._material_parsed:
             return
-
-        bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
 
         # parse materials
         bound_prims = []
@@ -214,7 +227,7 @@ class UsdContext:
                     material_dict, uv_name = parse_material_preview_surface(material)
                     self._material_properties[material_id] = material_dict, uv_name
                     if self._need_bake and material_dict is None:
-                        bake_material_paths[material_id] = str(material_prim.GetPath())
+                        self._bake_material_paths[material_id] = str(material_prim.GetPath())
                 self._prim_material_bindings[geom_path] = material_id
             else:
                 if bound_prim.IsA(UsdGeom.Gprim):
@@ -227,16 +240,10 @@ class UsdContext:
                         self._prim_material_bindings[geom_path] = material_id
         self._material_parsed = True
 
-        if not bake_material_paths:
+        if not self._bake_material_paths:
             return
 
-        device = gs.device
-        if device.type == "cpu":
-            try:
-                device, *_ = gs.utils.get_device(gs.cuda)
-            except gs.GenesisException as e:
-                gs.raise_exception_from("USD baking requires CUDA GPU.", e)
-
+        device = gs.utils.get_device(gs.cuda)[0] if gs.device.type == "cpu" else gs.device
         self.replace_asset_symlinks()
         os.makedirs(self._bake_folder, exist_ok=True)
 
@@ -251,7 +258,7 @@ class UsdContext:
             "--output_dir",
             self._bake_folder,
             "--usd_material_paths",
-            *bake_material_paths.values(),
+            *self._bake_material_paths.values(),
             "--device",
             str(device.index if device.index is not None else 0),
             "--log_level",
@@ -276,7 +283,7 @@ class UsdContext:
         if os.path.exists(self._bake_stage_file):
             gs.logger.warning(f"USD materials baked to file {self._bake_stage_file}")
             self._stage = Usd.Stage.Open(self._bake_stage_file)
-            for bake_material_id, bake_material_path in bake_material_paths.items():
+            for bake_material_id, bake_material_path in self._bake_material_paths.items():
                 bake_material_usd = UsdShade.Material(self._stage.GetPrimAtPath(bake_material_path))
                 bake_material_dict, uv_name = parse_material_preview_surface(bake_material_usd)
                 self._material_properties[bake_material_id] = bake_material_dict, uv_name
