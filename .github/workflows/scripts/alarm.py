@@ -21,6 +21,7 @@ Terminology/variable names:
 - config_param_names: ordered list of the config parameter names, that we have almost certainly derived
   from a config_params_fdict, by simply returning the ordered list of keys (though we may have merged
   such a list over multiple config_params_fdict's)
+  - we are prefixing with 'config' to make explicit that this does not include the names of metrics
 - 'pipeline format':
    a string having format like:
    "solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5"
