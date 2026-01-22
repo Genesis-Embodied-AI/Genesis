@@ -204,10 +204,16 @@ class Alarm:
         self.MAX_VALID_REVISIONS = args.max_valid_revisions
         self.MAX_FETCH_REVISIONS = args.max_fetch_revisions
 
+        # let's just define these in one place
+        self.metric_compile_time = "compile_time"
+        self.metric_runtime_fps = "runtime_fps"
+        self.metric_realtime_factor = "realtime_factor"
+        self.metric_max_mem_mb = "max_mem_mb"
+
         self.METRICS_TOL = {
-            "runtime_fps": args.runtime_fps_regression_tolerance_pct,
-            "compile_time": args.compile_time_regression_tolerance_pct,
-            "max_mem_mb": args.mem_regression_tolerance_pct,
+            self.metric_runtime_fps: args.runtime_fps_regression_tolerance_pct,
+            self.metric_compile_time: args.compile_time_regression_tolerance_pct,
+            self.metric_max_mem_mb: args.mem_regression_tolerance_pct,
         }
 
         self.speed_artifacts_dir = Path(args.speed_artifacts_dir).expanduser().resolve()
@@ -215,13 +221,17 @@ class Alarm:
         self.check_body_path = Path(args.check_body_path).expanduser()
 
         self.csv_out_file_by_metric_name = {
-            "runtime_fps": Path(args.csv_runtime_fps_path).expanduser().resolve(),
-            "compile_time": Path(args.csv_compile_time_path).expanduser().resolve(),
-            "max_mem_mb": Path(args.csv_mem_path).expanduser().resolve(),
+            self.metric_runtime_fps: Path(args.csv_runtime_fps_path).expanduser().resolve(),
+            self.metric_compile_time: Path(args.csv_compile_time_path).expanduser().resolve(),
+            self.metric_max_mem_mb: Path(args.csv_mem_path).expanduser().resolve(),
         }
 
-        self.SPEED_METRIC_KEYS = ("compile_time", "runtime_fps", "realtime_factor")
-        self.MEM_METRIC_KEYS = ("max_mem_mb",)
+        self.SPEED_METRIC_KEYS = (
+            self.metric_compile_time,
+            self.metric_runtime_fps,
+            self.metric_realtime_factor,
+        )
+        self.MEM_METRIC_KEYS = (self.metric_max_mem_mb,)  # note: make sure is a tuple
 
         self.dev_skip_speed = args.dev_skip_speed
         self.dev_allow_all_branches = args.dev_allow_all_branches
@@ -253,9 +263,9 @@ class Alarm:
         table_by_metric_name: dict[str, Table] = {}
         reg_found, alert_found = False, False
         for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
-            ("runtime_fps", "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
-            ("compile_time", "compile", -1, results_under_test_speed, speed_records_by_commit_hash),
-            ("max_mem_mb", "memory", -1, results_under_test_mem, mem_records_by_commit_hash),
+            (self.metric_runtime_fps, "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
+            (self.metric_compile_time, "compile", -1, results_under_test_speed, speed_records_by_commit_hash),
+            (self.metric_max_mem_mb, "memory", -1, results_under_test_mem, mem_records_by_commit_hash),
         ):
             (
                 table_by_metric_name[metric],
@@ -273,7 +283,11 @@ class Alarm:
 
         thr_repr = ", ".join(
             f"{alias} ± {self.METRICS_TOL[metric]:.0f}%"
-            for metric, alias in (("runtime_fps", "runtime"), ("compile_time", "compile"))
+            for metric, alias in (
+                (self.metric_runtime_fps, "runtime"),
+                (self.metric_compile_time, "compile"), 
+                (self.metric_max_mem_mb, "mem")
+            )
         )
 
         check_body = "\n".join(
@@ -281,13 +295,13 @@ class Alarm:
                 f"Thresholds: {thr_repr}",
                 "",
                 "### Runtime FPS",
-                *table_by_metric_name["runtime_fps"].markdown_rows,
+                *table_by_metric_name[self.metric_runtime_fps].markdown_rows,
                 "",
                 "### Compile Time",
-                *table_by_metric_name["compile_time"].markdown_rows,
+                *table_by_metric_name[self.metric_compile_time].markdown_rows,
                 "",
                 "### Memory usage",
-                *table_by_metric_name["max_mem_mb"].markdown_rows,
+                *table_by_metric_name[self.metric_max_mem_mb].markdown_rows,
                 "",
                 f"- (*1) last: last commit on main, mean/std: stats over commit hashes {self.MAX_VALID_REVISIONS} commits if available.",
                 f"- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
