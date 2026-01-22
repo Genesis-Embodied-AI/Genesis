@@ -547,8 +547,8 @@ class Alarm:
                     row_data["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
                     row_data["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
 
-                    value_std = statistics.stdev(values_prev) if len(values_prev) > 1 else math.inf
-                    stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
+                    value_ci95 = statistics.stdev(values_prev) / len(values_prev) * 1.96 if len(values_prev) > 1 else math.inf
+                    stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_ci95, is_int)})"
                     if sign * delta < -self.METRICS_TOL[metric]:
                         row_data["status"] = "regression"
 
