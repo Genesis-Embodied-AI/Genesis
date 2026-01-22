@@ -12,7 +12,7 @@ Terminology/variable names:
 - configuration parameter: something we vary/control, such as batch_size, or env
 - config_params_str: a string like "backend=cpu-n_envs=64", which specifies specific configuration
   parameters, in string format
-      - note that, two benchmark_id_str might represent the same configuration, but be different strings,
+      - note that, two config_params_str might represent the same configuration, but be different strings,
         because ordering of configuration parameters might be differnet
 - config_params_fdict: a frozen dict that represents a specific set of configuration parameters
       - by comparison with config_str, two identical config_params_fdict's always represent the same configuration
