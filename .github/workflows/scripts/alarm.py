@@ -119,7 +119,7 @@ def build_sort_key(param_names: Iterable[str]) -> Callable:
     return sort_key
 
 
-def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> dict[frozendict[str, str], dict[str, float]]]:
+def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> dict[frozendict[str, str], dict[str, float]]:
     """
     results file path should have lines in pipeline format, like:
     solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5
@@ -138,21 +138,32 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
       EXCEPT the metric key value pairs
     - the values are dicts where the keys are names of the metrics in metric_keys, and the values are
       the measured value of that metric
+
+    Conceptually the keys are config_param_fdict's, and the values are a dictionary of metric names and
+    values.
     """
-    out = {}
+    results = {}
     for line in results_file_path.read_text().splitlines():
-        kv = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
-        record = {}
+        config_param_dict = dict(map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p)
+        metrics = {}
         for k in metric_keys:
             try:
-                record[k] = float(kv.pop(k))
+                # removes metric keys from the config param dict, and adds
+                # to the metric kv dict
+                metrics[k] = float(config_param_dict.pop(k))
             except (ValueError, TypeError, KeyError):
                 pass
-        nbid = frozendict(kv)
-        out[nbid] = record
-    return out
+        config_param_fdict = frozendict(config_param_dict)
+        results[config_param_fdict] = metrics
+    return results
+
 
 def fmt_num(v, is_int: bool):
+    """
+    converts number to string where:
+    - ints => displays as int
+    - floats => displays to 2 decimal places
+    """
     return f"{int(v):,}" if is_int else f"{v:.2f}"
 
 
@@ -168,7 +179,7 @@ class BenchmarkRunUnderTest:
     def __init__(self, artifacts_dir: Path, metric_keys: Iterable[str], filename_glob: str) -> None:
         """
         metric_keys: the keys corresponding to values being measured, such as runtime_fps
-        filename_globa: how to locate the data files with the data for the benchmark run
+        filename_glob: how to locate the data files with the data for the benchmark run
         under test.
         """
         self.result_file_paths = list(artifacts_dir.rglob(filename_glob))
@@ -177,18 +188,20 @@ class BenchmarkRunUnderTest:
 
         self.metric_keys = metric_keys
 
-        self.results = {}
+        # self.results is a dictionary where the keys are config_param_fdict's, and the values
+        # are dicts of metric names and values
+        self.results: dict[frozendict[str, str], dict[str, float]] = {}
         for self.result_file_path in self.result_file_paths:
             self.results |= parse_results_file(self.result_file_path, self.metric_keys)
-        self.benchmark_ids_set = frozenset(self.results.keys())
-        assert self.benchmark_ids_set
+        self.config_param_fdict_set = frozenset(self.results.keys())
+        assert self.config_param_fdict_set
 
+        # ordered list of the config parameter names
         self.param_names = get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
     def ingest_records_by_commit_hash(self, records_by_commit_hash):
         self.blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
         self.baseline_block = ["**Baselines considered:** " + f"**{len(self.ingest_records_by_commit_hash)}** commits"] + blist
-
 
     def get_param_names(self):
         return get_param_names(tuple((tuple(kv.keys())) for kv in self.results.keys()))
