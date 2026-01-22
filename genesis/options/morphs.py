@@ -521,6 +521,9 @@ class FileMorph(Morph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
@@ -663,6 +666,9 @@ class Mesh(FileMorph, TetGenMixin):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     merge_submeshes_for_collision : bool, optional
         Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
     visualization : bool, optional
@@ -808,6 +814,9 @@ class MJCF(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
@@ -918,6 +927,9 @@ class URDF(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
@@ -1020,6 +1032,9 @@ class Drone(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
@@ -1376,6 +1391,9 @@ class USD(FileMorph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     decimate : bool, optional
         Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
     decimate_face_num : int, optional

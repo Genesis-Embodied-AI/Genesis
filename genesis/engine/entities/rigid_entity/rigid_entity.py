@@ -613,23 +613,26 @@ class RigidEntity(Entity):
             l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_rigid_entity(morph, surface)
 
         # Make sure that the inertia matrix of all links is valid
-        for l_info in l_infos:
-            inertia_i = l_info.get("inertial_i")
-            if inertia_i is None:
-                continue
-            inertia_diag = np.linalg.eigvals(inertia_i)
-            if (inertia_diag < 0.0).any():
-                gs.raise_exception(
-                    f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
-                )
-            if any(
-                inertia_diag[i] + inertia_diag[(i + 1) % 3] + gs.EPS < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
-                for i in range(3)
-            ):
-                gs.raise_exception(
-                    f"Inertia matrix of link '{l_info['name']}' does not satisfy A+B>=C for all permutations "
-                    f"(eigenvalues: {inertia_diag})."
-                )
+        if not morph.recompute_inertia:
+            for l_info in l_infos:
+                inertia_i = l_info.get("inertial_i")
+                if inertia_i is None:
+                    continue
+                inertia_diag = np.linalg.eigvals(inertia_i)
+                if (inertia_diag < 0.0).any():
+                    gs.raise_exception(
+                        f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
+                    )
+                if any(
+                    inertia_diag[i] + inertia_diag[(i + 1) % 3] + gs.EPS
+                    < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
+                    for i in range(3)
+                ):
+                    gs.raise_exception(
+                        f"Inertia matrix of link '{l_info['name']}' does not satisfy A+B>=C for all permutations "
+                        f"(eigenvalues: {inertia_diag}). Please fix manually you morph file '{morph.file}' or specify "
+                        "`recompute_inertia=True`."
+                    )
 
         # Add free floating joint at root if necessary
         if (
@@ -875,9 +878,6 @@ class RigidEntity(Entity):
                 "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
             )
 
-        if isinstance(morph, gs.options.morphs.FileMorph) and morph.recompute_inertia:
-            l_info.update(inertial_pos=None, inertial_quat=None, inertial_i=None, inertial_mass=None)
-
         parent_idx = l_info["parent_idx"]
         if parent_idx >= 0:
             parent_idx += self._link_start
@@ -985,6 +985,12 @@ class RigidEntity(Entity):
             visualize_contact=self.visualize_contact,
         )
         self._links.append(link)
+
+        if not link.is_fixed and isinstance(morph, gs.options.morphs.FileMorph) and morph.recompute_inertia:
+            link._inertial_pos = None
+            link._inertial_quat = None
+            link._inertial_i = None
+            link._inertial_mass = None
 
         # Separate collision from visual geometry for post-processing
         cg_infos, vg_infos = [], []
