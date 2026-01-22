@@ -542,7 +542,7 @@ class Alarm:
 
                 stats_repr = f"{fmt_num(value_last, is_int)}"
                 delta_repr = f"{delta:+.1f}%"
-                if len(values_prev) == self.MAX_VALID_REVISIONS:
+                if len(values_prev) >= 2:
                     row_data["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
                     row_data["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
                     row_data["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
