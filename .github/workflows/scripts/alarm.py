@@ -1,13 +1,26 @@
 # runs from alarm.yml
 
 """
-Terminology:
+Terminology/variable names:
 - benchmark suite results: the results of running all benchmark tests once, for a specific code base
 - the code base could be conceptually:
     - the current code under test
     - some past revision of the code, described by a git commit hash
 - there are actually multiple benchmark test suites, identified by a suite_id
     - in this script, we are only interested in the rigid benchmark suite
+- metric: the string name of something we are measuring, such as 'runtime_fps'
+- configuration parameter: something we vary/control, such as batch_size, or env
+- config_params_str: a string like "backend=cpu-n_envs=64", which specifies specific configuration
+  parameters, in string format
+      - note that, two benchmark_id_str might represent the same configuration, but be different strings,
+        because ordering of configuration parameters might be differnet
+- config_params_fdict: a frozen dict that represents a specific set of configuration parameters
+      - by comparison with config_str, two identical config_params_fdict's always represent the same configuration
+      - note that config_params_fdict's are hashable
+      - (fdict is an abbreviation for 'frozendict')
+- 'pipeline format':
+   a string having format like:
+   solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5
 """
 
 from collections import defaultdict
@@ -101,12 +114,10 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
         }
     }
     So:
-    - the keys of the top level dict are frozen dicts representing all the key value pairs in a results row
+    - the keys of the top level dict are frozendict's representing all the key value pairs in a results row
       EXCEPT the metric key value pairs
     - the values are dicts where the keys are names of the metrics in metric_keys, and the values are
       the measured value of that metric
-
-    Question: why do we use a frozendict as the key, instead of a string?
     """
     out = {}
     for line in results_file_path.read_text().splitlines():
