@@ -587,7 +587,7 @@ class Alarm:
         return Table(markdown_rows=[header, align] + markdown_rows + baseline_block), reg_found, alert_found
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--speed-artifacts-dir", type=str, required=True)
     parser.add_argument("--mem-artifacts-dir", type=str, required=True)
@@ -613,7 +613,7 @@ def main() -> None:
 
     alarm = Alarm(args=args)
     exit_code = alarm.run()
-    sys.exit(exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":
