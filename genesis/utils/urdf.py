@@ -132,11 +132,7 @@ def parse_urdf(morph, surface):
                     )
 
                     # If the file is a gltf, we have to convert it to zup
-                    if mesh_path.lower().endswith(gs.morphs.GLTF_FORMATS):
-                        mesh.convert_to_zup()
-                        gs.logger.debug(f"Converting the GLTF geometry to zup '{morph.file}'")
-                    # If the file is a not a gltf, we convert to zup if the FileMorph.file_meshes_are_zup is true
-                    elif not morph.file_meshes_are_zup:
+                    if not morph.file_meshes_are_zup:
                         mesh.convert_to_zup()
                         gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
 

@@ -18,8 +18,8 @@ from .options import Options
 
 URDF_FORMAT = ".urdf"
 MJCF_FORMAT = ".xml"
-MESH_FORMATS = (".obj", ".stl")
 GLTF_FORMATS = (".glb", ".gltf")
+MESH_FORMATS = (".obj", ".stl", *GLTF_FORMATS)
 USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
 
 
@@ -521,13 +521,10 @@ class FileMorph(Morph):
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
-    parse_glb_with_zup : bool, optional
-        This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -685,8 +682,7 @@ class Mesh(FileMorph, TetGenMixin):
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     fixed : bool, optional
         Whether the object should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -821,8 +817,7 @@ class MJCF(FileMorph):
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -932,8 +927,7 @@ class URDF(FileMorph):
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -1035,8 +1029,7 @@ class Drone(FileMorph):
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
