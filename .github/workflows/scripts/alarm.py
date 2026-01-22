@@ -27,17 +27,22 @@ Terminology/variable names:
    "solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5"
 """
 
-from collections import defaultdict
 import argparse
-import dataclasses
-import os, sys, json, math, statistics
-from typing import Callable, Iterable, Any
-import wandb
-from wandb.apis.public import Run
-from frozendict import frozendict
-from pathlib import Path
 import csv
+import dataclasses
+import json
 import math
+import os
+import statistics
+import sys
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable, Iterable
+
+from frozendict import frozendict
+from wandb.apis.public import Run
+
+import wandb
 
 
 def config_params_str_to_fdict(config_params_str: str) -> frozendict[str, str]:
@@ -86,13 +91,14 @@ def build_sort_key_fn(config_param_names: Iterable[str]) -> Callable:
       metrics during sorting)
     - when a param_name is present in the dictionary, the tuple
       contains (0, value), otherwise (1, None)
-    
+
     Since the resulting tuples will be used for sorting, the result
     is that we will first sort the incoming dictionaries by the first param_name,
     then the second, etc
     - for a particular param_name, the dicts without that param_name will
       be placed after the dicts with that param name, since 1 is after 0.
     """
+
     def sort_key(d: dict[str, Any]):
         nonlocal config_param_names
         key_list = []
@@ -103,10 +109,13 @@ def build_sort_key_fn(config_param_names: Iterable[str]) -> Callable:
             else:
                 key_list.append((1, None))
         return key_list
+
     return sort_key
 
 
-def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> dict[frozendict[str, str], dict[str, float]]:
+def parse_results_file(
+    results_file_path: Path, metric_keys: Iterable[str]
+) -> dict[frozendict[str, str], dict[str, float]]:
     """
     results file path should have lines in pipeline format, like:
     solver=PBD | backend=cpu | n_envs=128 | compile_time=2.52 | runtime_fps=990.0 | realtime_factor=49.5
@@ -135,7 +144,9 @@ def parse_results_file(results_file_path: Path, metric_keys: Iterable[str]) -> d
     results: dict[frozendict[str, str], dict[str, int | float]] = {}
     for line in results_file_path.read_text().splitlines():
         config_param_dict: dict[str, str] = dict(  # type: ignore
-            map(str.strip, p.split("=", 1)) for p in line.split("|") if "=" in p  # type: ignore
+            map(str.strip, p.split("=", 1))
+            for p in line.split("|")
+            if "=" in p  # type: ignore
         )
         metrics: dict[str, float | int] = {}
         for k in metric_keys:
@@ -183,7 +194,7 @@ class WandbParserOldFormat(WandbParser):
 
     @property
     def project(self):
-     return "genesis-benchmarks"
+        return "genesis-benchmarks"
 
     def __call__(
         self,
@@ -222,7 +233,7 @@ class WandbParserOldFormat(WandbParser):
 class WandbParserNewFormat(WandbParser):
     @property
     def project(self):
-     return "genesis-benchmarks-2"
+        return "genesis-benchmarks-2"
 
     def __call__(
         self,
@@ -237,7 +248,7 @@ class WandbParserNewFormat(WandbParser):
                 continue
             metric_name, _, kv_pairs_str = k.partition("-")
             kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
-            records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v                
+            records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v
 
 
 class BenchmarkRunUnderTest:
@@ -249,6 +260,7 @@ class BenchmarkRunUnderTest:
     Note: currently this class is kind of a mess, but we will make it contain what the previous
     paragraph just described.
     """
+
     def __init__(self, artifacts_dir: Path, metric_keys: Iterable[str], filename_glob: str) -> None:
         """
         metric_keys: the keys corresponding to values being measured, such as runtime_fps
@@ -325,21 +337,24 @@ class Alarm:
         self.PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
 
     def run(self) -> int:
-        results_under_test_speed = BenchmarkRunUnderTest(artifacts_dir=self.speed_artifacts_dir, metric_keys=self.SPEED_METRIC_KEYS, filename_glob="speed_test*.txt")
-        results_under_test_mem = BenchmarkRunUnderTest(artifacts_dir=self.mem_artifacts_dir, metric_keys=self.MEM_METRIC_KEYS, filename_glob="mem_test*.txt")
+        results_under_test_speed = BenchmarkRunUnderTest(
+            artifacts_dir=self.speed_artifacts_dir, metric_keys=self.SPEED_METRIC_KEYS, filename_glob="speed_test*.txt"
+        )
+        results_under_test_mem = BenchmarkRunUnderTest(
+            artifacts_dir=self.mem_artifacts_dir, metric_keys=self.MEM_METRIC_KEYS, filename_glob="mem_test*.txt"
+        )
 
         speed_records_by_commit_hash = {}
         if not self.dev_skip_speed:
             speed_records_by_commit_hash = self.fetch_wandb_data(
                 benchmark_under_test=results_under_test_speed,
                 run_name_prefix=None,
-                wandb_parser=WandbParserOldFormat(metric_keys=self.SPEED_METRIC_KEYS)
+                wandb_parser=WandbParserOldFormat(metric_keys=self.SPEED_METRIC_KEYS),
             )
 
         mem_records_by_commit_hash = self.fetch_wandb_data(
-            benchmark_under_test=results_under_test_mem,
-            run_name_prefix="mem-",
-            wandb_parser=WandbParserNewFormat())
+            benchmark_under_test=results_under_test_mem, run_name_prefix="mem-", wandb_parser=WandbParserNewFormat()
+        )
 
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
@@ -349,17 +364,14 @@ class Alarm:
             (self.metric_compile_time, "compile", -1, results_under_test_speed, speed_records_by_commit_hash),
             (self.metric_max_mem_mb, "memory", -1, results_under_test_mem, mem_records_by_commit_hash),
         ):
-            (
-                table_by_metric_name[metric],
-                reg_found_,
-                alert_found_
-            ) = self.build_table(
+            (table_by_metric_name[metric], reg_found_, alert_found_) = self.build_table(
                 config_param_names=results_under_test_.config_param_names,
                 alias=alias,
                 metric=metric,
                 sign=sign,
                 benchmark_run_under_test=results_under_test_,
-                records_by_commit_hash=records_by_commit_hash_)
+                records_by_commit_hash=records_by_commit_hash_,
+            )
             reg_found |= reg_found_
             alert_found |= alert_found_
 
@@ -367,8 +379,8 @@ class Alarm:
             f"{alias} ± {self.METRICS_TOL[metric]:.0f}%"
             for metric, alias in (
                 (self.metric_runtime_fps, "runtime"),
-                (self.metric_compile_time, "compile"), 
-                (self.metric_max_mem_mb, "mem")
+                (self.metric_compile_time, "compile"),
+                (self.metric_max_mem_mb, "mem"),
             )
         )
 
@@ -411,7 +423,8 @@ class Alarm:
 
         commit_hashes = set()
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
-            lambda: defaultdict(dict))
+            lambda: defaultdict(dict)
+        )
         for i, run in enumerate(runs_iter):
             print("i", i, "run", run.name)
             if run_name_prefix and not run.name.startswith(run_name_prefix):
@@ -425,7 +438,10 @@ class Alarm:
                 break
 
             # Early return if enough complete records have been collected
-            complete_records = [benchmark_under_test.all_config_param_fdicts.issubset(record.keys()) for record in records_by_commit_hash.values()]
+            complete_records = [
+                benchmark_under_test.all_config_param_fdicts.issubset(record.keys())
+                for record in records_by_commit_hash.values()
+            ]
             print("sum complete reocrds", sum(complete_records))
             if sum(complete_records) == self.MAX_VALID_REVISIONS:
                 break
@@ -452,7 +468,7 @@ class Alarm:
                 continue
 
             # Ignore runs associated with a commit that is not part of the official repository
-            if not branch.startswith('Genesis-Embodied-AI/') and not self.dev_allow_all_branches:
+            if not branch.startswith("Genesis-Embodied-AI/") and not self.dev_allow_all_branches:
                 continue
 
             # Skip runs did not finish for some reason
@@ -462,7 +478,7 @@ class Alarm:
             # Do not store new records if the desired number of revision is already reached
             if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
                 continue
-        
+
             wandb_parser(
                 benchmark_under_test=benchmark_under_test,
                 records_by_commit_hash=records_by_commit_hash,
@@ -492,15 +508,15 @@ class Alarm:
             *config_param_names,
             f"current {alias}",
             f"baseline {alias} [last (mean ± std)] (*1)",
-            f"Δ {alias} (*2)"
+            f"Δ {alias} (*2)",
         )
         header = "| " + " | ".join(header_cells) + " |"
-        align  = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
+        align = "|:------:|" + "|".join([":---" for _ in config_param_names]) + "|---:|---:|---:|"
 
         row_data = {}
-        for config_params_fdict in sorted(benchmark_run_under_test.results.keys(), key=build_sort_key_fn(
-            config_param_names=config_param_names
-        )):
+        for config_params_fdict in sorted(
+            benchmark_run_under_test.results.keys(), key=build_sort_key_fn(config_param_names=config_param_names)
+        ):
             value_cur = benchmark_run_under_test.results[config_params_fdict][metric]
             is_int = isinstance(value_cur, int) or value_cur.is_integer()
             value_repr = fmt_num(value_cur, is_int)
@@ -537,7 +553,7 @@ class Alarm:
 
                     value_std = statistics.stdev(values_prev) if len(values_prev) > 1 else math.inf
                     stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_std, is_int)})"
-                    if sign * delta < - self.METRICS_TOL[metric]:
+                    if sign * delta < -self.METRICS_TOL[metric]:
                         row_data["status"] = "regression"
 
                         delta_repr = f"**{delta_repr}**"
@@ -579,7 +595,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--speed-artifacts-dir", type=str, required=True)
     parser.add_argument("--mem-artifacts-dir", type=str, required=True)
-    parser.add_argument("--max-valid-revisions", type=int, default=10, help="limits how many git commits are used to build the baseline statistics")
+    parser.add_argument(
+        "--max-valid-revisions",
+        type=int,
+        default=10,
+        help="limits how many git commits are used to build the baseline statistics",
+    )
     parser.add_argument("--max-fetch-revisions", type=int, default=10)
     parser.add_argument("--runtime-fps-regression-tolerance-pct", type=float, default=10)
     parser.add_argument("--compile-time-regression-tolerance-pct", type=float, default=10)
