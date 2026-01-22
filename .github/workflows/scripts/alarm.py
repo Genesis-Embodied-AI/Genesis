@@ -39,15 +39,6 @@ from pathlib import Path
 import csv
 
 
-# def parse_kv_pairs_str(kv_pairs_str: str) -> dict[str, str]:
-#     kv_pairs_str_l = kv_pairs_str.split("-")
-#     kv_pairs = {}
-#     for kv_pair_str in kv_pairs_str_l:
-#         k, _, v = kv_pair_str.partition("=")
-#         kv_pairs[k] = v
-#     return kv_pairs
-
-
 def config_params_str_to_fdict(config_params_str: str) -> frozendict[str, str]:
     """
     Expects a config_params_str in the string format like:
@@ -65,16 +56,6 @@ def config_params_str_to_fdict(config_params_str: str) -> frozendict[str, str]:
                 k, v = token.split("=", 1)
                 kv[k.strip()] = v.strip()
     return frozendict(kv)
-
-
-# def normalize_benchmark_id(benchmark_id: str) -> frozendict[str, str]:
-#     """
-#     Converts a string benchmark id into a frozendict benchmark id, which is
-#     hashable.
-
-#     Questoin: why do we do this?
-#     """
-#     return frozendict(parse_benchmark_id_to_kv_pairs(benchmark_id))
 
 
 def merge_string_tuples(tuples: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
@@ -212,19 +193,10 @@ class BenchmarkRunUnderTest:
         # ordered list of the config parameter names
         self.config_param_names = merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
-    # def ingest_records_by_commit_hash(self, records_by_commit_hash):
-
-    # def get_config_param_names(self):
-    #     """
-    #     Returns an ordered list of the config param names (i.e. not including metric names)
-    #     """
-    #     return merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
-
 
 @dataclasses.dataclass
 class Table:
     markdown_rows: list[str]
-    # rows: list[dict[str, Any]]
 
 
 class Alarm:
@@ -279,7 +251,6 @@ class Alarm:
 
         reg_found, alert_found = False, False
         table_by_metric_name: dict[str, Table] = {}
-        rows_for_csv_by_metric_name = {"runtime_fps": [], "compile_time": [], "max_mem_mb": []}
         reg_found, alert_found = False, False
         for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
             ("runtime_fps", "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
@@ -288,7 +259,6 @@ class Alarm:
         ):
             (
                 table_by_metric_name[metric],
-                rows_for_csv_by_metric_name[metric],
                 reg_found_,
                 alert_found_
             ) = self.build_table(
@@ -324,13 +294,6 @@ class Alarm:
             ]
         )
 
-        # for metric_ in ("runtime_fps", "compile_time", "max_mem_mb"):
-        #     with self.csv_out_file_by_metric_name[metric_].open("w", newline="", encoding="utf-8") as f:
-        #         w = csv.DictWriter(f, fieldnames=info.keys())
-        #         w.writeheader()
-        #         for rec in rows_for_csv_by_metric_name[metric_]:
-        #             w.writerow(rec)
-
         self.check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
         if reg_found:
@@ -348,7 +311,6 @@ class Alarm:
         commit_hashes: set[str],
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
         all_config_param_fdicts: frozenset[frozendict[str, str]],
-        # check_benchmark_suite: bool = True
     ) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
         """
         The common part of the loop over runs, that is the same for both
@@ -394,8 +356,6 @@ class Alarm:
         # Do not store new records if the desired number of revision is already reached
         if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
             return False, "", {}, {}
-
-        # if check_benchmark_suite:
 
         return True, commit_hash, config, summary
 
@@ -480,13 +440,6 @@ class Alarm:
                     continue
                 metric_name, _, kv_pairs_str = k.partition("-")
                 records_by_commit_hash[commit_hash][kv_pairs_str][metric_name] = v                
-
-            print('records_by_commit_hash', records_by_commit_hash)
-            for commit_hash, records in records_by_commit_hash.items():
-                print('commit_hash')
-                for k, v in records.items():
-                    print("- ", "record", k, v)
-            # adsfasdf
         return records_by_commit_hash
 
     def build_table(
@@ -497,7 +450,7 @@ class Alarm:
         benchmark_run_under_test: BenchmarkRunUnderTest,
         records_by_commit_hash: dict[str, Any],
         sign: int,
-    ) -> tuple[Table, list[dict[str, Any]], bool, bool]:
+    ) -> tuple[Table, bool, bool]:
         print("=================================")
         print('alias', alias)
         # together these rows contain the text of the markdwon
@@ -587,16 +540,13 @@ class Alarm:
         blist = [f"- Commit {i}: {sha}" for i, sha in enumerate(records_by_commit_hash.keys(), 1)]
         baseline_block = ["**Baselines considered:** " + f"**{len(records_by_commit_hash)}** commits"] + blist
 
-        # for metric_ in ("runtime_fps", "compile_time", "max_mem_mb"):
         with self.csv_out_file_by_metric_name[metric].open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=row_data.keys())
             w.writeheader()
             for rec in rows:
                 w.writerow(rec)
 
-        # return [header, align] + markdown_rows, rows
-        return Table(markdown_rows=[header, align] + markdown_rows + baseline_block), rows, reg_found, alert_found
-        # tables[metric] = [header, align] + rows_md
+        return Table(markdown_rows=[header, align] + markdown_rows + baseline_block), reg_found, alert_found
 
 
 def main() -> None:
