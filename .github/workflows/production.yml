@@ -184,4 +184,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
-          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"
+          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.txt"
