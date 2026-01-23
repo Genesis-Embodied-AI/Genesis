@@ -130,22 +130,18 @@
 #         run: |
 #           pip install --upgrade pip setuptools pkg-info wheel
 
-#           # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
-#           if [[ "${{ matrix.OS }}" == 'macos-15' && "${{ matrix.GS_BACKEND }}" == 'gpu' ]] ; then
-#             pip3 install --pre --upgrade torch --index-url https://download.pytorch.org/whl/nightly/cpu
-#           else
-#             pip3 install torch --index-url https://download.pytorch.org/whl/cpu
-#           fi
-#       - name: Install Genesis
-#         shell: bash
-#         run: |
-#           PYTHON_DEPS="dev"
-#           # Install USD for all platforms except ARM (usd-core doesn't support ARM)
-#           # This is required for test_mesh.py which tests USD parsing functionality
-#           if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
-#             PYTHON_DEPS="${PYTHON_DEPS},usd"
-#           fi
-#           pip install -e ".[${PYTHON_DEPS}]"
+          # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
+      #     pip3 install torch --upgrade --index-url https://download.pytorch.org/whl/cpu
+      # - name: Install Genesis
+      #   shell: bash
+      #   run: |
+      #     PYTHON_DEPS="dev"
+      #     # Install USD for all platforms except ARM (usd-core doesn't support ARM)
+      #     # This is required for test_mesh.py which tests USD parsing functionality
+      #     if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
+      #       PYTHON_DEPS="${PYTHON_DEPS},usd"
+      #     fi
+      #     pip install -e ".[${PYTHON_DEPS}]"
 
 #       - name: Get artifact prefix name
 #         id: artifact_prefix
