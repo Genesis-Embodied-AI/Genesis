@@ -180,6 +180,51 @@ def kernel_set_links_pos(
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
+def kernel_wake_up_entities_by_links(
+    links_idx: ti.types.ndarray(),
+    envs_idx: ti.types.ndarray(),
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    entities_state: array_class.EntitiesState,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    geoms_state: array_class.GeomsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """Wake up entities that own the specified links by setting their hibernated flags to False."""
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        i_l = links_idx[i_l_]
+        i_e = links_info.entity_idx[i_l]
+
+        # Wake up the entity and all its components
+        if entities_state.hibernated[i_e, i_b]:
+            entities_state.hibernated[i_e, i_b] = False
+
+            # Add entity to awake_entities list
+            n_awake = ti.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+            rigid_global_info.awake_entities[n_awake, i_b] = i_e
+
+            # Wake up all links of this entity and add to awake_links
+            for i_l2 in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+                links_state.hibernated[i_l2, i_b] = False
+                n_awake_links = ti.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
+                rigid_global_info.awake_links[n_awake_links, i_b] = i_l2
+
+            # Wake up all DOFs of this entity and add to awake_dofs
+            for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                dofs_state.hibernated[i_d, i_b] = False
+                n_awake_dofs = ti.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
+                rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+
+            # Wake up all geoms of this entity
+            for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
+                geoms_state.hibernated[i_g, i_b] = False
+
+
+@ti.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_pos_grad(
     relative: ti.i32,
     pos_grad: ti.types.ndarray(),

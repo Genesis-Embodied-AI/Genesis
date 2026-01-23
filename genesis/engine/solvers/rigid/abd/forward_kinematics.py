@@ -1225,6 +1225,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     contact_island_state: array_class.ContactIslandState,
+    errno: array_class.V_ANNOTATION,
 ):
     _B = entities_state.hibernated.shape[1]
 
@@ -1235,9 +1236,15 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
 
             if not was_island_hibernated:
                 are_all_entities_okay_for_hibernation = True
-                entity_ref_range = contact_island_state.island_entity[island_idx, i_b]
-                for i_entity_ref_offset_ in range(entity_ref_range.n):
-                    entity_ref = entity_ref_range.start + i_entity_ref_offset_
+                entity_ref_n = contact_island_state.island_entity.n[island_idx, i_b]
+                entity_ref_start = contact_island_state.island_entity.start[island_idx, i_b]
+
+                # Invariant check: ensure entity_id access won't exceed buffer
+                if entity_ref_start + entity_ref_n > contact_island_state.entity_id.shape[0]:
+                    errno[i_b] = errno[i_b] | 0b00000000000000000000000000010000
+
+                for i_entity_ref_offset_ in range(entity_ref_n):
+                    entity_ref = entity_ref_start + i_entity_ref_offset_
                     entity_idx = contact_island_state.entity_id[entity_ref, i_b]
 
                     # Hibernated entities already have zero dofs_state.acc/vel
@@ -1257,8 +1264,8 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
 
                 if not are_all_entities_okay_for_hibernation:
                     # update collider sort_buffer with aabb extents along x-axis
-                    for i_entity_ref_offset_ in range(entity_ref_range.n):
-                        entity_ref = entity_ref_range.start + i_entity_ref_offset_
+                    for i_entity_ref_offset_ in range(entity_ref_n):
+                        entity_ref = entity_ref_start + i_entity_ref_offset_
                         entity_idx = contact_island_state.entity_id[entity_ref, i_b]
                         for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
                             min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
@@ -1267,28 +1274,30 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                             collider_state.sort_buffer.value[max_idx, i_b] = max_val
                 else:
                     # perform hibernation
-                    prev_entity_ref = entity_ref_range.start + entity_ref_range.n - 1
-                    prev_entity_idx = contact_island_state.entity_id[prev_entity_ref, i_b]
+                    # Guard: only process if there are entities in this island
+                    if entity_ref_n > 0:
+                        prev_entity_ref = entity_ref_start + entity_ref_n - 1
+                        prev_entity_idx = contact_island_state.entity_id[prev_entity_ref, i_b]
 
-                    for i_entity_ref_offset_ in range(entity_ref_range.n):
-                        entity_ref = entity_ref_range.start + i_entity_ref_offset_
-                        entity_idx = contact_island_state.entity_id[entity_ref, i_b]
+                        for i_entity_ref_offset_ in range(entity_ref_n):
+                            entity_ref = entity_ref_start + i_entity_ref_offset_
+                            entity_idx = contact_island_state.entity_id[entity_ref, i_b]
 
-                        func_hibernate_entity_and_zero_dof_velocities(
-                            entity_idx,
-                            i_b,
-                            entities_state=entities_state,
-                            entities_info=entities_info,
-                            dofs_state=dofs_state,
-                            links_state=links_state,
-                            geoms_state=geoms_state,
-                        )
+                            func_hibernate_entity_and_zero_dof_velocities(
+                                entity_idx,
+                                i_b,
+                                entities_state=entities_state,
+                                entities_info=entities_info,
+                                dofs_state=dofs_state,
+                                links_state=links_state,
+                                geoms_state=geoms_state,
+                            )
 
-                        # store entities in the hibernated islands by daisy chaining them
-                        contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island[
-                            prev_entity_idx, i_b
-                        ] = entity_idx
-                        prev_entity_idx = entity_idx
+                            # store entities in the hibernated islands by daisy chaining them
+                            contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island[
+                                prev_entity_idx, i_b
+                            ] = entity_idx
+                            prev_entity_idx = entity_idx
 
 
 @ti.func
@@ -1301,12 +1310,16 @@ def func_aggregate_awake_entities(
     n_entities = entities_state.hibernated.shape[0]
     _B = entities_state.hibernated.shape[1]
 
+    # Reset counts once per batch (not per entity!)
     ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_e, i_b in ti.ndrange(n_entities, _B):
+    for i_b in range(_B):
         rigid_global_info.n_awake_entities[i_b] = 0
         rigid_global_info.n_awake_links[i_b] = 0
         rigid_global_info.n_awake_dofs[i_b] = 0
 
+    # Count awake entities
+    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_e, i_b in ti.ndrange(n_entities, _B):
         if entities_state.hibernated[i_e, i_b] or entities_info.n_dofs[i_e] == 0:
             continue
 
