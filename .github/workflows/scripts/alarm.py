@@ -101,7 +101,7 @@ def sort_key(d: frozendict[str, Any], config_param_names: Iterable[str]) -> list
     key_list = []
     for col in config_param_names:
         val = d.get(col)
-        key_list.append((int(val is None), val))
+        key_list.append((val is None, val))
     return key_list
 
 
