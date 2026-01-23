@@ -2722,6 +2722,10 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in ti.ndrange(_B):
+        constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
+
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_hessian_and_cholesky_factor_direct(
             entities_info=entities_info,
@@ -2741,10 +2745,6 @@ def func_solve_init(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in ti.ndrange(_B):
-        constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
 
 
 @ti.func
