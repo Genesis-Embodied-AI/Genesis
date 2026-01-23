@@ -427,22 +427,21 @@ class RasterizerCameraSensor(BaseCameraSensor):
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
-    def destroy(self):
-        if not self._shared_metadata.sensors:
+    @classmethod
+    def destroy(cls, shared_metadata: RasterizerCameraSharedMetadata):
+        if not shared_metadata.sensors:
             return
-        self._shared_metadata.sensors.remove(self)
-        self._shared_metadata.renderer.remove_camera(self._camera_wrapper)
+        for sensor in shared_metadata.sensors:
+            assert isinstance(sensor, cls)
+            shared_metadata.renderer.remove_camera(sensor._camera_wrapper)
 
-        # A sort of reference counting to destroy the renderer once there are no more cameras.
-        if not self._shared_metadata.sensors:
-            self._shared_metadata.renderer.destroy()
-            self._shared_metadata.renderer = None
-            self._shared_metadata.context.destroy()
-            self._shared_metadata.context = None
-            self._shared_metadata.lights = None
-            self._shared_metadata.image_cache = None
-            # Make sure a new one is created next time a camera is built.
-            self._shared_metadata.sensors = None
+        shared_metadata.renderer.destroy()
+        shared_metadata.renderer = None
+        shared_metadata.context.destroy()
+        shared_metadata.context = None
+        shared_metadata.lights = None
+        shared_metadata.image_cache = None
+        shared_metadata.sensors = None
 
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
@@ -648,15 +647,17 @@ class RaytracerCameraSensor(BaseCameraSensor):
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
-    def destroy(self):
-        if self in self._shared_metadata.sensors:
-            self._shared_metadata.sensors.remove(self)
-            if not self._shared_metadata.sensors:
-                # TODO: consider explicit reference counting on the renderer rather than relying on
-                # garbage collection.
-                self._shared_metadata.renderer = None
-                self._shared_metadata.sensors = None
-            del self._shared_metadata.image_cache[self._idx]
+    @classmethod
+    def destroy(cls, shared_metadata: RaytracerCameraSharedMetadata):
+        if not shared_metadata.sensors:
+            return
+        for sensor in shared_metadata.sensors:
+            assert isinstance(sensor, cls)
+            shared_metadata.renderer.remove_camera(sensor._camera_wrapper)
+
+        shared_metadata.renderer = None
+        shared_metadata.sensors = None
+        shared_metadata.image_cache = None
 
     @gs.assert_built
     def move_to_attach(self):
@@ -780,16 +781,18 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
-    def destroy(self):
-        if self in self._shared_metadata.sensors:
-            self._shared_metadata.sensors.remove(self)
-            if not self._shared_metadata.sensors:
-                # TODO: consider explicit reference counting on the renderer rather than relying on
-                # garbage collection.
-                self._shared_metadata.renderer = None
-                self._shared_metadata.visualizer_wrapper = None
-                self._shared_metadata.sensors = None
-            del self._shared_metadata.image_cache[self._idx]
+    @classmethod
+    def destroy(cls, shared_metadata: BatchRendererCameraSharedMetadata):
+        if not shared_metadata.sensors:
+            return
+        for sensor in shared_metadata.sensors:
+            assert isinstance(sensor, cls)
+            shared_metadata.renderer.remove_camera(sensor._camera_wrapper)
+
+        shared_metadata.renderer = None
+        shared_metadata.sensors = None
+        shared_metadata.image_cache = None
+        shared_metadata.visualizer_wrapper = None
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
