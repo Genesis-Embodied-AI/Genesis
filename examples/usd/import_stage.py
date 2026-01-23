@@ -79,7 +79,7 @@ def main():
         gs.morphs.Plane(),
     )
     entities = scene.add_stage(
-        morph=gs.morphs.USD(
+        stage=gs.morphs.USD(
             file=f"{asset_path}/usd/Refrigerator055/Refrigerator055.usd",
             pos=(0, 0, 0.9),
             euler=(0, 0, 180),
