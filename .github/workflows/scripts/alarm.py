@@ -150,8 +150,7 @@ def parse_results_file(
         metrics: dict[str, float | int] = {}
         for k in metric_keys:
             try:
-                # removes metric keys from the config param dict, and adds
-                # to the metric kv dict
+                # removes metric keys from the config param dict, and adds to the metric kv dict
                 metrics[k] = float(config_param_dict.pop(k))
             except (ValueError, TypeError, KeyError):
                 pass
