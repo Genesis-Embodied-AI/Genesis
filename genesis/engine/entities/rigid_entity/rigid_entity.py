@@ -1,9 +1,9 @@
 import inspect
+import os
 from copy import copy
 from itertools import chain
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
-import os
 
 import gstaichi as ti
 import numpy as np
@@ -608,10 +608,10 @@ class RigidEntity(Entity):
                     + str(e).replace("\n", " - ")
                 )
         elif isinstance(morph, gs.morphs.USD):
-            import genesis.utils.usd as usu
+            from genesis.utils.usd import parse_usd
 
             # Unified parser handles both articulations and rigid bodies
-            l_infos, links_j_infos, links_g_infos, eqs_info = usu.parse_usd(morph, surface)
+            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd(morph, surface)
 
         # Make sure that the inertia matrix of all links is valid
         if not morph.recompute_inertia:

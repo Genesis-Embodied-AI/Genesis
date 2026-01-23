@@ -1,6 +1,6 @@
 import numpy as np
-from pxr import Usd, UsdShade
 from PIL import Image
+from pxr import Usd, UsdShade
 
 import genesis as gs
 from genesis.utils import mesh as mu

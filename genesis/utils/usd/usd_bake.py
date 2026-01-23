@@ -59,11 +59,11 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
     app = omni_bootstrap(device, log_level)
     logs.append(f"\tBootstrap: {time.time() - start_time}, App status: {app.is_running()}.")
 
+    import carb
     import omni.usd
     import omni.mdl.distill_and_bake
     import omni.replicator.core
     import omni.kit.usd.collect
-    import carb
 
     # open stage
     start_time = time.time()

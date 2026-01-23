@@ -1,13 +1,13 @@
-from pathlib import Path
-import shutil
-import os
 import io
-import subprocess
 import logging
+import os
+import shutil
+import subprocess
+from pathlib import Path
 
 import numpy as np
 import torch
-from pxr import Usd, UsdShade, UsdPhysics, UsdGeom, Sdf
+from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
 import genesis as gs
 import genesis.utils.mesh as mu
@@ -21,13 +21,7 @@ try:
     import omni.kit_app
 
     HAS_OMNIVERSE_KIT_SUPPORT = torch.cuda.is_available()
-    if not HAS_OMNIVERSE_KIT_SUPPORT:
-        gs.logger.warning("USD baking requires CUDA GPU. USD baking will be disabled.")
 except ImportError:
-    gs.logger.warning(
-        "omniverse-kit not found. USD baking will be disabled. "
-        "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`."
-    )
     HAS_OMNIVERSE_KIT_SUPPORT = False
 
 
@@ -89,6 +83,16 @@ class UsdContext:
 
         # detect bake file caches
         self._need_bake = HAS_OMNIVERSE_KIT_SUPPORT
+
+        if not HAS_OMNIVERSE_KIT_SUPPORT:
+            if torch.cuda.is_available():
+                gs.logger.warning(
+                    "omniverse-kit not found. USD baking will be disabled. "
+                    "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`."
+                )
+            else:
+                gs.logger.warning("USD baking requires CUDA GPU. USD baking will be disabled.")
+
         self._bake_folder = mu.get_usd_bake_path(stage_file)
         self._bake_stage_file = os.path.join(self._bake_folder, os.path.basename(stage_file))
         if use_bake_cache:
