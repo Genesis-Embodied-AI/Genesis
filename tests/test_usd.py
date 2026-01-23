@@ -911,7 +911,7 @@ def test_usd_parse_nodegraph(usd_file):
 )
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="OmniKit support not available")
+@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="omniverse-kit support not available")
 def test_usd_bake(usd_file):
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
     usd_file = os.path.join(asset_path, usd_file)

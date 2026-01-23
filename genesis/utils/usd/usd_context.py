@@ -20,7 +20,7 @@ from .usd_parser_utils import extract_scale
 try:
     import omni.kit_app
 
-    HAS_OMNIVERSE_KIT_SUPPORT = torch.cuda.is_available()
+    HAS_OMNIVERSE_KIT_SUPPORT = True
 except ImportError:
     HAS_OMNIVERSE_KIT_SUPPORT = False
 
@@ -81,18 +81,19 @@ class UsdContext:
         if stage_file.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
             stage_file = decompress_usdz(stage_file)
 
-        # detect bake file caches
+        # detect if baking is needed
         self._need_bake = HAS_OMNIVERSE_KIT_SUPPORT
-
-        if not HAS_OMNIVERSE_KIT_SUPPORT:
-            if torch.cuda.is_available():
-                gs.logger.warning(
-                    "omniverse-kit not found. USD baking will be disabled. "
-                    "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`."
-                )
-            else:
+        if HAS_OMNIVERSE_KIT_SUPPORT:
+            if not torch.cuda.is_available():
                 gs.logger.warning("USD baking requires CUDA GPU. USD baking will be disabled.")
+                self._need_bake = False
+        else:
+            gs.logger.warning(
+                "omniverse-kit not found. USD baking will be disabled. "
+                "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`."
+            )
 
+        # detect bake file caches
         self._bake_folder = mu.get_usd_bake_path(stage_file)
         self._bake_stage_file = os.path.join(self._bake_folder, os.path.basename(stage_file))
         if use_bake_cache:
