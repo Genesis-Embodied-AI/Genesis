@@ -6,7 +6,7 @@ from genesis.engine.solvers.rigid.constraint import solver
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def _kernel_linesearch_top_level(
+def _kernel_linesearch(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -17,7 +17,7 @@ def _kernel_linesearch_top_level(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_linesearch_top_level(
+            solver.func_linesearch_and_apply_alpha(
                 i_b,
                 entities_info=entities_info,
                 dofs_state=dofs_state,
@@ -54,7 +54,7 @@ def _kernel_update_constraint(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_update_constraint(
+            solver.func_update_constraint_batch(
                 i_b,
                 qacc=constraint_state.qacc,
                 Ma=constraint_state.Ma,
@@ -77,13 +77,20 @@ def _kernel_newton_only_nt_hessian_incremental(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_nt_hessian_incremental(
+            is_degenerated = solver.func_hessian_and_cholesky_factor_incremental_batch(
                 i_b,
-                entities_info=entities_info,
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
+            if is_degenerated:
+                solver.func_hessian_and_cholesky_factor_direct_batch(
+                    i_b,
+                    entities_info=entities_info,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -99,7 +106,7 @@ def _kernel_update_gradient(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_gradient(
+            solver.func_update_gradient_batch(
                 i_b,
                 dofs_state=dofs_state,
                 entities_info=entities_info,
@@ -120,7 +127,7 @@ def _kernel_update_search_direction(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_solver_decomp.func_update_search_direction(
+            solver.func_terminate_or_update_descent_batch(
                 i_b,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
@@ -143,7 +150,7 @@ def func_solve_decomposed_macrokernels(
     """
     iterations = rigid_global_info.iterations[None]
     for _it in range(iterations):
-        _kernel_linesearch_top_level(
+        _kernel_linesearch(
             entities_info,
             dofs_state,
             constraint_state,
@@ -163,16 +170,8 @@ def func_solve_decomposed_macrokernels(
             static_rigid_sim_config,
         )
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
-            n_dofs = constraint_state.nt_H.shape[1]
-            _kernel_newton_only_nt_hessian_direct_parallel(
+            _kernel_newton_only_nt_hessian_incremental(
                 entities_info,
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-                n_dofs,
-            )
-
-            _kernel_cholesky_warp_level(
                 constraint_state,
                 rigid_global_info,
                 static_rigid_sim_config,
