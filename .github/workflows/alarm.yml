@@ -68,19 +68,19 @@ jobs:
           WANDB_SILENT: "true"
         run: |
           python .github/workflows/scripts/alarm.py \
-            --speed-artifacts-dir "${{ steps.dl_speed.outputs.download-path }}" \
-            --mem-artifacts-dir "${{ steps.dl_mem.outputs.download-path }}" \
-            --max-valid-revisions "5" \
-            --max-fetch-revisions "40" \
-            --runtime-fps-regression-tolerance-pct "8" \
-            --compile-time-regression-tolerance-pct "16" \
-            --mem-regression-tolerance-pct "10" \
-            --csv-runtime-fps-path "runtime_fps.csv" \
-            --csv-compile-time-path "compile_time.csv" \
-            --csv-mem-path "mem.csv" \
-            --check-body-path "check_output.md" \
-            --exit-code-regression "42" \
-            --exit-code-alert "43"
+            --speed-artifacts-dir ${{ steps.dl_speed.outputs.download-path }} \
+            --mem-artifacts-dir ${{ steps.dl_mem.outputs.download-path }} \
+            --max-valid-revisions 5 \
+            --max-fetch-revisions 40 \
+            --runtime-fps-regression-tolerance-pct 8 \
+            --compile-time-regression-tolerance-pct 16 \
+            --mem-regression-tolerance-pct 10 \
+            --csv-runtime-fps-path runtime_fps.csv \
+            --csv-compile-time-path compile_time.csv \
+            --csv-mem-path mem.csv \
+            --check-body-path check_output.md \
+            --exit-code-regression 42 \
+            --exit-code-alert 43
       - name: Upload benchmark comparisons in CSV
         id: upload
         uses: actions/upload-artifact@v4
