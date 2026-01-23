@@ -19,6 +19,11 @@ jobs:
       contains(fromJson('["success","neutral"]'), github.event.workflow_run.conclusion)
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
