@@ -431,9 +431,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
     def destroy(cls, shared_metadata: RasterizerCameraSharedMetadata):
         if not shared_metadata.sensors:
             return
-        for sensor in shared_metadata.sensors:
-            assert isinstance(sensor, cls)
-            shared_metadata.renderer.remove_camera(sensor._camera_wrapper)
 
         shared_metadata.renderer.destroy()
         shared_metadata.renderer = None
@@ -785,9 +782,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
     def destroy(cls, shared_metadata: BatchRendererCameraSharedMetadata):
         if not shared_metadata.sensors:
             return
-        for sensor in shared_metadata.sensors:
-            assert isinstance(sensor, cls)
-            shared_metadata.renderer.remove_camera(sensor._camera_wrapper)
 
         shared_metadata.renderer = None
         shared_metadata.sensors = None
