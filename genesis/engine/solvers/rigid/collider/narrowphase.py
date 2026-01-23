@@ -6,6 +6,7 @@ terrain detection, box-box contact, and multi-contact search algorithms.
 """
 
 import sys
+from enum import IntEnum
 
 import gstaichi as ti
 
@@ -26,8 +27,6 @@ from .contact import (
     func_compute_tolerance,
     func_contact_orthogonals,
     func_rotate_frame,
-    rotaxis,
-    rotmatx,
 )
 
 from .box_contact import (
@@ -36,7 +35,7 @@ from .box_contact import (
 )
 
 
-class CCD_ALGORITHM_CODE:
+class CCD_ALGORITHM_CODE(IntEnum):
     """Convex collision detection algorithm codes."""
 
     # Our MPR (with SDF)
