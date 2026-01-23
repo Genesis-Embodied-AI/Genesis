@@ -231,9 +231,10 @@ class WandbParserOldFormat(WandbParser):
 
 def dev_dump_records_by_commit_hash(records_by_commit_hash):
     for commit, records in records_by_commit_hash.items():
-        print('commit', commit)
+        print("commit", commit)
         for config_params_fdict, metrics in records.items():
-            print('  config_params_fdict', config_params_fdict, 'metrics', metrics)
+            print("  config_params_fdict", config_params_fdict, "metrics", metrics)
+
 
 class WandbParserNewFormat(WandbParser):
     @property
@@ -557,7 +558,11 @@ class Alarm:
                     row_data["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
                     row_data["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
 
-                    value_ci95 = statistics.stdev(values_prev) / math.sqrt(len(values_prev)) * 1.96 if len(values_prev) > 1 else math.inf
+                    value_ci95 = (
+                        statistics.stdev(values_prev) / math.sqrt(len(values_prev)) * 1.96
+                        if len(values_prev) > 1
+                        else math.inf
+                    )
                     stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_ci95, is_int)})"
                     if sign * delta < -self.METRICS_TOL[metric]:
                         row_data["status"] = "regression"
