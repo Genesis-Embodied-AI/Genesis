@@ -229,13 +229,6 @@ class WandbParserOldFormat(WandbParser):
         }
 
 
-def dev_dump_records_by_commit_hash(records_by_commit_hash):
-    for commit, records in records_by_commit_hash.items():
-        print("commit", commit)
-        for config_params_fdict, metrics in records.items():
-            print("  config_params_fdict", config_params_fdict, "metrics", metrics)
-
-
 class WandbParserNewFormat(WandbParser):
     @property
     def project(self):
@@ -249,16 +242,12 @@ class WandbParserNewFormat(WandbParser):
         summary,
         commit_hash: str,
     ) -> None:
-        print("records_by_commit_hash before update:")
-        dev_dump_records_by_commit_hash(records_by_commit_hash)
         for k, v in summary.items():
             if k.startswith("_"):
                 continue
             metric_name, _, kv_pairs_str = k.partition("-")
             kv_pairs_fdict = config_params_str_to_fdict(kv_pairs_str)
             records_by_commit_hash[commit_hash][kv_pairs_fdict][metric_name] = v
-        print("records_by_commit_hash after update:")
-        dev_dump_records_by_commit_hash(records_by_commit_hash)
 
 
 class BenchmarkRunUnderTest:
@@ -426,14 +415,11 @@ class Alarm:
             lambda: defaultdict(dict)
         )
         for i, run in enumerate(runs_iter):
-            print("i", i, "run", run.name)
             if run_name_prefix and not run.name.startswith(run_name_prefix):
-                print(" (skipping)")
                 continue
 
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            print("len(commit_hashes)", len(commit_hashes))
             if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
                 break
 
@@ -442,7 +428,6 @@ class Alarm:
                 benchmark_under_test.all_config_param_fdicts.issubset(record.keys())
                 for record in records_by_commit_hash.values()
             ]
-            print("sum complete records", sum(complete_records))
             if sum(complete_records) == self.MAX_VALID_REVISIONS:
                 break
 
