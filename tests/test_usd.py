@@ -19,8 +19,8 @@ from .test_mesh import check_gs_meshes, check_gs_surfaces
 
 # Check for USD support
 try:
-    from genesis.utils.usd import HAS_OMNIVERSE_KIT_SUPPORT
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+    from genesis.utils.usd import HAS_OMNIVERSE_KIT_SUPPORT
 
     HAS_USD_SUPPORT = True
 except ImportError as e:
