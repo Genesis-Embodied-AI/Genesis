@@ -2072,6 +2072,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
             fixed=True,
+            file_meshes_are_zup=True,
         ),
         vis_mode="collision",
     )
@@ -2081,7 +2082,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
             file=f"{asset_path}/spoon.glb",
             pos=(0.3, 0, 0.015),
             convexify=convexify,
-            file_meshes_are_zup=False,
             scale=1.0,
         ),
         vis_mode="collision",
