@@ -447,7 +447,7 @@ class Alarm:
                 benchmark_under_test.all_config_param_fdicts.issubset(record.keys())
                 for record in records_by_commit_hash.values()
             ]
-            print("sum complete reocrds", sum(complete_records))
+            print("sum complete records", sum(complete_records))
             if sum(complete_records) == self.MAX_VALID_REVISIONS:
                 break
 
