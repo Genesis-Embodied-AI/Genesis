@@ -285,8 +285,8 @@ class BenchmarkRunUnderTest:
 
 class Alarm:
     def __init__(self, args: argparse.Namespace) -> None:
-        self.MAX_VALID_REVISIONS = args.max_valid_revisions
-        self.MAX_FETCH_REVISIONS = args.max_fetch_revisions
+        self.max_valid_revisions = args.max_valid_revisions
+        self.max_fetch_revisions = args.max_fetch_revisions
 
         # let's just define these in one place
         self.metric_compile_time = "compile_time"
@@ -294,7 +294,7 @@ class Alarm:
         self.metric_realtime_factor = "realtime_factor"
         self.metric_max_mem_mb = "max_mem_mb"
 
-        self.METRICS_TOL = {
+        self.metrics_tol = {
             self.metric_runtime_fps: args.runtime_fps_regression_tolerance_pct,
             self.metric_compile_time: args.compile_time_regression_tolerance_pct,
             self.metric_max_mem_mb: args.mem_regression_tolerance_pct,
@@ -310,26 +310,26 @@ class Alarm:
             self.metric_max_mem_mb: Path(args.csv_mem_path).expanduser().resolve(),
         }
 
-        self.SPEED_METRIC_KEYS = (
+        self.speed_metric_keys = (
             self.metric_compile_time,
             self.metric_runtime_fps,
             self.metric_realtime_factor,
         )
-        self.MEM_METRIC_KEYS = (self.metric_max_mem_mb,)  # note: make sure is a tuple
+        self.mem_metric_keys = (self.metric_max_mem_mb,)  # note: make sure is a tuple
 
         self.dev_skip_speed = args.dev_skip_speed
         self.dev_allow_all_branches = args.dev_allow_all_branches
 
         assert "WANDB_API_KEY" in os.environ
 
-        self.ENTITY = os.environ["WANDB_ENTITY"]
+        self.wandb_entity = os.environ["WANDB_ENTITY"]
 
     def run(self) -> int:
         results_under_test_speed = BenchmarkRunUnderTest(
-            artifacts_dir=self.speed_artifacts_dir, metric_keys=self.SPEED_METRIC_KEYS, filename_glob="speed_test*.txt"
+            artifacts_dir=self.speed_artifacts_dir, metric_keys=self.speed_metric_keys, filename_glob="speed_test*.txt"
         )
         results_under_test_mem = BenchmarkRunUnderTest(
-            artifacts_dir=self.mem_artifacts_dir, metric_keys=self.MEM_METRIC_KEYS, filename_glob="mem_test*.txt"
+            artifacts_dir=self.mem_artifacts_dir, metric_keys=self.mem_metric_keys, filename_glob="mem_test*.txt"
         )
 
         speed_records_by_commit_hash = {}
@@ -337,7 +337,7 @@ class Alarm:
             speed_records_by_commit_hash = self.fetch_wandb_data(
                 benchmark_under_test=results_under_test_speed,
                 run_name_prefix=None,
-                wandb_parser=WandbParserOldFormat(metric_keys=self.SPEED_METRIC_KEYS),
+                wandb_parser=WandbParserOldFormat(metric_keys=self.speed_metric_keys),
             )
 
         mem_records_by_commit_hash = self.fetch_wandb_data(
@@ -364,7 +364,7 @@ class Alarm:
             alert_found |= alert_found_
 
         thr_repr = ", ".join(
-            f"{alias} ± {self.METRICS_TOL[metric]:.0f}%"
+            f"{alias} ± {self.metrics_tol[metric]:.0f}%"
             for metric, alias in (
                 (self.metric_runtime_fps, "runtime"),
                 (self.metric_compile_time, "compile"),
@@ -385,7 +385,7 @@ class Alarm:
                 "### Memory usage",
                 *table_by_metric_name[self.metric_max_mem_mb],
                 "",
-                f"- (*1) last: last commit on main, mean/std: stats over commit hashes {self.MAX_VALID_REVISIONS} commits if available.",
+                f"- (*1) last: last commit on main, mean/std: stats over commit hashes {self.max_valid_revisions} commits if available.",
                 "- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
             ]
         )
@@ -407,7 +407,7 @@ class Alarm:
         wandb_parser: WandbParser,
     ) -> dict[str, dict[frozendict[str, str], dict[str, float | int]]]:
         api = wandb.Api()
-        runs_iter: Iterable[Run] = api.runs(f"{self.ENTITY}/{wandb_parser.project}", order="-created_at")
+        runs_iter: Iterable[Run] = api.runs(f"{self.wandb_entity}/{wandb_parser.project}", order="-created_at")
 
         commit_hashes = set()
         records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, float | int]]] = defaultdict(
@@ -419,7 +419,7 @@ class Alarm:
 
             # Abort if still not complete after checking enough runs.
             # This would happen if a new benchmark has been added, and not enough past data is available yet.
-            if len(commit_hashes) == self.MAX_FETCH_REVISIONS:
+            if len(commit_hashes) == self.max_fetch_revisions:
                 break
 
             # Early return if enough complete records have been collected
@@ -427,7 +427,7 @@ class Alarm:
                 benchmark_under_test.all_config_param_fdicts.issubset(record.keys())
                 for record in records_by_commit_hash.values()
             ]
-            if sum(complete_records) == self.MAX_VALID_REVISIONS:
+            if sum(complete_records) == self.max_valid_revisions:
                 break
 
             # Load config and summary, with support of legacy runs
@@ -460,7 +460,7 @@ class Alarm:
                 continue
 
             # Do not store new records if the desired number of revision is already reached
-            if len(records_by_commit_hash) == self.MAX_VALID_REVISIONS and commit_hash not in records_by_commit_hash:
+            if len(records_by_commit_hash) == self.max_valid_revisions and commit_hash not in records_by_commit_hash:
                 continue
 
             wandb_parser(
@@ -530,7 +530,7 @@ class Alarm:
 
                 stats_repr = f"{fmt_num(value_last, is_int)}"
                 delta_repr = f"{delta:+.1f}%"
-                if len(values_prev) >= self.MAX_VALID_REVISIONS:
+                if len(values_prev) >= self.max_valid_revisions:
                     row_data["baseline_mean"] = int(value_ref) if is_int else float(value_ref)
                     row_data["baseline_min"] = int(min(values_prev)) if is_int else float(min(values_prev))
                     row_data["baseline_max"] = int(max(values_prev)) if is_int else float(max(values_prev))
@@ -541,13 +541,13 @@ class Alarm:
                         else math.inf
                     )
                     stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_ci95, is_int)})"
-                    if sign * delta < -self.METRICS_TOL[metric]:
+                    if sign * delta < -self.metrics_tol[metric]:
                         row_data["status"] = "regression"
 
                         delta_repr = f"**{delta_repr}**"
                         picto = "🔴"
                         reg_found = True
-                    elif sign * delta > self.METRICS_TOL[metric]:
+                    elif sign * delta > self.metrics_tol[metric]:
                         row_data["status"] = "alert"
 
                         delta_repr = f"**{delta_repr}**"
