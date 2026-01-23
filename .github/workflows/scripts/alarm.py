@@ -340,8 +340,6 @@ class Alarm:
         assert "WANDB_API_KEY" in os.environ
 
         self.ENTITY = os.environ["WANDB_ENTITY"]
-        self.PROJECT_OLD = os.environ["WANDB_PROJECT_OLD_FORMAT"]
-        self.PROJECT_NEW = os.environ["WANDB_PROJECT_NEW_FORMAT"]
 
     def run(self) -> int:
         results_under_test_speed = BenchmarkRunUnderTest(
