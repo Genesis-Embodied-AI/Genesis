@@ -131,11 +131,7 @@ jobs:
           pip install --upgrade pip setuptools pkg-info wheel
 
           # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
-          if [[ "${{ matrix.OS }}" == 'macos-15' && "${{ matrix.GS_BACKEND }}" == 'gpu' ]] ; then
-            pip3 install --pre --upgrade torch --index-url https://download.pytorch.org/whl/nightly/cpu
-          else
-            pip3 install torch --index-url https://download.pytorch.org/whl/cpu
-          fi
+          pip3 install torch --upgrade --index-url https://download.pytorch.org/whl/cpu
       - name: Install Genesis
         shell: bash
         run: |

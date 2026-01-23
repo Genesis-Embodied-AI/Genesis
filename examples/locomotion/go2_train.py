@@ -152,8 +152,6 @@ def main():
     parser.add_argument("--max_iterations", type=int, default=101)
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, precision="32", logging_level="warning", performance_mode=True)
-
     log_dir = f"logs/{args.exp_name}"
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
     train_cfg = get_train_cfg(args.exp_name, args.max_iterations)
@@ -166,6 +164,8 @@ def main():
         [env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg],
         open(f"{log_dir}/cfgs.pkl", "wb"),
     )
+
+    gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=train_cfg["seed"], performance_mode=True)
 
     env = Go2Env(
         num_envs=args.num_envs, env_cfg=env_cfg, obs_cfg=obs_cfg, reward_cfg=reward_cfg, command_cfg=command_cfg
