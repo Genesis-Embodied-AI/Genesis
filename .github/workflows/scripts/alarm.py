@@ -320,82 +320,6 @@ class Alarm:
 
         self.wandb_entity = os.environ["WANDB_ENTITY"]
 
-    def run(self) -> int:
-        results_under_test_speed = BenchmarkRunUnderTest(
-            artifacts_dir=self.speed_artifacts_dir, metric_keys=self.speed_metric_keys, filename_glob="speed_test*.txt"
-        )
-        results_under_test_mem = BenchmarkRunUnderTest(
-            artifacts_dir=self.mem_artifacts_dir, metric_keys=self.mem_metric_keys, filename_glob="mem_test*.txt"
-        )
-
-        speed_records_by_commit_hash = {}
-        if not self.dev_skip_speed:
-            speed_records_by_commit_hash = self.fetch_wandb_data(
-                benchmark_under_test=results_under_test_speed,
-                run_name_prefix=None,
-                wandb_parser=WandbParserOldFormat(metric_keys=self.speed_metric_keys),
-            )
-
-        mem_records_by_commit_hash = self.fetch_wandb_data(
-            benchmark_under_test=results_under_test_mem, run_name_prefix="mem-", wandb_parser=WandbParserNewFormat()
-        )
-
-        reg_found, alert_found = False, False
-        table_by_metric_name: dict[str, list[str]] = {}
-        reg_found, alert_found = False, False
-        for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
-            (self.metric_runtime_fps, "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
-            (self.metric_compile_time, "compile", -1, results_under_test_speed, speed_records_by_commit_hash),
-            (self.metric_max_mem_mb, "memory", -1, results_under_test_mem, mem_records_by_commit_hash),
-        ):
-            (table_by_metric_name[metric], reg_found_, alert_found_) = self.build_table(
-                config_param_names=results_under_test_.config_param_names,
-                alias=alias,
-                metric=metric,
-                sign=sign,
-                benchmark_run_under_test=results_under_test_,
-                records_by_commit_hash=records_by_commit_hash_,
-            )
-            reg_found |= reg_found_
-            alert_found |= alert_found_
-
-        thr_repr = ", ".join(
-            f"{alias} ± {self.metrics_tol[metric]:.0f}%"
-            for metric, alias in (
-                (self.metric_runtime_fps, "runtime"),
-                (self.metric_compile_time, "compile"),
-                (self.metric_max_mem_mb, "mem"),
-            )
-        )
-
-        check_body = "\n".join(
-            [
-                f"Thresholds: {thr_repr}",
-                "",
-                "### Runtime FPS",
-                *table_by_metric_name[self.metric_runtime_fps],
-                "",
-                "### Compile Time",
-                *table_by_metric_name[self.metric_compile_time],
-                "",
-                "### Memory usage",
-                *table_by_metric_name[self.metric_max_mem_mb],
-                "",
-                f"- (*1) last: last commit on main, mean/std: stats over commit hashes {self.max_valid_revisions} commits if available.",
-                "- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
-            ]
-        )
-
-        self.check_body_path.write_text(check_body + "\n", encoding="utf-8")
-
-        if reg_found:
-            return int(os.environ["EXIT_CODE_REGRESSION"])
-
-        if alert_found:
-            return int(os.environ["EXIT_CODE_ALERT"])
-
-        return 0
-
     def fetch_wandb_data(
         self,
         benchmark_under_test: BenchmarkRunUnderTest,
@@ -575,7 +499,7 @@ class Alarm:
         return [header, align] + markdown_rows + baseline_block, reg_found, alert_found
 
 
-def main() -> int:
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--speed-artifacts-dir", type=str, required=True)
     parser.add_argument("--mem-artifacts-dir", type=str, required=True)
@@ -600,9 +524,77 @@ def main() -> int:
     args = parser.parse_args()
 
     alarm = Alarm(args=args)
-    exit_code = alarm.run()
-    return exit_code
 
+    results_under_test_speed = BenchmarkRunUnderTest(
+        artifacts_dir=alarm.speed_artifacts_dir, metric_keys=alarm.speed_metric_keys, filename_glob="speed_test*.txt"
+    )
+    results_under_test_mem = BenchmarkRunUnderTest(
+        artifacts_dir=alarm.mem_artifacts_dir, metric_keys=alarm.mem_metric_keys, filename_glob="mem_test*.txt"
+    )
 
-if __name__ == "__main__":
-    sys.exit(main())
+    speed_records_by_commit_hash = {}
+    if not alarm.dev_skip_speed:
+        speed_records_by_commit_hash = alarm.fetch_wandb_data(
+            benchmark_under_test=results_under_test_speed,
+            run_name_prefix=None,
+            wandb_parser=WandbParserOldFormat(metric_keys=alarm.speed_metric_keys),
+        )
+
+    mem_records_by_commit_hash = alarm.fetch_wandb_data(
+        benchmark_under_test=results_under_test_mem, run_name_prefix="mem-", wandb_parser=WandbParserNewFormat()
+    )
+
+    reg_found, alert_found = False, False
+    table_by_metric_name: dict[str, list[str]] = {}
+    reg_found, alert_found = False, False
+    for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
+        (alarm.metric_runtime_fps, "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
+        (alarm.metric_compile_time, "compile", -1, results_under_test_speed, speed_records_by_commit_hash),
+        (alarm.metric_max_mem_mb, "memory", -1, results_under_test_mem, mem_records_by_commit_hash),
+    ):
+        (table_by_metric_name[metric], reg_found_, alert_found_) = alarm.build_table(
+            config_param_names=results_under_test_.config_param_names,
+            alias=alias,
+            metric=metric,
+            sign=sign,
+            benchmark_run_under_test=results_under_test_,
+            records_by_commit_hash=records_by_commit_hash_,
+        )
+        reg_found |= reg_found_
+        alert_found |= alert_found_
+
+    thr_repr = ", ".join(
+        f"{alias} ± {alarm.metrics_tol[metric]:.0f}%"
+        for metric, alias in (
+            (alarm.metric_runtime_fps, "runtime"),
+            (alarm.metric_compile_time, "compile"),
+            (alarm.metric_max_mem_mb, "mem"),
+        )
+    )
+
+    check_body = "\n".join(
+        [
+            f"Thresholds: {thr_repr}",
+            "",
+            "### Runtime FPS",
+            *table_by_metric_name[alarm.metric_runtime_fps],
+            "",
+            "### Compile Time",
+            *table_by_metric_name[alarm.metric_compile_time],
+            "",
+            "### Memory usage",
+            *table_by_metric_name[alarm.metric_max_mem_mb],
+            "",
+            f"- (*1) last: last commit on main, mean/std: stats over commit hashes {alarm.max_valid_revisions} commits if available.",
+            "- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
+        ]
+    )
+
+    alarm.check_body_path.write_text(check_body + "\n", encoding="utf-8")
+
+    if reg_found:
+        sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]))
+
+    if alert_found:
+        sys.exit(int(os.environ["EXIT_CODE_ALERT"]))
+    sys.exit(0)
