@@ -77,9 +77,8 @@ class SensorManager:
     def destroy(self):
         for _sensor_cls, sensors in self._sensors_by_type.items():
             for sensor in sensors:
-                if hasattr(sensor, "destroy"):
-                    sensor.destroy()
-                    sensor._is_built = False
+                sensor.destroy()
+                sensor._is_built = False
 
     def reset(self, envs_idx=None):
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)

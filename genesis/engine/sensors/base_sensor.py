@@ -114,6 +114,15 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         )
         self._shared_metadata.cache_sizes.append(self._cache_size)
 
+    def destroy(self) -> None:
+        """
+        Destroy the sensor.
+
+        This method is called by SensorManager when the scene is destroyed.
+        This should remove any references to the sensor from the shared metadata,
+        and clean up any resources associated with the sensor.
+        """
+
     @classmethod
     def reset(cls, shared_metadata: SharedSensorMetadataT, envs_idx):
         """
