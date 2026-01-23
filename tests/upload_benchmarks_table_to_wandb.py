@@ -109,7 +109,7 @@ def upload_results_to_wandb(
     print(f"\n✅ Upload complete: {uploaded_count} results processed, {skipped_count} skipped")
 
 
-def main():
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Upload benchmark results to W&B")
     parser.add_argument("--in-file", required=True, help="Path to results file")
     parser.add_argument(
@@ -123,10 +123,6 @@ def main():
         help="Metric field names to upload (e.g., max_mem_mb compile_time runtime_fps). If not specified, all numeric fields are uploaded.",
     )
     args = parser.parse_args()
-    return upload_results_to_wandb(
+    upload_results_to_wandb(
         run_prefix=args.run_prefix, results_file_path=args.in_file, project_name=args.project, metric_names=args.metrics
     )
-
-
-if __name__ == "__main__":
-    main()
