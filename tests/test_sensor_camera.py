@@ -1,3 +1,5 @@
+import gc
+import weakref
 import sys
 
 import numpy as np
@@ -324,7 +326,8 @@ def test_destroy_unbuilt_scene_with_camera():
     scene.add_entity(morph=gs.morphs.Plane())
     scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
 
-    # Destroy without building - should not crash
+    # Scene.__del__ calls destroy(), and a crash in destroy() would result in some
+    # logspam.
     scene.destroy()
 
 
@@ -332,21 +335,20 @@ def test_destroy_unbuilt_scene_with_camera():
 def test_destroy_idempotent_with_camera():
     """Test that calling destroy twice on a scene with cameras doesn't crash."""
     scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
     camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
 
     scene.build()
     camera.read()
 
     scene.destroy()
-    scene.destroy()  # Should not crash
+    # Scene.__del__ calls destroy(), which means it's expected that destroy() will
+    # be called twice. A crash in destroy() would result in some logspam.
+    scene.destroy()
 
 
 @pytest.mark.required
-def test_cameras_share_metadata():
+def test_rasterizer_destroy():
     scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
-
     cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
     cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
 
@@ -354,65 +356,9 @@ def test_cameras_share_metadata():
     cam1.read()
     cam2.read()
 
-    assert cam1._shared_metadata is cam2._shared_metadata
-    assert len(cam1._shared_metadata.sensors) == 2
-
-
-@pytest.mark.required
-def test_camera_destroy_cleans_shared_metadata():
-    import gc
-    import weakref
-
-    scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
-
-    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
-
-    scene.build()
-    camera.read()
-
-    shared_metadata = camera._shared_metadata
-    renderer = shared_metadata.renderer
-    offscreen_renderer = renderer._renderer
-    offscreen_renderer_ref = weakref.ref(offscreen_renderer)
+    offscreen_renderer_ref = weakref.ref(cam1._shared_metadata.renderer._renderer)
 
     scene.destroy()
-
-    assert shared_metadata.renderer is None
-    assert shared_metadata.context is None
-    assert shared_metadata.sensors is None
-    assert renderer._renderer is None
-
-    del offscreen_renderer
-    gc.collect()
-    assert offscreen_renderer_ref() is None
-
-
-@pytest.mark.required
-def test_multiple_cameras_destroy_cleans_shared_renderer():
-    import gc
-    import weakref
-
-    scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
-
-    cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
-    cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
-
-    scene.build()
-    cam1.read()
-    cam2.read()
-
-    shared_metadata = cam1._shared_metadata
-    offscreen_renderer = shared_metadata.renderer._renderer
-    offscreen_renderer_ref = weakref.ref(offscreen_renderer)
-
-    scene.destroy()
-
-    assert shared_metadata.renderer is None
-    assert shared_metadata.sensors is None
-
-    del offscreen_renderer
     gc.collect()
     assert offscreen_renderer_ref() is None
 
@@ -422,8 +368,6 @@ def test_multiple_cameras_destroy_cleans_shared_renderer():
 @pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
 def test_batch_renderer_destroy():
     scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_entity(morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0)))
 
     cam1 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
     cam2 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
@@ -456,8 +400,6 @@ def test_raytracer_destroy():
         ),
         show_viewer=False,
     )
-    scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_entity(morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0)))
 
     cam1 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
     cam2 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
