@@ -649,10 +649,13 @@ class RaytracerCameraSensor(BaseCameraSensor):
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
     def destroy(self):
-        if not self._shared_metadata.sensors:
-            return
-        self._shared_metadata.sensors.remove(self)
-        # FIXME: there are probably other cleanups that should be done here, if this is the last sensor.
+        if self in self._shared_metadata.sensors:
+            self._shared_metadata.sensors.remove(self)
+            if not self._shared_metadata.sensors:
+                # TODO: consider explicit reference counting on the renderer rather than relying on
+                # garbage collection.
+                self._shared_metadata.renderer = None
+            del self._shared_metadata.image_cache[self._idx]
 
     @gs.assert_built
     def move_to_attach(self):
@@ -777,10 +780,14 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
     def destroy(self):
-        if not self._shared_metadata.sensors:
-            return
-        self._shared_metadata.sensors.remove(self)
-        # FIXME: there are probably other cleanups that should be done here, if this is the last sensor.
+        if self in self._shared_metadata.sensors:
+            self._shared_metadata.sensors.remove(self)
+            if not self._shared_metadata.sensors:
+                # TODO: consider explicit reference counting on the renderer rather than relying on
+                # garbage collection.
+                self._shared_metadata.renderer = None
+                self._shared_metadata.visualizer_wrapper = None
+            del self._shared_metadata.image_cache[self._idx]
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
