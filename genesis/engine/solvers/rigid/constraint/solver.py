@@ -1555,6 +1555,8 @@ def func_cholesky_factor_direct_tiled(
         i_b = i // BLOCK_DIM
         if i_b >= _B:
             continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
 
         # Padding +1 to avoid memory bank conflicts that would cause access serialization
         H = ti.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.ti_float)
