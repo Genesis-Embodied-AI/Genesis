@@ -23,14 +23,6 @@ def main():
             camera_lookat=(0, 0.0, 1.5),
             max_FPS=60,
         ),
-        rigid_options=gs.options.RigidOptions(
-            use_contact_island=True,
-            use_hibernation=True,
-            # Relaxed thresholds for stacked structures - contact forces create
-            # constant small accelerations that prevent hibernation with defaults
-            hibernation_thresh_vel=1e-2,
-            hibernation_thresh_acc=0.2,
-        ),
         show_viewer=args.vis,
     )
 
@@ -53,18 +45,8 @@ def main():
 
     scene.build()
 
-    solver = scene.sim.rigid_solver
     for i in range(args.steps):
         scene.step()
-        # hibernated = solver.entities_state.hibernated.to_numpy().mean()
-        # vel = solver.dofs_state.vel.to_numpy().mean()
-        # acc = solver.dofs_state.acc.to_numpy().mean()
-        # print(f"Acc: {np.abs(acc).max()}")
-        # print(f"Vel: {np.abs(vel).max()}")
-        # if hibernated > 0.0:
-        #     print(f"Hibernated: {hibernated}")
-        #     from IPython import embed; embed()
-        #     break
 
 
 if __name__ == "__main__":

@@ -4287,16 +4287,14 @@ def test_hibernation_and_contact_islands(backend, show_viewer):
         show_viewer=show_viewer,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Plane())
 
     # Two boxes placed separately on ground
     box1 = scene.add_entity(
         gs.morphs.Box(pos=(-0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
-        surface=gs.surfaces.Default(color=(1.0, 0.0, 0.0, 1.0)),
     )
     box2 = scene.add_entity(
         gs.morphs.Box(pos=(0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
-        surface=gs.surfaces.Default(color=(0.0, 0.0, 1.0, 1.0)),
     )
 
     scene.build()

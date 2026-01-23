@@ -113,7 +113,7 @@ class ContactIsland:
                 self.add_edge(link_a, link_b, i_b)
 
     @ti.kernel
-    def add_hiberanted_edges_to_islands(self):
+    def add_hibernated_edges_to_islands(self):
         _B = self.solver._B
         n_entities = self.solver.n_entities
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
@@ -121,12 +121,7 @@ class ContactIsland:
             for i_e in range(n_entities):
                 next_entity_idx = self.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
                 # Guard: validate next_entity_idx is within valid bounds
-                if (
-                    next_entity_idx != -1
-                    and next_entity_idx != i_e
-                    and next_entity_idx >= 0
-                    and next_entity_idx < n_entities
-                ):
+                if 0 <= next_entity_idx < n_entities and next_entity_idx != i_e:
                     any_link_a = self.solver.entities_info.link_start[i_e]
                     any_link_b = self.solver.entities_info.link_start[next_entity_idx]
                     self.add_edge(any_link_a, any_link_b, i_b)
@@ -134,7 +129,7 @@ class ContactIsland:
     def construct(self):
         self.clear()
         self.add_contact_edges_to_islands()
-        self.add_hiberanted_edges_to_islands()
+        self.add_hibernated_edges_to_islands()
         self.preprocess_island_and_map_entities_to_edges()
         self.construct_islands()
         self.postprocess_island_and_assign_contact_data()

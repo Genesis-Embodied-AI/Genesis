@@ -1242,6 +1242,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                 # Invariant check: ensure entity_id access won't exceed buffer
                 if entity_ref_start + entity_ref_n > contact_island_state.entity_id.shape[0]:
                     errno[i_b] = errno[i_b] | 0b00000000000000000000000000010000
+                    continue
 
                 for i_entity_ref_offset_ in range(entity_ref_n):
                     entity_ref = entity_ref_start + i_entity_ref_offset_

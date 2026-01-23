@@ -197,7 +197,8 @@ def kernel_wake_up_entities_by_links(
     for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_l = links_idx[i_l_]
-        i_e = links_info.entity_idx[i_l]
+        I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+        i_e = links_info.entity_idx[I_l]
 
         # Wake up the entity and all its components
         if entities_state.hibernated[i_e, i_b]:

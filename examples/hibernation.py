@@ -45,7 +45,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Plane())
 
     # Two boxes placed separately on ground
     box1 = scene.add_entity(
