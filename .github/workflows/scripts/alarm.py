@@ -161,8 +161,8 @@ def fmt_num(v, is_int: bool):
     - ints => displays as int
     - floats => displays to 2 decimal places
     """
-    if not math.isfinite(v):
-        return "∞"
+    if v != v:
+        return "NaN"
     return f"{int(v):,}" if is_int else f"{v:.2f}"
 
 
@@ -458,7 +458,7 @@ class Alarm:
                     value_ci95 = (
                         statistics.stdev(values_prev) / math.sqrt(len(values_prev)) * 1.96
                         if len(values_prev) > 1
-                        else math.inf
+                        else math.nan
                     )
                     stats_repr += f" ({fmt_num(value_ref, is_int)} ± {fmt_num(value_ci95, is_int)})"
                     if sign * delta < -self.metrics_tol[metric]:
