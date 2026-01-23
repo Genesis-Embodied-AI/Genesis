@@ -80,37 +80,33 @@ def merge_string_tuples(tuples: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
     return tuple(merged_keys)
 
 
-def sort_key(d: frozendict[str, Any], config_param_names: Iterable[str]) -> list[tuple[int, int | float | None]]:
-    """
-    sort key function that can be used to order
-    dictionaries of values. The sort key function returns
-    a list of tuples of (0|1, value | None), where the sequence of
-    (0|1, value) matches that of config_param_names and:
-    - only keys in config_param_names are considered in the sorting
-      (in the context of this script, this lets us ignore the values of
-      metrics during sorting)
-    - when a param_name is present in the dictionary, the tuple
-      contains (0, value), otherwise (1, None)
-
-    Since the resulting tuples will be used for sorting, the result
-    is that we will first sort the incoming dictionaries by the first param_name,
-    then the second, etc
-    - for a particular param_name, the dicts without that param_name will
-      be placed after the dicts with that param name, since 1 is after 0.
-    """
-    key_list = []
-    for col in config_param_names:
-        val = d.get(col)
-        key_list.append((val is None, val))
-    return key_list
-
-
 class SortKey:
     def __init__(self, config_param_names: Iterable[str]) -> None:
-        self.config_param_name = config_param_names
+        self.config_param_names = config_param_names
 
     def __call__(self, d: frozendict[str, Any]) -> list[tuple[int, int | float | None]]:
-        return sort_key(config_param_names=self.config_param_name, d=d)
+        """
+        returns list of tuples that can be used to order
+        dictionaries of values. The sort key function returns
+        a list of tuples of (True|False, value | None), where the sequence of
+        (True|False, value) matches that of config_param_names and:
+        - only keys in config_param_names are considered in the sorting
+        (in the context of this script, this lets us ignore the values of
+        metrics during sorting)
+        - when a param_name is present in the dictionary, the tuple
+        contains (False, value), otherwise (True, None)
+
+        Since the resulting tuples will be used for sorting, the result
+        is that we will first sort the incoming dictionaries by the first param_name,
+        then the second, etc
+        - for a particular param_name, the dicts without that param_name will
+        be placed after the dicts with that param name, since True is after False.
+        """
+        key_list = []
+        for col in self.config_param_names:
+            val = d.get(col)
+            key_list.append((val is None, val))
+        return key_list
 
 
 def parse_results_file(
