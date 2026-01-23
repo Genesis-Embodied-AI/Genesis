@@ -376,11 +376,6 @@ class Scene(RBC):
         if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.USD, gs.morphs.Terrain)):
             if not isinstance(material, (gs.materials.Rigid, gs.materials.Hybrid)):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph_for_checks}.")
-            if isinstance(material, gs.materials.Hybrid):
-                # TODO: there should be a way to distinguish between custom overrided rho and default rho
-                material._material_rigid._rho = 1000.0
-            else:
-                material._rho = 1000.0  # Default density for URDF, MJCF and USD
 
         if surface.double_sided is None:
             surface.double_sided = isinstance(material, gs.materials.PBD.Cloth)

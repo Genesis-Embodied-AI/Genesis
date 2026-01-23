@@ -116,10 +116,6 @@ render = [
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core==25.11",
-    # import stubs to static code analysis
-    "types-usd==24.5.2",
-    # Used for USD baking
-    "omniverse-kit",
 ]
 
 [project.scripts]

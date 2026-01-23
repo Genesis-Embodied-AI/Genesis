@@ -267,7 +267,7 @@ def build_mjcf_scene(xml_path: str, scale: float):
     # Create MJCF scene
     mjcf_scene = gs.Scene()
     mjcf_morph = gs.morphs.MJCF(file=xml_path, scale=scale)
-    mjcf_scene.add_entity(mjcf_morph)
+    mjcf_scene.add_entity(mjcf_morph, material=gs.materials.Rigid(rho=1000.0))
     mjcf_scene.build()
     return mjcf_scene
 
@@ -305,9 +305,9 @@ def build_usd_scene(
         use_bake_cache=False,
     )
     if is_stage:
-        usd_scene.add_stage(usd_morph, vis_mode=vis_mode)
+        usd_scene.add_stage(usd_morph, vis_mode=vis_mode, material=gs.materials.Rigid(rho=1000.0))
     else:
-        usd_scene.add_entity(usd_morph, vis_mode=vis_mode)
+        usd_scene.add_entity(usd_morph, vis_mode=vis_mode, material=gs.materials.Rigid(rho=1000.0))
     usd_scene.build()
     return usd_scene
 
@@ -334,7 +334,7 @@ def build_mesh_scene(mesh_file: str, scale: float):
         euler=(-90, 0, 0),
         group_by_material=False,
     )
-    mesh_scene.add_entity(mesh_morph)
+    mesh_scene.add_entity(mesh_morph, material=gs.materials.Rigid(rho=1000.0))
     mesh_scene.build()
     return mesh_scene
 

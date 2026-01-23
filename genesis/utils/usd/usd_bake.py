@@ -11,6 +11,16 @@ def omni_bootstrap(device=0, log_level="warning"):
     app = omni.kit_app.KitApp()
     kit_dir = os.path.dirname(os.path.abspath(os.path.realpath(omni.kit_app.__file__)))
     kit_path = os.path.join(kit_dir, "apps", "omni.app.empty.kit")
+
+    omni_extensions = [
+        "omni.usd",
+        "omni.kit.material.library",
+        "omni.kit.viewport.utility",
+        "omni.kit.viewport.rtx",
+        "omni.kit.usd.collect",
+        "omni.replicator.core",
+        "omni.mdl.distill_and_bake",
+    ]
     app_args = [
         kit_path,
         "--/app/window/hideUi=True",
@@ -22,6 +32,8 @@ def omni_bootstrap(device=0, log_level="warning"):
         "--/app/python/interceptSysStdOutput=False",
         "--/app/python/logSysStdOutput=False",
         "--/app/settings/fabricDefaultStageFrameHistoryCount=3",
+        "--/exts/omni.kit.registry.nucleus/registries/0/name=kit/default",  # prioritize searching in Kit 107 'shared' extension registry
+        "--/exts/omni.kit.registry.nucleus/registries/0/url=https://ovextensionsprod.blob.core.windows.net/exts/kit/prod/107/shared",
         f"--/omni/log/level={log_level}",
         "--/log/file=",  # Empty string means no log file
         f"--/log/level={log_level}",
@@ -30,22 +42,10 @@ def omni_bootstrap(device=0, log_level="warning"):
         "--/renderer/active=rtx",
         "--/renderer/multiGpu/enabled=False",  # Avoids unnecessary GPU context initialization
         "--no-window",
-        "--portable",
-        "--enable",
-        "omni.usd",
-        "--enable",
-        "omni.kit.material.library",
-        "--enable",
-        "omni.kit.viewport.utility",
-        "--enable",
-        "omni.kit.viewport.rtx",
-        "--enable",
-        "omni.kit.usd.collect",
-        "--enable",
-        "omni.replicator.core",
-        "--enable",
-        "omni.mdl.distill_and_bake",
+        "--portable",  # TODO: set portable root to avoid extension conflicts
     ]
+    for extension in omni_extensions:
+        app_args += ["--enable", extension]
     app.startup(app_args)
     app.update()  # important
     return app

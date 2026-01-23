@@ -6,6 +6,7 @@ import subprocess
 import logging
 
 import numpy as np
+import torch
 from pxr import Usd, UsdShade, UsdPhysics, UsdGeom, Sdf
 
 import genesis as gs
@@ -19,15 +20,14 @@ from .usd_parser_utils import extract_scale
 try:
     import omni.kit_app
 
-    device, *_ = gs.utils.get_device(gs.cuda)
-    HAS_OMNIVERSE_KIT_SUPPORT = True
+    HAS_OMNIVERSE_KIT_SUPPORT = torch.cuda.is_available()
+    if not HAS_OMNIVERSE_KIT_SUPPORT:
+        gs.logger.warning("USD baking requires CUDA GPU. USD baking will be disabled.")
 except ImportError:
     gs.logger.warning(
-        "omniverse-kit not found. USD baking will be disabled. Please install it with `pip install omniverse-kit`."
+        "omniverse-kit not found. USD baking will be disabled. "
+        "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`."
     )
-    HAS_OMNIVERSE_KIT_SUPPORT = False
-except gs.GenesisException as e:
-    gs.logger.warning("USD baking requires CUDA GPU. USD baking will be disabled.")
     HAS_OMNIVERSE_KIT_SUPPORT = False
 
 
@@ -278,7 +278,11 @@ class UsdContext:
             if result.stderr:
                 gs.logger.warning(result.stderr)
         except (subprocess.CalledProcessError, OSError) as e:
-            gs.logger.warning(f"Baking process failed: {e} (Note that USD baking may only support Python 3.10 now.)")
+            gs.logger.warning(
+                f"Baking process failed: {e}. A few possible reasons:"
+                "\n\t1. The first launch of USD baking app will install some dependencies, which may cause Timeout."
+                "\n\t2. If you have multiple environments with different Python versions, omniverse-kit extensions may conflict between them."
+            )
 
         if os.path.exists(self._bake_stage_file):
             gs.logger.warning(f"USD materials baked to file {self._bake_stage_file}")
