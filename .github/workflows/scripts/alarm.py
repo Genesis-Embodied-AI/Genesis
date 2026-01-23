@@ -161,7 +161,7 @@ def fmt_num(v, is_int: bool):
     - ints => displays as int
     - floats => displays to 2 decimal places
     """
-    if v == math.inf:
+    if not math.isfinite(v):
         return "∞"
     return f"{int(v):,}" if is_int else f"{v:.2f}"
 
