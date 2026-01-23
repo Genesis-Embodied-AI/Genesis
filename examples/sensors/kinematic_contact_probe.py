@@ -96,7 +96,6 @@ def main():
 
     ########################## simulation loop ##########################
     steps = int(args.seconds / 0.01)
-    contact_detected = False
     n_probes = len(probe_positions)
 
     # give a sphere a small velocity in x
@@ -108,19 +107,14 @@ def main():
     print("The probes measure penetration along their normal direction (+z).")
     print("Watch for contact detection when the sphere lands.\n")
 
-    for i in range(steps):
+    for step in range(steps):
         scene.step()
 
-        # Read probe sensor data
         data = probe.read()
-
-        # Check for any contact (penetration > 0 for any probe)
-        # data.penetration has shape (n_probes,)
         penetrations = data.penetration
-        # print the coordinates of the probes that are in contact
-        for i in range(n_probes):
-            if penetrations[i] > 0:
-                print(f"Probe {i} is in contact at {probe_positions[i]}")
+        for p in range(n_probes):
+            if penetrations[p] > 0:
+                print(f"Step {step}: Probe {p} contact at {probe_positions[p]}")
     print("\n=== Simulation Complete ===")
 
 

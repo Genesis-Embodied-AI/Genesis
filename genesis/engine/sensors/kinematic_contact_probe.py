@@ -59,6 +59,7 @@ class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
     n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: torch.int32)
     sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: torch.int32)
+    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: torch.int32)
     total_n_probes: int = 0
 
 
@@ -106,6 +107,14 @@ class KinematicContactProbe(
         self._shared_metadata.sensor_cache_start = concat_with_tensor(
             self._shared_metadata.sensor_cache_start,
             torch.tensor([current_cache_start], dtype=torch.int32, device=gs.device),
+            expand=(1,),
+            dim=0,
+        )
+
+        current_probe_start = self._shared_metadata.total_n_probes
+        self._shared_metadata.sensor_probe_start = concat_with_tensor(
+            self._shared_metadata.sensor_probe_start,
+            torch.tensor([current_probe_start], dtype=torch.int32, device=gs.device),
             expand=(1,),
             dim=0,
         )
@@ -196,6 +205,7 @@ class KinematicContactProbe(
             conaffinities=shared_metadata.conaffinities.contiguous(),
             n_probes_per_sensor=shared_metadata.n_probes_per_sensor.contiguous(),
             sensor_cache_start=shared_metadata.sensor_cache_start.contiguous(),
+            sensor_probe_start=shared_metadata.sensor_probe_start.contiguous(),
             n_geoms=n_geoms,
             geoms_state=solver.geoms_state,
             geoms_info=solver.geoms_info,
@@ -398,6 +408,7 @@ def _kernel_kinematic_contact_probe_support_query(
     conaffinities: ti.types.ndarray(),
     n_probes_per_sensor: ti.types.ndarray(),
     sensor_cache_start: ti.types.ndarray(),
+    sensor_probe_start: ti.types.ndarray(),
     n_geoms: ti.i32,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -493,23 +504,17 @@ def _kernel_kinematic_contact_probe_support_query(
             normal_local = probe_normal_local
             force_local = stiff * max_abs_penetration * probe_normal_local
 
-        probe_idx_in_sensor = gs.ti_int(0)
-        probe_start = gs.ti_int(0)
-        for s in range(i_s):
-            probe_start += n_probes_per_sensor[s]
-        probe_idx_in_sensor = i_p - probe_start
-
+        probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
         cache_start = sensor_cache_start[i_s]
-        p_idx = probe_idx_in_sensor
 
-        output[i_b, cache_start + p_idx] = max_abs_penetration
-        output[i_b, cache_start + n_probes + p_idx * 3 + 0] = contact_pos_local[0]
-        output[i_b, cache_start + n_probes + p_idx * 3 + 1] = contact_pos_local[1]
-        output[i_b, cache_start + n_probes + p_idx * 3 + 2] = contact_pos_local[2]
-        output[i_b, cache_start + n_probes + n_probes * 3 + p_idx * 3 + 0] = normal_local[0]
-        output[i_b, cache_start + n_probes + n_probes * 3 + p_idx * 3 + 1] = normal_local[1]
-        output[i_b, cache_start + n_probes + n_probes * 3 + p_idx * 3 + 2] = normal_local[2]
-        output[i_b, cache_start + n_probes + n_probes * 6 + p_idx * 3 + 0] = force_local[0]
-        output[i_b, cache_start + n_probes + n_probes * 6 + p_idx * 3 + 1] = force_local[1]
-        output[i_b, cache_start + n_probes + n_probes * 6 + p_idx * 3 + 2] = force_local[2]
+        output[i_b, cache_start + probe_idx_in_sensor] = max_abs_penetration
+        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = contact_pos_local[0]
+        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = contact_pos_local[1]
+        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = contact_pos_local[2]
+        output[i_b, cache_start + n_probes + n_probes * 3 + probe_idx_in_sensor * 3 + 0] = normal_local[0]
+        output[i_b, cache_start + n_probes + n_probes * 3 + probe_idx_in_sensor * 3 + 1] = normal_local[1]
+        output[i_b, cache_start + n_probes + n_probes * 3 + probe_idx_in_sensor * 3 + 2] = normal_local[2]
+        output[i_b, cache_start + n_probes + n_probes * 6 + probe_idx_in_sensor * 3 + 0] = force_local[0]
+        output[i_b, cache_start + n_probes + n_probes * 6 + probe_idx_in_sensor * 3 + 1] = force_local[1]
+        output[i_b, cache_start + n_probes + n_probes * 6 + probe_idx_in_sensor * 3 + 2] = force_local[2]

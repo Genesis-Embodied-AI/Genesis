@@ -222,6 +222,22 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         Collision type bitmask. Default: 1.
     conaffinity : int
         Collision affinity bitmask. Default: 0x7FFFFFFF.
+
+    Returns (from read())
+    ---------------------
+    KinematicContactProbeData NamedTuple with fields:
+        penetration : torch.Tensor
+            Shape (n_envs, n_probes) or (n_probes,). Penetration depth in meters.
+            Positive when contact detected, zero otherwise.
+        position : torch.Tensor
+            Shape (n_envs, n_probes, 3) or (n_probes, 3). Contact point in link-local frame.
+            The point on the contacting geom closest to the probe (in the -normal direction).
+        normal : torch.Tensor
+            Shape (n_envs, n_probes, 3) or (n_probes, 3). Contact normal in link-local frame.
+            Same as probe_local_normal when contact detected, zero otherwise.
+        force : torch.Tensor
+            Shape (n_envs, n_probes, 3) or (n_probes, 3). Estimated force in link-local frame.
+            Computed as stiffness * penetration * probe_normal (NOT physical, see above).
     """
 
     probe_local_pos: list[Tuple3FType] = [(0.0, 0.0, 0.0)]
