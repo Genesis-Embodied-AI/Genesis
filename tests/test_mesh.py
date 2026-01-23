@@ -6,8 +6,9 @@ import pytest
 import trimesh
 
 import genesis as gs
+import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
-import genesis.utils.mesh as mesh_utils
+import genesis.utils.mesh as mu
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
@@ -420,7 +421,7 @@ def test_obj_morphes_yup(show_viewer):
             file_meshes_are_zup=False,
         ),
     )
-    glb_mesh_y = glb_y.vgeoms[0].vmesh
+    glb_geom_y = glb_y.vgeoms[0]
     glb_z = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_z.glb",
@@ -429,7 +430,7 @@ def test_obj_morphes_yup(show_viewer):
             file_meshes_are_zup=True,
         ),
     )
-    glb_mesh_z = glb_z.vgeoms[0].vmesh
+    glb_geom_z = glb_z.vgeoms[0]
     stl_y = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.stl",
@@ -438,7 +439,7 @@ def test_obj_morphes_yup(show_viewer):
             file_meshes_are_zup=False,
         ),
     )
-    stl_mesh_y = stl_y.vgeoms[0].vmesh
+    stl_geom_y = stl_y.vgeoms[0]
     stl_z = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_z_y.stl",
@@ -446,7 +447,7 @@ def test_obj_morphes_yup(show_viewer):
             fixed=True,
         ),
     )
-    stl_mesh_z = stl_z.vgeoms[0].vmesh
+    stl_geom_z = stl_z.vgeoms[0]
     obj_y = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.obj",
@@ -455,7 +456,7 @@ def test_obj_morphes_yup(show_viewer):
             file_meshes_are_zup=False,
         ),
     )
-    obj_mesh_y = obj_y.vgeoms[0].vmesh
+    obj_geom_y = obj_y.vgeoms[0]
     obj_z = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_z_y.obj",
@@ -463,19 +464,21 @@ def test_obj_morphes_yup(show_viewer):
             fixed=True,
         ),
     )
-    obj_mesh_z = obj_z.vgeoms[0].vmesh
+    obj_geom_z = obj_z.vgeoms[0]
 
     if show_viewer:
         scene.build()
 
-    assert not glb_mesh_y.metadata["imported_as_zup"]
-    assert glb_mesh_z.metadata["imported_as_zup"]
-    assert not stl_mesh_y.metadata["imported_as_zup"]
-    assert stl_mesh_z.metadata["imported_as_zup"]
-    assert not obj_mesh_y.metadata["imported_as_zup"]
-    assert obj_mesh_z.metadata["imported_as_zup"]
+    assert not glb_geom_y.vmesh.metadata["imported_as_zup"]
+    assert not glb_geom_z.vmesh.metadata["imported_as_zup"]
+    assert not stl_geom_y.vmesh.metadata["imported_as_zup"]
+    assert stl_geom_z.vmesh.metadata["imported_as_zup"]
+    assert not obj_geom_y.vmesh.metadata["imported_as_zup"]
+    assert obj_geom_z.vmesh.metadata["imported_as_zup"]
 
-    for mesh in (glb_mesh_y, glb_mesh_z, stl_mesh_y, stl_mesh_z, obj_mesh_y, obj_mesh_z):
+    for geom in (glb_geom_y, glb_geom_z, stl_geom_y, stl_geom_z, obj_geom_y, obj_geom_z):
+        mesh = geom.vmesh.copy()
+        mesh.apply_transform(gu.trans_quat_to_T(geom.link.pos, geom.link.quat))
         assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
 
 
@@ -632,25 +635,25 @@ def test_convex_decompose_cache(monkeypatch):
 
     # Monkeypatch the get_cvx_path function to track the cache path
     seen_paths = []
-    real_get_cvx_path = mesh_utils.get_cvx_path
+    real_get_cvx_path = mu.get_cvx_path
 
     def wrapped_get_cvx_path(verts, faces, opts):
         path = real_get_cvx_path(verts, faces, opts)
         seen_paths.append(path)
         return path
 
-    monkeypatch.setattr(mesh_utils, "get_cvx_path", wrapped_get_cvx_path)
+    monkeypatch.setattr(mu, "get_cvx_path", wrapped_get_cvx_path)
 
     # Monkeypatch the convex_decompose function to track the convex decomposition result
     seen_results = []
-    real_convex_decompose = mesh_utils.convex_decompose
+    real_convex_decompose = mu.convex_decompose
 
     def wrapped_convex_decompose(mesh, opts):
         result = real_convex_decompose(mesh, opts)
         seen_results.append(result)
         return result
 
-    monkeypatch.setattr(mesh_utils, "convex_decompose", wrapped_convex_decompose)
+    monkeypatch.setattr(mu, "convex_decompose", wrapped_convex_decompose)
 
     # First scene building to create the cache
     scene = gs.Scene(
