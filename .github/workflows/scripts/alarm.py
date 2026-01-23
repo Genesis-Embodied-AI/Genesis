@@ -80,9 +80,9 @@ def merge_string_tuples(tuples: tuple[tuple[str, ...], ...]) -> tuple[str, ...]:
     return tuple(merged_keys)
 
 
-def build_sort_key_fn(config_param_names: Iterable[str]) -> Callable:
+def sort_key(d: frozendict[str, Any], config_param_names: Iterable[str]) -> list[tuple[int, int | float | None]]:
     """
-    Builds a sort key function that can be used to order
+    sort key function that can be used to order
     dictionaries of values. The sort key function returns
     a list of tuples of (0|1, value | None), where the sequence of
     (0|1, value) matches that of config_param_names and:
@@ -98,16 +98,19 @@ def build_sort_key_fn(config_param_names: Iterable[str]) -> Callable:
     - for a particular param_name, the dicts without that param_name will
       be placed after the dicts with that param name, since 1 is after 0.
     """
+    key_list = []
+    for col in config_param_names:
+        val = d.get(col)
+        key_list.append((int(val is None), val))
+    return key_list
 
-    def sort_key(d: dict[str, Any]):
-        nonlocal config_param_names
-        key_list = []
-        for col in config_param_names:
-            val = d.get(col)
-            key_list.append((int(val is None), val))
-        return key_list
 
-    return sort_key
+class SortKey:
+    def __init__(self, config_param_names: Iterable[str]) -> None:
+        self.config_param_name = config_param_names
+
+    def __call__(self, d: frozendict[str, Any]) -> list[tuple[int, int | float | None]]:
+        return sort_key(config_param_names=self.config_param_name, d=d)
 
 
 def parse_results_file(
@@ -517,7 +520,7 @@ class Alarm:
 
         row_data = {}
         for config_params_fdict in sorted(
-            benchmark_run_under_test.results.keys(), key=build_sort_key_fn(config_param_names=config_param_names)
+            benchmark_run_under_test.results.keys(), key=SortKey(config_param_names=config_param_names)
         ):
             value_cur = benchmark_run_under_test.results[config_params_fdict][metric]
             is_int = isinstance(value_cur, int) or value_cur.is_integer()
