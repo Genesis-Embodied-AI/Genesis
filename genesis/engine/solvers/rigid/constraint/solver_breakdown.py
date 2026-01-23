@@ -61,6 +61,8 @@ def _kernel_update_constraint(
                 cost=constraint_state.cost,
                 dofs_state=dofs_state,
                 constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
