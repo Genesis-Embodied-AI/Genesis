@@ -295,11 +295,6 @@ class BenchmarkRunUnderTest:
         self.config_param_names = merge_string_tuples(tuple((tuple(kv.keys())) for kv in self.results.keys()))
 
 
-@dataclasses.dataclass
-class Table:
-    markdown_rows: list[str]
-
-
 class Alarm:
     def __init__(self, args: argparse.Namespace) -> None:
         self.MAX_VALID_REVISIONS = args.max_valid_revisions
@@ -362,7 +357,7 @@ class Alarm:
         )
 
         reg_found, alert_found = False, False
-        table_by_metric_name: dict[str, Table] = {}
+        table_by_metric_name: dict[str, list[str]] = {}
         reg_found, alert_found = False, False
         for metric, alias, sign, results_under_test_, records_by_commit_hash_ in (
             (self.metric_runtime_fps, "FPS", 1, results_under_test_speed, speed_records_by_commit_hash),
@@ -394,13 +389,13 @@ class Alarm:
                 f"Thresholds: {thr_repr}",
                 "",
                 "### Runtime FPS",
-                *table_by_metric_name[self.metric_runtime_fps].markdown_rows,
+                *table_by_metric_name[self.metric_runtime_fps],
                 "",
                 "### Compile Time",
-                *table_by_metric_name[self.metric_compile_time].markdown_rows,
+                *table_by_metric_name[self.metric_compile_time],
                 "",
                 "### Memory usage",
-                *table_by_metric_name[self.metric_max_mem_mb].markdown_rows,
+                *table_by_metric_name[self.metric_max_mem_mb],
                 "",
                 f"- (*1) last: last commit on main, mean/std: stats over commit hashes {self.MAX_VALID_REVISIONS} commits if available.",
                 "- (*2) Δ: relative difference between PR and last commit on main, i.e. (PR - main) / main * 100%.",
@@ -501,7 +496,7 @@ class Alarm:
         benchmark_run_under_test: BenchmarkRunUnderTest,
         records_by_commit_hash: dict[str, Any],
         sign: int,
-    ) -> tuple[Table, bool, bool]:
+    ) -> tuple[list[str], bool, bool]:
         # together these rows contain the text of the markdwon
         markdown_rows = []
         rows = []
@@ -597,7 +592,7 @@ class Alarm:
             for rec in rows:
                 w.writerow(rec)
 
-        return Table(markdown_rows=[header, align] + markdown_rows + baseline_block), reg_found, alert_found
+        return [header, align] + markdown_rows + baseline_block, reg_found, alert_found
 
 
 def main() -> int:
