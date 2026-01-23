@@ -870,3 +870,89 @@ def test_kinematic_contact_probe_multi_probe(show_viewer, tol, n_envs):
     assert (data.penetration[..., 0] > 0.0).all()
     assert (data.penetration[..., 1] > 0.0).all()
     assert_allclose(data.penetration[..., 2], 0.0, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_kinematic_contact_probe_multiple_sensors_different_probes(show_viewer, tol, n_envs):
+    """Test multiple sensors with different numbers of probes each."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+
+    mount = scene.add_entity(gs.morphs.Sphere(radius=0.05, pos=(0.0, 0.0, 0.1), fixed=True, collision=False))
+
+    # Sensor 1: 2 probes
+    probe1 = scene.add_sensor(
+        gs.sensors.KinematicContactProbe(
+            entity_idx=mount.idx,
+            probe_local_pos=[(0.0, 0.0, -0.11), (0.1, 0.0, -0.11)],
+            probe_local_normal=[(0.0, 0.0, 1.0)] * 2,
+            radius=0.02,
+            stiffness=1000.0,
+        )
+    )
+
+    # Sensor 2: 4 probes
+    probe2 = scene.add_sensor(
+        gs.sensors.KinematicContactProbe(
+            entity_idx=mount.idx,
+            probe_local_pos=[(0.0, 0.0, -0.11), (0.1, 0.0, -0.11), (0.0, 0.1, -0.11), (0.0, 0.0, 0.0)],
+            probe_local_normal=[(0.0, 0.0, 1.0)] * 4,
+            radius=0.02,
+            stiffness=2000.0,
+        )
+    )
+
+    # Sensor 3: 1 probe
+    probe3 = scene.add_sensor(
+        gs.sensors.KinematicContactProbe(
+            entity_idx=mount.idx,
+            probe_local_pos=[(0.0, 0.0, -0.11)],
+            probe_local_normal=[(0.0, 0.0, 1.0)],
+            radius=0.02,
+            stiffness=500.0,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    # Verify shapes
+    data1 = probe1.read()
+    data2 = probe2.read()
+    data3 = probe3.read()
+
+    if n_envs == 0:
+        assert data1.penetration.shape == (2,)
+        assert data2.penetration.shape == (4,)
+        assert data3.penetration.shape == (1,)
+        assert data1.position.shape == (2, 3)
+        assert data2.position.shape == (4, 3)
+        assert data3.position.shape == (1, 3)
+    else:
+        assert data1.penetration.shape == (n_envs, 2)
+        assert data2.penetration.shape == (n_envs, 4)
+        assert data3.penetration.shape == (n_envs, 1)
+        assert data1.position.shape == (n_envs, 2, 3)
+        assert data2.position.shape == (n_envs, 4, 3)
+        assert data3.position.shape == (n_envs, 1, 3)
+
+    # Verify contact detection
+    assert (data1.penetration[..., 0] > 0.0).all()
+    assert (data1.penetration[..., 1] > 0.0).all()
+    assert (data2.penetration[..., 0] > 0.0).all()
+    assert (data2.penetration[..., 1] > 0.0).all()
+    assert (data2.penetration[..., 2] > 0.0).all()
+    assert_allclose(data2.penetration[..., 3], 0.0, tol=tol)  # Above plane
+    assert (data3.penetration[..., 0] > 0.0).all()
+
+    # Verify different stiffness produces different forces
+    force1_mag = torch.norm(data1.force[..., 0, :], dim=-1)
+    force2_mag = torch.norm(data2.force[..., 0, :], dim=-1)
+    force3_mag = torch.norm(data3.force[..., 0, :], dim=-1)
+    assert (force2_mag > force1_mag).all()  # stiffness 2000 > 1000
+    assert (force1_mag > force3_mag).all()  # stiffness 1000 > 500

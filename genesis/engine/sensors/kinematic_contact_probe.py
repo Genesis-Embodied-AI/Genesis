@@ -41,7 +41,7 @@ class KinematicContactProbeData(NamedTuple):
     penetration: torch.Tensor  # (n_envs, n_probes) or (n_probes,) - depth in meters (0 if no contact)
     position: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - contact position in link frame
     normal: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - contact normal in link frame
-    force: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - F = stiffness * penetration * probe_normal
+    force: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - estimated force (not physical, see options)
 
 
 @dataclass

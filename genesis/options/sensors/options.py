@@ -183,42 +183,45 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
 
 class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
-    Kinematic contact probe that detects contact information for virtual sensing points attached to a rigid link.
+    Kinematic contact probe for detecting contact without affecting physics simulation.
 
-    The probe performs support-function-based contact queries without affecting the physics simulation.
-    It returns penetration depth, position, normal, and estimated force for each probe point.
+    This is a purely kinematic sensor that queries geometric proximity using support functions.
+    It does NOT use the simulator's actual contact model - it provides independent contact
+    measurements for applications like tactile sensing on robot fingertips.
 
-    Multiple probe points are defined per sensor by providing lists of positions and normals.
-    The output shape is (n_envs, n_probes) for scalar fields and (n_envs, n_probes, 3) for vector fields.
+    Mechanism
+    ---------
+    For each probe, the sensor:
+    1. Transforms probe_pos and probe_normal from link-local to world frame
+    2. For each nearby geom, computes support point in direction -probe_normal
+       (the point on the geom furthest in the opposite direction of the probe normal)
+    3. Checks if the support point falls within the probe's sensing radius
+    4. Computes penetration = dot(support_pos - probe_pos, probe_normal)
 
-    Penetration is computed as: dot(support_pos - probe_pos, probe_normal), measuring how far
-    objects penetrate into the probe's tangent plane.
+    The penetration measures how far the geom's closest point (in the -normal direction)
+    penetrates past the probe's tangent plane. Positive values indicate contact.
+
+    Force Estimation (Not Physical)
+    -------------------------------
+    The returned "force" is a user-defined estimate: F = stiffness * penetration * probe_normal.
+    This is NOT derived from the simulator's contact solver. Genesis uses impulse-based contact
+    resolution, not a mass-spring model. The stiffness parameter is purely for user convenience
+    to convert penetration depth into a force-like quantity for downstream applications.
 
     Parameters
     ----------
     probe_local_pos : list[tuple[float, float, float]]
-        The probe positions in the link-local frame. A list of (x, y, z) tuples, one per probe.
+        Probe positions in link-local frame. One (x, y, z) tuple per probe.
     probe_local_normal : list[tuple[float, float, float]]
-        The probe sensing directions in link-local frame. Penetration is measured along this axis.
-        Must have the same length as probe_local_pos.
-        Defaults to [(0, 0, 1)] - single probe sensing upward in the link's z-direction.
+        Probe sensing directions in link-local frame. Penetration is measured along this axis.
     radius : float
-        The radius used for AABB broadphase filtering in meters. Defaults to 0.005.
+        Sensing radius in meters. Objects within this distance are detected. Default: 0.005.
     stiffness : float
-        The stiffness coefficient for force estimation (F = stiffness * penetration * probe_normal).
-        Defaults to 1000.0.
+        User-defined coefficient for force estimation. Default: 1000.0.
     contype : int
-        Collision type bitmask for the probe. Defaults to 1.
-        The probe will detect a geom if (geom.contype & probe.conaffinity) != 0
-        AND (probe.contype & geom.conaffinity) != 0.
+        Collision type bitmask. Default: 1.
     conaffinity : int
-        Collision affinity bitmask for the probe. Defaults to 0x7FFFFFFF (all bits set except sign bit).
-        The probe will detect a geom if (geom.contype & probe.conaffinity) != 0
-        AND (probe.contype & geom.conaffinity) != 0.
-    debug_sphere_color : tuple[float, float, float, float], optional
-        The rgba color of the debug sensing sphere (no contact). Defaults to (1.0, 0.5, 0.0, 0.5).
-    debug_contact_color : tuple[float, float, float, float], optional
-        The rgba color of the debug sphere when in contact. Defaults to (1.0, 0.0, 0.0, 0.8).
+        Collision affinity bitmask. Default: 0x7FFFFFFF.
     """
 
     probe_local_pos: list[Tuple3FType] = [(0.0, 0.0, 0.0)]
