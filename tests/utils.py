@@ -1,6 +1,7 @@
-import platform
 import io
+import numbers
 import os
+import platform
 import re
 import subprocess
 import time
@@ -8,6 +9,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from functools import cache
 from itertools import chain
 from pathlib import Path
@@ -1055,3 +1057,15 @@ def rgb_array_to_png_bytes(rgb_arr: np.ndarray | torch.Tensor) -> bytes:
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def pprint_oneline(data, delimiter, digits=None):
+    msg_items = []
+    for key, value in data.items():
+        if isinstance(value, Enum):
+            value = value.name
+        if digits is not None and isinstance(value, (numbers.Real, np.floating)):
+            value = f"{value:.{digits}f}"
+        msg_item = "=".join((key, str(value)))
+        msg_items.append(msg_item)
+    return delimiter.join(msg_items)
