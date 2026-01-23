@@ -66,38 +66,21 @@ jobs:
           WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
           WANDB_ENTITY: genesis-ai-company
           WANDB_SILENT: "true"
-
-          # --- Parameters ---
-          MAX_VALID_REVISIONS: 5
-          MAX_FETCH_REVISIONS: 40
-          RUNTIME_FPS_REGRESSION_TOLERANCE_PCT: 8
-          COMPILE_TIME_REGRESSION_TOLERANCE_PCT: 16
-          MEM_REGRESSION_TOLERANCE_PCT: 10
-
-          # Input/Output paths
-          SPEED_ARTIFACTS_DIR: ${{ steps.dl_speed.outputs.download-path }}
-          MEM_ARTIFACTS_DIR: ${{ steps.dl_mem.outputs.download-path }}
-          CHECK_BODY_PATH: check_output.md
-          CSV_RUNTIME_FPS_PATH: runtime_fps.csv
-          CSV_COMPILE_TIME_PATH: compile_time.csv
-          CSV_MEM_PATH: mem.csv
-          EXIT_CODE_REGRESSION: 42
-          EXIT_CODE_ALERT: 43
         run: |
           python .github/workflows/scripts/alarm.py \
-            --speed-artifacts-dir "${SPEED_ARTIFACTS_DIR}" \
-            --mem-artifacts-dir "${MEM_ARTIFACTS_DIR}" \
-            --max-valid-revisions "${MAX_VALID_REVISIONS}" \
-            --max-fetch-revisions "${MAX_FETCH_REVISIONS}" \
-            --runtime-fps-regression-tolerance-pct "${RUNTIME_FPS_REGRESSION_TOLERANCE_PCT}" \
-            --compile-time-regression-tolerance-pct "${COMPILE_TIME_REGRESSION_TOLERANCE_PCT}" \
-            --mem-regression-tolerance-pct "${MEM_REGRESSION_TOLERANCE_PCT}" \
-            --csv-runtime-fps-path "${CSV_RUNTIME_FPS_PATH}" \
-            --csv-compile-time-path "${CSV_COMPILE_TIME_PATH}" \
-            --csv-mem-path "${CSV_MEM_PATH}" \
-            --check-body-path "${CHECK_BODY_PATH}" \
-            --exit-code-regression "${EXIT_CODE_REGRESSION}" \
-            --exit-code-alert "${EXIT_CODE_ALERT}"
+            --speed-artifacts-dir "${{ steps.dl_speed.outputs.download-path }}" \
+            --mem-artifacts-dir "${{ steps.dl_mem.outputs.download-path }}" \
+            --max-valid-revisions "5" \
+            --max-fetch-revisions "40" \
+            --runtime-fps-regression-tolerance-pct "8" \
+            --compile-time-regression-tolerance-pct "16" \
+            --mem-regression-tolerance-pct "10" \
+            --csv-runtime-fps-path "runtime_fps.csv" \
+            --csv-compile-time-path "compile_time.csv" \
+            --csv-mem-path "mem.csv" \
+            --check-body-path "check_output.md" \
+            --exit-code-regression "42" \
+            --exit-code-alert "43"
       - name: Upload benchmark comparisons in CSV
         id: upload
         uses: actions/upload-artifact@v4
