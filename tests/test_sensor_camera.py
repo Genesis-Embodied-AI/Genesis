@@ -368,7 +368,8 @@ def test_rasterizer_destroy():
 @pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
 def test_batch_renderer_destroy():
     scene = gs.Scene(show_viewer=False)
-
+    # FIXME: This test fails without any entities in the scene.
+    scene.add_entity(morph=gs.morphs.Plane())
     cam1 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
     cam2 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
 
