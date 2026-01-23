@@ -12,9 +12,8 @@ import numpy as np
 import genesis as gs
 
 
-@pytest.fixture(scope="function")
-def sph_scene(show_viewer):
-    """Fixture to create a basic SPH scene with regular sampler."""
+def create_sph_scene(show_viewer, particle_size=0.01):
+    """Create a basic SPH scene with regular sampler."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=4e-3,
@@ -23,12 +22,12 @@ def sph_scene(show_viewer):
         sph_options=gs.options.SPHOptions(
             lower_bound=(-0.5, -0.5, 0.0),
             upper_bound=(0.5, 0.5, 1),
-            particle_size=0.01,
+            particle_size=particle_size,
         ),
         show_viewer=show_viewer,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Plane(),
     )
 
@@ -47,6 +46,12 @@ def sph_scene(show_viewer):
     scene.build()
 
     return scene, liquid
+
+
+@pytest.fixture(scope="function")
+def sph_scene(show_viewer):
+    """Fixture to create a basic SPH scene with regular sampler."""
+    return create_sph_scene(show_viewer)
 
 
 def get_sph_density_pressure(scene, n_particles):
@@ -71,11 +76,13 @@ def get_sph_density_pressure(scene, n_particles):
     """
     sph_solver = scene.sph_solver
 
-    # Reorder particles and compute density (this happens in substep_pre_coupling)
+    # Reorder particles into spatial grid cells for efficient neighbor queries,
+    # then compute density. This mirrors what happens in substep_pre_coupling.
+    # We must reorder first because _kernel_compute_rho operates on particles_reordered.
     sph_solver._kernel_reorder_particles(0)
     sph_solver._kernel_compute_rho(0)
 
-    # Get density values from reordered particles
+    # Get density values from reordered particles (where _kernel_compute_rho stores results)
     densities = sph_solver.particles_reordered.rho.to_numpy()[:n_particles, 0]
 
     # Get material properties for pressure computation
@@ -201,24 +208,17 @@ def test_sph_simulation_stability_regular_sampler(sph_scene, tol):
     # Run simulation for a few steps
     num_steps = 5
     max_velocities = []
-
     for step in range(num_steps):
         scene.step()
-
-        # Get current state
         pos = liquid.get_particles_pos()
         vel = liquid.get_particles_vel()
-
-        # Check for NaN/Inf in positions
         assert not pos.isnan().any(), f"NaN values detected in positions at step {step}"
         assert not pos.isinf().any(), f"Inf values detected in positions at step {step}"
-
-        # Check for NaN/Inf in velocities
         assert not vel.isnan().any(), f"NaN values detected in velocities at step {step}"
         assert not vel.isinf().any(), f"Inf values detected in velocities at step {step}"
 
         # Track maximum velocity
-        max_vel = vel.norm(dim=-1).max().item()
+        max_vel = vel.norm(dim=-1).max()
         max_velocities.append(max_vel)
 
     # Maximum velocity should be bounded (not exploding)
@@ -232,7 +232,7 @@ def test_sph_simulation_stability_regular_sampler(sph_scene, tol):
     final_pos = liquid.get_particles_pos()
 
     # Check particles haven't moved too far (not exploding)
-    displacement = (final_pos - initial_pos).norm(dim=-1).max().item()
+    displacement = (final_pos - initial_pos).norm(dim=-1).max()
     assert displacement < 1.0, (
         f"Maximum displacement {displacement:.4f} is too large after {num_steps} steps. This may indicate instability."
     )
@@ -247,32 +247,7 @@ def test_sph_density_consistency_different_particle_sizes(show_viewer, particle_
     The relative density distribution (normalized by rho0) should be similar
     regardless of particle size, as the SPH kernel is scaled accordingly.
     """
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=4e-3,
-            substeps=10,
-        ),
-        sph_options=gs.options.SPHOptions(
-            lower_bound=(-0.5, -0.5, 0.0),
-            upper_bound=(0.5, 0.5, 1),
-            particle_size=particle_size,
-        ),
-        show_viewer=show_viewer,
-    )
-
-    plane = scene.add_entity(
-        morph=gs.morphs.Plane(),
-    )
-
-    liquid = scene.add_entity(
-        material=gs.materials.SPH.Liquid(sampler="regular"),
-        morph=gs.morphs.Box(
-            pos=(0.0, 0.0, 0.65),
-            size=(0.4, 0.4, 0.4),
-        ),
-    )
-
-    scene.build()
+    scene, _ = create_sph_scene(show_viewer, particle_size=particle_size)
 
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles

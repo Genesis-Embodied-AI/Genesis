@@ -32,7 +32,7 @@ plane = scene.add_entity(
 liquid = scene.add_entity(
     # viscous liquid
     # material=gs.materials.SPH.Liquid(mu=0.02, gamma=0.02),
-    material=gs.materials.SPH.Liquid(sampler="regular"),
+    material=gs.materials.SPH.Liquid(),
     morph=gs.morphs.Box(
         pos=(0.0, 0.0, 0.65),
         size=(0.4, 0.4, 0.4),
