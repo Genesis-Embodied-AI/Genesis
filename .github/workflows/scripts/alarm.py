@@ -103,11 +103,8 @@ def build_sort_key_fn(config_param_names: Iterable[str]) -> Callable:
         nonlocal config_param_names
         key_list = []
         for col in config_param_names:
-            if col in d:
-                val = d[col]
-                key_list.append((0, val))
-            else:
-                key_list.append((1, None))
+            val = d.get(col)
+            key_list.append((int(val is None), val))
         return key_list
 
     return sort_key
