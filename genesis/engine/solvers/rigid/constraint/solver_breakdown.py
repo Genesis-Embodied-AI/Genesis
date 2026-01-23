@@ -73,6 +73,10 @@ def _kernel_newton_only_nt_hessian_incremental(
     static_rigid_sim_config: ti.template(),
 ):
     """Step 4: Newton Hessian update (Newton only)"""
+    solver.func_hessian_direct_tiled(
+        constraint_state=constraint_state,
+        rigid_global_info=rigid_global_info
+    )
     solver.func_cholesky_factor_direct_tiled(
         constraint_state=constraint_state,
         rigid_global_info=rigid_global_info,
