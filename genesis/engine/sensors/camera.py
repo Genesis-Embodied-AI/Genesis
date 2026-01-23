@@ -432,7 +432,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
             return
         self._shared_metadata.sensors.remove(self)
         self._shared_metadata.renderer.remove_camera(self._camera_wrapper)
-        # TODO: should remove the camera from the renderer too.
+
         # A sort of reference counting to destroy the renderer once there are no more cameras.
         if not self._shared_metadata.sensors:
             self._shared_metadata.renderer.destroy()
@@ -655,6 +655,7 @@ class RaytracerCameraSensor(BaseCameraSensor):
                 # TODO: consider explicit reference counting on the renderer rather than relying on
                 # garbage collection.
                 self._shared_metadata.renderer = None
+                self._shared_metadata.sensors = None
             del self._shared_metadata.image_cache[self._idx]
 
     @gs.assert_built
@@ -787,6 +788,7 @@ class BatchRendererCameraSensor(BaseCameraSensor):
                 # garbage collection.
                 self._shared_metadata.renderer = None
                 self._shared_metadata.visualizer_wrapper = None
+                self._shared_metadata.sensors = None
             del self._shared_metadata.image_cache[self._idx]
 
     def _render_current_state(self):

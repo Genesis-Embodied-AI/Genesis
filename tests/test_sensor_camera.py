@@ -435,10 +435,12 @@ def test_batch_renderer_destroy():
     shared_metadata = cam1._shared_metadata
     assert cam1._shared_metadata is cam2._shared_metadata
     assert len(shared_metadata.sensors) == 2
+    assert shared_metadata.renderer is not None
 
     scene.destroy()
 
-    assert not shared_metadata.sensors
+    assert shared_metadata.sensors is None
+    assert shared_metadata.renderer is None
 
 
 @pytest.mark.required
@@ -467,10 +469,12 @@ def test_raytracer_destroy():
     shared_metadata = cam1._shared_metadata
     assert cam1._shared_metadata is cam2._shared_metadata
     assert len(shared_metadata.sensors) == 2
+    assert shared_metadata.renderer is not None
 
     scene.destroy()
 
-    assert not shared_metadata.sensors
+    assert shared_metadata.sensors is None
+    assert shared_metadata.renderer is None
 
 
 @pytest.mark.required
