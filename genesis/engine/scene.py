@@ -333,9 +333,11 @@ class Scene(RBC):
         surface : gs.surfaces.Surface | None, optional
             The surface of the entity. If None, use ``gs.surfaces.Default()``.
         visualize_contact : bool
-            Whether to visualize contact forces applied to this entity as arrows in the viewer and rendered images. Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
+            Whether to visualize contact forces applied to this entity as arrows in the viewer and rendered images.
+            Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
         vis_mode : str | None, optional
-            The visualization mode of the entity. This is a handy shortcut for setting `surface.vis_mode` without explicitly creating a surface object.
+            The visualization mode of the entity. This is a handy shortcut for setting `surface.vis_mode` without
+            explicitly creating a surface object.
 
         Returns
         -------
@@ -464,7 +466,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_stage(
         self,
-        stage: gs.morphs.USD,
+        morph: gs.morphs.USD,
         material: Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
@@ -475,33 +477,35 @@ class Scene(RBC):
 
         Parameters
         ----------
-        stage : gs.morphs.USD
+        morph : gs.morphs.USD
             The stage to add to the scene.
         material : gs.materials.Material | None, optional
             The material of the stage. If None, use ``gs.materials.Rigid()`` for all morphs.
         surface : gs.surfaces.Surface | None, optional
             The surface of the stage. If None, use ``gs.surfaces.Default()`` for all morphs.
         visualize_contact : bool
-            Whether to visualize contact forces applied to this stage as arrows in the viewer and rendered images. Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
+            Whether to visualize contact forces applied to this stage as arrows in the viewer and rendered images.
+            Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
         vis_mode : str | None, optional
-            The visualization mode of the stage. This is a handy shortcut for setting `surface.vis_mode` without explicitly creating a surface object.
+            The visualization mode of the stage. This is a handy shortcut for setting `surface.vis_mode` without
+            explicitly creating a surface object.
 
         Returns
         -------
         entities : List[genesis.Entity]
             The created entities.
         """
-        morphs = []
-        if isinstance(stage, gs.morphs.USD):
+        entity_morphs = []
+        if isinstance(morph, gs.morphs.USD):
             from genesis.utils.usd import parse_usd_stage
 
-            morphs = parse_usd_stage(stage)
+            entity_morphs = parse_usd_stage(morph)
         else:
-            gs.raise_exception(f"Unsupported stage: {stage}.")
+            gs.raise_exception(f"Unsupported morph: {morph}.")
 
         entities = []
-        for morph in morphs:
-            entities.append(self.add_entity(morph, material, surface, visualize_contact, vis_mode))
+        for entity_morph in entity_morphs:
+            entities.append(self.add_entity(entity_morph, material, surface, visualize_contact, vis_mode))
 
         return entities
 

@@ -1363,6 +1363,64 @@ class USD(FileMorph):
     ----------
     file : str
         The path to the USD file.
+    scale : float or tuple, optional
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+    pos : tuple, shape (3,), optional
+        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+    euler : tuple, shape (3,), optional
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
+    quat : tuple, shape (4,), optional
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Default to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
+    convexify : bool, optional
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : float, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : float, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
+    visualization : bool, optional
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
+    collision : bool, optional
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
+    requires_jac_and_IK : bool, optional
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
 
     Joint Dynamics Options
     ----------------------
@@ -1402,7 +1460,7 @@ class USD(FileMorph):
         List of regex patterns to match visual mesh prim names. Patterns are tried in order.
         Defaults to [r"^([vV]isual).*"].
 
-    Internal Options
+    USD specific Options
     ----------------
     prim_path : str, optional
         The parsing target prim path. Defaults to None.
