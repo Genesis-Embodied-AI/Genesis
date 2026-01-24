@@ -192,8 +192,11 @@ class RasterizerContext:
             return self._scene.add(obj, **kwargs)
 
     def remove_node(self, node):
-        with self.scene._visualizer.viewer_lock:
+        if self.scene._visualizer is None:
             self._scene.remove_node(node)
+        else:
+            with self.scene._visualizer.viewer_lock:
+                self._scene.remove_node(node)
 
     def _get_geom_active_envs_idx(self, geom, rendered_envs_idx):
         """Get the intersection of geom.active_envs_idx (for heterogeneous sim) and rendered_envs_idx.
