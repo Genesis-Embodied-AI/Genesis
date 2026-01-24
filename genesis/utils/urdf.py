@@ -131,7 +131,7 @@ def parse_urdf(morph, surface):
                 mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geometry.filename)
                 if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
                     group_material = True
-                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, morph.scale, geom_surface)
+                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, geom_surface)
                     geometry._meshes = [mesh.trimesh for mesh in meshes]
 
                 # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
