@@ -155,6 +155,19 @@ class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetad
     # Track when rasterizer cameras were last updated
     last_render_timestep: int = -1
 
+    def destroy(self):
+        super().destroy()
+
+        if self.renderer is not None:
+            self.renderer.destroy()
+            self.renderer = None
+        if self.context is not None:
+            self.context.destroy()
+            self.context = None
+        self.lights = None
+        self.image_cache = None
+        self.sensors = None
+
 
 @dataclass
 class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
@@ -170,6 +183,13 @@ class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetada
     image_cache: Optional[Dict[int, np.ndarray]] = None
     # Track when raytracer cameras were last updated
     last_render_timestep: int = -1
+
+    def destroy(self):
+        super().destroy()
+
+        self.renderer = None
+        self.sensors = None
+        self.image_cache = None
 
 
 @dataclass
@@ -188,6 +208,14 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
     last_render_timestep: int = -1
     # MinimalVisualizerWrapper instance
     visualizer_wrapper: Optional["MinimalVisualizerWrapper"] = None
+
+    def destroy(self):
+        super().destroy()
+
+        self.renderer = None
+        self.sensors = None
+        self.image_cache = None
+        self.visualizer_wrapper = None
 
 
 # ========================== Base Camera Sensor ==========================
@@ -427,19 +455,6 @@ class RasterizerCameraSensor(BaseCameraSensor):
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
-    @classmethod
-    def destroy(cls, shared_metadata: RasterizerCameraSharedMetadata):
-        if not shared_metadata.sensors:
-            return
-
-        shared_metadata.renderer.destroy()
-        shared_metadata.renderer = None
-        shared_metadata.context.destroy()
-        shared_metadata.context = None
-        shared_metadata.lights = None
-        shared_metadata.image_cache = None
-        shared_metadata.sensors = None
-
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
         if not scene.sim._rigid_only and scene.n_envs > 1:
@@ -644,15 +659,6 @@ class RaytracerCameraSensor(BaseCameraSensor):
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
-    @classmethod
-    def destroy(cls, shared_metadata: RaytracerCameraSharedMetadata):
-        if not shared_metadata.sensors:
-            return
-
-        shared_metadata.renderer = None
-        shared_metadata.sensors = None
-        shared_metadata.image_cache = None
-
     @gs.assert_built
     def move_to_attach(self):
         # Bypass original implementation since it will be handled by visualizer
@@ -774,16 +780,6 @@ class BatchRendererCameraSensor(BaseCameraSensor):
         _B = max(self._manager._sim.n_envs, 1)
         w, h = self._options.res
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
-
-    @classmethod
-    def destroy(cls, shared_metadata: BatchRendererCameraSharedMetadata):
-        if not shared_metadata.sensors:
-            return
-
-        shared_metadata.renderer = None
-        shared_metadata.sensors = None
-        shared_metadata.image_cache = None
-        shared_metadata.visualizer_wrapper = None
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""

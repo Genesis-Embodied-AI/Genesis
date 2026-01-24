@@ -75,9 +75,10 @@ class SensorManager:
                 sensor._is_built = True
 
     def destroy(self):
-        for sensor_cls, _sensors in self._sensors_by_type.items():
-            sensor_cls.destroy(self._sensors_metadata[sensor_cls])
-            del self._sensors_metadata[sensor_cls]
+        for sensors_metadata in self._sensors_metadata.values():
+            if sensors_metadata is not None:
+                sensors_metadata.destroy()
+        self._sensors_metadata.clear()
         self._sensors_by_type.clear()
 
     def reset(self, envs_idx=None):

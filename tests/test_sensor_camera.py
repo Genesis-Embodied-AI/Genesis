@@ -1,6 +1,5 @@
-import gc
-import weakref
 import sys
+import weakref
 
 import numpy as np
 import pytest
@@ -359,7 +358,6 @@ def test_rasterizer_destroy():
     offscreen_renderer_ref = weakref.ref(cam1._shared_metadata.renderer._renderer)
 
     scene.destroy()
-    gc.collect()
     assert offscreen_renderer_ref() is None
 
 
