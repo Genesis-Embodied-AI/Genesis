@@ -79,7 +79,7 @@ class RigidSensorOptionsMixin:
         super().validate(scene)
         if self.entity_idx is not None and self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
-        if self.entity_idx is not None:
+        if self.entity_idx is not None and self.entity_idx >= 0:
             entity = scene.entities[self.entity_idx]
             if not isinstance(entity, RigidEntity):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
