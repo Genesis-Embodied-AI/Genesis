@@ -95,8 +95,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
                 sys.executable,
                 "tests/monitor_test_mem.py",
                 "--die-with-parent",
-                "--out-csv-filepath",
+                "--out-file",
                 mem_filepath,
+                "--extra-key-values",
+                *config.getoption("--mem-monitoring-extra-result-key-values"),
             ]
         )
 
@@ -389,6 +391,13 @@ def pytest_addoption(parser):
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
+    parser.addoption(
+        "--mem-monitoring-extra-result-key-values",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Extra key=value pairs to include in memory monitoring results (e.g., dtype=field use_contact_island=False)",
+    )
 
 
 @pytest.fixture(scope="session")

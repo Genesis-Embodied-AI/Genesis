@@ -161,7 +161,7 @@ jobs:
         run: |
           srun ${SRUN_COMMON} bash -e -s <<'EOF'
             source /venv/bin/activate
-            pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.csv" \
+            pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
                    --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
           EOF
@@ -184,4 +184,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mem-test-${{ matrix.GS_ENABLE_NDARRAY }}
-          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.csv"
+          path: "/mnt/data/artifacts/mem_test_${{ env.SLURM_JOB_NAME }}.txt"

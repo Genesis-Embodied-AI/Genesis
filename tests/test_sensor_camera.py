@@ -1,4 +1,5 @@
 import sys
+import weakref
 
 import numpy as np
 import pytest
@@ -315,6 +316,106 @@ def test_batch_renderer(n_envs, png_snapshot):
                 assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
         else:
             assert rgb_array_to_png_bytes(data.rgb) == png_snapshot
+
+
+@pytest.mark.required
+def test_destroy_unbuilt_scene_with_camera():
+    """Test that destroy on an unbuilt scene with cameras doesn't crash."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+
+    # Scene.__del__ calls destroy(), and a crash in destroy() would result in some
+    # logspam.
+    scene.destroy()
+
+
+@pytest.mark.required
+def test_destroy_idempotent_with_camera():
+    """Test that calling destroy twice on a scene with cameras doesn't crash."""
+    scene = gs.Scene(show_viewer=False)
+    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+
+    scene.build()
+    camera.read()
+
+    scene.destroy()
+    # Scene.__del__ calls destroy(), which means it's expected that destroy() will
+    # be called twice. A crash in destroy() would result in some logspam.
+    scene.destroy()
+
+
+@pytest.mark.required
+def test_rasterizer_destroy():
+    scene = gs.Scene(show_viewer=False)
+    cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+    cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    offscreen_renderer_ref = weakref.ref(cam1._shared_metadata.renderer._renderer)
+
+    scene.destroy()
+    assert offscreen_renderer_ref() is None
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
+def test_batch_renderer_destroy():
+    scene = gs.Scene(show_viewer=False)
+    # FIXME: This test fails without any entities in the scene.
+    scene.add_entity(morph=gs.morphs.Plane())
+    cam1 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
+    cam2 = scene.add_sensor(gs.sensors.BatchRendererCameraOptions(res=(64, 64), use_rasterizer=True))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    shared_metadata = cam1._shared_metadata
+    assert cam1._shared_metadata is cam2._shared_metadata
+    assert len(shared_metadata.sensors) == 2
+    assert shared_metadata.renderer is not None
+
+    scene.destroy()
+
+    assert shared_metadata.sensors is None
+    assert shared_metadata.renderer is None
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+def test_raytracer_destroy():
+    scene = gs.Scene(
+        renderer=gs.renderers.RayTracer(
+            env_surface=gs.surfaces.Emission(
+                emissive_texture=gs.textures.ColorTexture(color=(0.2, 0.3, 0.5)),
+            ),
+            env_radius=20.0,
+        ),
+        show_viewer=False,
+    )
+
+    cam1 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
+    cam2 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    shared_metadata = cam1._shared_metadata
+    assert cam1._shared_metadata is cam2._shared_metadata
+    assert len(shared_metadata.sensors) == 2
+    assert shared_metadata.renderer is not None
+
+    scene.destroy()
+
+    assert shared_metadata.sensors is None
+    assert shared_metadata.renderer is None
 
 
 @pytest.mark.required

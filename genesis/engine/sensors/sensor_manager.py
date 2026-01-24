@@ -74,6 +74,13 @@ class SensorManager:
                 sensor.build()
                 sensor._is_built = True
 
+    def destroy(self):
+        for sensors_metadata in self._sensors_metadata.values():
+            if sensors_metadata is not None:
+                sensors_metadata.destroy()
+        self._sensors_metadata.clear()
+        self._sensors_by_type.clear()
+
     def reset(self, envs_idx=None):
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
 
