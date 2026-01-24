@@ -94,6 +94,7 @@ jobs:
           path: |
             runtime_fps.csv
             compile_time.csv
+            mem.csv
           if-no-files-found: warn
 
       - name: Publish PR check
