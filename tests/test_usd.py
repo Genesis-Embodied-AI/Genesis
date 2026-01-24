@@ -25,6 +25,7 @@ try:
     HAS_USD_SUPPORT = True
 except ImportError as e:
     HAS_USD_SUPPORT = False
+    HAS_OMNIVERSE_KIT_SUPPORT = False
 
 USD_COLOR_TOL = 1e-07  # Parsing from .usd loses a little precision in color
 
