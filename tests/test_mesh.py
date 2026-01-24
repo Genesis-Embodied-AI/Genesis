@@ -578,6 +578,50 @@ def test_urdf_mesh_processing(tmp_path, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("mesh_file", ["glb/combined_transform.glb", "yup_zup_coverage/cannon_y_-z.stl"])
+def test_urdf_scaling(mesh_file, tmp_path, show_viewer):
+    SCALE_FACTOR = 2.0
+
+    asset_path = get_hf_dataset(pattern=mesh_file)
+
+    urdf_path = tmp_path / "model.urdf"
+    urdf_path.write_text(
+        f"""<robot name="shoe">
+              <link name="base">
+                <visual>
+                  <geometry><mesh filename="{os.path.join(asset_path, mesh_file)}"/></geometry>
+                </visual>
+              </link>
+            </robot>
+         """
+    )
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    obj_1 = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    mesh_1 = obj_1.vgeoms[0].vmesh.trimesh
+    obj_2 = scene.add_entity(
+        gs.morphs.URDF(
+            file=urdf_path,
+            scale=SCALE_FACTOR,
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    mesh_2 = obj_2.vgeoms[0].vmesh.trimesh
+
+    assert_allclose(SCALE_FACTOR * mesh_1.extents, mesh_2.extents, tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_2_channels_luminance_alpha_textures(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,

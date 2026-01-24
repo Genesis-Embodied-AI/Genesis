@@ -593,8 +593,9 @@ if __name__ == "__main__":
     alarm.check_body_path.write_text(check_body + "\n", encoding="utf-8")
 
     if reg_found:
-        sys.exit(int(os.environ["EXIT_CODE_REGRESSION"]))
+        sys.exit(int(args.exit_code_regression))
 
     if alert_found:
-        sys.exit(int(os.environ["EXIT_CODE_ALERT"]))
+        sys.exit(int(args.exit_code_alert))
+
     sys.exit(0)
