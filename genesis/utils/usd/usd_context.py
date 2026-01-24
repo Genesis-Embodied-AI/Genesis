@@ -231,7 +231,7 @@ class UsdContext:
                 if material_id not in self._material_properties:
                     material_dict, uv_name = parse_material_preview_surface(material)
                     self._material_properties[material_id] = material_dict, uv_name
-                    if self._need_bake and material_dict is None:
+                    if self._need_bake and not material_dict:
                         self._bake_material_paths[material_id] = str(material_prim.GetPath())
                 self._prim_material_bindings[geom_path] = material_id
             else:

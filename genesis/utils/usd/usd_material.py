@@ -27,7 +27,23 @@ def get_input_attribute_value(shader: UsdShade.Shader, input_name, input_type=No
     return None, None
 
 
-def get_shader(prim: Usd.Prim, output_name):
+def parse_component(shader: UsdShade.Shader, component_name: str, component_encode: str):
+    component, component_output = get_input_attribute_value(shader, component_name)
+    if component_output is None:  # constant value
+        component_factor = component
+        component_image = None
+        component_uvname = None
+    else:  # texture shader
+        component_image, component_overencode, component_uvname = parse_preview_surface(component, component_output)
+        if component_overencode is not None:
+            component_encode = component_overencode
+        component_factor = None
+
+    component_texture = mu.create_texture(component_image, component_factor, component_encode)
+    return component_texture, component_uvname
+
+
+def get_shader(prim: Usd.Prim, output_name: str) -> UsdShade.Shader:
     if prim.IsA(UsdShade.Shader):
         return UsdShade.Shader(prim)
     elif prim.IsA(UsdShade.NodeGraph):
@@ -43,30 +59,13 @@ def parse_preview_surface(prim: Usd.Prim, output_name):
     if shader_id == "UsdPreviewSurface":
         uvname = None
 
-        def parse_component(component_name, component_encode):
-            component, component_output = get_input_attribute_value(shader, component_name)
-            if component_output is None:  # constant value
-                component_factor = component
-                component_image = None
-                component_uvname = None
-            else:  # texture shader
-                component_image, component_overencode, component_uvname = parse_preview_surface(
-                    component, component_output
-                )
-                if component_overencode is not None:
-                    component_encode = component_overencode
-                component_factor = None
-
-            component_texture = mu.create_texture(component_image, component_factor, component_encode)
-            return component_texture, component_uvname
-
         # parse color
-        color_texture, color_uvname = parse_component("diffuseColor", "srgb")
+        color_texture, color_uvname = parse_component(shader, "diffuseColor", "srgb")
         if color_uvname is not None:
             uvname = color_uvname
 
         # parse opacity
-        opacity_texture, opacity_uvname = parse_component("opacity", "linear")
+        opacity_texture, opacity_uvname = parse_component(shader, "opacity", "linear")
         if opacity_uvname is not None and uvname is None:
             uvname = opacity_uvname
         if opacity_texture is not None:
@@ -74,7 +73,7 @@ def parse_preview_surface(prim: Usd.Prim, output_name):
             opacity_texture.apply_cutoff(alpha_cutoff)
 
         # parse emissive
-        emissive_texture, emissive_uvname = parse_component("emissiveColor", "srgb")
+        emissive_texture, emissive_uvname = parse_component(shader, "emissiveColor", "srgb")
         if emissive_texture is not None and emissive_texture.is_black():
             emissive_texture = None
         if emissive_uvname is not None and uvname is None:
@@ -83,19 +82,19 @@ def parse_preview_surface(prim: Usd.Prim, output_name):
         # parse metallic
         use_specular = get_input_attribute_value(shader, "useSpecularWorkflow", "value")[0]
         if not use_specular:
-            metallic_texture, metallic_uvname = parse_component("metallic", "linear")
+            metallic_texture, metallic_uvname = parse_component(shader, "metallic", "linear")
             if metallic_uvname is not None and uvname is None:
                 uvname = metallic_uvname
         else:
             metallic_texture = None
 
         # parse roughness
-        roughness_texture, roughness_uvname = parse_component("roughness", "linear")
+        roughness_texture, roughness_uvname = parse_component(shader, "roughness", "linear")
         if roughness_uvname is not None and uvname is None:
             uvname = roughness_uvname
 
         # parse normal
-        normal_texture, normal_uvname = parse_component("normal", "linear")
+        normal_texture, normal_uvname = parse_component(shader, "normal", "linear")
         if normal_uvname is not None and uvname is None:
             uvname = normal_uvname
 
@@ -151,7 +150,7 @@ def parse_material_preview_surface(material: UsdShade.Material) -> tuple[dict, s
     """Find the preview surface for a material."""
     surface_outputs = material.GetSurfaceOutputs()
     candidates_surfaces = []
-    material_dict, uv_name = None, None
+    material_dict, uv_name = {}, None
     for surface_output in surface_outputs:
         if not surface_output.HasConnectedSource():
             continue
@@ -165,7 +164,7 @@ def parse_material_preview_surface(material: UsdShade.Material) -> tuple[dict, s
             break
         candidates_surfaces.append((surface_shader.GetPath(), surface_shader_id, surface_shader_implement))
 
-    if material_dict is None:
+    if not material_dict:
         candidates_str = "\n".join(
             f"\tShader at {shader_path} with implement {shader_impl} and ID {shader_id}."
             for shader_path, shader_id, shader_impl in candidates_surfaces
