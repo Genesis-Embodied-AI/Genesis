@@ -1,23 +1,53 @@
+import os
+import tempfile
 from typing import TYPE_CHECKING
 
 import numpy as np
+import trimesh
 import gstaichi as ti
 
 import genesis as gs
+from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 from genesis.options.solvers import IPCCouplerOptions
 from genesis.repr_base import RBC
+from genesis.utils import mesh as mu
+from genesis.utils import geom as gu
+
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
 
-# Check if libuipc is available
+# Import IPC Solver if available
 try:
-    import uipc
+    from uipc import view, builtin, Transform, Vector3, Quaternion, Logger, Timer
+    from uipc.backend import SceneVisitor
+    from uipc.constitution import (
+        AffineBodyConstitution,
+        SoftTransformConstraint,
+        StableNeoHookean,
+        NeoHookeanShell,
+        DiscreteShellBending,
+        ElasticModuli,
+        ElasticModuli2D,
+    )
+    from uipc.core import Engine, World, Scene
+    from uipc.geometry import (
+        SimplicialComplexSlot,
+        apply_transform,
+        trimesh as uipc_trimesh,
+        tetmesh,
+        label_surface,
+        label_triangle_orient,
+        flip_inward_triangles,
+        merge,
+        ground,
+    )
+    from uipc.gui import SceneGUI
+    from uipc.unit import MPa
 
     UIPC_AVAILABLE = True
 except ImportError:
     UIPC_AVAILABLE = False
-    uipc = None
 
 
 @ti.data_oriented
@@ -81,19 +111,10 @@ class IPCCoupler(RBC):
 
     def _init_ipc(self):
         """Initialize IPC system components"""
-        from uipc.core import Engine, World, Scene
-        from uipc.constitution import AffineBodyConstitution, StableNeoHookean, NeoHookeanShell, DiscreteShellBending
-
         # Disable IPC logging if requested
         if self.options.disable_ipc_logging:
-            from uipc import Logger, Timer
-
             Logger.set_level(Logger.Level.Error)
             Timer.disable_all()
-
-        # Create IPC engine and world
-        import os
-        import tempfile
 
         # Create workspace directory for IPC output
         workspace = os.path.join(tempfile.gettempdir(), "genesis_ipc_workspace")
@@ -243,10 +264,6 @@ class IPCCoupler(RBC):
 
     def _add_fem_entities_to_ipc(self):
         """Add FEM entities to the existing IPC scene (includes both volumetric FEM and cloth)"""
-        from uipc.constitution import ElasticModuli
-        from uipc.geometry import label_surface, tetmesh, trimesh
-        from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
-
         fem_solver = self.fem_solver
         scene = self._ipc_scene
         stk = self._ipc_stk  # StableNeoHookean for volumetric FEM
@@ -273,7 +290,7 @@ class IPCCoupler(RBC):
                     # Cloth: use surface triangles only
                     verts = entity.init_positions.cpu().numpy().astype(np.float64)
                     faces = entity.surface_triangles.astype(np.int32)
-                    mesh = trimesh(verts, faces)
+                    mesh = uipc_trimesh(verts, faces)
                 else:
                     # Volumetric FEM: use tetrahedral mesh
                     mesh = tetmesh(entity.init_positions.cpu().numpy(), entity.elems)
@@ -293,9 +310,9 @@ class IPCCoupler(RBC):
                 label_surface(mesh)
 
                 # Apply material constitution based on type
-                moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                 if is_cloth:
                     # Apply shell material for cloth
+                    moduli = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)
                     nks.apply_to(
                         mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
                     )
@@ -304,6 +321,7 @@ class IPCCoupler(RBC):
                         dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
                 else:
                     # Apply volumetric material for FEM
+                    moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                     stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
 
                 # Add metadata to identify geometry type
@@ -318,11 +336,6 @@ class IPCCoupler(RBC):
 
     def _add_rigid_geoms_to_ipc(self):
         """Add rigid geoms to the existing IPC scene as ABD objects, merging geoms by link_idx"""
-        from uipc.geometry import tetmesh, label_surface, label_triangle_orient, flip_inward_triangles, merge, ground
-        from genesis.utils import mesh as mu
-        import numpy as np
-        import trimesh
-
         rigid_solver = self.rigid_solver
         scene = self._ipc_scene
         abd = self._ipc_abd
@@ -347,7 +360,6 @@ class IPCCoupler(RBC):
                 geom_type = rigid_solver.geoms_info.type[i_g]
                 link_idx = rigid_solver.geoms_info.link_idx[i_g]
                 entity_idx = rigid_solver.links_info.entity_idx[link_idx]
-                entity = rigid_solver._entities[entity_idx]
 
                 # Check if this link should be included in IPC based on coupler's filter
                 if entity_idx in self._ipc_link_filters:
@@ -440,8 +452,6 @@ class IPCCoupler(RBC):
                             geom_idx = link_data["meshes"][0][0]  # Use first geom's index for metadata
 
                         # Apply link world transform
-                        from uipc import view, Transform, Vector3, Quaternion
-
                         trans_view = view(merged_mesh.transforms())
                         t = Transform.Identity()
 
@@ -471,20 +481,13 @@ class IPCCoupler(RBC):
                         if self._use_subscenes:
                             scene_subscenes[i_b].apply_to(merged_mesh)
                         self._ipc_abd_contact.apply_to(merged_mesh)
-                        from uipc.unit import MPa
 
                         # Use half density for IPC ABD to avoid double-counting mass
                         # (the other half is in Genesis rigid solver, scaled in _scale_genesis_rigid_link_masses)
                         entity_rho = rigid_solver._entities[link_data["entity_idx"]].material.rho
-                        abd.apply_to(
-                            merged_mesh,
-                            kappa=10.0 * MPa,
-                            mass_density=entity_rho / 2.0,
-                        )
+                        abd.apply_to(merged_mesh, kappa=10.0 * MPa, mass_density=entity_rho / 2.0)
 
                         # Apply soft transform constraints
-                        from uipc.constitution import SoftTransformConstraint
-
                         if not hasattr(self, "_ipc_stc"):
                             self._ipc_stc = SoftTransformConstraint()
                             scene.constitution_tabular().insert(self._ipc_stc)
@@ -512,8 +515,6 @@ class IPCCoupler(RBC):
 
                         def create_animate_function(env_idx, link_idx, rigid_solver_ref):
                             def animate_rigid_link(info):
-                                from uipc import view, builtin
-
                                 geo_slots = info.geo_slots()
                                 if len(geo_slots) == 0:
                                     return
@@ -725,15 +726,10 @@ class IPCCoupler(RBC):
     def _retrieve_fem_states(self, f):
         # IPC world advance/retrieve is handled at Scene level
         # This method handles both volumetric FEM (3D) and cloth (2D) post-processing
-
         if not self.fem_solver.is_active:
             return
 
         # Gather FEM states (both volumetric and cloth) using metadata filtering
-        from uipc.backend import SceneVisitor
-        from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
-        import numpy as np
-
         visitor = SceneVisitor(self._ipc_scene)
 
         # Collect FEM and cloth geometries using metadata
@@ -808,13 +804,8 @@ class IPCCoupler(RBC):
         """
         # IPC world advance/retrieve is handled at Scene level
         # Retrieve ABD transform matrices after IPC simulation
-
         if not hasattr(self, "_ipc_scene") or not hasattr(self.rigid_solver, "list_env_mesh"):
             return
-
-        from uipc import view
-        from uipc.backend import SceneVisitor
-        from uipc.geometry import SimplicialComplexSlot
 
         rigid_solver = self.rigid_solver
         visitor = SceneVisitor(self._ipc_scene)
@@ -907,8 +898,6 @@ class IPCCoupler(RBC):
         np.ndarray
             4x4 transformation matrix
         """
-        from uipc import Transform, Vector3, Quaternion
-
         rigid_solver = self.rigid_solver
 
         # Get current link state from Genesis
@@ -953,7 +942,6 @@ class IPCCoupler(RBC):
         - G is 12D: [linear_force(3), rotational_force(9)]
         - We extract linear force and convert rotational force to 3D torque
         """
-
         rigid_solver = self.rigid_solver
         strength_tuple = self.options.ipc_constraint_strength
         translation_strength = strength_tuple[0]
@@ -966,6 +954,10 @@ class IPCCoupler(RBC):
             for env_idx, data in env_data.items():
                 ipc_transform = data.get("transform")  # Current transform after IPC solve
                 aim_transform = data.get("aim_transform")  # Target from Genesis
+
+                if rigid_solver.n_envs == 0:
+                    assert env_idx == 0
+                    env_idx = None
 
                 if ipc_transform is None or aim_transform is None:
                     continue
@@ -998,10 +990,7 @@ class IPCCoupler(RBC):
                     linear_force = translation_strength * link_mass * delta_pos / dt2
 
                     R_rel = R_current @ R_aim.T
-
-                    from scipy.spatial.transform import Rotation as R
-
-                    rotvec = R.from_matrix(R_rel).as_rotvec()
+                    rotvec = gu.R_to_rotvec(R_rel)
 
                     inertia_tensor_local = rigid_solver.links_info.inertial_i[link_idx].to_numpy()
 
@@ -1010,29 +999,11 @@ class IPCCoupler(RBC):
 
                     angular_torque = rotation_strength * inertia_tensor_world @ rotvec / dt2
 
-                    # Format forces for Genesis API
-                    # _sanitize_2D_io_variables expects:
-                    # - Non-parallelized (n_envs=0): shape (n_links, 3)
-                    # - Parallelized (n_envs>0): shape (n_envs, n_links, 3)
-                    # It will use torch.as_tensor to convert numpy arrays to tensors
-
-                    if self.sim._scene.n_envs > 0:
-                        # Parallelized scene: shape (1, 1, 3) for (n_envs, n_links, 3)
-                        force_input = linear_force.reshape(1, 1, 3)
-                        torque_input = angular_torque.reshape(1, 1, 3)
-                        apply_kwargs = {"links_idx": link_idx, "envs_idx": env_idx}
-                    else:
-                        # Non-parallelized scene: shape (1, 3) for (n_links, 3)
-                        force_input = linear_force.reshape(1, 3)
-                        torque_input = angular_torque.reshape(1, 3)
-                        apply_kwargs = {
-                            "links_idx": link_idx,
-                        }
-
                     # Apply forces to Genesis rigid body
-                    rigid_solver.apply_links_external_force(force=force_input, **apply_kwargs)
-
-                    rigid_solver.apply_links_external_torque(torque=torque_input, **apply_kwargs)
+                    rigid_solver.apply_links_external_force(force=linear_force, links_idx=link_idx, envs_idx=env_idx)
+                    rigid_solver.apply_links_external_torque(
+                        torque=angular_torque, links_idx=link_idx, envs_idx=env_idx
+                    )
 
                 except Exception as e:
                     gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
@@ -1052,9 +1023,6 @@ class IPCCoupler(RBC):
         """Initialize IPC GUI for debugging"""
         try:
             import polyscope as ps
-            from uipc.gui import SceneGUI
-
-            self.ps = ps
 
             # Initialize SceneGUI for IPC scene
             self._ipc_scene_gui = SceneGUI(self._ipc_scene)
@@ -1084,5 +1052,7 @@ class IPCCoupler(RBC):
 
     def update_ipc_gui(self):
         """Update IPC GUI"""
-        self.ps.frame_tick()  # Non-blocking frame update
+        import polyscope as ps
+
+        ps.frame_tick()  # Non-blocking frame update
         self._ipc_scene_gui.update()
