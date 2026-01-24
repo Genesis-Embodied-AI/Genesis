@@ -4266,9 +4266,9 @@ def test_pick_heterogenous_objects(show_viewer):
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
 
 
-@pytest.mark.skipif(os.environ.get("GS_ENABLE_NDARRAY") == "1", reason="Hibernation only works in fields mode")
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_hibernation_and_contact_islands(backend, show_viewer):
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("performance_mode", [True])
+def test_hibernation_and_contact_islands(show_viewer):
     """
     Test hibernation and contact island behavior.
 

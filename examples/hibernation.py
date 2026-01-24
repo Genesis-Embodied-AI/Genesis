@@ -29,7 +29,7 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=False, help="Use CPU backend")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level="info")
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, performance_mode=True)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=0.01),
