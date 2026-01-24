@@ -150,7 +150,7 @@ def parse_material_preview_surface(material: UsdShade.Material) -> tuple[dict, s
     """Find the preview surface for a material."""
     surface_outputs = material.GetSurfaceOutputs()
     candidates_surfaces = []
-    material_dict, uv_name = {}, None
+    material_dict, uv_name = {}, "st"
     for surface_output in surface_outputs:
         if not surface_output.HasConnectedSource():
             continue
