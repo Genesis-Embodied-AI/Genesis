@@ -446,7 +446,7 @@ def _kernel_kinematic_contact_probe_support_query(
         probe_pos = link_pos + gu.ti_transform_by_quat(probe_pos_local, link_quat)
         probe_normal = gu.ti_transform_by_quat(probe_normal_local, link_quat)
 
-        max_abs_penetration = gs.ti_float(0.0)
+        max_penetration = gs.ti_float(0.0)
         best_contact_pos_world = ti.Vector.zero(gs.ti_float, 3)
         support_dir = -probe_normal
 
@@ -487,28 +487,27 @@ def _kernel_kinematic_contact_probe_support_query(
                     geoms_state, geoms_info, support_field_info, support_dir, i_g, i_b
                 )
 
-            dist_to_probe = (support_pos - probe_pos).norm()
+            dist_to_probe = (probe_pos - support_pos).norm()
             if dist_to_probe <= radius:
-                penetration = (support_pos - probe_pos).dot(probe_normal)
-                abs_pen = ti.abs(penetration)
-                if abs_pen > max_abs_penetration:
-                    max_abs_penetration = abs_pen
+                penetration = (probe_pos - support_pos).dot(probe_normal)
+                if penetration > max_penetration:
+                    max_penetration = penetration
                     best_contact_pos_world = support_pos
 
         contact_pos_local = ti.Vector.zero(gs.ti_float, 3)
         normal_local = ti.Vector.zero(gs.ti_float, 3)
         force_local = ti.Vector.zero(gs.ti_float, 3)
 
-        if max_abs_penetration > 0:
+        if max_penetration > 0:
             contact_pos_local = gu.ti_inv_transform_by_trans_quat(best_contact_pos_world, link_pos, link_quat)
             normal_local = probe_normal_local
-            force_local = stiff * max_abs_penetration * probe_normal_local
+            force_local = stiff * max_penetration * probe_normal_local
 
         probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
         cache_start = sensor_cache_start[i_s]
 
-        output[i_b, cache_start + probe_idx_in_sensor] = max_abs_penetration
+        output[i_b, cache_start + probe_idx_in_sensor] = max_penetration
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = contact_pos_local[0]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = contact_pos_local[1]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = contact_pos_local[2]
