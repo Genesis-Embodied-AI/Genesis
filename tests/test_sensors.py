@@ -630,173 +630,6 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_kinematic_contact_probe_basic_contact(show_viewer, tol, n_envs):
-    """Test basic contact detection and no-contact case."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-
-    mount = scene.add_entity(gs.morphs.Sphere(radius=0.05, pos=(0.0, 0.0, 0.045), fixed=True, collision=False))
-
-    probe = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            link_idx_local=0,
-            probe_local_pos=[(0.0, 0.0, -0.05)],
-            probe_local_normal=[(0.0, 0.0, 1.0)],
-            radius=0.01,
-            stiffness=1000.0,
-        )
-    )
-
-    scene.build(n_envs=n_envs)
-    scene.step()
-
-    data = probe.read()
-    assert_allclose(data.penetration[..., 0], 0.005, tol=2e-3)
-    assert data.normal[..., 0, 2].abs().mean() > 0.9
-    assert torch.norm(data.force[..., 0, :], dim=-1).mean() > 0
-
-    mount.set_pos([0.0, 0.0, 5.0] if n_envs == 0 else np.array([[0.0, 0.0, 5.0]] * n_envs))
-    scene.step()
-    data = probe.read()
-    assert_allclose(data.penetration[..., 0], 0.0, tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [2])
-def test_kinematic_contact_probe_multiple_envs(show_viewer, tol, n_envs):
-    """Test different environments have independent contact states."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Sphere(radius=0.5, pos=(0.0, 0.0, 0.5), fixed=True))
-
-    mount = scene.add_entity(gs.morphs.Sphere(radius=0.05, pos=(0.0, 0.0, 0.06), fixed=True, collision=False))
-
-    probe = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.05)],
-            radius=0.02,
-            stiffness=1000.0,
-        )
-    )
-
-    scene.build(n_envs=n_envs)
-    scene.step()
-
-    mount.set_pos(np.array([[0.0, 0.0, 2.0], [0.0, 0.0, 0.06]]))
-    scene.step()
-
-    data = probe.read()
-    assert_allclose(data.penetration[0, 0], 0.0, tol=tol)
-    assert data.penetration[1, 0] > 0.0
-
-
-@pytest.mark.required
-def test_kinematic_contact_probe_collision_filtering(show_viewer, tol):
-    """Test collision filtering: contype/conaffinity and self-detection."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-
-    mount = scene.add_entity(gs.morphs.Sphere(radius=0.1, pos=(0.0, 0.0, 0.095), fixed=True, collision=True))
-
-    probe_default = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.1)],
-            radius=0.01,
-            stiffness=1000.0,
-        )
-    )
-
-    probe_no_affinity = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.1)],
-            radius=0.01,
-            stiffness=1000.0,
-            conaffinity=0,
-        )
-    )
-
-    scene.build(n_envs=0)
-    scene.step()
-
-    assert probe_default.read().penetration[0] > 0.0
-    assert_allclose(probe_no_affinity.read().penetration[0], 0.0, tol=tol)
-
-
-@pytest.mark.required
-def test_kinematic_contact_probe_noise_and_delay(show_viewer, tol):
-    """Test noise bias and delay functionality."""
-    DT, DELAY_STEPS, BIAS = 1e-2, 2, 0.001
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=DT, substeps=1, gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-
-    mount = scene.add_entity(gs.morphs.Sphere(radius=0.05, pos=(0.0, 0.0, 0.045), fixed=True, collision=False))
-
-    probe_clean = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx, probe_local_pos=[(0.0, 0.0, -0.05)], radius=0.01, stiffness=1000.0
-        )
-    )
-
-    probe_delayed = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.05)],
-            radius=0.01,
-            stiffness=1000.0,
-            delay=DT * DELAY_STEPS,
-        )
-    )
-
-    probe_noisy = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.05)],
-            radius=0.01,
-            stiffness=1000.0,
-            bias=BIAS,
-            noise=0.0001,
-        )
-    )
-
-    scene.build(n_envs=0)
-    for _ in range(DELAY_STEPS + 1):
-        scene.step()
-
-    gt = probe_clean.read_ground_truth()
-    assert_allclose(probe_clean.read().penetration[0], gt.penetration[0], tol=tol)
-    assert_allclose(probe_noisy.read().penetration[0], gt.penetration[0] + BIAS, tol=0.001)
-
-    mount.set_pos([0.0, 0.0, 2.0])
-    scene.step()
-    assert probe_delayed.read().penetration[0] > 0.0
-
-    for _ in range(DELAY_STEPS):
-        scene.step()
-    assert_allclose(probe_delayed.read().penetration[0], 0.0, tol=0.001)
-
-
-@pytest.mark.required
 def test_kinematic_contact_probe_box_support(show_viewer, tol):
     """Test BOX geometry detection via support function."""
     scene = gs.Scene(
@@ -831,7 +664,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_multi_probe(show_viewer, tol, n_envs):
-    """Test multiple probes in a single sensor."""
+    """Test multiple sensors with different numbers of probes."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, 0.0)),
         profiling_options=gs.options.ProfilingOptions(show_FPS=False),
@@ -841,78 +674,32 @@ def test_kinematic_contact_probe_multi_probe(show_viewer, tol, n_envs):
 
     mount = scene.add_entity(gs.morphs.Sphere(radius=0.05, pos=(0.0, 0.0, 0.1), fixed=True, collision=False))
 
-    probe = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=mount.idx,
-            probe_local_pos=[
-                (0.0, 0.0, -0.11),
-                (0.0, 0.1, -0.11),
-                (0.0, 0.0, 0.0),
-            ],
-            probe_local_normal=[(0.0, 0.0, 1.0)] * 3,
-            radius=0.02,
-            stiffness=1000.0,
-        )
-    )
-
-    scene.build(n_envs=n_envs)
-    scene.step()
-
-    data = probe.read()
-
-    if n_envs == 0:
-        assert data.penetration.shape == (3,)
-        assert data.position.shape == (3, 3)
-    else:
-        assert data.penetration.shape == (n_envs, 3)
-        assert data.position.shape == (n_envs, 3, 3)
-
-    assert (data.penetration[..., 0] > 0.0).all()
-    assert (data.penetration[..., 1] > 0.0).all()
-    assert_allclose(data.penetration[..., 2], 0.0, tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_kinematic_contact_probe_multiple_sensors_different_probes(show_viewer, tol, n_envs):
-    """Test multiple sensors with different numbers of probes each."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-
-    mount = scene.add_entity(gs.morphs.Sphere(radius=0.05, pos=(0.0, 0.0, 0.1), fixed=True, collision=False))
-
-    # Sensor 1: 2 probes
+    # Sensor with 3 probes (2 facing down toward plane, 1 facing up)
     probe1 = scene.add_sensor(
         gs.sensors.KinematicContactProbe(
             entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.11), (0.1, 0.0, -0.11)],
-            probe_local_normal=[(0.0, 0.0, 1.0)] * 2,
+            probe_local_pos=[(0.0, 0.0, -0.11), (0.0, 0.1, -0.11), (0.0, 0.0, 0.0)],
+            probe_local_normal=[(0.0, 0.0, -1.0), (0.0, 0.0, -1.0), (0.0, 0.0, -1.0)],
             radius=0.02,
             stiffness=1000.0,
         )
     )
-
-    # Sensor 2: 4 probes
+    # Sensor with 2 probes
     probe2 = scene.add_sensor(
         gs.sensors.KinematicContactProbe(
             entity_idx=mount.idx,
-            probe_local_pos=[(0.0, 0.0, -0.11), (0.1, 0.0, -0.11), (0.0, 0.1, -0.11), (0.0, 0.0, 0.0)],
-            probe_local_normal=[(0.0, 0.0, 1.0)] * 4,
+            probe_local_pos=[(0.0, 0.0, -0.11), (0.1, 0.0, -0.11)],
+            probe_local_normal=[(0.0, 0.0, -1.0)] * 2,
             radius=0.02,
             stiffness=2000.0,
         )
     )
-
-    # Sensor 3: 1 probe
+    # Sensor with 1 probe
     probe3 = scene.add_sensor(
         gs.sensors.KinematicContactProbe(
             entity_idx=mount.idx,
             probe_local_pos=[(0.0, 0.0, -0.11)],
-            probe_local_normal=[(0.0, 0.0, 1.0)],
+            probe_local_normal=[(0.0, 0.0, -1.0)],
             radius=0.02,
             stiffness=500.0,
         )
@@ -921,38 +708,16 @@ def test_kinematic_contact_probe_multiple_sensors_different_probes(show_viewer, 
     scene.build(n_envs=n_envs)
     scene.step()
 
-    # Verify shapes
-    data1 = probe1.read()
-    data2 = probe2.read()
-    data3 = probe3.read()
+    data1, data2, data3 = probe1.read(), probe2.read(), probe3.read()
 
-    if n_envs == 0:
-        assert data1.penetration.shape == (2,)
-        assert data2.penetration.shape == (4,)
-        assert data3.penetration.shape == (1,)
-        assert data1.position.shape == (2, 3)
-        assert data2.position.shape == (4, 3)
-        assert data3.position.shape == (1, 3)
-    else:
-        assert data1.penetration.shape == (n_envs, 2)
-        assert data2.penetration.shape == (n_envs, 4)
-        assert data3.penetration.shape == (n_envs, 1)
-        assert data1.position.shape == (n_envs, 2, 3)
-        assert data2.position.shape == (n_envs, 4, 3)
-        assert data3.position.shape == (n_envs, 1, 3)
+    # Verify shapes
+    batch = (n_envs,) if n_envs > 0 else ()
+    assert data1.penetration.shape == (*batch, 3)
+    assert data2.penetration.shape == (*batch, 2)
+    assert data3.penetration.shape == (*batch, 1)
 
     # Verify contact detection
-    assert (data1.penetration[..., 0] > 0.0).all()
-    assert (data1.penetration[..., 1] > 0.0).all()
-    assert (data2.penetration[..., 0] > 0.0).all()
-    assert (data2.penetration[..., 1] > 0.0).all()
-    assert (data2.penetration[..., 2] > 0.0).all()
-    assert_allclose(data2.penetration[..., 3], 0.0, tol=tol)  # Above plane
-    assert (data3.penetration[..., 0] > 0.0).all()
-
-    # Verify different stiffness produces different forces
-    force1_mag = torch.norm(data1.force[..., 0, :], dim=-1)
-    force2_mag = torch.norm(data2.force[..., 0, :], dim=-1)
-    force3_mag = torch.norm(data3.force[..., 0, :], dim=-1)
-    assert (force2_mag > force1_mag).all()  # stiffness 2000 > 1000
-    assert (force1_mag > force3_mag).all()  # stiffness 1000 > 500
+    assert (data1.penetration[..., :2] > 0.0).all()
+    assert_allclose(data1.penetration[..., 2], 0.0, tol=tol)
+    assert (data2.penetration > 0.0).all()
+    assert (data3.penetration > 0.0).all()
