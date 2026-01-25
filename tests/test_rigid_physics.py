@@ -4266,7 +4266,7 @@ def test_pick_heterogenous_objects(show_viewer):
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
 
 
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.required
 @pytest.mark.parametrize("performance_mode", [True])
 def test_hibernation_and_contact_islands(show_viewer):
     """
@@ -4279,7 +4279,6 @@ def test_hibernation_and_contact_islands(show_viewer):
     4. Stacked boxes settle and hibernate -> 1 contact island (merged)
     """
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
             use_hibernation=True,
@@ -4303,21 +4302,15 @@ def test_hibernation_and_contact_islands(show_viewer):
     box1_idx = box1._idx_in_solver
     box2_idx = box2._idx_in_solver
 
-    def is_hibernated(entity_idx):
-        return solver.entities_state.hibernated[entity_idx, 0] == 1
-
-    def get_n_islands():
-        return solver.constraint_solver.contact_island.n_islands[0]
-
     # Phase 1: Let boxes settle and hibernate separately
-    for step in range(500):
+    for step in range(200):
         scene.step()
-        if is_hibernated(box1_idx) and is_hibernated(box2_idx):
+        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
             break
 
-    assert is_hibernated(box1_idx), "Box 1 should be hibernated"
-    assert is_hibernated(box2_idx), "Box 2 should be hibernated"
-    assert get_n_islands() == 2, f"Expected 2 contact islands, got {get_n_islands()}"
+    assert solver.entities_state.hibernated[box1_idx, 0]
+    assert solver.entities_state.hibernated[box2_idx, 0]
+    assert solver.constraint_solver.contact_island.n_islands[0] == 2
 
     # Phase 2: Move box1 above box2 (this should wake up box1)
     offset = 0.01
@@ -4325,25 +4318,25 @@ def test_hibernation_and_contact_islands(show_viewer):
     box1.set_pos(np.array([float(box2_pos[0]) + offset, float(box2_pos[1]) + offset, 0.3]))
 
     # Verify box1 woke up and position was set
-    assert not is_hibernated(box1_idx), "Box 1 should be awake after set_pos"
-    assert float(box1.get_pos()[2]) > 0.2, "Box 1 should be above box2"
+    assert not solver.entities_state.hibernated[box1_idx, 0]
+    assert float(box1.get_pos()[2]) > 0.2
 
     # Let box1 fall and collide with box2
     for _ in range(25):
         scene.step()
 
     # Both boxes should be awake shortly after collision (before they re-hibernate)
-    assert not is_hibernated(box1_idx), "Box 1 should be awake after collision"
-    assert not is_hibernated(box2_idx), "Box 2 should be awake after collision"
+    assert not solver.entities_state.hibernated[box1_idx, 0]
+    assert not solver.entities_state.hibernated[box2_idx, 0]
 
     # Phase 3: Let stacked boxes settle and hibernate
-    for step in range(500):
+    for step in range(200):
         scene.step()
-        if is_hibernated(box1_idx) and is_hibernated(box2_idx):
+        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
             break
 
-    assert is_hibernated(box1_idx), "Box 1 should be hibernated after settling"
-    assert is_hibernated(box2_idx), "Box 2 should be hibernated after settling"
+    assert solver.entities_state.hibernated[box1_idx, 0]
+    assert solver.entities_state.hibernated[box2_idx, 0]
 
     # Stacked boxes should form 1 contact island
-    assert get_n_islands() == 1, f"Expected 1 contact island for stacked boxes, got {get_n_islands()}"
+    assert solver.constraint_solver.contact_island.n_islands[0] == 1

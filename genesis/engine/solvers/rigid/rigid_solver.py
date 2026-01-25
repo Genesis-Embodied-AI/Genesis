@@ -462,8 +462,8 @@ class RigidSolver(Solver):
         if self._static_rigid_sim_config.use_hibernation:
             if gs.use_ndarray:
                 gs.raise_exception(
-                    "Hibernation is not yet supported with ndarray mode. "
-                    "Set GS_ENABLE_NDARRAY=0 or use_hibernation=False."
+                    "Hibernation is not yet supported with dynamic array mode. "
+                    "Please set performance_mode=True or use_hibernation=False."
                 )
 
         if self._static_rigid_sim_config.requires_grad:
@@ -1192,6 +1192,7 @@ class RigidSolver(Solver):
         return ti_to_torch(self._errno) > 0
 
     def check_errno(self):
+        # TODO: Add some class ErrorCode(IntEnum) to manage error codes x)
         if gs.use_zerocopy:
             errno = np.bitwise_or.reduce(ti_to_numpy(self._errno))
         else:
@@ -1214,10 +1215,7 @@ class RigidSolver(Solver):
         if errno & 0b00000000000000000000000000001000:
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & 0b00000000000000000000000000010000:
-            gs.raise_exception(
-                "Contact island buffer overflow. Too many edges in contact island construction. "
-                "This may indicate excessive hibernation edges or contact pairs."
-            )
+            gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
 
     def _kernel_detect_collision(self):
         self.collider.clear()
