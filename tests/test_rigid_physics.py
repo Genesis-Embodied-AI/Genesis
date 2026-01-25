@@ -4278,6 +4278,9 @@ def test_hibernation_and_contact_islands(show_viewer):
     3. Box falls and collides -> both boxes awake
     4. Stacked boxes settle and hibernate -> 1 contact island (merged)
     """
+    if gs.use_ndarray:
+        pytest.skip("Hibernation does not support dynamic array mode.")
+
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
