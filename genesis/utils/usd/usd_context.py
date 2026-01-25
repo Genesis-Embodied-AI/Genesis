@@ -101,6 +101,9 @@ class UsdContext:
                 self._need_bake = False
                 gs.logger.info(f"Baked assets detected and used: {self._bake_stage_file}")
                 stage_file = self._bake_stage_file
+        else:
+            if os.path.exists(self._bake_stage_file):
+                shutil.rmtree(self._bake_folder)
 
         self._stage_file = stage_file
         self._stage = Usd.Stage.Open(self._stage_file)

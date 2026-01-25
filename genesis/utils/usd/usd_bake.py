@@ -15,8 +15,6 @@ def omni_bootstrap(device=0, log_level="warning"):
     omni_extensions = [
         "omni.usd",
         "omni.kit.material.library",
-        "omni.kit.viewport.utility",
-        "omni.kit.viewport.rtx",
         "omni.kit.usd.collect",
         "omni.replicator.core",
         "omni.mdl.distill_and_bake",
@@ -56,13 +54,14 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
 
     # bootstrap
     start_time = time.time()
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        os.environ.pop("CUDA_VISIBLE_DEVICES")
     app = omni_bootstrap(device, log_level)
     logs.append(f"\tBootstrap: {time.time() - start_time}, App status: {app.is_running()}.")
 
     import carb
     import omni.usd
     import omni.mdl.distill_and_bake
-    import omni.replicator.core
     import omni.kit.usd.collect
 
     # open stage
@@ -73,9 +72,8 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
     # create render product
     start_time = time.time()
     stage = omni.usd.get_context().get_stage()
-    render_prod_path = omni.replicator.core.create.render_product("/OmniverseKit_Persp", resolution=(600, 600))
     app.update()  # important
-    logs.append(f"\tCreate render product: {time.time() - start_time}s, {render_prod_path}.")
+    logs.append(f"\tCreate render product: {time.time() - start_time}s.")
 
     # distill the material
     start_time = time.time()
