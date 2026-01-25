@@ -27,3 +27,20 @@ class SFParticleEntity(ParticleEntity):
     def update_particles(self, particles):
         self._particles = particles
         self._n_particles = len(particles)
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """
+        Get the identifier string from the morph for name generation.
+
+        For SFParticleEntity, this returns "sf_" prefixed identifier.
+
+        Returns
+        -------
+        str
+            The morph identifier used in auto-generated entity names.
+        """
+        return f"sf_{self._get_morph_base_identifier()}"

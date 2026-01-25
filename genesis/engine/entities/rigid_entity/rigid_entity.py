@@ -3285,6 +3285,56 @@ class RigidEntity(Entity):
             return mass
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """
+        Get the identifier string from the morph for name generation.
+
+        For RigidEntity, this returns:
+        - "heterogeneous" for heterogeneous entities (multiple morph variants)
+        - Shape name ("box", "sphere", "cylinder", "plane") for primitives
+        - File stem (without extension) for Mesh, URDF, MJCF, Drone
+        - Prim path last segment (if available) or file stem for USD
+        - Terrain name or "terrain" for Terrain morphs
+
+        Returns
+        -------
+        str
+            The morph identifier used in auto-generated entity names.
+        """
+        from pathlib import Path
+
+        # Handle heterogeneous entities (entities with multiple morph variants)
+        if self._enable_heterogeneous:
+            return "heterogeneous"
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        elif isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        elif isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        elif isinstance(morph, gs.morphs.Plane):
+            return "plane"
+        elif isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone)):
+            return Path(morph.file).stem
+        elif isinstance(morph, gs.morphs.USD):
+            # Use prim_path last segment if available, otherwise file stem
+            if morph.prim_path:
+                return morph.prim_path.rstrip("/").split("/")[-1]
+            return Path(morph.file).stem
+        elif isinstance(morph, gs.morphs.Terrain):
+            return morph.name if morph.name else "terrain"
+        else:
+            return "rigid"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 
