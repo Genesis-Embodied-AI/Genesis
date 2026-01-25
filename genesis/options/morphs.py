@@ -1466,10 +1466,6 @@ class USD(FileMorph):
         The parsing target prim path. Defaults to None.
     usd_ctx : Any, optional
         The parser context. Defaults to None.
-    geometry_only: bool, optional
-        Whether to skip rigid/articulation validation for the specified prim. Defaults to False.
-    use_bake_cache: bool, optional
-        Whether to use cached baked assets. Defaults to True.
     """
 
     # Joint Dynamics Options
@@ -1518,8 +1514,6 @@ class USD(FileMorph):
     # Internal Options
     usd_ctx: Any = None
     prim_path: Optional[str] = None
-    geometry_only: bool = False
-    use_bake_cache: bool = True
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -1530,7 +1524,7 @@ class USD(FileMorph):
             if not self.is_format(USD_FORMATS):
                 gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
 
-            self.usd_ctx = UsdContext(self.file, self.use_bake_cache)
+            self.usd_ctx = UsdContext(self.file)
 
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}', prim_path='{self.prim_path}')>"

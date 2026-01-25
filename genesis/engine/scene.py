@@ -499,6 +499,7 @@ class Scene(RBC):
         if isinstance(morph, gs.morphs.USD):
             from genesis.utils.usd import parse_usd_stage
 
+            # Return a list of `gs.morphs.USD` for each parsed rigid entity in the stage.
             entity_morphs = parse_usd_stage(morph)
         else:
             gs.raise_exception(f"Unsupported morph: {morph}.")

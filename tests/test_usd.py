@@ -20,7 +20,7 @@ from .test_mesh import check_gs_meshes, check_gs_surfaces
 # Check for USD support
 try:
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
-    from genesis.utils.usd import HAS_OMNIVERSE_KIT_SUPPORT
+    from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
 
     HAS_USD_SUPPORT = True
 except ImportError as e:
@@ -66,9 +66,7 @@ def compare_links(compared_links, usd_links, tol):
     # Check that we have matching link names
     compared_link_names = set(compared_links_by_name.keys())
     usd_link_names = set(usd_links_by_name.keys())
-    assert compared_link_names == usd_link_names, (
-        f"Link names mismatch: compared={compared_link_names}, USD={usd_link_names}"
-    )
+    assert compared_link_names == usd_link_names
 
     # Compare all link properties by name
     for link_name in sorted(compared_link_names):
@@ -175,9 +173,7 @@ def compare_geoms(compared_geoms, usd_geoms, tol):
     Generic function to compare geoms between two scenes.
     Compares as much geom data as possible including positions, orientations, sizes, etc.
     """
-    assert len(compared_geoms) == len(usd_geoms), (
-        f"Number of geoms mismatch: compared={len(compared_geoms)}, USD={len(usd_geoms)}"
-    )
+    assert len(compared_geoms) == len(usd_geoms)
 
     # Sort geoms by link name for consistent comparison
     compared_geoms_sorted = sorted(compared_geoms, key=lambda g: (g.link.name, g._idx))
@@ -187,33 +183,35 @@ def compare_geoms(compared_geoms, usd_geoms, tol):
         assert compared_geom.type == usd_geom.type
         assert_allclose(compared_geom.init_pos, usd_geom.init_pos, tol=tol)
         assert_allclose(compared_geom.init_quat, usd_geom.init_quat, tol=tol)
+        assert_allclose(compared_geom.get_AABB(), usd_geom.get_AABB(), tol=tol)
 
 
-def compare_vgeoms(compared_vgeoms, usd_vgeoms):
-    assert len(compared_vgeoms) == len(usd_vgeoms), (
-        f"Number of vgeoms mismatch: compared={len(compared_vgeoms)}, USD={len(usd_vgeoms)}"
-    )
+def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
+    assert len(compared_vgeoms) == len(usd_vgeoms)
 
     # Sort geoms by link name for consistent comparison
     compared_vgeoms_sorted = sorted(compared_vgeoms, key=lambda g: g.vmesh.metadata["name"])
     usd_vgeoms_sorted = sorted(usd_vgeoms, key=lambda g: g.vmesh.metadata["name"].split("/")[-1])
 
     for compared_vgeom, usd_vgeom in zip(compared_vgeoms_sorted, usd_vgeoms_sorted):
-        compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-            compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
-        )
-        usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-            usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
-        )
-        compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
-        usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)
+        if strict:
+            compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
+                compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
+            )
+            usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
+                usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
+            )
+            compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
+            usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)
 
-        compared_vgeom_mesh = compared_vgeom.vmesh.copy()
-        usd_vgeom_mesh = usd_vgeom.vmesh.copy()
-        mesh_name = usd_vgeom_mesh.metadata["name"]
-        compared_vgeom_mesh.apply_transform(compared_vgeom_T)
-        usd_vgeom_mesh.apply_transform(usd_vgeom_T)
-        check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name)
+            compared_vgeom_mesh = compared_vgeom.vmesh.copy()
+            usd_vgeom_mesh = usd_vgeom.vmesh.copy()
+            mesh_name = usd_vgeom_mesh.metadata["name"]
+            compared_vgeom_mesh.apply_transform(compared_vgeom_T)
+            usd_vgeom_mesh.apply_transform(usd_vgeom_T)
+            check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name)
+        else:
+            assert_allclose(compared_vgeom.get_AABB(), usd_vgeom.get_AABB(), tol=tol)
 
         compared_vgeom_surface = compared_vgeom_mesh.surface
         usd_vgeom_surface = usd_vgeom_mesh.surface
@@ -238,7 +236,7 @@ def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
     compare_joints(compared_joints, usd_joints, tol=tol)
 
 
-def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene):
+def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
     """
     Compare mesh data between mesh scene and USD scene.
     Meshes are loaded with transformations baked. Therefore, we only compare mesh data.
@@ -247,7 +245,7 @@ def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene):
     usd_entities = usd_scene.entities
     compared_vgeoms = [vgeom for entity in compared_entities for vgeom in entity.vgeoms]
     usd_vgeoms = [vgeom for entity in usd_entities for vgeom in entity.vgeoms]
-    compare_vgeoms(compared_vgeoms, usd_vgeoms)
+    compare_vgeoms(compared_vgeoms, usd_vgeoms, tol=tol)
 
 
 def build_mjcf_scene(xml_path: str, scale: float):
@@ -300,10 +298,8 @@ def build_usd_scene(
     # Create USD scene
     usd_scene = gs.Scene()
     usd_morph = gs.morphs.USD(
-        file=usd_file,
+        usd_ctx=UsdContext(usd_file, use_bake_cache=False),
         scale=scale,
-        geometry_only=not is_stage,
-        use_bake_cache=False,
     )
     if is_stage:
         usd_scene.add_stage(usd_morph, vis_mode=vis_mode, material=gs.materials.Rigid(rho=1000.0))
@@ -881,12 +877,12 @@ def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, scale, tol):
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_usd_visual_parse(model_name):
+def test_usd_visual_parse(model_name, tol):
     glb_file = os.path.join(get_hf_dataset(pattern=f"{model_name}.glb"), f"{model_name}.glb")
     usd_file = os.path.join(get_hf_dataset(pattern=f"{model_name}.usdz"), f"{model_name}.usdz")
     mesh_scene = build_mesh_scene(glb_file, scale=1.0)
     usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
-    compare_mesh_scene(mesh_scene, usd_scene)
+    compare_mesh_scene(mesh_scene, usd_scene, tol=tol)
 
 
 @pytest.mark.required

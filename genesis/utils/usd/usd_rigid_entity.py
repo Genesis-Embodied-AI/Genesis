@@ -430,16 +430,6 @@ def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     if not entity_prim.IsValid():
         gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
 
-    if not morph.geometry_only and not (
-        entity_prim.HasAPI(UsdPhysics.RigidBodyAPI)
-        or entity_prim.HasAPI(UsdPhysics.CollisionAPI)
-        or entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI)
-    ):
-        gs.raise_exception(
-            f"Provided prim {entity_prim.GetPath()} is neither an articulation root nor a rigid body. "
-            f"If the selected prim does not have any RigidBody API, use 'geometry_only=True'."
-        )
-
     # find joints
     links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim)
     links_g_infos = _parse_geoms(context, entity_prim, link_path_to_idx, morph, surface)
