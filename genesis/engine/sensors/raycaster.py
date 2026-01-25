@@ -9,6 +9,7 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
+from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
 from genesis.options.sensors import (
     Raycaster as RaycasterOptions,
 )
@@ -23,7 +24,7 @@ from genesis.utils.geom import (
     transform_by_trans_quat,
 )
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
-from genesis.utils.raycast import kernel_update_aabbs, ray_aabb_intersection, ray_triangle_intersection
+from genesis.utils.raycast import ray_aabb_intersection, ray_triangle_intersection, update_aabbs
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
@@ -37,6 +38,29 @@ from .sensor_manager import register_sensor
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
+
+
+@ti.kernel
+def kernel_update_verts_and_aabbs(
+    geoms_info: array_class.GeomsInfo,
+    geoms_state: array_class.GeomsState,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+    static_rigid_sim_config: ti.template(),
+    aabb_state: ti.template(),
+):
+    func_update_all_verts(
+        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+    )
+    update_aabbs(
+        free_verts_state,
+        fixed_verts_state,
+        verts_info,
+        faces_info,
+        aabb_state,
+    )
 
 
 @ti.kernel
@@ -218,24 +242,17 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         """Rebuild BVH from current geometry in the scene."""
-        from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
-
-        kernel_update_all_verts(
+        kernel_update_verts_and_aabbs(
             geoms_info=shared_metadata.solver.geoms_info,
             geoms_state=shared_metadata.solver.geoms_state,
             verts_info=shared_metadata.solver.verts_info,
+            faces_info=shared_metadata.solver.faces_info,
             free_verts_state=shared_metadata.solver.free_verts_state,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             static_rigid_sim_config=shared_metadata.solver._static_rigid_sim_config,
-        )
-
-        kernel_update_aabbs(
-            free_verts_state=shared_metadata.solver.free_verts_state,
-            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
-            verts_info=shared_metadata.solver.verts_info,
-            faces_info=shared_metadata.solver.faces_info,
             aabb_state=shared_metadata.aabb,
         )
+
         shared_metadata.bvh.build()
 
     def build(self):

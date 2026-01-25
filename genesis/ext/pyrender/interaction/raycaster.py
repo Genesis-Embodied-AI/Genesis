@@ -5,7 +5,7 @@ import numpy as np
 
 import genesis as gs
 from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
-from genesis.utils.raycast import kernel_update_aabbs, ray_aabb_intersection, ray_triangle_intersection
+from genesis.utils.raycast import ray_aabb_intersection, ray_triangle_intersection, update_aabbs
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
@@ -213,24 +213,17 @@ class ViewerRaycaster:
         if self.bvh is None:
             return
 
-        # Update vertex positions
-        from genesis.engine.solvers.rigid.rigid_solver_decomp import kernel_update_all_verts
+        # Update vertex positions and AABBs
+        from genesis.sensors.raycaster import kernel_update_verts_and_aabbs
 
-        kernel_update_all_verts(
+        kernel_update_verts_and_aabbs(
             geoms_info=self.solver.geoms_info,
             geoms_state=self.solver.geoms_state,
             verts_info=self.solver.verts_info,
+            faces_info=self.solver.faces_info,
             free_verts_state=self.solver.free_verts_state,
             fixed_verts_state=self.solver.fixed_verts_state,
             static_rigid_sim_config=self.solver._static_rigid_sim_config,
-        )
-
-        # Update AABBs for each rendered environment
-        kernel_update_aabbs(
-            free_verts_state=self.solver.free_verts_state,
-            fixed_verts_state=self.solver.fixed_verts_state,
-            verts_info=self.solver.verts_info,
-            faces_info=self.solver.faces_info,
             aabb_state=self.aabb,
         )
 

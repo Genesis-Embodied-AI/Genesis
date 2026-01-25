@@ -16,7 +16,6 @@ class DroneController:
     def update_rpms(self):
         """Compute RPMs based on current direction and thrust"""
         clipped_dir = np.clip(self.cur_dir, -1.0, 1.0)
-        print(clipped_dir)
         rpms = self.thrust + clipped_dir * self.rotation_delta
         return np.clip(rpms, 0, 25000)
 
