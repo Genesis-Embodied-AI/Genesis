@@ -291,6 +291,7 @@ def test_sph_density_consistency_different_particle_sizes(show_viewer, pressure_
 # =============================================================================
 
 
+# TODO: Add more tests for validating the underlying physical behavior of DFSPH.
 @pytest.mark.required
 def test_dfsph_simulation_builds_and_runs(show_viewer):
     """
