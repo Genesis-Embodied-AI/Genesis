@@ -104,21 +104,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-file", type=str, required=True)
     parser.add_argument("--die-with-parent", action="store_true")
-    parser.add_argument(
-        "--extra-key-values",
-        type=str,
-        nargs="*",
-        default=[],
-        help="Extra key=value pairs to include in output (e.g., dtype=field use_contact_island=False)",
-    )
     args = parser.parse_args()
 
-    # Parse extra parameters
     extra_params = {}
-    for param in args.extra_key_values:
-        if "=" in param:
-            k, v = param.split("=", 1)
-            extra_params[k] = v
+    extra_params["dtype"] = "ndarray" if os.environ.get("GS_ENABLE_NDARRAY", "0") == "1" else "field"
 
     max_mem_by_test = defaultdict(int)
 
