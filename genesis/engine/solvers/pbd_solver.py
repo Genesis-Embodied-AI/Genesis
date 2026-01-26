@@ -102,6 +102,12 @@ class PBDSolver(Solver):
             shape=(max(self._n_vverts, 1), self._B), layout=ti.Layout.SOA
         )
 
+        # UV coordinates for visual vertices (static, same across all batch envs)
+        self.vverts_uvs = ti.field(dtype=gs.ti_vec2, shape=(max(self._n_vverts, 1),))
+
+        # Triangle face indices for visual mesh (static)
+        self.vfaces_indices = ti.field(dtype=gs.ti_ivec3, shape=(max(self._n_vfaces, 1),))
+
     def init_particle_fields(self):
         # particles information (static)
         struct_particle_info = ti.types.struct(
@@ -828,6 +834,24 @@ class PBDSolver(Solver):
         else:
             state = None
         return state
+
+    def get_state_render(self):
+        """
+        Get visual vertex positions, UVs, and face indices for rendering.
+
+        Returns
+        -------
+        tuple
+            (vverts_pos, vverts_uvs, vfaces_indices) - vertex positions, UV coords, and triangle indices
+        """
+        if not self.is_active or self._n_vverts == 0:
+            return None, None, None
+
+        # Make sure render fields are up to date
+        self.update_render_fields()
+
+        # Return the Taichi fields directly for GPU access
+        return self.vverts_render.pos, self.vverts_uvs, self.vfaces_indices
 
     @ti.kernel
     def _kernel_get_state(
