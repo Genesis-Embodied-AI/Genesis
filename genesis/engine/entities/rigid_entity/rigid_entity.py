@@ -3323,7 +3323,12 @@ class RigidEntity(Entity):
         elif isinstance(morph, gs.morphs.Mesh):
             return Path(morph.file).stem
         elif isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone)):
-            return Path(morph.file).stem
+            # morph.file can be a URDF object (e.g., from hybrid entity) instead of a path
+            if isinstance(morph.file, str):
+                return Path(morph.file).stem
+            else:
+                # URDF object has a name attribute
+                return morph.file.name
         elif isinstance(morph, gs.morphs.USD):
             # Use prim_path last segment if available, otherwise file stem
             if morph.prim_path:
