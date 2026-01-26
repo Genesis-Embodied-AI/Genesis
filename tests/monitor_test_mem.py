@@ -35,7 +35,7 @@ def parse_test_name(test_name: str) -> dict[str, str]:
         "gjk_collision": parts[2],
         "batch_size": parts[3],
         "backend": parts[4],
-        "dtype": parts[5]
+        "dtype": parts[5],
     }
 
     # Remove "None" values for consistency
