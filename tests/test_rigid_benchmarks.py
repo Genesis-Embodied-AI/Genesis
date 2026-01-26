@@ -728,7 +728,7 @@ def box_pyramid_6(solver, n_envs, gjk):
 @pytest.fixture
 def g1_fall(solver, n_envs, gjk):
     """G1 humanoid robot falling from above a plane."""
-    # note: to check how to enable performance_mode
+    # TODO: check how to enable performance_mode
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             dt=0.005,
@@ -745,19 +745,8 @@ def g1_fall(solver, n_envs, gjk):
             enable_collision=True,
             enable_self_collision=True,
             enable_joint_limit=True,
-            # batch_links_info=env_options.batch_links_info,
-            # batch_joints_info=env_options.batch_joints_info,
-            # batch_dofs_info=env_options.batch_dofs_info,
             enable_multi_contact=True,
         ),
-
-        # rigid_options=gs.options.RigidOptions(
-        #     **get_rigid_solver_options(
-        #         dt=STEP_DT,
-        #         **(dict(constraint_solver=solver) if solver is not None else {}),
-        #         **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-        #     )
-        # ),
         show_viewer=False,
         show_FPS=False,
     )
