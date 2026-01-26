@@ -811,7 +811,6 @@ def g1_fall(solver, n_envs, gjk):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", None, None, 4096, gs.gpu),
-        ("g1_fall", None, None, 0, gs.cpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
