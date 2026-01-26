@@ -1,10 +1,9 @@
 import hashlib
-import numbers
 import os
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
+from huggingface_hub import snapshot_download
 
 import numpy as np
 import pytest
@@ -728,6 +727,15 @@ def box_pyramid_6(solver, n_envs, gjk):
 @pytest.fixture
 def g1_fall(solver, n_envs, gjk):
     """G1 humanoid robot falling from above a plane."""
+
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        revision="e0d8081ddf6d7490f67eac214d09820ba8689b2f",
+        allow_patterns="unitree_g1/*",
+        max_workers=1,
+    )
+
     # TODO: check how to enable performance_mode
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -755,7 +763,7 @@ def g1_fall(solver, n_envs, gjk):
     robot = scene.add_entity(
         gs.morphs.MJCF(
             **get_file_morph_options(
-                file="xml/unitree_g1/g1_29dof_rev_1_0.xml",
+                file=f"{asset_path}/unitree_g1/g1_29dof_rev_1_0.xml",
                 pos=(0, 0, 1.0),
             )
         ),
