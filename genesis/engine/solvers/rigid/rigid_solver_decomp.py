@@ -1159,9 +1159,10 @@ class RigidSolver(Solver):
             from genesis.engine.couplers import IPCCoupler
 
             if isinstance(self.sim.coupler, IPCCoupler):
-                # Dispatch to strategy-specific precoupling logic
-                if self.sim.coupler.options.coupling_strategy == "two_way_soft_constraint":
-                    # Skip rigid body computation (IPC handles rigid simulation)
+                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
+                # The rigid simulation will be done in post-coupling phase instead
+                # This applies to all coupling types: two_way_soft_constraint, external_articulation, ipc_only
+                if self.sim.coupler.has_any_rigid_coupling():
                     return
 
             # Run Genesis rigid simulation step for non-IPC couplers
@@ -1367,10 +1368,9 @@ class RigidSolver(Solver):
                 errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
-            # Dispatch to strategy-specific postcoupling logic
-            if self.sim.coupler.options.coupling_strategy == "two_way_soft_constraint":
-                # For two_way_soft_constraint, perform full rigid body computation in post-coupling phase
-                # This allows IPC to handle rigid bodies during the coupling phase
+            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase
+            # This applies to all coupling types: two_way_soft_constraint, external_articulation, ipc_only
+            if self.sim.coupler.has_any_rigid_coupling():
                 # Temporarily disable ground collision if requested
                 if self.sim.coupler.options.disable_genesis_contact:
                     original_enable_collision = self._enable_collision

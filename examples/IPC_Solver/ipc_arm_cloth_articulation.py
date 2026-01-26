@@ -61,20 +61,21 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     gs.init(seed=0, precision="32", logging_level="info", backend=gs.gpu, performance_mode=True)
     np.set_printoptions(precision=7, suppress=True)
 
-    dt = 2e-2
+    dt = 1e-2
 
     ########################## create a scene ##########################
     coupler_options = (
         gs.options.IPCCouplerOptions(
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
-            ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios,
+            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
+            coupling_strategy="external_articulation",
+            disable_ipc_ground_contact=True,
+            disable_genesis_contact=True,
+            IPC_self_contact=False,
             contact_friction_mu=0.8,
-            IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-            newton_velocity_tol=1e-1,
-            newton_transrate_tol=1,
             enable_ipc_gui=enable_ipc_gui,
-            sync_dof_enable=False,
+            newton_semi_implicit_enable=False,
         )
         if use_ipc
         else None
@@ -85,7 +86,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
         coupler_options=coupler_options,
         rigid_options=gs.options.RigidOptions(
             enable_joint_limit=True,
-            enable_collision=True,
+            enable_collision=True,  # Disable rigid collision when using IPC
             gravity=(0, 0, -9.8),
             box_box_detection=True,
             constraint_timeconst=0.01,
@@ -111,11 +112,6 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
             file="xml/franka_emika_panda/panda.xml",
             euler=(0, 0, 0),
         ),
-    )
-    scene.sim.coupler.set_link_ipc_coupling_type(
-        entity=entities["robot"],
-        coupling_type="both",
-        link_names=["left_finger", "right_finger"],
     )
 
     material = (
@@ -154,9 +150,9 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     cube_height = 0.02501  # Height
     grid_spacing = 0.15  # Spacing between cubes
 
-    for i in range(4):
-        for j in range(4):
-            x = (i + 1.7) * grid_spacing  # Center the grid
+    for i in range(1):
+        for j in range(2):
+            x = (i + 1.9) * grid_spacing  # Center the grid
             y = (j - 1.5) * grid_spacing
             scene.add_entity(
                 morph=gs.morphs.Box(
@@ -164,17 +160,17 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
                     size=(cube_size, cube_size, cube_size),
                     fixed=True,
                 ),
-                material=gs.materials.Rigid(rho=500, friction=0.3),
+                material=gs.materials.FEM.Elastic(E=1.0e4, nu=0.3, rho=1000.0, model="stable_neohookean"),
                 surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
             )
-    entities["target"] = scene.add_entity(
-        gs.morphs.Mesh(
-            file="meshes/axis.obj",
-            scale=0.15,
-            collision=False,
-        ),
-        surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
-    )
+    # entities["target"] = scene.add_entity(
+    #     gs.morphs.Mesh(
+    #         file="meshes/axis.obj",
+    #         scale=0.15,
+    #         collision=False,
+    #     ),
+    #     surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
+    # )
 
     ########################## build ##########################
     scene.build()
@@ -184,7 +180,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
 
 def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
     robot = entities["robot"]
-    target_entity = entities["target"]
+    # target_entity = entities["target"]
 
     robot_init_pos = np.array([0.5, 0, 0.55])
     robot_init_R = R.from_euler("y", np.pi)
@@ -205,7 +201,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
         target_pos = robot_init_pos.copy()
         target_R = robot_init_R
         target_quat = target_R.as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
+        # target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
         q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
         robot.set_qpos(q[:-2], motors_dof)
 
@@ -262,7 +258,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
     print("esc\t- Quit")
 
     # reset scene before starting teleoperation
-    reset_scene()
+    # reset_scene()
 
     # start teleoperation or playback
     stop = False
@@ -341,7 +337,7 @@ def run_sim(scene, entities, clients, mode="interactive", trajectory_file=None):
 
         # control arm
         target_quat = target_R.as_quat(scalar_first=True)
-        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
+        # target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
         q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
         robot.control_dofs_position(q[:-2], motors_dof)
         # control gripper
