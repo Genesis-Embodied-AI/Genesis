@@ -120,13 +120,13 @@ Then install PyTorch for your platform:
 
 ```bash
 # NVIDIA GPU (CUDA 12.6 as an example)
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126
 
 # CPU only (Linux/Windows)
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # Apple Silicon (Metal/MPS)
-uv pip install torch torchvision
+uv pip install torch
 ```
 
 Run an example:
