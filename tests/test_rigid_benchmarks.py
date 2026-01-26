@@ -733,9 +733,7 @@ def g1_fall(solver, n_envs, gjk):
         rigid_options=gs.options.RigidOptions(
             dt=0.005,
             constraint_solver=gs.constraint_solver.Newton,
-            constraint_timeconst=max(
-                0.01, 2 * 0.005 / 1
-            ),
+            constraint_timeconst=max(0.01, 2 * 0.005 / 1),
             use_gjk_collision=False,
             max_collision_pairs=35,
             iterations=10,
