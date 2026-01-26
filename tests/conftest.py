@@ -361,6 +361,9 @@ def pytest_collection_modifyitems(config, items):
 def pytest_runtest_setup(item):
     # Include test name in process title
     test_name = item.nodeid.replace(" ", "")
+    dtype = "ndarray" if os.environ.get("GS_ENABLE_NDARRAY") == "1" else "field"
+    test_name = test_name[:-1] + f"-{dtype}]"
+
     setproctitle.setproctitle(f"pytest: {test_name}")
 
     # Match CUDA device with EGL device.
