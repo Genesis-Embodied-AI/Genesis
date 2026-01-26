@@ -155,3 +155,49 @@ uv.lock
 # alarm.yml outputs
 outputs/
 
+.gaac*local*
+
+# Local development files
+.claude/
+.humanize/
+CLAUDE.md
+debug/
+debug_backup/
+bak/
+_tmp/
+
+# Test outputs and temporary files
+*_output/
+img_output/
+gui_images/
+test_*.py
+!tests/test_*.py
+*_debug.py
+draft.md
+pr_*.md
+*_design.md
+
+# Speed test outputs
+speed_test*.txt
+_speed_test*.txt
+
+# Misc temporary files
+=2
+*.json
+!genesis/**/*.json
+!examples/**/*.json
+!tests/**/*.json
+apollo_sensor/
+mujoco_menagerie/
+*_scene.py
+heterogeneous_simulation_simple.py
+
+# Local docs folder (different from doc/_build)
+/docs/
+
+# Test images
+*.png
+!genesis/**/*.png
+
+# Local example experiments
+examples/tutorials/entity_name.py
