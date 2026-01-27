@@ -169,9 +169,9 @@ def get_hashkey(*args):
     return hasher.hexdigest()
 
 
-def load_mesh(file):
+def load_mesh(file, skip_texture=True):
     if isinstance(file, (str, Path)):
-        return trimesh.load(file, force="mesh", skip_texture=True)
+        return trimesh.load(file, force="mesh", skip_texture=skip_texture)
     return file
 
 

@@ -389,6 +389,7 @@ class FEMEntity(Entity):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
+        self._uvs = None  # Initialize UVs storage (indexed same as FEM vertices)
 
         if is_cloth:
             # Cloth: load surface mesh directly (no tetrahedralization)
@@ -400,6 +401,14 @@ class FEMEntity(Entity):
                 faces = mesh.faces
                 # For cloth, we store faces as "elements" (treating them as surface elements)
                 self.instantiate(verts, faces)
+
+                # Load UVs from mesh (1:1 mapping for cloth)
+                try:
+                    uvs = mesh.visual.uv.copy()
+                    uvs[:, 1] = 1.0 - uvs[:, 1]  # flip V coordinate (trimesh uses top-left origin)
+                    self._uvs = uvs.astype(gs.np_float)
+                except AttributeError:
+                    self._uvs = None
             else:
                 gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
         else:
@@ -419,11 +428,12 @@ class FEMEntity(Entity):
             elif isinstance(self.morph, gs.options.morphs.Cylinder):
                 verts, elems = eu.cylinder_to_elements()
             elif isinstance(self.morph, gs.options.morphs.Mesh):
-                verts, elems = eu.mesh_to_elements(
+                verts, elems, self._uvs = eu.mesh_to_elements(
                     file=self._morph.file,
                     pos=self._morph.pos,
                     scale=self._morph.scale,
                     tet_cfg=self.tet_cfg,
+                    return_uvs=True,
                 )
             else:
                 gs.raise_exception(f"Unsupported morph: {self.morph}.")
@@ -477,7 +487,22 @@ class FEMEntity(Entity):
                 tri2el=self._surface_el_np,
             )
 
+        # Add UVs to solver if available
+        self._add_uvs_to_solver()
+
         self.active = True
+
+    def _add_uvs_to_solver(self):
+        """
+        Copy UV coordinates to the solver's surface_render_uvs field.
+        """
+        if self._uvs is None:
+            return
+
+        # Copy UVs to solver field starting at v_start
+        uvs_np = self._uvs.astype(gs.np_float, copy=False)
+        for i, uv in enumerate(uvs_np):
+            self._solver.surface_render_uvs[self._v_start + i] = uv
 
     def compute_pressure_field(self):
         """
@@ -1073,6 +1098,11 @@ class FEMEntity(Entity):
     def surface_triangles(self):
         """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
+
+    @property
+    def uvs(self):
+        """UV coordinates for this entity's vertices, or None if not available."""
+        return self._uvs
 
     @property
     def tet_cfg(self):

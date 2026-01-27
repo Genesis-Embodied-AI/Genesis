@@ -240,6 +240,13 @@ class FEMSolver(Solver):
             layout=ti.Layout.SOA,
         )
 
+        # UV coordinates for rendering (per-vertex UVs, initialized to zeros)
+        self.surface_render_uvs = ti.field(
+            dtype=gs.ti_vec2,
+            shape=(max(n_vertices_max, 1),),
+            needs_grad=False,
+        )
+
     def _init_surface_info(self):
         self.vertices_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_vertices,))
         self.elements_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_elements,))
@@ -1096,8 +1103,9 @@ class FEMSolver(Solver):
         self.get_state_render_kernel(f)
         vertices = self.surface_render_v.vertices
         indices = self.surface_render_f.indices
+        uvs = self.surface_render_uvs
 
-        return vertices, indices
+        return vertices, indices, uvs
 
     def get_forces(self):
         """
@@ -1378,7 +1386,8 @@ class FEMSolver(Solver):
                 pos_j = ti.cast(self.elements_v[f, i_v, i_b].pos[j], ti.f32)
                 self.surface_render_v[i_v, i_b].vertices[j] = pos_j + self.envs_offset[i_b][j]
 
-        for i_s, i_b in ti.ndrange(self.n_surfaces, self._B):
+        # Fill triangle indices (flat array, 3 ints per triangle)
+        for i_s in range(self.n_surfaces):
             for j in ti.static(range(3)):
                 self.surface_render_f[i_s * 3 + j].indices = ti.cast(self.surface[i_s].tri2v[j], ti.i32)
 

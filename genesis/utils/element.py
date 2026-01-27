@@ -31,9 +31,21 @@ def cylinder_to_elements():
     raise NotImplementedError
 
 
-def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
-    mesh = mu.load_mesh(file)
+def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict(), return_uvs=False):
+    # Load mesh (with texture data if UVs are requested)
+    mesh = mu.load_mesh(file, skip_texture=not return_uvs)
     mesh.vertices = mesh.vertices * scale
+    
+    # Extract UVs from mesh before tetrahedralization (if requested)
+    # (tetgen preserves original vertices at start of output array)
+    if return_uvs:
+        n_original = len(mesh.vertices)
+        try:
+            original_uvs = mesh.visual.uv.copy()
+            original_uvs[:, 1] = 1.0 - original_uvs[:, 1]  # flip V (trimesh uses top-left origin)
+            original_uvs = original_uvs.astype(gs.np_float)
+        except AttributeError:
+            original_uvs = None
 
     # compute file name via hashing for caching
     tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
@@ -43,8 +55,8 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
     if os.path.exists(tet_file_path):
         gs.logger.debug("Tetrahedra file (`.tet`) found in cache.")
         try:
-            with open(tet_file_path, "rb") as file:
-                verts, elems = pkl.load(file)
+            with open(tet_file_path, "rb") as tet_file:
+                verts, elems = pkl.load(tet_file)
             is_cached_loaded = True
         except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
             gs.logger.info("Ignoring corrupted cache.")
@@ -54,10 +66,18 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
             verts, elems = mu.tetrahedralize_mesh(mesh, tet_cfg)
 
             os.makedirs(os.path.dirname(tet_file_path), exist_ok=True)
-            with open(tet_file_path, "wb") as file:
-                pkl.dump((verts, elems), file)
+            with open(tet_file_path, "wb") as tet_file:
+                pkl.dump((verts, elems), tet_file)
 
     verts += np.array(pos)
+    
+    if return_uvs:
+        # Build full UV array: original vertices get their UVs, interior vertices get zeros
+        n_fem = len(verts)
+        uvs = np.zeros((n_fem, 2), dtype=gs.np_float)
+        if original_uvs is not None:
+            uvs[:n_original] = original_uvs
+        return verts, elems, uvs
 
     return verts, elems
 
