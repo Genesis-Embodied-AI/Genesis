@@ -28,6 +28,7 @@ except ImportError as e:
     HAS_OMNIVERSE_KIT_SUPPORT = False
 
 USD_COLOR_TOL = 1e-07  # Parsing from .usd loses a little precision in color
+USD_NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
 
 
 def to_array(s: str) -> np.ndarray:
@@ -209,7 +210,7 @@ def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
             mesh_name = usd_vgeom_mesh.metadata["name"]
             compared_vgeom_mesh.apply_transform(compared_vgeom_T)
             usd_vgeom_mesh.apply_transform(usd_vgeom_T)
-            check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name)
+            check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name, tol, USD_NORMALS_TOL)
         else:
             assert_allclose(compared_vgeom.get_AABB(), usd_vgeom.get_AABB(), tol=tol)
 

@@ -12,9 +12,6 @@ import genesis.utils.mesh as mu
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
-VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
-NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
-
 
 def extract_mesh(gs_mesh):
     """Extract vertices, normals, uvs, and faces from a gs.Mesh object."""
@@ -44,23 +41,23 @@ def extract_mesh(gs_mesh):
     return vertices, faces, normals, uvs
 
 
-def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
+def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name, vertices_tol, normals_tol):
     """Check if two gs.Mesh objects are equal."""
     vertices1, faces1, normals1, uvs1 = extract_mesh(gs_mesh1)
     vertices2, faces2, normals2, uvs2 = extract_mesh(gs_mesh2)
 
-    assert_allclose(vertices1, vertices2, atol=VERTICES_TOL, err_msg=f"Vertices match failed in mesh {mesh_name}.")
+    assert_allclose(vertices1, vertices2, atol=vertices_tol, err_msg=f"Vertices match failed in mesh {mesh_name}.")
     assert_array_equal(faces1, faces2, err_msg=f"Faces match failed in mesh {mesh_name}.")
-    assert_allclose(normals1, normals2, atol=NORMALS_TOL, err_msg=f"Normals match failed in mesh {mesh_name}.")
+    assert_allclose(normals1, normals2, atol=normals_tol, err_msg=f"Normals match failed in mesh {mesh_name}.")
     assert_allclose(uvs1, uvs2, rtol=gs.EPS, err_msg=f"UVs match failed in mesh {mesh_name}.")
 
 
-def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
+def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name, vertices_tol, normals_tol):
     """Check if a gs.Mesh object and a trimesh.Trimesh object are equal."""
     assert_allclose(
         tm_mesh.vertices,
         gs_mesh.trimesh.vertices,
-        atol=VERTICES_TOL,
+        tol=vertices_tol,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
     assert_array_equal(
@@ -71,7 +68,7 @@ def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
     assert_allclose(
         tm_mesh.vertex_normals,
         gs_mesh.trimesh.vertex_normals,
-        atol=NORMALS_TOL,
+        tol=normals_tol,
         err_msg=f"Normals match failed in mesh {mesh_name}.",
     )
     if not isinstance(tm_mesh.visual, trimesh.visual.color.ColorVisuals):
@@ -155,8 +152,9 @@ def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
-def test_glb_parse_geometry(glb_file):
+def test_glb_parse_geometry(glb_file, tol):
     """Test glb mesh geometry parsing."""
     asset_path = get_hf_dataset(pattern=glb_file)
     glb_file = os.path.join(asset_path, glb_file)
@@ -179,7 +177,7 @@ def test_glb_parse_geometry(glb_file):
     for gs_mesh in gs_meshes:
         mesh_name = gs_mesh.metadata["name"]
         tm_mesh = tm_meshes[mesh_name]
-        check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name)
+        check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name, tol, tol)
 
 
 @pytest.mark.required
