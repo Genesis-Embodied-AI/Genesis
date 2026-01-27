@@ -183,3 +183,8 @@ markers = [
     "slow: tests that are slow to run (> 100s).",
 ]
 log_cli_level = "WARNING"
+
+[tool.uv]
+# uv respects the build-system and project tables
+# PyTorch must be installed separately before Genesis due to platform-specific builds
+# See README.md for installation instructions with different PyTorch backends
