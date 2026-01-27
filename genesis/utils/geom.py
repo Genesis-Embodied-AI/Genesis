@@ -1677,9 +1677,9 @@ def _np_euler_to_R(rpy: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     """
     assert rpy.ndim >= 1
     if out is None:
-        out_ = np.empty((*rpy.shape[1:], 3, 3), dtype=rpy.dtype)
+        out_ = np.empty((*rpy.shape[:-1], 3, 3), dtype=rpy.dtype)
     else:
-        assert out.shape == (*rpy.shape[1:], 3, 3)
+        assert out.shape == (*rpy.shape[:-1], 3, 3)
         out_ = out
 
     cos_rpy, sin_rpy = np.cos(rpy), np.sin(rpy)
