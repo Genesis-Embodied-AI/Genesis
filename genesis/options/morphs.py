@@ -1008,6 +1008,13 @@ class URDF(FileMorph):
                 gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
             self.scale = self.scale.mean()
 
+    def is_format(self, format):
+        from genesis.ext.urdfpy.urdf import URDF
+
+        if isinstance(self.file, URDF):
+            return True
+        return super().is_format(format)
+
 
 class Drone(FileMorph):
     """
