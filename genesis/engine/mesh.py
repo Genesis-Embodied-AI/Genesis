@@ -205,6 +205,7 @@ class Mesh(RBC):
             mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
             surface=self._surface.copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
+            scale=self._scale.copy() if self._scale is not None else None,
             metadata=self._metadata.copy(),
         )
 
@@ -425,6 +426,15 @@ class Mesh(RBC):
         if self._scale is not None:
             mesh.apply_scale(self._scale)
         return mesh
+
+    @property
+    def _trimesh_raw(self):
+        """
+        Return the internal trimesh object without copying or scaling.
+
+        This is for internal use only when mutation of the underlying mesh is needed.
+        """
+        return self._mesh
 
     @property
     def is_convex(self) -> bool:
