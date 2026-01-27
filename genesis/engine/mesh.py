@@ -205,6 +205,7 @@ class Mesh(RBC):
             mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
             surface=self._surface.copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
+            scale=self._scale.copy() if self._scale is not None else None,
             metadata=self._metadata.copy(),
         )
 
