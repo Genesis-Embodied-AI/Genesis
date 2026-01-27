@@ -163,7 +163,17 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
+          pytest -v --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests --basetemp=.pytest_tmp
+
+      - name: Upload failed snapshot images
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-snapshots-${{ matrix.OS }}-py${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
+          path: |
+            .pytest_tmp/**/failed_snapshots/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Save Updated Taichi Kernel Cache
         if: >-
