@@ -728,6 +728,10 @@ def box_pyramid_6(solver, n_envs, gjk):
 def g1_fall(solver, n_envs, gjk):
     """G1 humanoid robot falling from above a plane."""
 
+    # This is sufficient, as long as we use sync
+    duration_warmup = 20.0
+    duration_record = 5.0
+
     asset_path = snapshot_download(
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
@@ -736,22 +740,12 @@ def g1_fall(solver, n_envs, gjk):
         max_workers=1,
     )
 
-    # TODO: check how to enable performance_mode
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             dt=0.005,
-            constraint_solver=gs.constraint_solver.Newton,
-            constraint_timeconst=max(0.01, 2 * 0.005 / 1),
-            use_gjk_collision=False,
-            max_collision_pairs=35,
             iterations=10,
             tolerance=1e-5,
             ls_iterations=20,
-            ls_tolerance=1e-2,
-            enable_collision=True,
-            enable_self_collision=True,
-            enable_joint_limit=True,
-            enable_multi_contact=True,
         ),
         show_viewer=False,
         show_FPS=False,
@@ -783,15 +777,19 @@ def g1_fall(solver, n_envs, gjk):
 
     num_steps = 0
     is_recording = False
+    gs.ti.sync()
     time_start = time.time()
     while True:
         scene.step()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
-            if time_elapsed > DURATION_RECORD:
+            if time_elapsed > duration_record:
+                gs.ti.sync()
+                time_elapsed = time.time() - time_start
                 break
-        elif time_elapsed > DURATION_WARMUP:
+        elif time_elapsed > duration_warmup:
+            gs.ti.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
