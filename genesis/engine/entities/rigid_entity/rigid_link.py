@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from genesis.ext.pyrender.interaction.vec3 import Pose
 
 
-INERTIA_RATIO_MAX = 100
+# If mass is too small, we do not care much about spatial inertia discrepancy
+MASS_EPS = 0.005
+INERTIA_RATIO_MAX = 100.0
 
 
 class RigidLink(RBC):
@@ -182,7 +184,7 @@ class RigidLink(RBC):
                 )
 
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
-        if hint_mass > gs.EPS:
+        if hint_mass > MASS_EPS:
             if self._inertial_mass is not None:
                 if not (hint_mass / INERTIA_RATIO_MAX <= self._inertial_mass <= INERTIA_RATIO_MAX * hint_mass):
                     gs.logger.warning(

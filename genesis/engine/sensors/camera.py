@@ -155,6 +155,19 @@ class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetad
     # Track when rasterizer cameras were last updated
     last_render_timestep: int = -1
 
+    def destroy(self):
+        super().destroy()
+
+        if self.renderer is not None:
+            self.renderer.destroy()
+            self.renderer = None
+        if self.context is not None:
+            self.context.destroy()
+            self.context = None
+        self.lights = None
+        self.image_cache = None
+        self.sensors = None
+
 
 @dataclass
 class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
@@ -170,6 +183,13 @@ class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetada
     image_cache: Optional[Dict[int, np.ndarray]] = None
     # Track when raytracer cameras were last updated
     last_render_timestep: int = -1
+
+    def destroy(self):
+        super().destroy()
+
+        self.renderer = None
+        self.sensors = None
+        self.image_cache = None
 
 
 @dataclass
@@ -188,6 +208,14 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
     last_render_timestep: int = -1
     # MinimalVisualizerWrapper instance
     visualizer_wrapper: Optional["MinimalVisualizerWrapper"] = None
+
+    def destroy(self):
+        super().destroy()
+
+        self.renderer = None
+        self.sensors = None
+        self.image_cache = None
+        self.visualizer_wrapper = None
 
 
 # ========================== Base Camera Sensor ==========================

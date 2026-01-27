@@ -73,6 +73,8 @@ Project Page: <https://genesis-embodied-ai.github.io/>
 
 ## Quick Installation
 
+### Using pip
+
 Install **PyTorch** first following the [official instructions](https://pytorch.org/get-started/locally/).
 
 Then, install Genesis via PyPI:
@@ -93,6 +95,44 @@ cd Genesis
 pip install -e ".[dev]"
 ```
 It is recommended to systematically execute `pip install -e ".[dev]"` after moving HEAD to make sure that all dependencies and entrypoints are up-to-date.
+
+### Using uv
+
+[uv](https://docs.astral.sh/uv/) is a fast Python package and project manager.
+
+**Install uv:**
+```bash
+# On macOS and Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# On Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**Quick start with uv:**
+```bash
+git clone https://github.com/Genesis-Embodied-AI/Genesis.git
+cd Genesis
+uv sync
+```
+
+Then install PyTorch for your platform:
+
+```bash
+# NVIDIA GPU (CUDA 12.6 as an example)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+# CPU only (Linux/Windows)
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Apple Silicon (Metal/MPS)
+uv pip install torch
+```
+
+Run an example:
+```bash
+uv run examples/rigid/single_franka.py
+```
 
 ## Docker
 

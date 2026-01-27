@@ -303,6 +303,10 @@ class Scene(RBC):
             self._visualizer.destroy()
             self._visualizer = None
 
+        if getattr(self, "_sim", None) is not None:
+            self._sim.destroy()
+            self._sim = None
+
         # Stop tracking this scene
         try:
             gs._scene_registry.remove(weakref.ref(self))

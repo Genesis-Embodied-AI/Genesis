@@ -72,6 +72,8 @@ jobs:
           WANDB_ENTITY: genesis-ai-company
           WANDB_SILENT: "true"
         run: |
+          mkdir -p /tmp
+          set +e
           python .github/workflows/scripts/alarm.py \
             --speed-artifacts-dir ${{ steps.dl_speed.outputs.download-path }} \
             --mem-artifacts-dir ${{ steps.dl_mem.outputs.download-path }} \
@@ -80,20 +82,36 @@ jobs:
             --runtime-fps-regression-tolerance-pct 8 \
             --compile-time-regression-tolerance-pct 16 \
             --mem-regression-tolerance-pct 10 \
-            --csv-runtime-fps-path runtime_fps.csv \
-            --csv-compile-time-path compile_time.csv \
-            --csv-mem-path mem.csv \
-            --check-body-path check_output.md \
+            --csv-runtime-fps-path /tmp/runtime_fps.csv \
+            --csv-compile-time-path /tmp/compile_time.csv \
+            --csv-mem-path /tmp/mem.csv \
+            --check-body-path /tmp/check_output.md \
             --exit-code-regression 42 \
             --exit-code-alert 43
+          EXIT_CODE=$?
+          set -e
+          # Expose outputs to later steps
+          if [ -f /tmp/check_output.md ]; then
+            {
+              echo 'CHECK_OUTPUT<<__EOF__'
+              cat /tmp/check_output.md
+              echo '__EOF__'
+            } >> "$GITHUB_ENV"
+          else
+            echo "CHECK_OUTPUT=" >> "$GITHUB_ENV"
+          fi
+          # Export status
+          echo "HAS_REGRESSIONS=$([ "$EXIT_CODE" = 42 ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
+          echo "HAS_ALERTS=$([ "$EXIT_CODE" = 43 ] && echo 1 || echo 0)" >> "$GITHUB_ENV"
       - name: Upload benchmark comparisons in CSV
         id: upload
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-comparison-tables
           path: |
-            runtime_fps.csv
-            compile_time.csv
+            /tmp/runtime_fps.csv
+            /tmp/compile_time.csv
+            /tmp/mem.csv
           if-no-files-found: warn
 
       - name: Publish PR check
