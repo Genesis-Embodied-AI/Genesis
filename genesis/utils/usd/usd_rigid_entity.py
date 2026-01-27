@@ -392,7 +392,7 @@ def _parse_links(
     return l_infos, links_j_infos
 
 
-def parse_usd(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
+def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Unified parser for USD rigid entities (both articulations and rigid bodies).
 

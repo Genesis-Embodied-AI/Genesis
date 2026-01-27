@@ -608,10 +608,10 @@ class RigidEntity(Entity):
                     + str(e).replace("\n", " - ")
                 )
         elif isinstance(morph, gs.morphs.USD):
-            from genesis.utils.usd import parse_usd
+            from genesis.utils.usd import parse_usd_rigid_entity
 
             # Unified parser handles both articulations and rigid bodies
-            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd(morph, surface)
+            l_infos, links_j_infos, links_g_infos, eqs_info = parse_usd_rigid_entity(morph, surface)
 
         # Make sure that the inertia matrix of all links is valid
         if not morph.recompute_inertia:
