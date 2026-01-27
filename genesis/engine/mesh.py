@@ -173,8 +173,8 @@ class Mesh(RBC):
         Sample particles using the mesh volume.
         """
         if "pbs" in sampler:
-            return pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
-        return pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
+            return pu.trimesh_to_particles_pbs(self.trimesh, p_size, sampler)
+        return pu.trimesh_to_particles_simple(self.trimesh, p_size, sampler)
 
     def clear_visuals(self):
         """
