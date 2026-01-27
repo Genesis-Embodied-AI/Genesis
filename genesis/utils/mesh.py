@@ -309,8 +309,8 @@ def postprocess_collision_geoms(
     # which is less aggressive than `Trimesh.process(validate=True)`.
     for g_info in g_infos:
         mesh = g_info["mesh"]
-        # Use _trimesh_raw for mutation - scaling doesn't affect winding/watertight checks
-        tmesh = mesh._trimesh_raw
+        # Access internal mesh directly for mutation - scaling doesn't affect winding/watertight checks
+        tmesh = mesh._mesh
         if g_info["type"] != gs.GEOM_TYPE.MESH:
             continue
         if tmesh.is_winding_consistent and not tmesh.is_watertight:

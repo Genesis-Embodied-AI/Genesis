@@ -428,15 +428,6 @@ class Mesh(RBC):
         return mesh
 
     @property
-    def _trimesh_raw(self):
-        """
-        Return the internal trimesh object without copying or scaling.
-
-        This is for internal use only when mutation of the underlying mesh is needed.
-        """
-        return self._mesh
-
-    @property
     def is_convex(self) -> bool:
         """
         Whether the mesh is convex.
