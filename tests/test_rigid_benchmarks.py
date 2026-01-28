@@ -1,10 +1,9 @@
 import hashlib
-import numbers
 import os
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
+from huggingface_hub import snapshot_download
 
 import numpy as np
 import pytest
@@ -725,6 +724,80 @@ def box_pyramid_6(solver, n_envs, gjk):
     return _box_pyramid(solver, n_envs, gjk, n_cubes=6)
 
 
+@pytest.fixture
+def g1_fall(solver, n_envs, gjk):
+    """G1 humanoid robot falling from above a plane."""
+
+    # This is sufficient, as long as we use sync
+    duration_warmup = 20.0
+    duration_record = 5.0
+
+    asset_path = snapshot_download(
+        repo_type="dataset",
+        repo_id="Genesis-Intelligence/assets",
+        revision="e0d8081ddf6d7490f67eac214d09820ba8689b2f",
+        allow_patterns="unitree_g1/*",
+        max_workers=1,
+    )
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=0.005,
+            iterations=10,
+            tolerance=1e-5,
+            ls_iterations=20,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            **get_file_morph_options(
+                file=f"{asset_path}/unitree_g1/g1_29dof_rev_1_0.xml",
+                pos=(0, 0, 1.0),
+            )
+        ),
+        vis_mode="collision",
+    )
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    # Set initial position with robot elevated above ground
+    init_qpos = torch.zeros((robot.n_qs,), dtype=gs.tc_float, device=gs.device)
+    init_qpos[2] = 1.0  # z position
+    init_qpos[3] = 1.0  # quaternion w component
+    if n_envs > 0:
+        init_qpos = init_qpos.unsqueeze(0).repeat((scene.n_envs, 1))
+    robot.set_qpos(init_qpos)
+
+    num_steps = 0
+    is_recording = False
+    gs.ti.sync()
+    time_start = time.time()
+    while True:
+        scene.step()
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > duration_record:
+                gs.ti.sync()
+                time_elapsed = time.time() - time_start
+                break
+        elif time_elapsed > duration_warmup:
+            gs.ti.sync()
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -752,6 +825,7 @@ def box_pyramid_6(solver, n_envs, gjk):
         ("box_pyramid_5", None, None, 4096, gs.gpu),
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
+        ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
