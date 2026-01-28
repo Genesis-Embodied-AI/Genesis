@@ -713,7 +713,6 @@ def test_plane_texture_path_preservation(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
