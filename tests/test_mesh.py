@@ -1,5 +1,6 @@
 import os
 import platform
+from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -175,7 +176,8 @@ def test_glb_parse_geometry(glb_file):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -203,7 +205,8 @@ def test_glb_parse_material(glb_file):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -282,13 +285,14 @@ def test_usd_parse(usd_filename):
     gs_glb_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
     gs_usd_meshes = usda_utils.parse_mesh_usd(
         usd_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
         surface=gs.surfaces.Default(),
     )
 
@@ -329,7 +333,7 @@ def test_usd_parse_nodegraph(usd_file):
     gs_usd_meshes = usda_utils.parse_mesh_usd(
         usd_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
         surface=gs.surfaces.Default(),
     )
     texture0 = gs_usd_meshes[0].surface.diffuse_texture
@@ -353,7 +357,7 @@ def test_usd_bake(usd_file, show_viewer):
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
     usd_file = os.path.join(asset_path, usd_file)
     gs_usd_meshes = usda_utils.parse_mesh_usd(
-        usd_file, group_by_material=True, scale=1.0, surface=gs.surfaces.Default(), bake_cache=False
+        usd_file, group_by_material=True, scale=None, surface=gs.surfaces.Default(), bake_cache=False
     )
     for gs_usd_mesh in gs_usd_meshes:
         require_bake = gs_usd_mesh.metadata["require_bake"]
@@ -480,6 +484,68 @@ def test_obj_morphes_yup(show_viewer):
         mesh = geom.vmesh.copy()
         mesh.apply_transform(gu.trans_quat_to_T(geom.link.pos, geom.link.quat))
         assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("scale", [(2.0, 3.0, 5.0), (2.0, 2.0, 2.0)])
+@pytest.mark.parametrize(
+    "mesh_file, file_meshes_are_zup",
+    [("meshes/camera/camera.glb", False), ("meshes/axis.obj", True)],
+)
+def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_path):
+    urdf_path = tmp_path / "model.urdf"
+    urdf_path.write_text(
+        f"""<robot name="cannon">
+              <link name="base">
+                <visual>
+                  <geometry><mesh filename="{mu.get_asset_path(mesh_file)}"/></geometry>
+                </visual>
+              </link>
+            </robot>
+         """
+    )
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    obj_orig = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=mesh_file,
+            pos=(0, 0, 1.0),
+            scale=(1.0, 1.0, 1.0),
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    mesh_orig = obj_orig.vgeoms[0].vmesh.trimesh
+    obj_scaled = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=mesh_file,
+            pos=(0, 0, 1.0),
+            scale=scale,
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    mesh_scaled = obj_scaled.vgeoms[0].vmesh.trimesh
+
+    is_isotropic = np.unique(scale).size == 1
+    with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
+        robot_scaled = scene.add_entity(
+            gs.morphs.URDF(
+                file=urdf_path,
+                convexify=False,
+                fixed=True,
+                scale=scale,
+                file_meshes_are_zup=file_meshes_are_zup,
+            ),
+        )
+        mesh_robot_scaled = robot_scaled.vgeoms[0].vmesh.trimesh
+
+    if show_viewer:
+        scene.build()
+
+    assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
+    if is_isotropic:
+        assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
 
 
 @pytest.mark.required
@@ -647,7 +713,6 @@ def test_plane_texture_path_preservation(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,

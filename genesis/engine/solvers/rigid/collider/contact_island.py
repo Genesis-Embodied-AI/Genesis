@@ -63,13 +63,16 @@ class ContactIsland:
 
         self.entity_idx_to_next_entity_idx_in_hibernated_island.fill(-1)
 
+        # Reference to errno for reporting buffer overflow errors
+        self.errno = self.solver._errno
+
     @ti.kernel
     def clear(self):
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_e, i_b in ti.ndrange(self.solver.n_entities, self.solver._B):
-            self.entity_edge[i_e, i_b].n = 0
-            self.island_col[i_e, i_b].n = 0
-            self.island_entity[i_e, i_b].n = 0
+            self.entity_edge.n[i_e, i_b] = 0
+            self.island_col.n[i_e, i_b] = 0
+            self.island_entity.n[i_e, i_b] = 0
             self.entity_island[i_e, i_b] = -1
 
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
@@ -85,15 +88,19 @@ class ContactIsland:
         ea = self.solver.links_info.entity_idx[link_a_maybe_batch]
         eb = self.solver.links_info.entity_idx[link_b_maybe_batch]
 
-        # update num edges per entity
-        self.entity_edge[ea, i_b].n = self.entity_edge[ea, i_b].n + 1
-        self.entity_edge[eb, i_b].n = self.entity_edge[eb, i_b].n + 1
-
         # fill in collider-info edges with indices to connected entities.
         n_edge = self.n_edges[i_b]
-        self.ci_edges[n_edge, 0, i_b] = ea
-        self.ci_edges[n_edge, 1, i_b] = eb
-        self.n_edges[i_b] = n_edge + 1
+        max_edges = self.ci_edges.shape[0]
+        if n_edge < max_edges:
+            self.ci_edges[n_edge, 0, i_b] = ea
+            self.ci_edges[n_edge, 1, i_b] = eb
+            self.n_edges[i_b] = n_edge + 1
+            # update num edges per entity - only when edge is actually stored
+            self.entity_edge.n[ea, i_b] = self.entity_edge.n[ea, i_b] + 1
+            self.entity_edge.n[eb, i_b] = self.entity_edge.n[eb, i_b] + 1
+        else:
+            # Signal buffer overflow via errno bit 4 (0b00010000)
+            self.errno[i_b] = self.errno[i_b] | 0b00000000000000000000000000010000
 
     @ti.kernel
     def add_contact_edges_to_islands(self):
@@ -106,14 +113,15 @@ class ContactIsland:
                 self.add_edge(link_a, link_b, i_b)
 
     @ti.kernel
-    def add_hiberanted_edges_to_islands(self):
+    def add_hibernated_edges_to_islands(self):
         _B = self.solver._B
         n_entities = self.solver.n_entities
         ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_e in range(n_entities):
                 next_entity_idx = self.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
-                if next_entity_idx != -1 and next_entity_idx != i_e:
+                # Guard: validate next_entity_idx is within valid bounds
+                if 0 <= next_entity_idx < n_entities and next_entity_idx != i_e:
                     any_link_a = self.solver.entities_info.link_start[i_e]
                     any_link_b = self.solver.entities_info.link_start[next_entity_idx]
                     self.add_edge(any_link_a, any_link_b, i_b)
@@ -121,7 +129,7 @@ class ContactIsland:
     def construct(self):
         self.clear()
         self.add_contact_edges_to_islands()
-        self.add_hiberanted_edges_to_islands()
+        self.add_hibernated_edges_to_islands()
         self.preprocess_island_and_map_entities_to_edges()
         self.construct_islands()
         self.postprocess_island_and_assign_contact_data()
@@ -148,42 +156,42 @@ class ContactIsland:
                 if island_a == -1:
                     island = island_b
 
-                self.island_col[island, i_b].n = self.island_col[island, i_b].n + 1
+                self.island_col.n[island, i_b] = self.island_col.n[island, i_b] + 1
                 self.constraint_list[i_col, i_b] = island
 
             constraint_list_start = 0
             for i in range(self.n_islands[i_b]):
-                self.island_col[i, i_b].start = constraint_list_start
-                constraint_list_start = constraint_list_start + self.island_col[i, i_b].n
-                self.island_col[i, i_b].curr = self.island_col[i, i_b].start
+                self.island_col.start[i, i_b] = constraint_list_start
+                constraint_list_start = constraint_list_start + self.island_col.n[i, i_b]
+                self.island_col.curr[i, i_b] = self.island_col.start[i, i_b]
 
                 self.island_hibernated[i, i_b] = 1
 
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 island = self.constraint_list[i_col, i_b]
-                self.constraint_id[self.island_col[island, i_b].curr, i_b] = i_col
-                self.island_col[island, i_b].curr = self.island_col[island, i_b].curr + 1
+                self.constraint_id[self.island_col.curr[island, i_b], i_b] = i_col
+                self.island_col.curr[island, i_b] = self.island_col.curr[island, i_b] + 1
 
             # island_entity
             for i in range(self.solver.n_entities):
                 if self.entity_island[i, i_b] >= 0:
-                    self.island_entity[self.entity_island[i, i_b], i_b].n = (
-                        self.island_entity[self.entity_island[i, i_b], i_b].n + 1
+                    self.island_entity.n[self.entity_island[i, i_b], i_b] = (
+                        self.island_entity.n[self.entity_island[i, i_b], i_b] + 1
                     )
                     if self.solver.entities_state.hibernated[i, i_b] == 0:
                         self.island_hibernated[self.entity_island[i, i_b], i_b] = 0
 
             entity_list_start = 0
             for i in range(self.n_islands[i_b]):
-                self.island_entity[i, i_b].start = entity_list_start
-                self.island_entity[i, i_b].curr = self.island_entity[i, i_b].start
-                entity_list_start = entity_list_start + self.island_entity[i, i_b].n
+                self.island_entity.start[i, i_b] = entity_list_start
+                self.island_entity.curr[i, i_b] = self.island_entity.start[i, i_b]
+                entity_list_start = entity_list_start + self.island_entity.n[i, i_b]
 
             for i in range(self.solver.n_entities):
                 island = self.entity_island[i, i_b]
                 if island >= 0:
-                    self.entity_id[self.island_entity[island, i_b].curr, i_b] = i
-                    self.island_entity[island, i_b].curr = self.island_entity[island, i_b].curr + 1
+                    self.entity_id[self.island_entity.curr[island, i_b], i_b] = i
+                    self.island_entity.curr[island, i_b] = self.island_entity.curr[island, i_b] + 1
 
     @ti.kernel
     def preprocess_island_and_map_entities_to_edges(self):
@@ -191,9 +199,13 @@ class ContactIsland:
         for i_b in range(self.solver._B):
             entity_list_start = 0
             for i in range(self.solver.n_entities):
-                self.entity_edge[i, i_b].start = entity_list_start
-                self.entity_edge[i, i_b].curr = entity_list_start
-                entity_list_start = entity_list_start + self.entity_edge[i, i_b].n
+                self.entity_edge.start[i, i_b] = entity_list_start
+                self.entity_edge.curr[i, i_b] = entity_list_start
+                entity_list_start = entity_list_start + self.entity_edge.n[i, i_b]
+
+            # Invariant check: ensure total half-edges don't exceed edge_id buffer
+            if entity_list_start > self.edge_id.shape[0]:
+                self.errno[i_b] = self.errno[i_b] | 0b00000000000000000000000000010000
 
             # process added collider-info edges
             for i in range(self.n_edges[i_b]):
@@ -201,11 +213,11 @@ class ContactIsland:
                 eb = self.ci_edges[i, 1, i_b]
 
                 # map entity's half-edge index to edge index.
-                self.edge_id[self.entity_edge[ea, i_b].curr, i_b] = i
-                self.edge_id[self.entity_edge[eb, i_b].curr, i_b] = i
+                self.edge_id[self.entity_edge.curr[ea, i_b], i_b] = i
+                self.edge_id[self.entity_edge.curr[eb, i_b], i_b] = i
 
-                self.entity_edge[ea, i_b].curr = self.entity_edge[ea, i_b].curr + 1
-                self.entity_edge[eb, i_b].curr = self.entity_edge[eb, i_b].curr + 1
+                self.entity_edge.curr[ea, i_b] = self.entity_edge.curr[ea, i_b] + 1
+                self.entity_edge.curr[eb, i_b] = self.entity_edge.curr[eb, i_b] + 1
 
     @ti.kernel
     def construct_islands(self):
@@ -216,7 +228,7 @@ class ContactIsland:
         for i_b in range(self.solver._B):
             for i_v in range(self.solver.n_entities):
                 # only create islands for entities with collisions and with dofs
-                if self.entity_edge[i_v, i_b].n > 0 and self.solver.entities_info.n_dofs[i_v] > 0:
+                if self.entity_edge.n[i_v, i_b] > 0 and self.solver.entities_info.n_dofs[i_v] > 0:
                     if self.entity_island[i_v, i_b] != -1:
                         continue
                     self.n_stack[i_b] = 0
@@ -230,8 +242,8 @@ class ContactIsland:
                         self.n_stack[i_b] = self.n_stack[i_b] - 1
                         v = self.stack[self.n_stack[i_b], i_b]
 
-                        for i_edge in range(self.entity_edge[v, i_b].n):
-                            _id = self.entity_edge[v, i_b].start + i_edge  # half-edge index
+                        for i_edge in range(self.entity_edge.n[v, i_b]):
+                            _id = self.entity_edge.start[v, i_b] + i_edge  # half-edge index
                             edge = self.edge_id[_id, i_b]  # edge index
                             next_v = self.ci_edges[edge, 0, i_b]  # other entity index, connected by edge
                             if next_v == v:
