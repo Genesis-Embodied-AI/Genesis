@@ -415,7 +415,7 @@ class Plane(Primitive):
     Note
     ----
     Plane is a primitive with infinite size. Note that the `pos` is the center of the plane,
-    but essetially only defines a point where the plane passes through.
+    but essentially only defines a point where the plane passes through.
 
     Parameters
     ----------
@@ -546,7 +546,7 @@ class FileMorph(Morph):
     """
 
     file: Any = ""
-    scale: Union[float, tuple] = 1.0
+    scale: tuple[float, float, float] | float = 1.0
     decimate: bool = True
     decimate_face_num: int = 500
     decimate_aggressiveness: int = 2
@@ -562,6 +562,10 @@ class FileMorph(Morph):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.ndim > 1 or scale.size not in (1, 3):
+            gs.raise_exception("`scale` should be a scalar sequence of length 1 or 3.")
 
         if self.decompose_nonconvex is not None:
             if self.decompose_nonconvex:
@@ -601,13 +605,6 @@ class FileMorph(Morph):
                 gs.raise_exception(f"File not found in either current directory or assets directory: '{self.file}'.")
 
             self.file = file
-
-        if isinstance(self, Mesh):
-            if isinstance(self.scale, tuple) and len(self.scale) != 3:
-                gs.raise_exception("`scale` should be a float or a 3-tuple.")
-        else:
-            if not isinstance(self.scale, float):
-                gs.raise_exception("`scale` should be a float.")
 
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
@@ -875,6 +872,7 @@ class MJCF(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
+
         if not self.is_format(MJCF_FORMAT):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
@@ -891,10 +889,10 @@ class MJCF(FileMorph):
         # avoid this inconsistency than limiting scaling to a scalar factor. In this case, scaling between anisotropic
         # and does not depends on the orientation of each geometry anymore, and therefore is independent of the
         # configuration of the entity, which is precisely the property that we want to enforce.
-        if isinstance(self.scale, np.ndarray):
-            if self.scale.std() > gs.EPS:
-                gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
-            self.scale = self.scale.mean()
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+        self.scale = scale.mean()
 
 
 class URDF(FileMorph):
@@ -1003,10 +1001,10 @@ class URDF(FileMorph):
             gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
 
         # Anisotropic scaling is ill-defined for poly-articulated robots. See related MJCF about this for details.
-        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
-            if self.scale.std() > gs.EPS:
-                gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
-            self.scale = self.scale.mean()
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
+        self.scale = scale.mean()
 
     def is_format(self, format):
         from genesis.ext.urdfpy.urdf import URDF
