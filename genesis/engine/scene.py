@@ -196,6 +196,9 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
+        # entity name registry for lookup by name
+        self._entity_name_registry: dict[str, "Entity"] = {}
+
         self._backward_ready = False
         self._forward_ready = False
 
@@ -322,6 +325,7 @@ class Scene(RBC):
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: str | None = None,
+        name: str | None = None,
     ):
         """
         Add an entity to the scene.
@@ -340,11 +344,23 @@ class Scene(RBC):
             Whether to visualize contact forces applied to this entity as arrows in the viewer and rendered images. Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
         vis_mode : str | None, optional
             The visualization mode of the entity. This is a handy shortcut for setting `surface.vis_mode` without explicitly creating a surface object.
+        name : str | None, optional
+            User-specified name for the entity. If not provided, an auto-generated name will be assigned
+            based on the morph type and entity UID (e.g., "box_a1b2c3d4"). Must be unique within the scene.
 
         Returns
         -------
         entity : genesis.Entity
             The created entity.
+
+        Examples
+        --------
+        >>> scene = gs.Scene()
+        >>> box = scene.add_entity(gs.morphs.Box(), name="my_box")
+        >>> box.name
+        'my_box'
+        >>> sphere = scene.add_entity(gs.morphs.Sphere())  # auto-generated name
+        >>> sphere.name  # e.g., 'sphere_a1b2c3d4'
         """
         if material is None:
             material = gs.materials.Rigid()
@@ -462,6 +478,9 @@ class Scene(RBC):
                 morph.convexify = isinstance(material, gs.materials.Rigid)
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact)
+
+        # Set entity name (auto-generate if not specified)
+        entity._set_name(name, self)
 
         return entity
 
@@ -1463,6 +1482,75 @@ class Scene(RBC):
     def entities(self) -> list["Entity"]:
         """All the entities in the scene."""
         return self._sim.entities
+
+    @property
+    def entity_names(self) -> list[str]:
+        """
+        Get the names of all entities in the scene.
+
+        Returns
+        -------
+        list[str]
+            List of entity names in order of creation.
+
+        Examples
+        --------
+        >>> scene = gs.Scene()
+        >>> scene.add_entity(gs.morphs.Box(), name="box1")
+        >>> scene.add_entity(gs.morphs.Sphere(), name="sphere1")
+        >>> scene.entity_names
+        ['box1', 'sphere1']
+        """
+        return [entity.name for entity in self.entities]
+
+    def get_entity(self, name: str | None = None, uid: str | None = None) -> "Entity":
+        """
+        Get an entity by name or UID prefix.
+
+        Parameters
+        ----------
+        name : str, optional
+            The exact name of the entity to find.
+        uid : str, optional
+            The UID prefix of the entity to find. Must uniquely identify one entity.
+
+        Returns
+        -------
+        Entity
+            The matching entity.
+
+        Raises
+        ------
+        Exception
+            If no entity is found, multiple entities match the UID prefix,
+            or neither name nor uid is provided.
+
+        Examples
+        --------
+        >>> scene = gs.Scene()
+        >>> box = scene.add_entity(gs.morphs.Box(), name="my_box")
+        >>> scene.get_entity(name="my_box") is box
+        True
+        >>> scene.get_entity(uid=str(box.uid)[:4]) is box  # UID prefix lookup
+        True
+        """
+        if name is not None:
+            if name in self._entity_name_registry:
+                return self._entity_name_registry[name]
+            gs.raise_exception(f"Entity not found for name: '{name}'.")
+        elif uid is not None:
+            # Use prefix matching (startswith) instead of substring matching
+            matches = [entity for entity in self.entities if str(entity.uid).startswith(uid)]
+            if len(matches) == 1:
+                return matches[0]
+            elif len(matches) == 0:
+                gs.raise_exception(f"Entity not found for uid prefix: '{uid}'.")
+            else:
+                gs.raise_exception(
+                    f"Multiple entities match uid prefix '{uid}'. Use a longer prefix to uniquely identify the entity."
+                )
+        else:
+            gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @property
     def emitters(self):

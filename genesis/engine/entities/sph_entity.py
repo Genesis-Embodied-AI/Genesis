@@ -188,3 +188,20 @@ class SPHEntity(ParticleEntity):
         if self._scene.n_envs == 0:
             actives = actives[0]
         return actives
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """
+        Get the identifier string from the morph for name generation.
+
+        For SPHEntity, this returns "sph_" prefixed identifier.
+
+        Returns
+        -------
+        str
+            The morph identifier used in auto-generated entity names.
+        """
+        return f"sph_{self._get_morph_base_identifier()}"

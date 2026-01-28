@@ -1016,6 +1016,38 @@ class FEMEntity(Entity):
             self._solver.elements_el.grad[f, i_global, i_b].actu = 0
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """
+        Get the identifier string from the morph for name generation.
+
+        For FEMEntity, this returns "fem_" prefixed identifier:
+        - "fem_box", "fem_sphere", "fem_cylinder" for primitives
+        - "fem_{filename}" for mesh files
+
+        Returns
+        -------
+        str
+            The morph identifier used in auto-generated entity names.
+        """
+        from pathlib import Path
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "fem_box"
+        elif isinstance(morph, gs.morphs.Sphere):
+            return "fem_sphere"
+        elif isinstance(morph, gs.morphs.Cylinder):
+            return "fem_cylinder"
+        elif isinstance(morph, gs.morphs.Mesh):
+            return f"fem_{Path(morph.file).stem}"
+        else:
+            return "fem_entity"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 
