@@ -57,8 +57,10 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
 def parse_urdf(morph, surface):
     if isinstance(morph.file, (str, Path)):
         path = os.path.join(get_assets_dir(), morph.file)
+        parent_dir = os.path.dirname(path)
         robot = urdfpy.URDF.load(path)
     else:
+        parent_dir = os.getcwd()
         robot = morph.file
 
     # Merge links connected by fixed joints
@@ -128,25 +130,21 @@ def parse_urdf(morph, surface):
                 else:
                     geom_surface = surface
 
-                mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geometry.filename)
+                mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
                 if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
                     group_material = True
-                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, geom_surface)
+                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, True, geom_surface)
                     geometry._meshes = [mesh.trimesh for mesh in meshes]
 
                 # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
-                for i, tmesh in enumerate(geometry.meshes):
+                for _, tmesh in enumerate(geometry.meshes):
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
                         scale=scale,
                         surface=geom_surface,
+                        is_mesh_zup=morph.file_meshes_are_zup,
                         metadata={"mesh_path": mesh_path},
                     )
-
-                    if not morph.file_meshes_are_zup:
-                        mesh.convert_to_zup()
-                        if i == 0:
-                            gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)

@@ -453,10 +453,7 @@ class RigidEntity(Entity):
             # Merge them as a single one if requested
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
                 tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-                mesh = gs.Mesh.from_trimesh(
-                    mesh=tmesh,
-                    surface=gs.surfaces.Collision(),
-                )
+                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
                 meshes = (mesh,)
 
             for mesh in meshes:
