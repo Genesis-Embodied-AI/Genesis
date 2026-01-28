@@ -2110,7 +2110,9 @@ class RigidEntity(Entity):
             for joint in self.joints:
                 if joint.name == name:
                     return joint
-            gs.raise_exception(f"Joint not found for name: {name}.")
+            gs.raise_exception(
+                f"Joint not found for name: {name}. Available joint names: {[joint.name for joint in self.joints]}."
+            )
 
         elif uid is not None:
             for joint in self.joints:
@@ -2142,7 +2144,9 @@ class RigidEntity(Entity):
             for link in self._links:
                 if link.name == name:
                     return link
-            gs.raise_exception(f"Link not found for name: {name}.")
+            gs.raise_exception(
+                f"Link not found for name: {name}. Available link names: {[link.name for link in self._links]}."
+            )
 
         elif uid is not None:
             for link in self._links:

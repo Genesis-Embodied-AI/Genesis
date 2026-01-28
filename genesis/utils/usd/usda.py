@@ -263,10 +263,16 @@ def decompress_usdz(usdz_path):
     return root_path
 
 
-# entrance
-def parse_mesh_usd(path: str, group_by_material: bool, scale, surface: gs.surfaces.Surface, bake_cache=True):
+# Main entrypoint
+def parse_mesh_usd(
+    path: str, group_by_material: bool, scale: float | None, surface: gs.surfaces.Surface, bake_cache=True
+):
     if path.lower().endswith(gs.options.morphs.USD_FORMATS[-1]):
         path = decompress_usdz(path)
+
+    # Handling of unspecified scaling factor
+    if scale is None:
+        scale = 1.0
 
     # detect bake file caches
     is_bake_cache_found = False
@@ -466,4 +472,4 @@ def parse_mesh_usd(path: str, group_by_material: bool, scale, surface: gs.surfac
                 )
             mesh_info.append(points, triangles, normals, uvs)
 
-    return mesh_infos.export_meshes(scale=scale)
+    return mesh_infos.export_meshes(scale=scale, is_mesh_zup=True)
