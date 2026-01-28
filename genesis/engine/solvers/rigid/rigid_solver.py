@@ -126,6 +126,7 @@ from .abd.accessor import (
     kernel_set_links_mass_shift,
     kernel_set_links_COM_shift,
     kernel_set_links_inertial_mass,
+    kernel_wake_up_entities_by_links,
     kernel_set_geoms_friction_ratio,
     kernel_set_qpos,
     kernel_set_global_sol_params,
@@ -457,6 +458,13 @@ class RigidSolver(Solver):
                 )
 
         self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
+
+        if self._static_rigid_sim_config.use_hibernation:
+            if gs.use_ndarray:
+                gs.raise_exception(
+                    "Hibernation is not yet supported with dynamic array mode. "
+                    "Please set performance_mode=True or use_hibernation=False."
+                )
 
         if self._static_rigid_sim_config.requires_grad:
             if self._static_rigid_sim_config.use_hibernation:
@@ -1184,6 +1192,7 @@ class RigidSolver(Solver):
         return ti_to_torch(self._errno) > 0
 
     def check_errno(self):
+        # TODO: Add some class ErrorCode(IntEnum) to manage error codes x)
         if gs.use_zerocopy:
             errno = np.bitwise_or.reduce(ti_to_numpy(self._errno))
         else:
@@ -1205,6 +1214,8 @@ class RigidSolver(Solver):
             gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & 0b00000000000000000000000000001000:
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+        if errno & 0b00000000000000000000000000010000:
+            gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -1890,6 +1901,21 @@ class RigidSolver(Solver):
                 "option 'batch_fixed_verts=True'."
             )
 
+        # Wake up hibernated entities before setting position
+        if self._options.use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
         kernel_set_links_pos(
             relative,
             pos,
@@ -1960,6 +1986,21 @@ class RigidSolver(Solver):
         )
         if has_fixed_verts and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
             gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
+
+        # Wake up hibernated entities before setting quaternion
+        if self._options.use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
         kernel_set_links_quat(
             relative,
@@ -3091,6 +3132,7 @@ def kernel_step_2(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             contact_island_state=contact_island_state,
+            errno=errno,
         )
         func_aggregate_awake_entities(
             entities_state=entities_state,
