@@ -90,19 +90,10 @@ jobs:
             # tmate -S /tmp/tmate.sock wait tmate-ready
             # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
 
-            pytest -v -ra --backend gpu --dev --forked ./tests --basetemp=/root/workspace/.pytest_tmp
+            pytest -v -ra --backend gpu --dev --forked ./tests
 
             # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
-      - name: Upload failed snapshot images
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-snapshots-production-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
-          path: |
-            .pytest_tmp/**/failed_snapshots/
-          if-no-files-found: ignore
-          retention-days: 7
       - name: Kill Slurm job
         if: always()
         run: |
