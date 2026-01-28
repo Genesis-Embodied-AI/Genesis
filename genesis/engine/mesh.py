@@ -162,7 +162,7 @@ class Mesh(RBC):
         """
         Tetrahedralize the mesh.
         """
-        return mu.tetrahedralize_mesh(self._mesh, tet_cfg)
+        return mu.tetrahedralize_mesh(self.trimesh, tet_cfg)
 
     def particlize(
         self,
@@ -408,6 +408,10 @@ class Mesh(RBC):
         """
         Apply a 4x4 transformation matrix (translation on the right column) to the mesh.
         """
+        # Bake pending scale into vertices before applying transform, since order matters (scale first, then transform)
+        if self._scale is not None:
+            self._mesh.apply_scale(self._scale)
+            self._scale = None
         self._mesh.apply_transform(T)
 
     @property
@@ -485,11 +489,11 @@ class Mesh(RBC):
         """
         Surface area of the mesh.
         """
-        return self._mesh.area
+        return self.trimesh.area
 
     @property
     def volume(self):
         """
         Volume of the mesh.
         """
-        return self._mesh.volume
+        return self.trimesh.volume

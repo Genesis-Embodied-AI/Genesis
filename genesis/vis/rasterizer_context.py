@@ -559,7 +559,9 @@ class RasterizerContext:
                         buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                     elif mpm_entity.surface.vis_mode == "visual":
-                        mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end, idx]
+                        mpm_entity._vmesh._mesh.vertices = vverts_all[
+                            mpm_entity.vvert_start : mpm_entity.vvert_end, idx
+                        ]
                         self.add_dynamic_node(
                             mpm_entity,
                             pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
