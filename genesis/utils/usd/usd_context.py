@@ -90,7 +90,8 @@ class UsdContext:
         else:
             gs.logger.warning(
                 "omniverse-kit not found. USD baking will be disabled. "
-                "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`."
+                "Please install it with `pip install --extra-index-url https://pypi.nvidia.com omniverse-kit`. "
+                "See https://genesis-world.readthedocs.io/en/latest/user_guide/getting_started/usd_import.html."
             )
 
         # detect bake file caches

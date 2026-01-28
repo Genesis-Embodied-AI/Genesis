@@ -1448,21 +1448,35 @@ class USD(FileMorph):
     prismatic_joint_stiffness_attr_candidates : List[str], optional
         List of candidate attribute names for prismatic joint stiffness. The parser will try these in order.
         If no matching attribute is found, Genesis default (0.0) is used.
-        Defaults to ["physxLimit:linear:stiffness", "physxLimit:X:stiffness", "physxLimit:Y:stiffness", "physxLimit:Z:stiffness",
-        "physics:linear:stiffness", "linear:stiffness"].
+        Defaults to ["physxLimit:linear:stiffness", "physxLimit:X:stiffness", "physxLimit:Y:stiffness",
+        "physxLimit:Z:stiffness", "physics:linear:stiffness", "linear:stiffness"].
     prismatic_joint_damping_attr_candidates : List[str], optional
         List of candidate attribute names for prismatic joint damping. The parser will try these in order.
         If no matching attribute is found, Genesis default (0.0) is used.
-        Defaults to ["physxLimit:linear:damping", "physxLimit:X:damping", "physxLimit:Y:damping", "physxLimit:Z:damping",
-        "physics:linear:damping", "linear:damping"].
+        Defaults to ["physxLimit:linear:damping", "physxLimit:X:damping", "physxLimit:Y:damping",
+        "physxLimit:Z:damping", "physics:linear:damping", "linear:damping"].
 
     Geometry Parsing Options
     -------------------------
     collision_mesh_prim_patterns : List[str], optional
-        List of regex patterns to match collision mesh prim names. Patterns are tried in order.
+        List of regex patterns to match collision mesh prim names. Patterns are tried in order
+        until a match is found. The parser uses `re.match()` to check if a USD prim's name
+        matches each pattern from the start of the string.
+
+        When a prim matches a collision pattern, it is treated as collision-only geometry
+        (not used for visualization). If a prim matches neither a visual nor collision pattern,
+        it is treated as both visual and collision geometry by default.
+
         Defaults to [r"^([cC]ollision).*"].
     visual_mesh_prim_patterns : List[str], optional
-        List of regex patterns to match visual mesh prim names. Patterns are tried in order.
+        List of regex patterns to match visual mesh prim names. Patterns are tried in order
+        until a match is found. The parser uses `re.match()` to check if a USD prim's name
+        matches each pattern from the start of the string.
+
+        When a prim matches a visual pattern, it is treated as visual-only geometry
+        (not used for collision detection). If a prim matches neither a visual nor collision
+        pattern, it is treated as both visual and collision geometry by default.
+
         Defaults to [r"^([vV]isual).*"].
 
     USD specific Options
