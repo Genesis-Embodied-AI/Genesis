@@ -3,15 +3,14 @@ import marshal
 import math
 import os
 import pickle as pkl
-import platform
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import trimesh
-from PIL import Image
 import OpenEXR
 import Imath
+from PIL import Image
 
 import coacd
 import igl
@@ -62,29 +61,28 @@ class MeshInfo:
         self.uvs.append(uvs)
         self.n_points += len(verts)
 
-    def export_mesh(self, scale):
+    def export_mesh(self, scale, is_mesh_zup):
+        uvs = None
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
                 if uvs is None:
                     self.uvs[i] = np.zeros((len(verts), 2), dtype=gs.np_float)
             uvs = np.concatenate(self.uvs, axis=0)
-        else:
-            uvs = None
 
         verts = np.concatenate(self.verts, axis=0)
         faces = np.concatenate(self.faces, axis=0)
         normals = np.concatenate(self.normals, axis=0)
 
-        mesh = gs.Mesh.from_attrs(
+        return gs.Mesh.from_attrs(
             verts=verts,
             faces=faces,
             normals=normals,
             surface=self.surface,
             uvs=uvs,
             scale=scale,
+            metadata=self.metadata,
+            is_mesh_zup=is_mesh_zup,
         )
-        mesh.metadata.update(self.metadata)
-        return mesh
 
 
 class MeshInfoGroup:
@@ -99,8 +97,8 @@ class MeshInfoGroup:
             first_created = True
         return mesh_info, first_created
 
-    def export_meshes(self, scale):
-        return [mesh_info.export_mesh(scale) for mesh_info in self.infos.values()]
+    def export_meshes(self, scale, is_mesh_zup):
+        return [mesh_info.export_mesh(scale, is_mesh_zup) for mesh_info in self.infos.values()]
 
 
 def get_asset_path(file):
@@ -309,8 +307,7 @@ def postprocess_collision_geoms(
     # which is less aggressive than `Trimesh.process(validate=True)`.
     for g_info in g_infos:
         mesh = g_info["mesh"]
-        # Access internal mesh directly for mutation - scaling doesn't affect winding/watertight checks
-        tmesh = mesh._mesh
+        tmesh = mesh.trimesh
         if g_info["type"] != gs.GEOM_TYPE.MESH:
             continue
         if tmesh.is_winding_consistent and not tmesh.is_watertight:
@@ -469,13 +466,15 @@ def postprocess_collision_geoms(
     return _g_infos
 
 
-def parse_mesh_trimesh(path, group_by_material, scale, surface):
+def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
     meshes = []
-    scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+    scene = trimesh.load_scene(path, group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")
-        mesh = gs.Mesh.from_trimesh(mesh=tmesh, scale=scale, surface=surface, metadata={"mesh_path": path})
+        mesh = gs.Mesh.from_trimesh(
+            mesh=tmesh, scale=scale, surface=surface, is_mesh_zup=is_mesh_zup, metadata={"mesh_path": path}
+        )
         meshes.append(mesh)
     return meshes
 
@@ -992,9 +991,6 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    if platform.machine() == "aarch64":
-        gs.raise_exception("This method is not support on Linux ARM because 'tetgen' module is crashing.")
-
     # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
     import pyvista as pv
     import tetgen
@@ -1007,7 +1003,7 @@ def tetrahedralize_mesh(mesh, tet_cfg):
     # the Python wrapper sometimes ignores certain kwargs
     # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
     switches = make_tetgen_switches(tet_cfg)
-    verts, elems = tet.tetrahedralize(switches=switches)
+    verts, elems, *_ = tet.tetrahedralize(switches=switches)
     # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
     return verts, elems
 

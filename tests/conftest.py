@@ -401,12 +401,7 @@ def show_viewer(pytestconfig):
 
 @pytest.fixture(scope="session")
 def backend(pytestconfig):
-    import genesis as gs
-
-    backend = pytestconfig.getoption("--backend") or gs.cpu
-    if isinstance(backend, str):
-        return getattr(gs.constants.backend, backend)
-    return backend
+    return pytestconfig.getoption("--backend") or "cpu"
 
 
 @pytest.fixture(scope="session")
@@ -562,6 +557,10 @@ def initialize_genesis(
     if backend is None:
         yield
         return
+
+    # Convert backend from string to enum if necessary
+    if isinstance(backend, str):
+        backend = getattr(gs.constants.backend, backend)
 
     logging_level = request.config.getoption("--log-cli-level", logging.INFO)
     if debug is None:

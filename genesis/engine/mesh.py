@@ -1,5 +1,6 @@
 import os
 import pickle as pkl
+from typing import Any
 
 import fast_simplification
 import numpy as np
@@ -7,7 +8,6 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.mesh as mu
-import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
 from genesis.options.surfaces import Surface
@@ -53,21 +53,27 @@ class Mesh(RBC):
         decimate_face_num=500,
         decimate_aggressiveness=0,
         metadata=None,
+        is_mesh_zup: bool = True,
     ):
         self._uid = gs.UID()
-        self._mesh = mesh
+        self._mesh = mesh  # .copy() FIXME: For some reason forcing copy is causing some tests to fails...
         self._surface = surface
         self._uvs = uvs
-        self._metadata = metadata or {}
+        self._metadata: dict[str, Any] = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
+
+        # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False.
+        self._metadata.setdefault("imported_as_zup", True)
+
+        if not is_mesh_zup:
+            if self._metadata["imported_as_zup"]:
+                self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
+            self._metadata["imported_as_zup"] = False
 
         if scale is not None:
             scale = np.atleast_1d(np.asarray(scale))
             assert scale.ndim == 1 and scale.size in (1, 3)
-        self._scale = scale
-
-        # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False.
-        self._metadata["imported_as_zup"] = True
+            self._mesh.apply_scale(scale)
 
         if self._surface.requires_uv():  # check uvs here
             if self._uvs is None:
@@ -205,7 +211,6 @@ class Mesh(RBC):
             mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
             surface=self._surface.copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
-            scale=self._scale.copy() if self._scale is not None else None,
             metadata=self._metadata.copy(),
         )
 
@@ -220,6 +225,7 @@ class Mesh(RBC):
         decimate_aggressiveness=2,
         metadata=None,
         surface=None,
+        is_mesh_zup=True,
     ):
         """
         Create a genesis.Mesh from a trimesh.Trimesh object.
@@ -317,10 +323,13 @@ class Mesh(RBC):
             decimate_face_num=decimate_face_num,
             decimate_aggressiveness=decimate_aggressiveness,
             metadata=metadata,
+            is_mesh_zup=is_mesh_zup,
         )
 
     @classmethod
-    def from_attrs(cls, verts, faces, normals=None, surface=None, uvs=None, scale=None):
+    def from_attrs(
+        cls, verts, faces, normals=None, surface=None, uvs=None, scale=None, metadata=None, is_mesh_zup=True
+    ):
         """
         Create a genesis.Mesh from mesh attributes including vertices, faces, and normals.
         """
@@ -338,24 +347,27 @@ class Mesh(RBC):
             surface=surface,
             uvs=uvs,
             scale=scale,
+            metadata=metadata,
+            is_mesh_zup=is_mesh_zup,
         )
 
     @classmethod
     def from_morph_surface(cls, morph, surface=None):
         """
         Create a genesis.Mesh from morph and surface options.
+
         If the morph is a Mesh morph (morphs.Mesh), it could contain multiple sub-meshes, so we return a list.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
                 if morph.is_format(gs.options.morphs.GLTF_FORMATS):
-                    meshes = gltf_utils.parse_mesh_glb(morph.file, morph.group_by_material, morph.scale, surface)
+                    meshes = gltf_utils.parse_mesh_glb(
+                        morph.file, morph.group_by_material, morph.scale, morph.file_meshes_are_zup, surface
+                    )
                 else:
-                    meshes = mu.parse_mesh_trimesh(morph.file, morph.group_by_material, morph.scale, surface)
-                if not morph.file_meshes_are_zup:
-                    for mesh in meshes:
-                        mesh.convert_to_zup()
-                    gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
+                    meshes = mu.parse_mesh_trimesh(
+                        morph.file, morph.group_by_material, morph.scale, morph.file_meshes_are_zup, surface
+                    )
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]
@@ -364,17 +376,16 @@ class Mesh(RBC):
 
             return meshes
 
+        if isinstance(morph, gs.options.morphs.Box):
+            tmesh = mu.create_box(extents=morph.size)
+        elif isinstance(morph, gs.options.morphs.Cylinder):
+            tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
+        elif isinstance(morph, gs.options.morphs.Sphere):
+            tmesh = mu.create_sphere(radius=morph.radius)
         else:
-            if isinstance(morph, gs.options.morphs.Box):
-                tmesh = mu.create_box(extents=morph.size)
-            elif isinstance(morph, gs.options.morphs.Cylinder):
-                tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
-            elif isinstance(morph, gs.options.morphs.Sphere):
-                tmesh = mu.create_sphere(radius=morph.radius)
-            else:
-                gs.raise_exception()
+            gs.raise_exception()
 
-            return cls.from_trimesh(tmesh, surface=surface)
+        return cls.from_trimesh(tmesh, surface=surface)
 
     def set_color(self, color):
         """
@@ -391,14 +402,6 @@ class Mesh(RBC):
         Update the trimesh obj's visual attributes using its surface and uvs.
         """
         self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self.surface, self.uvs, len(self.verts))
-
-    def convert_to_zup(self):
-        """
-        Convert the mesh to z-up.
-        """
-        if self._metadata["imported_as_zup"]:
-            self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
-        self._metadata["imported_as_zup"] = False
 
     def apply_transform(self, T):
         """
@@ -418,10 +421,7 @@ class Mesh(RBC):
         """
         Return the mesh's trimesh object.
         """
-        mesh = self._mesh.copy(include_cache=True)
-        if self._scale is not None:
-            mesh.apply_scale(self._scale)
-        return mesh
+        return self._mesh
 
     @property
     def is_convex(self) -> bool:
@@ -442,9 +442,15 @@ class Mesh(RBC):
         """
         Vertices of the mesh.
         """
-        if self._scale is not None:
-            return self._mesh.vertices * self._scale
         return self._mesh.vertices
+
+    @verts.setter
+    def verts(self, verts):
+        """
+        Set the vertices of the mesh.
+        """
+        assert len(verts) == len(self.verts)
+        self._mesh.vertices = verts
 
     @property
     def faces(self):
@@ -458,8 +464,6 @@ class Mesh(RBC):
         """
         Normals of the mesh.
         """
-        if self._scale is not None and self._scale.size == 3:
-            return self._mesh.vertex_normals * self._scale
         return self._mesh.vertex_normals
 
     @property

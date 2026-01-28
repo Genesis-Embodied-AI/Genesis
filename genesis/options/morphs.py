@@ -1529,6 +1529,7 @@ class USD(FileMorph):
     # Geometry Parsing Options
     collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*"]
     visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*"]
+    file_meshes_are_zup: bool | None = None
 
     # Internal Options
     usd_ctx: Any = None
@@ -1536,6 +1537,12 @@ class USD(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
+
+        if self.file_meshes_are_zup is not None:
+            gs.raise_exception(
+                "Specifying `file_meshes_are_zup` not supported for morph USD. "
+                "USD file has independent metadata `up_axis` for up axis specification."
+            )
 
         if self.usd_ctx is None:
             from genesis.utils.usd import UsdContext

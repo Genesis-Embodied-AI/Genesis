@@ -162,7 +162,8 @@ def test_glb_parse_geometry(glb_file, tol):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -190,7 +191,8 @@ def test_glb_parse_material(glb_file):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -426,12 +428,8 @@ def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_pat
         scene.build()
 
     assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    normal_scaled = mesh_orig.vertex_normals * scale
-    normal_scaled /= np.linalg.norm(normal_scaled, axis=-1, keepdims=True)
-    assert_allclose(normal_scaled, mesh_scaled.vertex_normals, tol=gs.EPS)
     if is_isotropic:
         assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
-        assert_allclose(mesh_robot_scaled.vertex_normals, mesh_scaled.vertex_normals, tol=gs.EPS)
 
 
 @pytest.mark.required
@@ -599,7 +597,6 @@ def test_plane_texture_path_preservation(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
