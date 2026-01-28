@@ -3,15 +3,14 @@ import marshal
 import math
 import os
 import pickle as pkl
-import platform
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import trimesh
-from PIL import Image
 import OpenEXR
 import Imath
+from PIL import Image
 
 import coacd
 import igl
@@ -992,9 +991,6 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    if platform.machine() == "aarch64":
-        gs.raise_exception("This method is not support on Linux ARM because 'tetgen' module is crashing.")
-
     # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
     import pyvista as pv
     import tetgen
@@ -1007,7 +1003,7 @@ def tetrahedralize_mesh(mesh, tet_cfg):
     # the Python wrapper sometimes ignores certain kwargs
     # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
     switches = make_tetgen_switches(tet_cfg)
-    verts, elems = tet.tetrahedralize(switches=switches)
+    verts, elems, *_ = tet.tetrahedralize(switches=switches)
     # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
     return verts, elems
 
