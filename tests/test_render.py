@@ -1146,9 +1146,11 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
     try:
         assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
     except AssertionError:
-        # TODO: This test is flaky across different CI environments (GPU drivers, Mesa versions, etc.).
+        # TODO: This test is flaky on Linux with field mode (GPU drivers, Mesa versions, etc.).
         #       Need to investigate root cause and either fix rendering consistency or adjust tolerance.
-        pytest.xfail("Flaky: sensor debug drawing produces inconsistent results across CI environments.")
+        if sys.platform == "linux" and not gs.use_ndarray:
+            pytest.xfail("Flaky: sensor debug drawing produces inconsistent results on Linux with field mode.")
+        raise
 
 
 @pytest.mark.required
