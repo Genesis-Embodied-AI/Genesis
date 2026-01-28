@@ -61,7 +61,7 @@ IMG_NUM_ERR_THR = 0.001
 def is_mem_monitoring_supported():
     try:
         assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=2)
+        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=10)
         return True, None
     except Exception as exc:  # platform or nvidia-smi unavailable
         return False, exc
