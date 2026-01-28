@@ -1,6 +1,5 @@
 import os
 import platform
-from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -481,72 +480,6 @@ def test_obj_morphes_yup(show_viewer):
         mesh = geom.vmesh.copy()
         mesh.apply_transform(gu.trans_quat_to_T(geom.link.pos, geom.link.quat))
         assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("scale", [(2.0, 3.0, 5.0), (2.0, 2.0, 2.0)])
-@pytest.mark.parametrize(
-    "mesh_file, file_meshes_are_zup",
-    [("meshes/camera/camera.glb", False), ("meshes/axis.obj", True)],
-)
-def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_path):
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="cannon">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{mu.get_asset_path(mesh_file)}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-
-    scene = gs.Scene(show_viewer=show_viewer)
-    obj_orig = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=mesh_file,
-            pos=(0, 0, 1.0),
-            scale=(1.0, 1.0, 1.0),
-            convexify=False,
-            fixed=True,
-        ),
-    )
-    mesh_orig = obj_orig.vgeoms[0].vmesh.trimesh
-    obj_scaled = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=mesh_file,
-            pos=(0, 0, 1.0),
-            scale=scale,
-            convexify=False,
-            fixed=True,
-        ),
-    )
-    mesh_scaled = obj_scaled.vgeoms[0].vmesh.trimesh
-
-    is_isotropic = np.unique(scale).size == 1
-    with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
-        robot_scaled = scene.add_entity(
-            gs.morphs.URDF(
-                file=urdf_path,
-                convexify=False,
-                fixed=True,
-                scale=scale,
-                file_meshes_are_zup=file_meshes_are_zup,
-            ),
-        )
-        mesh_robot_scaled = robot_scaled.vgeoms[0].vmesh.trimesh
-
-    if show_viewer:
-        scene.build()
-
-    assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    normal_scaled = mesh_orig.vertex_normals * scale
-    normal_scaled /= np.linalg.norm(normal_scaled, axis=-1, keepdims=True)
-    assert_allclose(normal_scaled, mesh_scaled.vertex_normals, tol=gs.EPS)
-    if is_isotropic:
-        assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
-        assert_allclose(mesh_robot_scaled.vertex_normals, mesh_scaled.vertex_normals, tol=gs.EPS)
 
 
 @pytest.mark.required

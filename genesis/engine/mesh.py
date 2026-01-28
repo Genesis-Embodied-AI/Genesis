@@ -7,7 +7,6 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.mesh as mu
-import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.particle as pu
 from genesis.options.surfaces import Surface
@@ -18,9 +17,8 @@ from genesis.utils.misc import redirect_libc_stderr
 class Mesh(RBC):
     """
     Genesis's own triangle mesh object.
-
-    This is a wrapper of `trimesh.Trimesh` with some additional features and attributes. The internal trimesh object
-    can be accessed via `self.trimesh`.
+    This is a wrapper of `trimesh.Trimesh` with some additional features and attributes. The internal trimesh object can be accessed via `self.trimesh`.
+    We perform both convexification and decimation to preprocess the mesh for simulation if specified.
 
     Parameters
     ----------
@@ -47,7 +45,6 @@ class Mesh(RBC):
         mesh,
         surface: Surface | None = None,
         uvs: "np.typing.NDArray | None" = None,
-        scale: "np.typing.NDArray | float | None" = None,
         convexify=False,
         decimate=False,
         decimate_face_num=500,
@@ -60,11 +57,6 @@ class Mesh(RBC):
         self._uvs = uvs
         self._metadata = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
-
-        if scale is not None:
-            scale = np.atleast_1d(np.asarray(scale))
-            assert scale.ndim == 1 and scale.size in (1, 3)
-        self._scale = scale
 
         # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False.
         self._metadata["imported_as_zup"] = True
@@ -155,7 +147,10 @@ class Mesh(RBC):
             with open(rm_file_path, "wb") as file:
                 pkl.dump((verts, faces), file)
 
-        self._mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+        self._mesh = trimesh.Trimesh(
+            vertices=verts,
+            faces=faces,
+        )
         self.clear_visuals()
 
     def tetrahedralize(self, tet_cfg):
@@ -205,7 +200,6 @@ class Mesh(RBC):
             mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
             surface=self._surface.copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
-            scale=self._scale.copy() if self._scale is not None else None,
             metadata=self._metadata.copy(),
         )
 
@@ -229,7 +223,6 @@ class Mesh(RBC):
             surface.update_texture()
         else:
             surface = surface.copy()
-
         mesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
 
         try:  # always parse uvs because roughness and normal map also need uvs
@@ -307,11 +300,13 @@ class Mesh(RBC):
             )
             mesh.visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(mesh.vertices))
 
+        if scale is not None:
+            mesh.vertices *= scale
+
         return cls(
             mesh=mesh,
             surface=surface,
             uvs=uvs,
-            scale=scale,
             convexify=convexify,
             decimate=decimate,
             decimate_face_num=decimate_face_num,
@@ -329,7 +324,7 @@ class Mesh(RBC):
 
         return cls(
             mesh=trimesh.Trimesh(
-                vertices=verts,
+                vertices=verts * scale if scale is not None else verts,
                 faces=faces,
                 vertex_normals=normals,
                 visual=mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts)),
@@ -337,7 +332,6 @@ class Mesh(RBC):
             ),
             surface=surface,
             uvs=uvs,
-            scale=scale,
         )
 
     @classmethod
@@ -371,14 +365,18 @@ class Mesh(RBC):
         else:
             if isinstance(morph, gs.options.morphs.Box):
                 tmesh = mu.create_box(extents=morph.size)
+
             elif isinstance(morph, gs.options.morphs.Cylinder):
                 tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
+
             elif isinstance(morph, gs.options.morphs.Sphere):
                 tmesh = mu.create_sphere(radius=morph.radius)
+
             else:
                 gs.raise_exception()
 
-            return cls.from_trimesh(tmesh, surface=surface)
+            metadata = {}
+            return cls.from_trimesh(tmesh, surface=surface, metadata=metadata)
 
     def set_color(self, color):
         """
@@ -410,6 +408,12 @@ class Mesh(RBC):
         """
         self._mesh.apply_transform(T)
 
+    def show(self):
+        """
+        Visualize the mesh using trimesh's built-in viewer.
+        """
+        return self._mesh.show()
+
     @property
     def uid(self):
         """
@@ -422,10 +426,7 @@ class Mesh(RBC):
         """
         Return the mesh's trimesh object.
         """
-        mesh = self._mesh.copy(include_cache=True)
-        if self._scale is not None:
-            mesh.apply_scale(self._scale)
-        return mesh
+        return self._mesh
 
     @property
     def is_convex(self) -> bool:
@@ -446,9 +447,15 @@ class Mesh(RBC):
         """
         Vertices of the mesh.
         """
-        if self._scale is not None:
-            return self._mesh.vertices * self._scale
         return self._mesh.vertices
+
+    @verts.setter
+    def verts(self, verts):
+        """
+        Set the vertices of the mesh.
+        """
+        assert len(verts) == len(self.verts)
+        self._mesh.vertices = verts
 
     @property
     def faces(self):
@@ -462,8 +469,6 @@ class Mesh(RBC):
         """
         Normals of the mesh.
         """
-        if self._scale is not None and self._scale.size == 3:
-            return self._mesh.vertex_normals * self._scale
         return self._mesh.vertex_normals
 
     @property
