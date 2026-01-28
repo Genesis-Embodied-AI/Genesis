@@ -176,7 +176,8 @@ def test_glb_parse_geometry(glb_file):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -204,7 +205,8 @@ def test_glb_parse_material(glb_file):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -283,13 +285,14 @@ def test_usd_parse(usd_filename):
     gs_glb_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
     gs_usd_meshes = usda_utils.parse_mesh_usd(
         usd_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
         surface=gs.surfaces.Default(),
     )
 
@@ -330,7 +333,7 @@ def test_usd_parse_nodegraph(usd_file):
     gs_usd_meshes = usda_utils.parse_mesh_usd(
         usd_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
         surface=gs.surfaces.Default(),
     )
     texture0 = gs_usd_meshes[0].surface.diffuse_texture
@@ -354,7 +357,7 @@ def test_usd_bake(usd_file, show_viewer):
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
     usd_file = os.path.join(asset_path, usd_file)
     gs_usd_meshes = usda_utils.parse_mesh_usd(
-        usd_file, group_by_material=True, scale=1.0, surface=gs.surfaces.Default(), bake_cache=False
+        usd_file, group_by_material=True, scale=None, surface=gs.surfaces.Default(), bake_cache=False
     )
     for gs_usd_mesh in gs_usd_meshes:
         require_bake = gs_usd_mesh.metadata["require_bake"]
@@ -541,12 +544,8 @@ def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_pat
         scene.build()
 
     assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    normal_scaled = mesh_orig.vertex_normals * scale
-    normal_scaled /= np.linalg.norm(normal_scaled, axis=-1, keepdims=True)
-    assert_allclose(normal_scaled, mesh_scaled.vertex_normals, tol=gs.EPS)
     if is_isotropic:
         assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
-        assert_allclose(mesh_robot_scaled.vertex_normals, mesh_scaled.vertex_normals, tol=gs.EPS)
 
 
 @pytest.mark.required

@@ -1488,6 +1488,7 @@ class USD(FileMorph):
     decimate: bool = True
     decimate_face_num: int = 500
     decimate_aggressiveness: int = 2
+    file_meshes_are_zup: bool | None = None
 
     # Internal Options
     prim_path: Optional[str] = None
@@ -1495,6 +1496,9 @@ class USD(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
+
+        if self.file_meshes_are_zup is not None:
+            gs.raise_exception("Specifying `file_meshes_are_zup` not supported for morph USD.")
 
         if not isinstance(self.file, str):
             gs.raise_exception("`file` should be a string.")
