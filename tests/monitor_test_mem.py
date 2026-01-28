@@ -35,6 +35,7 @@ def parse_test_name(test_name: str) -> dict[str, str]:
         "gjk_collision": parts[2],
         "batch_size": parts[3],
         "backend": parts[4],
+        "dtype": parts[5],
     }
 
     # Remove "None" values for consistency
@@ -90,10 +91,9 @@ def get_test_name_by_pid() -> dict[int, str]:
     return test_by_psid
 
 
-def format_result_line(test_name: str, max_mem_mb: int, extra_params: dict[str, str]) -> str:
+def format_result_line(test_name: str, max_mem_mb: int) -> str:
     """Format a result line in pipe-delimited format."""
     params = parse_test_name(test_name)
-    params.update(extra_params)
     params["max_mem_mb"] = str(max_mem_mb)
 
     line_parts = [f"{k}={v}" for k, v in params.items()]
@@ -104,21 +104,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-file", type=str, required=True)
     parser.add_argument("--die-with-parent", action="store_true")
-    parser.add_argument(
-        "--extra-key-values",
-        type=str,
-        nargs="*",
-        default=[],
-        help="Extra key=value pairs to include in output (e.g., dtype=field use_contact_island=False)",
-    )
     args = parser.parse_args()
-
-    # Parse extra parameters
-    extra_params = {}
-    for param in args.extra_key_values:
-        if "=" in param:
-            k, v = param.split("=", 1)
-            extra_params[k] = v
 
     max_mem_by_test = defaultdict(int)
 
@@ -142,7 +128,7 @@ def main() -> None:
             max_mem_by_test[test] = max(_mem, max_mem_by_test[test])
         for _test, _mem in old_mem_by_test.items():
             if _test not in _mem_by_test:
-                result_line = format_result_line(_test, max_mem_by_test[_test], extra_params)
+                result_line = format_result_line(_test, max_mem_by_test[_test])
                 f.write(result_line + "\n")
                 f.flush()
                 num_results_written += 1

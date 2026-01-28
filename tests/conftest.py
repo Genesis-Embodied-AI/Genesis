@@ -61,7 +61,7 @@ IMG_NUM_ERR_THR = 0.001
 def is_mem_monitoring_supported():
     try:
         assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=2)
+        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=10)
         return True, None
     except Exception as exc:  # platform or nvidia-smi unavailable
         return False, exc
@@ -97,8 +97,6 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
                 "--die-with-parent",
                 "--out-file",
                 mem_filepath,
-                "--extra-key-values",
-                *config.getoption("--mem-monitoring-extra-result-key-values"),
             ]
         )
 
@@ -363,6 +361,9 @@ def pytest_collection_modifyitems(config, items):
 def pytest_runtest_setup(item):
     # Include test name in process title
     test_name = item.nodeid.replace(" ", "")
+    dtype = "ndarray" if os.environ.get("GS_ENABLE_NDARRAY") == "1" else "field"
+    test_name = test_name[:-1] + f"-{dtype}]"
+
     setproctitle.setproctitle(f"pytest: {test_name}")
 
     # Match CUDA device with EGL device.
@@ -391,13 +392,6 @@ def pytest_addoption(parser):
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
-    parser.addoption(
-        "--mem-monitoring-extra-result-key-values",
-        type=str,
-        nargs="*",
-        default=[],
-        help="Extra key=value pairs to include in memory monitoring results (e.g., dtype=field use_contact_island=False)",
-    )
 
 
 @pytest.fixture(scope="session")
