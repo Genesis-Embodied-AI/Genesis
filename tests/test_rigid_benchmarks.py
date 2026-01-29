@@ -10,6 +10,7 @@ import torch
 import wandb
 
 import genesis as gs
+import gstaichi as ti
 
 from .utils import (
     get_hardware_fingerprint,
@@ -776,7 +777,7 @@ def g1_fall(solver, n_envs, gjk):
 
     num_steps = 0
     is_recording = False
-    gs.ti.sync()
+    ti.sync()
     time_start = time.time()
     while True:
         scene.step()
@@ -784,11 +785,11 @@ def g1_fall(solver, n_envs, gjk):
         if is_recording:
             num_steps += 1
             if time_elapsed > duration_record:
-                gs.ti.sync()
+                ti.sync()
                 time_elapsed = time.time() - time_start
                 break
         elif time_elapsed > duration_warmup:
-            gs.ti.sync()
+            ti.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
