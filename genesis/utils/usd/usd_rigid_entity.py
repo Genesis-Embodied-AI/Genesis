@@ -427,12 +427,18 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     stage: Usd.Stage = context.stage
 
     if morph.prim_path is None:
-        gs.logger.info("USD morph has no prim path. Fallback to its default prim path.")
+        gs.logger.debug("USD morph has no prim path. Fallback to its default prim path.")
         entity_prim = stage.GetDefaultPrim()
     else:
         entity_prim = stage.GetPrimAtPath(morph.prim_path)
     if not entity_prim.IsValid():
-        gs.raise_exception(f"Invalid prim path {morph.prim_path} in USD file {morph.file}.")
+        if morph.prim_path is None:
+            err_msg = (
+                f"Invalid default prim path {entity_prim} in USD file {morph.file}. Please specify 'morph.prim_path'."
+            )
+        else:
+            err_msg = f"Invalid user-specified prim path {entity_prim} in USD file {morph.file}."
+        gs.raise_exception(err_msg)
 
     # find joints
     links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim)

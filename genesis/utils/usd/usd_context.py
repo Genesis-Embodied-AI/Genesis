@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -256,11 +257,11 @@ class UsdContext:
         self.replace_asset_symlinks()
         os.makedirs(self._bake_folder, exist_ok=True)
 
-        # Note that it is necessary to call 'bake_usd_material' via a subprocess to ensure proper isolation of
-        # omninerse kit, otherwise the global conversion registry of some Python bindings will be conflicting between
-        # each, ultimately leading to segfault...
+        # Note that it is necessary to call 'bake_usd_material' as a subprocess to ensure proper isolation of omniverse
+        # kit, otherwise the global conversion registry of some Python bindings will be conflicting with each other,
+        # ultimately leading to segfault...
         commands = [
-            "python",
+            sys.executable,
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "usd_bake.py"),
             "--input_file",
             self._stage_file,
@@ -275,13 +276,11 @@ class UsdContext:
         ]
         gs.logger.debug(f"Execute: {' '.join(commands)}")
 
+        env = dict(os.environ)
+        env["OMNI_KIT_ALLOW_ROOT"] = "1"
+
         try:
-            result = subprocess.run(
-                commands,
-                capture_output=True,
-                check=True,
-                text=True,
-            )
+            result = subprocess.run(commands, capture_output=True, check=True, text=True, env=env)
             if result.stdout:
                 gs.logger.debug(result.stdout)
             if result.stderr:

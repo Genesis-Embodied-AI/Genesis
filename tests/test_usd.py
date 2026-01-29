@@ -6,6 +6,7 @@ loaded from USD files match equivalent scenes loaded from compared files.
 """
 
 import os
+import time
 
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -177,8 +178,8 @@ def compare_geoms(compared_geoms, usd_geoms, tol):
     assert len(compared_geoms) == len(usd_geoms)
 
     # Sort geoms by link name for consistent comparison
-    compared_geoms_sorted = sorted(compared_geoms, key=lambda g: (g.link.name, g._idx))
-    usd_geoms_sorted = sorted(usd_geoms, key=lambda g: (g.link.name, g._idx))
+    compared_geoms_sorted = sorted(compared_geoms, key=lambda g: (g.link.name, g.idx))
+    usd_geoms_sorted = sorted(usd_geoms, key=lambda g: (g.link.name, g.idx))
 
     for compared_geom, usd_geom in zip(compared_geoms_sorted, usd_geoms_sorted):
         assert compared_geom.type == usd_geom.type
@@ -266,8 +267,18 @@ def build_mjcf_scene(xml_path: str, scale: float):
     """
     # Create MJCF scene
     mjcf_scene = gs.Scene()
-    mjcf_morph = gs.morphs.MJCF(file=xml_path, scale=scale)
-    mjcf_scene.add_entity(mjcf_morph, material=gs.materials.Rigid(rho=1000.0))
+
+    mjcf_scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            scale=scale,
+            convexify=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+
     mjcf_scene.build()
     return mjcf_scene
 
@@ -300,18 +311,34 @@ def build_usd_scene(
         The USD scene
     """
     # Create USD scene
-    usd_scene = gs.Scene()
-    usd_morph = gs.morphs.USD(
-        usd_ctx=UsdContext(usd_file, use_bake_cache=False),
-        scale=scale,
-        fixed=fixed,
+    scene = gs.Scene()
+
+    kwargs = dict(
+        morph=gs.morphs.USD(
+            usd_ctx=UsdContext(
+                usd_file,
+                use_bake_cache=False,
+            ),
+            scale=scale,
+            fixed=fixed,
+            convexify=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+        vis_mode=vis_mode,
     )
+
     if is_stage:
-        usd_scene.add_stage(usd_morph, vis_mode=vis_mode, material=gs.materials.Rigid(rho=1000.0))
+        scene.add_stage(**kwargs)
     else:
-        usd_scene.add_entity(usd_morph, vis_mode=vis_mode, material=gs.materials.Rigid(rho=1000.0))
-    usd_scene.build()
-    return usd_scene
+        scene.add_entity(**kwargs)
+
+    # Note that it is necessary to build the scene because spatial inertia of some geometries may not be specified.
+    # In such a case, it will be estimated from the geometry during build (RigidLink._build to be specific).
+    scene.build()
+
+    return scene
 
 
 def build_mesh_scene(mesh_file: str, scale: float):
@@ -438,6 +465,7 @@ def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     rigid_body_api.GetKinematicEnabledAttr().Set(False)
 
     stage.Save()
+
     return usd_file
 
 
@@ -864,6 +892,7 @@ def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
     joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
 
     stage.Save()
+
     return usd_file
 
 
@@ -883,10 +912,14 @@ def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, scale, tol):
 @pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_visual_parse(model_name, tol):
-    glb_file = os.path.join(get_hf_dataset(pattern=f"{model_name}.glb"), f"{model_name}.glb")
-    usd_file = os.path.join(get_hf_dataset(pattern=f"{model_name}.usdz"), f"{model_name}.usdz")
+    glb_asset_path = get_hf_dataset(pattern=f"{model_name}.glb")
+    glb_file = os.path.join(glb_asset_path, f"{model_name}.glb")
+    usd_asset_path = get_hf_dataset(pattern=f"{model_name}.usdz")
+    usd_file = os.path.join(usd_asset_path, f"{model_name}.usdz")
+
     mesh_scene = build_mesh_scene(glb_file, scale=1.0)
     usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
+
     compare_mesh_scene(mesh_scene, usd_scene, tol=tol)
 
 
@@ -897,7 +930,9 @@ def test_usd_visual_parse(model_name, tol):
 def test_usd_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
     usd_file = os.path.join(asset_path, usd_file)
+
     usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
+
     texture0 = usd_scene.entities[0].vgeoms[0].vmesh.surface.diffuse_texture
     texture1 = usd_scene.entities[0].vgeoms[1].vmesh.surface.diffuse_texture
     assert isinstance(texture0, gs.textures.ColorTexture)
@@ -914,15 +949,33 @@ def test_usd_parse_nodegraph(usd_file):
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="omniverse-kit support not available")
-def test_usd_bake(usd_file):
-    asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
-    usd_file = os.path.join(asset_path, usd_file)
-    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False, fixed=True)
+def test_usd_bake(usd_file, tmp_path):
+    RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
+    RETRY_DELAY = 30.0
 
-    success_count = 0
-    for vgeom in usd_scene.entities[0].vgeoms:
-        vmesh = vgeom.vmesh
-        bake_success = vmesh.metadata["bake_success"]
-        assert bake_success is None or bake_success
-        success_count += 1 if bake_success else 0
-    assert success_count > 0
+    asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir=tmp_path)
+    usd_file = os.path.join(asset_path, usd_file)
+
+    # Note that bootstrapping omni-kit by multiple workers concurrently is causing failure.
+    # There is no easy way to get around this limitation except retrying after some delay...
+    retry_idx = 0
+    while True:
+        usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False, fixed=True)
+
+        is_any_baked = False
+        for vgeom in usd_scene.entities[0].vgeoms:
+            vmesh = vgeom.vmesh
+            bake_success = vmesh.metadata["bake_success"]
+            try:
+                assert bake_success is None or bake_success
+            except AssertionError:
+                if retry_idx < RETRY_NUM:
+                    usd_scene.destroy()
+                    print(f"Failed to bake usd. Trying again in {RETRY_DELAY}s...")
+                    time.sleep(RETRY_DELAY)
+                    break
+                raise
+            is_any_baked |= bake_success
+        else:
+            assert is_any_baked
+            break
