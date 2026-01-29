@@ -15,12 +15,12 @@ def main():
     # ==== Simulation Parameters (Configurable) ====
     dt = 1e-3
     test_time = 0.20  # seconds
-    initial_cube_velocity = np.array([10.0, 0.0, 0.0, 100.0, 100.0, 100.0])  # [vx, vy, vz, wx, wy, wz]
+    initial_cube_velocity = np.array([3.0, 0.0, 0.0, 0.0, 600.0, 20.0])  # [vx, vy, vz, wx, wy, wz]
     initial_momentum_reference_time = 0.02  # seconds - when to capture reference momentum for error calculation
 
     # Object types: 'rigid' or 'fem'
     cube_type = "rigid"  # 'rigid' or 'fem'
-    blob_type = "rigid"  # 'rigid' or 'fem'
+    blob_type = "fem"  # 'rigid' or 'fem'
     # =============================================
 
     gs.init(backend=gs.gpu, logging_level=logging.DEBUG, performance_mode=True)
@@ -30,7 +30,7 @@ def main():
             dt=dt,
             gravity=(0.0, 0.0, 0.0),
             ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios
-            use_contact_proxy=False,
+            use_contact_proxy=True,
             enable_ipc_gui=args.vis,
         ),
         show_viewer=args.vis,
@@ -44,13 +44,13 @@ def main():
     # Blob (sphere) - configurable type
     if blob_type == "rigid":
         blob = scene.add_entity(
-            morph=gs.morphs.Sphere(pos=(0.6, 0.00, 0.00), radius=blob_radius),
+            morph=gs.morphs.Sphere(pos=(0.3, 0.00, 0.00), radius=blob_radius),
             material=gs.materials.Rigid(rho=blob_rho, friction=0.3),
             surface=gs.surfaces.Plastic(color=(0.2, 0.2, 0.8, 0.8)),
         )
     else:  # fem
         blob = scene.add_entity(
-            morph=gs.morphs.Sphere(pos=(0.6, 0.00, 0.00), radius=blob_radius),
+            morph=gs.morphs.Sphere(pos=(0.3, 0.00, 0.00), radius=blob_radius),
             material=gs.materials.FEM.Elastic(E=1.0e5, nu=0.45, rho=blob_rho, model="stable_neohookean"),
             surface=gs.surfaces.Plastic(color=(0.2, 0.2, 0.8, 0.8)),
         )

@@ -322,7 +322,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     contact_d_hat: float = None
     contact_friction_enable: bool = None
     contact_friction_mu: float = 0.5
-    contact_resistance: float = 1e9
+    contact_resistance: float = 1e7
     contact_eps_velocity: float = None
     contact_constitution: str = None
 
@@ -351,6 +351,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     two_way_coupling: bool = True
     use_contact_proxy: bool = False
     sync_dof_enable: bool = True
+    fem_fem_friction_mu: float = 0.001
 
 
 ############################ Solvers inside simulator ############################

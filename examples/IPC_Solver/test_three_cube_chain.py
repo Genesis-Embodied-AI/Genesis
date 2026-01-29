@@ -18,7 +18,6 @@ def main():
     coupler_options = gs.options.IPCCouplerOptions(
         dt=dt,
         gravity=(0.0, 0.0, -9.8),
-        coupling_strategy="external_articulation",
         contact_friction_mu=0.5,
         IPC_self_contact=False,
         enable_ipc_gui=True,
@@ -76,7 +75,7 @@ def main():
     # Parameters for oscillation
     amplitude1 = 1  # radians for joint1 (Z-axis rotation)
     amplitude2 = 1  # radians for joint2 (Y-axis rotation)
-    period = 5000  # steps per cycle
+    period = 500  # steps per cycle
 
     step = 0
     while scene.viewer.is_alive():

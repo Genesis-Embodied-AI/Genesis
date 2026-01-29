@@ -114,12 +114,6 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
         ),
     )
 
-    material = (
-        gs.materials.FEM.Elastic(E=1.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")
-        if use_ipc
-        else gs.materials.Rigid()
-    )
-
     if use_ipc:
         asset_path = snapshot_download(
             repo_type="dataset",

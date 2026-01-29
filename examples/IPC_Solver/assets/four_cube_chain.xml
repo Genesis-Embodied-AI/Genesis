@@ -1,0 +1,37 @@
+<mujoco model="four_cube_chain">
+  <compiler angle="radian" />
+
+  <option timestep="0.01" gravity="0 0 -9.8"/>
+
+  <worldbody>
+    <!-- Base cube (fixed) - rotated 45 degrees around Z -->
+    <body name="base" pos="0 0 0.5" quat="0.9239 0 0 0.3827">
+      <geom name="base_geom" type="box" size="0.1 0.1 0.1" rgba="1 0 0 1" contype="1" conaffinity="1"/>
+      <inertial pos="0 0 0" mass="1" diaginertia="0.0067 0.0067 0.0067"/>
+
+      <!-- Joint 1: Revolute joint connecting base to cube1, rotates around Y axis -->
+      <!-- Joint frame offset with rotation -->
+      <body name="cube1" pos="0.2 0.15 0.1" quat="0.9659 0.2588 0 0">
+        <joint name="joint1" type="hinge" axis="0 1 0" range="-3.14 3.14" damping="0.1"/>
+        <geom name="cube1_geom" type="box" size="0.1 0.1 0.1" rgba="0 1 0 1" contype="1" conaffinity="1"/>
+        <inertial pos="0 0 0" mass="1" diaginertia="0.0067 0.0067 0.0067"/>
+
+        <!-- Joint 2: Fixed joint (no joint element, making cube2 fixed to cube1) -->
+        <!-- Cube2 is at an angle relative to cube1 -->
+        <body name="cube2" pos="0.25 -0.1 0.05" quat="0.8660 0 0.5 0">
+          <!-- No joint element = fixed joint -->
+          <geom name="cube2_geom" type="box" size="0.1 0.1 0.1" rgba="0 0 1 1" contype="1" conaffinity="1"/>
+          <inertial pos="0 0 0" mass="1" diaginertia="0.0067 0.0067 0.0067"/>
+
+          <!-- Joint 3: Prismatic joint connecting cube2 to cube3, slides along local X -->
+          <!-- Joint frame is rotated 30 degrees around Z -->
+          <body name="cube3" pos="0.2 0.1 -0.05" quat="0.9914 0 0 0.1305">
+            <joint name="joint3" type="slide" axis="1 0 0" range="-0.3 0.3" damping="0.1"/>
+            <geom name="cube3_geom" type="box" size="0.1 0.1 0.1" rgba="1 1 0 1" contype="1" conaffinity="1"/>
+            <inertial pos="0 0 0" mass="1" diaginertia="0.0067 0.0067 0.0067"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

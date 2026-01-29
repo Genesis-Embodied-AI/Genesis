@@ -68,7 +68,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
         gs.options.IPCCouplerOptions(
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
-            ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios,
+            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
             contact_friction_mu=0.8,
             IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
             newton_velocity_tol=1e-1,

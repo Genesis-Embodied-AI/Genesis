@@ -18,7 +18,6 @@ def main():
     coupler_options = gs.options.IPCCouplerOptions(
         dt=dt,
         gravity=(0.0, 0.0, -9.8),
-        coupling_strategy="external_articulation",
         contact_friction_mu=0.5,
         IPC_self_contact=False,
         enable_ipc_gui=True,
