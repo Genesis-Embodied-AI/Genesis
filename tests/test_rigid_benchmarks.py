@@ -732,6 +732,10 @@ def g1_fall(solver, n_envs, gjk):
     duration_warmup = 20.0
     duration_record = 5.0
 
+    # Needed in order to reproduce the benefits for parallelizing Hessian that
+    # we see on Eden Beyond Mimic
+    step_dt = 0.005
+
     asset_path = snapshot_download(
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
@@ -742,7 +746,7 @@ def g1_fall(solver, n_envs, gjk):
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            dt=0.005,
+            dt=step_dt,
             iterations=10,
             tolerance=1e-5,
             ls_iterations=20,
@@ -793,7 +797,7 @@ def g1_fall(solver, n_envs, gjk):
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
+    realtime_factor = runtime_fps * step_dt
 
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
