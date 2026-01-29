@@ -36,8 +36,6 @@ dependencies = [
     "pygltflib==1.16.0",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen==0.8.2",
-    # Optional requirement of 'tetgen' that is being used to pass custom geometry as input
-    "pyvista",
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
     # Used to convert VTK output to numpy when converting volume to particles for PBS
