@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import tetgen
 import trimesh
 import OpenEXR
 import Imath
@@ -991,24 +992,17 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
-    import pyvista as pv
-    import tetgen
+    tet = tetgen.TetGen(mesh.vertices.astype(np.float64, copy=False), mesh.faces.astype(np.int32, copy=False))
 
-    pv_obj = pv.PolyData(
-        mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
-    )
-    tet = tetgen.TetGen(pv_obj)
     # Build and apply the switches string directly, since
     # the Python wrapper sometimes ignores certain kwargs
     # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
-    switches = make_tetgen_switches(tet_cfg)
-    verts, elems, *_ = tet.tetrahedralize(switches=switches)
-    # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
+    verts, elems, *_ = tet.tetrahedralize(switches=make_tetgen_switches(tet_cfg))
+
     return verts, elems
 
 
-def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
+def visualize_tet(tet, mesh, show_surface=True, plot_cell_qual=False):
     grid = tet.grid
     if show_surface:
         grid.plot(show_edges=True)
@@ -1028,8 +1022,11 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
                 scalars=cell_qual, stitle="Quality", cmap="bwr", clim=[0, 1], flip_scalars=True, show_edges=True
             )
         else:
-            # Importing pyvista is very slow and not used very often. Let's delay import.
+            # Delaying import of 'pyvista' because it is an optional dependency
             import pyvista as pv
+
+            faces = np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
+            pv_data = pv.PolyData(mesh.vertices, faces)
 
             plotter = pv.Plotter()
             plotter.add_mesh(subgrid, "lightgrey", lighting=True, show_edges=True)
