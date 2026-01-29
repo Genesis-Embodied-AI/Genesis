@@ -3,7 +3,6 @@ import os
 import time
 from pathlib import Path
 from typing import Any
-from huggingface_hub import snapshot_download
 
 import numpy as np
 import pytest
@@ -14,6 +13,7 @@ import genesis as gs
 
 from .utils import (
     get_hardware_fingerprint,
+    get_hf_dataset,
     get_platform_fingerprint,
     get_git_commit_timestamp,
     get_git_commit_info,
@@ -736,13 +736,7 @@ def g1_fall(solver, n_envs, gjk):
     # we see on Eden Beyond Mimic
     step_dt = 0.005
 
-    asset_path = snapshot_download(
-        repo_type="dataset",
-        repo_id="Genesis-Intelligence/assets",
-        revision="e0d8081ddf6d7490f67eac214d09820ba8689b2f",
-        allow_patterns="unitree_g1/*",
-        max_workers=1,
-    )
+    asset_path = get_hf_dataset(pattern="unitree_g1/*")
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             dt=step_dt,
