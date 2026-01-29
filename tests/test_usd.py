@@ -277,6 +277,7 @@ def build_usd_scene(
     scale: float,
     vis_mode: str = "collision",
     is_stage: bool = True,
+    fixed: bool = False,
 ):
     """
     Build a USD scene from its file path.
@@ -291,6 +292,8 @@ def build_usd_scene(
         The visualization mode of the scene
     is_stage : bool
         Whether to add the USD file as a stage or as an entity
+    fixed : bool
+        Whether the object should be fixed
     Returns
     -------
     usd_scene : gs.Scene
@@ -301,6 +304,7 @@ def build_usd_scene(
     usd_morph = gs.morphs.USD(
         usd_ctx=UsdContext(usd_file, use_bake_cache=False),
         scale=scale,
+        fixed=fixed,
     )
     if is_stage:
         usd_scene.add_stage(usd_morph, vis_mode=vis_mode, material=gs.materials.Rigid(rho=1000.0))
@@ -913,7 +917,7 @@ def test_usd_parse_nodegraph(usd_file):
 def test_usd_bake(usd_file):
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
     usd_file = os.path.join(asset_path, usd_file)
-    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
+    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False, fixed=True)
 
     success_count = 0
     for vgeom in usd_scene.entities[0].vgeoms:

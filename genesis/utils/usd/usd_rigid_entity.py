@@ -84,6 +84,9 @@ def _parse_link(
     elif link.HasAPI(UsdPhysics.CollisionAPI):
         link_fixed = True
 
+    if morph.fixed:
+        link_fixed = any(parent_idx == -1 for _, parent_idx, _ in joints)
+
     # parse link mass properties
     if link.HasAPI(UsdPhysics.MassAPI):
         mass_api = UsdPhysics.MassAPI(link)
@@ -329,19 +332,20 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
     # TODO: we only assume that all links are under the subtree of the articulation root now.
     # To parse the accurate articulation structure, we need to search through the BodyRel.
     link_path_joints = {}
-    for prim in Usd.PrimRange(entity_prim):  # will not iterate inactive prims
-        if prim.IsA(UsdPhysics.Joint):
-            joint = UsdPhysics.Joint(prim)
-            body0_targets = joint.GetBody0Rel().GetTargets()  # parent
-            body1_targets = joint.GetBody1Rel().GetTargets()  # child
-            body0_target_path = str(body0_targets[0]) if body0_targets else None
-            body1_target_path = str(body1_targets[0]) if body1_targets else None
-            if body1_target_path:
-                if body0_target_path:
-                    link_path_joints.setdefault(body0_target_path, [])
-                link_path_joints.setdefault(body1_target_path, []).append((prim, body0_target_path, True))
-            elif body0_target_path:
-                link_path_joints.setdefault(body0_target_path, []).append((prim, None, False))
+    if entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
+        for prim in Usd.PrimRange(entity_prim):  # will not iterate inactive prims
+            if prim.IsA(UsdPhysics.Joint):
+                joint = UsdPhysics.Joint(prim)
+                body0_targets = joint.GetBody0Rel().GetTargets()  # parent
+                body1_targets = joint.GetBody1Rel().GetTargets()  # child
+                body0_target_path = str(body0_targets[0]) if body0_targets else None
+                body1_target_path = str(body1_targets[0]) if body1_targets else None
+                if body1_target_path:
+                    if body0_target_path:
+                        link_path_joints.setdefault(body0_target_path, [])
+                    link_path_joints.setdefault(body1_target_path, []).append((prim, body0_target_path, True))
+                elif body0_target_path:
+                    link_path_joints.setdefault(body0_target_path, []).append((prim, None, False))
 
     links, link_joints = [], []
     if link_path_joints:

@@ -1487,6 +1487,10 @@ class USD(FileMorph):
         The parser context. Defaults to None.
     """
 
+    # Mesh Options
+    file_meshes_are_zup: bool | None = None
+    fixed: bool = False
+
     # Joint Dynamics Options
     joint_friction_attr_candidates: List[str] = [
         "physxJoint:jointFriction",  # Isaac-Sim assets compatibility
@@ -1529,9 +1533,8 @@ class USD(FileMorph):
     # Geometry Parsing Options
     collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*"]
     visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*"]
-    file_meshes_are_zup: bool | None = None
 
-    # Internal Options
+    # USD specific Options
     usd_ctx: Any = None
     prim_path: Optional[str] = None
 

@@ -288,9 +288,13 @@ class UsdContext:
                 gs.logger.warning(result.stderr)
         except (subprocess.CalledProcessError, OSError) as e:
             gs.logger.warning(
-                f"Baking process failed: {e}. A few possible reasons:"
-                "\n\t1. The first launch of USD baking app will install some dependencies, which may cause Timeout."
-                "\n\t2. If you have multiple environments with different Python versions, omniverse-kit extensions may conflict between them."
+                f"Baking process failed: {e} A few possible reasons:"
+                "\n\t1. The first launch may require accepting the Omniverse EULA. "
+                "Set `OMNI_KIT_ACCEPT_EULA=yes` to accept it automatically."
+                "\n\t2. The first launch may install additional dependencies, which can cause a timeout."
+                "\n\t3. If you have multiple Python environments (especially with different Python versions), "
+                "Omniverse Kit extensions may conflict across environments. Try to remove the shared omniverse "
+                "extension folder (e.g. `~/.local/share/ov/data/ext` in Linux) and try again."
             )
 
         if os.path.exists(self._bake_stage_file):
