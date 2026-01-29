@@ -15,7 +15,6 @@ esc	- Quit
 Plus all default viewer controls (press 'i' to see them)
 """
 
-import os
 import random
 
 import numpy as np
