@@ -1016,6 +1016,26 @@ class FEMEntity(Entity):
             self._solver.elements_el.grad[f, i_global, i_b].actu = 0
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        from pathlib import Path
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "fem_box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "fem_sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "fem_cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return f"fem_{Path(morph.file).stem}"
+        return "fem_entity"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 

@@ -109,6 +109,14 @@ class PBDBaseEntity(ParticleEntity):
         self.solver._kernel_release_particle(particles_idx, envs_idx)
         self.solver._sim._coupler.kernel_pbd_rigid_clear_animate_particles_by_link(particles_idx, envs_idx)
 
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        return f"pbd_{super()._get_morph_identifier()}"
+
 
 @ti.data_oriented
 class PBDTetEntity(PBDBaseEntity):

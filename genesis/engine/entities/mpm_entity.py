@@ -676,3 +676,11 @@ class MPMEntity(ParticleEntity):
             particles_mask = torch.ones((self._sim._B, self.n_particles), dtype=torch.bool, device=gs.device)
 
         self._solver._kernel_remove_particle_constraints(particles_mask, self._particle_start)
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        return f"mpm_{super()._get_morph_identifier()}"

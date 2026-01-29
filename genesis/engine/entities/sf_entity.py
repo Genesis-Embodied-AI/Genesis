@@ -27,3 +27,11 @@ class SFParticleEntity(ParticleEntity):
     def update_particles(self, particles):
         self._particles = particles
         self._n_particles = len(particles)
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        return f"sf_{super()._get_morph_identifier()}"

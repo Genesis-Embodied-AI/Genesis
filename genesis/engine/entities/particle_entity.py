@@ -740,6 +740,28 @@ class ParticleEntity(Entity):
         return closest_idx
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        from pathlib import Path
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.Nowhere):
+            return "emitter"
+        return "particle"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 

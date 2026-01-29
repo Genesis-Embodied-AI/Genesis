@@ -3295,6 +3295,41 @@ class RigidEntity(Entity):
             return mass
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        from pathlib import Path
+
+        if self._enable_heterogeneous:
+            return "heterogeneous"
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        if isinstance(morph, gs.morphs.Plane):
+            return "plane"
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone)):
+            if isinstance(morph.file, str):
+                return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.USD):
+            if morph.prim_path:
+                return morph.prim_path.rstrip("/").split("/")[-1]
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.Terrain):
+            return morph.name if morph.name else "terrain"
+        return "rigid"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 

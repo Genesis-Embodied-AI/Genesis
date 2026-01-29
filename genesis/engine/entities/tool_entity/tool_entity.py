@@ -44,6 +44,22 @@ class ToolEntity(Entity):
         # for rendering purpose only
         self.latest_pos = ti.Vector.field(3, dtype=gs.ti_float, shape=(1))
 
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        from pathlib import Path
+
+        if isinstance(self._morph, gs.morphs.Mesh):
+            return Path(self._morph.file).stem
+        return "tool"
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- initialization -----------------------------------
+    # ------------------------------------------------------------------------------------
+
     def init_tgt_vars(self):
         # temp variable to store targets for next step
         self._tgt = {
