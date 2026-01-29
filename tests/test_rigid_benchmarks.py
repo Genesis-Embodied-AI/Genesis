@@ -743,13 +743,14 @@ def g1_fall(solver, n_envs, gjk):
         allow_patterns="unitree_g1/*",
         max_workers=1,
     )
-
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             dt=step_dt,
             iterations=10,
             tolerance=1e-5,
             ls_iterations=20,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
         show_viewer=False,
         show_FPS=False,
