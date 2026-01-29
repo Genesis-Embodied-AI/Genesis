@@ -263,11 +263,13 @@ class ParticleEntity(Entity):
         for i_vf_ in range(self.n_vfaces):
             i_vf = i_vf_ + self._vface_start
             # Offset face indices by vvert_start for global vertex indexing
-            self.solver.vfaces_indices[i_vf] = ti.Vector([
-                ti.cast(faces[i_vf_][0], gs.ti_int) + self._vvert_start,
-                ti.cast(faces[i_vf_][1], gs.ti_int) + self._vvert_start,
-                ti.cast(faces[i_vf_][2], gs.ti_int) + self._vvert_start,
-            ])
+            self.solver.vfaces_indices[i_vf] = ti.Vector(
+                [
+                    ti.cast(faces[i_vf_][0], gs.ti_int) + self._vvert_start,
+                    ti.cast(faces[i_vf_][1], gs.ti_int) + self._vvert_start,
+                    ti.cast(faces[i_vf_][2], gs.ti_int) + self._vvert_start,
+                ]
+            )
 
     def sample(self):
         """

@@ -35,7 +35,7 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict(), return_uvs=
     # Load mesh (with texture data if UVs are requested)
     mesh = mu.load_mesh(file, skip_texture=not return_uvs)
     mesh.vertices = mesh.vertices * scale
-    
+
     # Extract UVs from mesh before tetrahedralization (if requested)
     # (tetgen preserves original vertices at start of output array)
     if return_uvs:
@@ -70,7 +70,7 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict(), return_uvs=
                 pkl.dump((verts, elems), tet_file)
 
     verts += np.array(pos)
-    
+
     if return_uvs:
         # Build full UV array: original vertices get their UVs, interior vertices get zeros
         n_fem = len(verts)
