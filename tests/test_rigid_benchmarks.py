@@ -773,11 +773,16 @@ def g1_fall(solver, n_envs, gjk):
     init_qpos[3] = 1.0  # quaternion w component
     robot.set_qpos(init_qpos)
 
+    random_forces = torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device)
+    max_force = 50.0
+
     num_steps = 0
     is_recording = False
     ti.sync()
     time_start = time.time()
     while True:
+        random_forces.uniform_(-max_force, max_force)
+        robot.control_dofs_force(random_forces)
         scene.step()
         time_elapsed = time.time() - time_start
         if is_recording:
