@@ -9,7 +9,7 @@ from genesis.utils import urdf as urdf_utils
 
 from .usd_context import UsdContext
 from .usd_geometry import parse_prim_geoms
-from .usd_parser_utils import (
+from .usd_utils import (
     AXES_VECTOR,
     get_attr_value_by_candidates,
     usd_pos_to_numpy,

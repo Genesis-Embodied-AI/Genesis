@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.utils import geom as gu
 
 from .usd_context import UsdContext
-from .usd_parser_utils import AXES_T, usd_attr_array_to_numpy, usd_primvar_array_to_numpy
+from .usd_utils import AXES_T, usd_attr_array_to_numpy, usd_primvar_array_to_numpy
 
 
 def geom_exception(geom_type, geom_id, stage_file, reason_msg):

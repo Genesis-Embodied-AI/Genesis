@@ -13,7 +13,7 @@ import genesis as gs
 import genesis.utils.mesh as mu
 
 from .usd_material import parse_material_preview_surface
-from .usd_parser_utils import extract_scale
+from .usd_utils import extract_scale
 
 # Check for Omniverse Kit support (required for USD baking)
 # Note: CI workflows should set OMNI_KIT_ACCEPT_EULA=yes in their env section
