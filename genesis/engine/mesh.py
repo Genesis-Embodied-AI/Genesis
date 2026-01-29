@@ -77,9 +77,9 @@ class Mesh(RBC):
 
         if self._surface.requires_uv():  # check uvs here
             if self._uvs is None:
-                if "mesh_path" in metadata:
+                if "mesh_path" in self._metadata:
                     gs.logger.warning(
-                        f"Texture given but asset missing uv info (or failed to load): {metadata['mesh_path']}"
+                        f"Texture given but asset missing uv info (or failed to load): {self._metadata['mesh_path']}"
                     )
                 else:
                     gs.logger.warning("Texture given but asset missing uv info (or failed to load).")
@@ -368,11 +368,6 @@ class Mesh(RBC):
                     meshes = mu.parse_mesh_trimesh(
                         morph.file, morph.group_by_material, morph.scale, morph.file_meshes_are_zup, surface
                     )
-            elif morph.is_format(gs.options.morphs.USD_FORMATS):
-                import genesis.utils.usd.usda as usda_utils
-
-                assert surface is not None
-                meshes = usda_utils.parse_mesh_usd(morph.file, morph.group_by_material, morph.scale, surface)
             elif isinstance(morph, gs.options.morphs.MeshSet):
                 assert all(isinstance(mesh, trimesh.Trimesh) for mesh in morph.files)
                 meshes = [mu.trimesh_to_mesh(mesh, morph.scale, surface) for mesh in morph.files]

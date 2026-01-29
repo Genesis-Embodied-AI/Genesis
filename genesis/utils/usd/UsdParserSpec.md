@@ -2,76 +2,76 @@
 
 This document describes the specification of the USD parser in Genesis.
 
-# UsdArticulation Load Strategy
+## Scaling
 
-## About Scaling
+USD allows scaling in transformation matrices, but Genesis `link` transforms are **rigid only** (rotation and translation, no scaling). This fundamental architectural difference requires decomposing USD transforms to separate scaling from the rigid component.
 
-We use $T$ to represent a transform considering Rotation $R$, Scaling $S$ and translation $t$, while $Q$ represents a transform only considering $R$ and $t$.
-
-So a $T$ can be written as:
+We decompose any USD transform $T$ (which includes rotation $R$, scaling $S$, and translation $t$) into a rigid transform $Q$ (rotation $R$ and translation $t$ only) and a scale matrix $S$:
 
 $$
 T = Q \cdot S
 $$
 
-## Usd Stage Tree Structure
+where $Q$ is used for the Genesis `link` transform, and $S$ is **baked into the mesh geometry** to preserve the visual appearance.
 
-`Transform` on `Prim` is a local transform according to its parent. We use $T_i^j$ to describe it, where $j$ indicates the `Prim` and $i$ indicates the parent `Prim` of `Prim` $j$. 
+## Tree Structure and Transform Notation
 
-To prevent nested transform, we consider $T_j^w$ as the global transform of $j$.
+Both USD and Genesis use hierarchical tree structures where each node has a local transform relative to its parent.
 
-Thus, any relative transform can be calculated as:
-
-$$
-T^w_j = T^w_i \cdot T^i_j \\
-T^i_j = ({T^w_i})^{-1} \cdot T^w_j
-$$
-
-## Genesis (Gs) Tree Structure
-
-`Transform` on `link` is a local transform according to its parent (but no scaling). We use $Q_i^j$ to describe it, where $j$ indicates the `link` and $i$ indicates the parent `link` of `link` $j$. 
-
-To prevent nested transform, we consider $Q_j^w$ as the global transform of $j$.
-
-Thus, any relative transform can be calculated as:
+**USD Stage:** We use $T_i^j$ to denote the transform from parent `Prim` $i$ to child `Prim` $j$ (includes rotation, scaling, and translation). The world-space transform $T_j^w$ of `Prim` $j$ is computed as:
 
 $$
-Q^w_j =Q^w_i \cdot Q^i_j \\
-Q^i_j = ({Q^w_i})^{-1} \cdot Q^w_j
+T^w_j = T^w_i \cdot T^i_j \Rightarrow T^i_j = ({T^w_i})^{-1} \cdot T^w_j
 $$
 
-## Between Usd and Gs?
+**Genesis:** We use $Q_i^j$ to denote the transform from parent `link` $i$ to child `link` $j$ (rigid transform only, no scaling). The world-space transform $Q_j^w$ of `link` $j$ is computed as:
 
-There is no typical relationship between $T^i_j$ and $Q^i_j$; relative transforms provide no general relationship. This limitation arises from the complexity of tree structures and nested relationships.
+$$
+Q^w_j = Q^w_i \cdot Q^i_j \Rightarrow Q^i_j = ({Q^w_i})^{-1} \cdot Q^w_j
+$$
 
-The only relationship between $T$ and $Q$ is in the world space, which is:
+## Relationship Between USD and Genesis
+
+**Notation:** We use $i$ to denote a USD `Prim`, and $i'$ to denote the corresponding Genesis `link` (with scale baked).
+
+There is no direct relationship between $T^i_j$ and $Q^{i'}_{j'}$. This limitation arises from the complexity of tree structures and nested relationships. The only relationship between $T$ and $Q$ is in world space, which is:
 
 $$
 T^w_i = Q^w_{i'} \cdot S^{i'}_i
 $$
 
-In Gs, the $S^{i'}_{i}$ will be left to transform the `Mesh` on `link` $i'$.
+where $T^w_i$ is the world-space transform of USD `Prim` $i$, $Q^w_{i'}$ is the world-space transform of the corresponding Genesis `link` $i'$, and $S^{i'}_i$ is the scale matrix that transforms from Genesis link $i'$ to USD prim $i$. In Genesis, the scale $S^{i'}_{i}$ is baked into the meshes on `link` $i'$.
 
 ## Transform to World Space
 
-In Usd, the joint is described using $T_J^0$ and $T_J^1$, which tell the relative transform of joint $J$ w.r.t. Link $0$ and $1$. 
+In USD, a joint is described using $T_J^{l_0}$ and $T_J^{l_1}$, which represent the relative transforms of joint $J$ with respect to Link $l_0$ (specified by `Body0Rel`) and Link $l_1$ (specified by `Body1Rel`).
 
-[https://openusd.org/dev/api/usd_physics_page_front.html#usdPhysics_jointed_bodies](https://openusd.org/dev/api/usd_physics_page_front.html#usdPhysics_jointed_bodies)
+Reference: [USD Physics Jointed Bodies](https://openusd.org/dev/api/usd_physics_page_front.html#usdPhysics_jointed_bodies)
 
-The joint axis can only be chosen from $X$, $Y$, or $Z$, specified by the string `'X'/'Y'/'Z'`. We use $\hat{e}$ to represent it.
+The joint axis can only be chosen from the $X$, $Y$, or $Z$ axes, specified by the string `'X'`, `'Y'`, or `'Z'`. We use $\hat{e}$ to represent the axis vector.
 
-NOTE: The axis is defined in both links' local space.
+**Note:** The axis is defined in both links' local coordinate spaces.
 
-### Joint Axis
+## Joint Transform to Genesis
 
-Axis in world space:
+For both the joint axis and position, we can use the transforms of either link to calculate the world-space value (in practice we use $l_1$), then convert to Genesis local space.
 
+**Joint Axis:**
 $$
 \begin{bmatrix}
 \hat{e}^w \\
 0
 \end{bmatrix} 
-= T^w_0 \cdot T^0_{J} \cdot 
+= T^w_{l_0} \cdot T^{l_0}_{J} \cdot 
+\begin{bmatrix}
+\hat{e} \\
+0
+\end{bmatrix}, \;\;\;\;
+\begin{bmatrix}
+\hat{e}^w \\
+0
+\end{bmatrix} 
+= T^w_{l_1} \cdot T^{l_1}_{J} \cdot 
 \begin{bmatrix}
 \hat{e} \\
 0
@@ -79,33 +79,25 @@ $$
 $$
 
 $$
-\begin{bmatrix}
-\hat{e}^w \\
-0
-\end{bmatrix} 
-= T^w_1 \cdot T^1_{J} \cdot 
-\begin{bmatrix}
-\hat{e} \\
-0
-\end{bmatrix}
+\hat{e}' = \hat{e}^{l_1'} = (Q^w_{l_1'})^{-1} \cdot \hat{e}^w
 $$
 
-Convert to Genesis Link 1 Local Space (Genesis-Style). For conciseness, the homogeneous 0 is ignored.
-
-$$
-\hat{e}^{1'} = (Q^w_{1'})^{-1} \cdot \hat{e}^w
-$$
-
-### Joint Position
-
-Position in world space:
-
+**Joint Position:**
 $$
 \begin{bmatrix}
 P^w \\
 1
 \end{bmatrix} 
-= T^w_0 \cdot T^0_{J} \cdot 
+= T^w_{l_0} \cdot T^{l_0}_{J} \cdot 
+\begin{bmatrix}
+P \\
+1
+\end{bmatrix}, \;\;\;\;
+\begin{bmatrix}
+P^w \\
+1
+\end{bmatrix} 
+= T^w_{l_1} \cdot T^{l_1}_{J} \cdot 
 \begin{bmatrix}
 P \\
 1
@@ -113,43 +105,5 @@ P \\
 $$
 
 $$
-\begin{bmatrix}
-P^w \\
-1
-\end{bmatrix} 
-= T^w_1 \cdot T^1_{J} \cdot 
-\begin{bmatrix}
-P \\
-1
-\end{bmatrix}
+P' = P^{l_1'} = (Q^w_{l_1'})^{-1} \cdot P^w
 $$
-
-Convert to Genesis Link 1 Local Space. For conciseness, the homogeneous 1 is ignored.
-
-$$
-P^{1'} = (Q^w_{1'})^{-1} \cdot P^w
-$$
-
-### Distance Limit Scaling
-
-$$
-\beta \| \hat{e}^{1'} \| = \| \hat{e}^w \| = \alpha \|\hat{e}\|
-$$
-
-Because $Q^w_{1'}$ keeps the distance (Rigid Transform), and $\|\hat{e}\|$ is $1$ by definition, we have:
-
-$$
-\beta = \alpha = \| \hat{e}^w \|
-$$
-
-The distance limit should be scaled by $\beta$.
-
-Unfortunately, if parent and child links are not at the same scale, the distance limit is difficult to determine, and it is unclear which scale to choose.
-
-📌 Currently, the distance limit is not scaled and is kept as-is (world space size). 
-
-### Angle Limit
-
-Under **homogeneous scaling**, the angle limit is preserved. We assume the **synthesis** transform is **homogeneous scaling**.
-
-📌 Currently, the angle limit is not modified and is kept as-is (world space size).

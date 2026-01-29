@@ -11,6 +11,14 @@ def omni_bootstrap(device=0, log_level="warning"):
     app = omni.kit_app.KitApp()
     kit_dir = os.path.dirname(os.path.abspath(os.path.realpath(omni.kit_app.__file__)))
     kit_path = os.path.join(kit_dir, "apps", "omni.app.empty.kit")
+
+    omni_extensions = [
+        "omni.usd",
+        "omni.kit.material.library",
+        "omni.kit.usd.collect",
+        "omni.replicator.core",
+        "omni.mdl.distill_and_bake",
+    ]
     app_args = [
         kit_path,
         "--/app/window/hideUi=True",
@@ -22,6 +30,8 @@ def omni_bootstrap(device=0, log_level="warning"):
         "--/app/python/interceptSysStdOutput=False",
         "--/app/python/logSysStdOutput=False",
         "--/app/settings/fabricDefaultStageFrameHistoryCount=3",
+        "--/exts/omni.kit.registry.nucleus/registries/0/name=kit/default",  # prioritize searching in Kit 107 'shared' extension registry
+        "--/exts/omni.kit.registry.nucleus/registries/0/url=https://ovextensionsprod.blob.core.windows.net/exts/kit/prod/107/shared",
         f"--/omni/log/level={log_level}",
         "--/log/file=",  # Empty string means no log file
         f"--/log/level={log_level}",
@@ -30,22 +40,10 @@ def omni_bootstrap(device=0, log_level="warning"):
         "--/renderer/active=rtx",
         "--/renderer/multiGpu/enabled=False",  # Avoids unnecessary GPU context initialization
         "--no-window",
-        "--portable",
-        "--enable",
-        "omni.usd",
-        "--enable",
-        "omni.kit.material.library",
-        "--enable",
-        "omni.kit.viewport.utility",
-        "--enable",
-        "omni.kit.viewport.rtx",
-        "--enable",
-        "omni.kit.usd.collect",
-        "--enable",
-        "omni.replicator.core",
-        "--enable",
-        "omni.mdl.distill_and_bake",
+        "--portable",  # TODO: set portable root to avoid extension conflicts
     ]
+    for extension in omni_extensions:
+        app_args += ["--enable", extension]
     app.startup(app_args)
     app.update()  # important
     return app
@@ -56,12 +54,14 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
 
     # bootstrap
     start_time = time.time()
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        os.environ.pop("CUDA_VISIBLE_DEVICES")
     app = omni_bootstrap(device, log_level)
     logs.append(f"\tBootstrap: {time.time() - start_time}, App status: {app.is_running()}.")
 
+    import carb
     import omni.usd
     import omni.mdl.distill_and_bake
-    import omni.replicator.core
     import omni.kit.usd.collect
 
     # open stage
@@ -72,9 +72,8 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
     # create render product
     start_time = time.time()
     stage = omni.usd.get_context().get_stage()
-    render_prod_path = omni.replicator.core.create.render_product("/OmniverseKit_Persp", resolution=(600, 600))
     app.update()  # important
-    logs.append(f"\tCreate render product: {time.time() - start_time}s, {render_prod_path}.")
+    logs.append(f"\tCreate render product: {time.time() - start_time}s.")
 
     # distill the material
     start_time = time.time()
@@ -83,7 +82,8 @@ def bake_usd_material(input_file, output_dir, usd_material_paths, device=0, log_
         material_prim = stage.GetPrimAtPath(usd_material_path)
         distiller = omni.mdl.distill_and_bake.MdlDistillAndBake(material_prim, ouput_folder=output_dir)
         distiller.distill()
-    logs.append(f"\tDistill: {time.time() - start_time}s, {material_prim}.")
+        carb.log_info("Distilled: " + usd_material_path)
+        logs.append(f"\tDistill: {time.time() - start_time}s, {usd_material_path}.")
 
     # export usd
     start_time = time.time()
