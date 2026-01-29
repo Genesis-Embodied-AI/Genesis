@@ -62,8 +62,11 @@ class Mesh(RBC):
         self._metadata: dict[str, Any] = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
 
-        # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False.
+        # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False
         self._metadata.setdefault("imported_as_zup", True)
+
+        # By default, all meshes are considered having their original visual
+        self._metadata.setdefault("is_visual_overwritten", False)
 
         if not is_mesh_zup:
             if self._metadata["imported_as_zup"]:
@@ -245,6 +248,7 @@ class Mesh(RBC):
             # Visual may not have uv, e.g. ColorVisuals
             uvs = None
 
+        metadata = metadata or {}
         must_update_surface = True
         roughness_factor = None
         color_image = None
@@ -287,14 +291,14 @@ class Mesh(RBC):
             else:
                 # TODO: support vertex/face colors in luisa
                 color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
+        elif surface.color is not None:
+            color_factor = surface.color
+            metadata["is_visual_overwritten"] = True
         elif (isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined) or (
             isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0
         ):
-            # Color is already vertex-based. No need to create a new texture to keep the original one, unless a color
-            # overwrite has been specified as surface-level.
-            must_update_surface = surface.color is not None
-        elif surface.color is not None:
-            color_factor = surface.color
+            # Color is already vertex-based. It is not only necessary to create a new visual.
+            must_update_surface = False
         else:
             # use white color as default
             color_factor = (1.0, 1.0, 1.0, 1.0)
@@ -336,14 +340,20 @@ class Mesh(RBC):
         if surface is None:
             surface = gs.surfaces.Default()
 
+        metadata = metadata or {}
+        metadata["is_visual_overwritten"] = metadata.get("is_visual_overwritten", False) or (surface.color is not None)
+        visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts))
+
+        tmesh = trimesh.Trimesh(
+            vertices=verts,
+            faces=faces,
+            vertex_normals=normals,
+            visual=visual,
+            process=False,
+        )
+
         return cls(
-            mesh=trimesh.Trimesh(
-                vertices=verts,
-                faces=faces,
-                vertex_normals=normals,
-                visual=mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts)),
-                process=False,
-            ),
+            mesh=tmesh,
             surface=surface,
             uvs=uvs,
             scale=scale,
@@ -402,6 +412,7 @@ class Mesh(RBC):
         Update the trimesh obj's visual attributes using its surface and uvs.
         """
         self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self.surface, self.uvs, len(self.verts))
+        self._metadata["is_visual_overwritten"] = True
 
     def apply_transform(self, T):
         """

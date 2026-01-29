@@ -117,6 +117,7 @@ def parse_urdf(morph, surface):
                     scale *= geometry.scale
 
                 # Overwrite surface color by original color specified in URDF file only if necessary
+                is_urdf_material = False
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
@@ -125,6 +126,7 @@ def parse_urdf(morph, surface):
                     and geom_prop.material.color is not None
                     and (morph.prioritize_urdf_material or surface.color is None)
                 ):
+                    is_urdf_material = True
                     geom_surface = surface.copy()
                     geom_surface.color = geom_prop.material.color
                 else:
@@ -145,6 +147,9 @@ def parse_urdf(morph, surface):
                         is_mesh_zup=morph.file_meshes_are_zup,
                         metadata={"mesh_path": mesh_path},
                     )
+                    if is_urdf_material:
+                        # Material color defined in URDF are not considered as visual overwrite
+                        mesh.metadata["is_visual_overwritten"] = False
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)
