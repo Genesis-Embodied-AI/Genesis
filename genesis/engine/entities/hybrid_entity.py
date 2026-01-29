@@ -202,6 +202,23 @@ class HybridEntity(Entity):
         assert self._solver_rigid.dt == self._solver_soft.dt, "Rigid and soft solver should have the same dt for now"
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        """Get the identifier string from the morph for name generation."""
+        from pathlib import Path
+
+        morph = self._morph
+        if isinstance(morph, gs.morphs.URDF):
+            if isinstance(morph.file, str):
+                return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        return "hybrid"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- basic ops --------------------------------------
     # ------------------------------------------------------------------------------------
 

@@ -194,14 +194,5 @@ class SPHEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """
-        Get the identifier string from the morph for name generation.
-
-        For SPHEntity, this returns "sph_" prefixed identifier.
-
-        Returns
-        -------
-        str
-            The morph identifier used in auto-generated entity names.
-        """
-        return f"sph_{self._get_morph_base_identifier()}"
+        """Get the identifier string from the morph for name generation."""
+        return f"sph_{super()._get_morph_identifier()}"

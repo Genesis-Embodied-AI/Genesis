@@ -3290,24 +3290,9 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """
-        Get the identifier string from the morph for name generation.
-
-        For RigidEntity, this returns:
-        - "heterogeneous" for heterogeneous entities (multiple morph variants)
-        - Shape name ("box", "sphere", "cylinder", "plane") for primitives
-        - File stem (without extension) for Mesh, URDF, MJCF, Drone
-        - Prim path last segment (if available) or file stem for USD
-        - Terrain name or "terrain" for Terrain morphs
-
-        Returns
-        -------
-        str
-            The morph identifier used in auto-generated entity names.
-        """
+        """Get the identifier string from the morph for name generation."""
         from pathlib import Path
 
-        # Handle heterogeneous entities (entities with multiple morph variants)
         if self._enable_heterogeneous:
             return "heterogeneous"
 
@@ -3315,30 +3300,25 @@ class RigidEntity(Entity):
 
         if isinstance(morph, gs.morphs.Box):
             return "box"
-        elif isinstance(morph, gs.morphs.Sphere):
+        if isinstance(morph, gs.morphs.Sphere):
             return "sphere"
-        elif isinstance(morph, gs.morphs.Cylinder):
+        if isinstance(morph, gs.morphs.Cylinder):
             return "cylinder"
-        elif isinstance(morph, gs.morphs.Plane):
+        if isinstance(morph, gs.morphs.Plane):
             return "plane"
-        elif isinstance(morph, gs.morphs.Mesh):
+        if isinstance(morph, gs.morphs.Mesh):
             return Path(morph.file).stem
-        elif isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone)):
-            # morph.file can be a URDF object (e.g., from hybrid entity) instead of a path
+        if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone)):
             if isinstance(morph.file, str):
                 return Path(morph.file).stem
-            else:
-                # URDF object has a name attribute
-                return morph.file.name
-        elif isinstance(morph, gs.morphs.USD):
-            # Use prim_path last segment if available, otherwise file stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.USD):
             if morph.prim_path:
                 return morph.prim_path.rstrip("/").split("/")[-1]
             return Path(morph.file).stem
-        elif isinstance(morph, gs.morphs.Terrain):
+        if isinstance(morph, gs.morphs.Terrain):
             return morph.name if morph.name else "terrain"
-        else:
-            return "rigid"
+        return "rigid"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

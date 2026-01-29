@@ -114,17 +114,8 @@ class PBDBaseEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """
-        Get the identifier string from the morph for name generation.
-
-        For PBDEntity, this returns "pbd_" prefixed identifier.
-
-        Returns
-        -------
-        str
-            The morph identifier used in auto-generated entity names.
-        """
-        return f"pbd_{self._get_morph_base_identifier()}"
+        """Get the identifier string from the morph for name generation."""
+        return f"pbd_{super()._get_morph_identifier()}"
 
 
 @ti.data_oriented

@@ -682,14 +682,5 @@ class MPMEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """
-        Get the identifier string from the morph for name generation.
-
-        For MPMEntity, this returns "mpm_" prefixed identifier.
-
-        Returns
-        -------
-        str
-            The morph identifier used in auto-generated entity names.
-        """
-        return f"mpm_{self._get_morph_base_identifier()}"
+        """Get the identifier string from the morph for name generation."""
+        return f"mpm_{super()._get_morph_identifier()}"

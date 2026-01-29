@@ -352,15 +352,6 @@ class Scene(RBC):
         -------
         entity : genesis.Entity
             The created entity.
-
-        Examples
-        --------
-        >>> scene = gs.Scene()
-        >>> box = scene.add_entity(gs.morphs.Box(), name="my_box")
-        >>> box.name
-        'my_box'
-        >>> sphere = scene.add_entity(gs.morphs.Sphere())  # auto-generated name
-        >>> sphere.name  # e.g., 'sphere_a1b2c3d4'
         """
         if material is None:
             material = gs.materials.Rigid()
@@ -1484,28 +1475,20 @@ class Scene(RBC):
         return self._sim.entities
 
     @property
-    def entity_names(self) -> list[str]:
+    def entity_names(self) -> tuple[str, ...]:
         """
         Get the names of all entities in the scene.
 
         Returns
         -------
-        list[str]
-            List of entity names in order of creation.
-
-        Examples
-        --------
-        >>> scene = gs.Scene()
-        >>> scene.add_entity(gs.morphs.Box(), name="box1")
-        >>> scene.add_entity(gs.morphs.Sphere(), name="sphere1")
-        >>> scene.entity_names
-        ['box1', 'sphere1']
+        tuple[str, ...]
+            Tuple of entity names in order of creation.
         """
-        return [entity.name for entity in self.entities]
+        return tuple(entity.name for entity in self.entities)
 
     def get_entity(self, name: str | None = None, uid: str | None = None) -> "Entity":
         """
-        Get an entity by name or UID prefix.
+        Get an entity by name or UID prefix. Raises an exception if not found.
 
         Parameters
         ----------
@@ -1518,21 +1501,6 @@ class Scene(RBC):
         -------
         Entity
             The matching entity.
-
-        Raises
-        ------
-        Exception
-            If no entity is found, multiple entities match the UID prefix,
-            or neither name nor uid is provided.
-
-        Examples
-        --------
-        >>> scene = gs.Scene()
-        >>> box = scene.add_entity(gs.morphs.Box(), name="my_box")
-        >>> scene.get_entity(name="my_box") is box
-        True
-        >>> scene.get_entity(uid=str(box.uid)[:4]) is box  # UID prefix lookup
-        True
         """
         if name is not None:
             if name in self._entity_name_registry:

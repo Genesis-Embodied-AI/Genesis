@@ -33,14 +33,5 @@ class SFParticleEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """
-        Get the identifier string from the morph for name generation.
-
-        For SFParticleEntity, this returns "sf_" prefixed identifier.
-
-        Returns
-        -------
-        str
-            The morph identifier used in auto-generated entity names.
-        """
-        return f"sf_{self._get_morph_base_identifier()}"
+        """Get the identifier string from the morph for name generation."""
+        return f"sf_{super()._get_morph_identifier()}"

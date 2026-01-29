@@ -90,15 +90,6 @@ class Entity(RBC):
             The entity's name. If a user-specified name was provided during creation,
             that name is returned. Otherwise, an auto-generated name based on the
             morph type and UID is returned.
-
-        Examples
-        --------
-        >>> scene = gs.Scene()
-        >>> box = scene.add_entity(gs.morphs.Box(), name="my_box")
-        >>> box.name
-        'my_box'
-        >>> sphere = scene.add_entity(gs.morphs.Sphere())  # auto-generated name
-        >>> sphere.name  # e.g., 'sphere_a1b2c3d4'
         """
         return self._name
 
@@ -110,63 +101,23 @@ class Entity(RBC):
         """
         Set the entity's name, auto-generating if not provided.
 
-        This method is called by Scene.add_entity() after the entity is created.
-        It validates uniqueness of both user-specified and auto-generated names,
-        and registers the entity in the scene's name registry.
-
-        Parameters
-        ----------
-        user_name : str | None
-            User-specified name. If None, an auto-generated name will be used.
-        scene : Scene
-            The scene to register the entity name with.
-
-        Raises
-        ------
-        Exception
-            If the name (user-specified or auto-generated) already exists in the scene.
-
-        Examples
-        --------
-        This method is typically called internally by Scene.add_entity():
-
-        >>> scene = gs.Scene()
-        >>> box = scene.add_entity(gs.morphs.Box(), name="my_box")
-        >>> box.name
-        'my_box'
-        >>> sphere = scene.add_entity(gs.morphs.Sphere())  # auto-generated
-        >>> sphere.name
-        'sphere_a1b2c3d4'
+        Raises an exception if the name already exists in the scene.
         """
         if user_name is not None:
+            # Validate uniqueness for user-specified names upfront
+            if user_name in scene._entity_name_registry:
+                gs.raise_exception(f"Entity name '{user_name}' already exists in scene.")
             self._name = user_name
         else:
             self._name = self._generate_name()
-
-        # Validate uniqueness for both user-specified and auto-generated names
-        if self._name in scene._entity_name_registry:
-            gs.raise_exception(f"Entity name '{self._name}' already exists in scene.")
+            # Validate uniqueness for auto-generated names
+            if self._name in scene._entity_name_registry:
+                gs.raise_exception(f"Entity name '{self._name}' already exists in scene.")
 
         scene._entity_name_registry[self._name] = self
 
     def _generate_name(self) -> str:
-        """
-        Generate a default name based on morph type and UID.
-
-        Returns
-        -------
-        str
-            A name in the format "{morph_identifier}_{uid_prefix}" where
-            uid_prefix is the first 8 characters of the entity's UID.
-
-        Examples
-        --------
-        Auto-generated names follow patterns based on entity type:
-
-        - Rigid primitives: "box_a1b2c3d4", "sphere_b2c3d4e5"
-        - File-based morphs: "go2_c3d4e5f6" (URDF), "ant_d4e5f6g7" (MJCF)
-        - Particle entities: "mpm_box_e5f6g7h8", "fem_sphere_f6g7h8i9"
-        """
+        """Generate a default name based on morph type and UID."""
         uid_suffix = str(self._uid)[:8]
         morph_name = self._get_morph_identifier()
         return f"{morph_name}_{uid_suffix}"
@@ -175,12 +126,6 @@ class Entity(RBC):
         """
         Get the identifier string from the morph for name generation.
 
-        This method should be overridden in subclasses to provide
-        type-specific identifiers (e.g., "box", "sphere", "fem_box").
-
-        Returns
-        -------
-        str
-            The morph identifier. Base implementation returns "entity".
+        Must be overridden in subclasses to provide type-specific identifiers.
         """
-        return "entity"
+        raise NotImplementedError
