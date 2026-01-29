@@ -771,8 +771,6 @@ def g1_fall(solver, n_envs, gjk):
     init_qpos = torch.zeros((robot.n_qs,), dtype=gs.tc_float, device=gs.device)
     init_qpos[2] = 1.0  # z position
     init_qpos[3] = 1.0  # quaternion w component
-    if n_envs > 0:
-        init_qpos = init_qpos.unsqueeze(0).repeat((scene.n_envs, 1))
     robot.set_qpos(init_qpos)
 
     num_steps = 0
