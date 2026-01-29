@@ -1,14 +1,13 @@
-import math
 import dataclasses
+import math
 from enum import IntEnum
 from functools import partial
-from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import gstaichi as ti
 import numpy as np
+from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import genesis as gs
-
 
 if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
@@ -1921,6 +1920,28 @@ class DataManager:
         self.errno = V(dtype=gs.ti_int, shape=(solver._B,))
 
 
+# =========================================== ViewerRaycastResult ===========================================
+
+
+@DATA_ORIENTED
+class StructViewerRaycastResult(metaclass=BASE_METACLASS):
+    distance: V_ANNOTATION
+    geom_idx: V_ANNOTATION
+    hit_point: V_ANNOTATION
+    normal: V_ANNOTATION
+    env_idx: V_ANNOTATION
+
+
+def get_viewer_raycast_result():
+    return StructViewerRaycastResult(
+        distance=V(dtype=gs.ti_float, shape=()),
+        geom_idx=V(dtype=gs.ti_int, shape=()),
+        hit_point=V_VEC(3, dtype=gs.ti_float, shape=()),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=()),
+        env_idx=V(dtype=gs.ti_int, shape=()),
+    )
+
+
 DofsState = StructDofsState if gs.use_ndarray else ti.template()
 DofsInfo = StructDofsInfo if gs.use_ndarray else ti.template()
 GeomsState = StructGeomsState if gs.use_ndarray else ti.template()
@@ -1954,3 +1975,4 @@ SDFInfo = StructSDFInfo if gs.use_ndarray else ti.template()
 ContactIslandState = StructContactIslandState if gs.use_ndarray else ti.template()
 DiffContactInput = StructDiffContactInput if gs.use_ndarray else ti.template()
 RigidAdjointCache = StructRigidAdjointCache if gs.use_ndarray else ti.template()
+RaycastResult = StructViewerRaycastResult if gs.use_ndarray else ti.template()

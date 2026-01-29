@@ -8,11 +8,13 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+from genesis.engine.bvh import AABB, LBVH
 from genesis.options.sensors import (
     Raycaster as RaycasterOptions,
+)
+from genesis.options.sensors import (
     RaycastPattern,
 )
-from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
 from genesis.utils.geom import (
     ti_normalize,
     ti_transform_by_quat,
@@ -21,6 +23,7 @@ from genesis.utils.geom import (
     transform_by_trans_quat,
 )
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.utils.raycast import bvh_ray_cast, kernel_update_verts_and_aabbs
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
@@ -34,119 +37,6 @@ from .sensor_manager import register_sensor
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
-
-
-@ti.func
-def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
-    """
-    Moller-Trumbore ray-triangle intersection.
-
-    Returns: vec4(t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
-    """
-    result = ti.Vector.zero(gs.ti_float, 4)
-
-    edge1 = v1 - v0
-    edge2 = v2 - v0
-
-    # Begin calculating determinant - also used to calculate u parameter
-    h = ray_dir.cross(edge2)
-    a = edge1.dot(h)
-
-    # Check all conditions in sequence without early returns
-    valid = True
-
-    t = gs.ti_float(0.0)
-    u = gs.ti_float(0.0)
-    v = gs.ti_float(0.0)
-    f = gs.ti_float(0.0)
-    s = ti.Vector.zero(gs.ti_float, 3)
-    q = ti.Vector.zero(gs.ti_float, 3)
-
-    # If determinant is near zero, ray lies in plane of triangle
-    if ti.abs(a) < gs.EPS:
-        valid = False
-
-    if valid:
-        f = 1.0 / a
-        s = ray_start - v0
-        u = f * s.dot(h)
-
-        if u < 0.0 or u > 1.0:
-            valid = False
-
-    if valid:
-        q = s.cross(edge1)
-        v = f * ray_dir.dot(q)
-
-        if v < 0.0 or u + v > 1.0:
-            valid = False
-
-    if valid:
-        # At this stage we can compute t to find out where the intersection point is on the line
-        t = f * edge2.dot(q)
-
-        # Ray intersection
-        if t <= gs.EPS:
-            valid = False
-
-    if valid:
-        result = ti.math.vec4(t, u, v, 1.0)
-
-    return result
-
-
-@ti.func
-def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
-    """
-    Fast ray-AABB intersection test.
-    Returns the t value of intersection, or -1.0 if no intersection.
-    """
-    result = -1.0
-
-    # Use the slab method for ray-AABB intersection
-    sign = ti.select(ray_dir >= 0.0, 1.0, -1.0)
-    ray_dir = sign * ti.max(ti.abs(ray_dir), gs.EPS)
-    inv_dir = 1.0 / ray_dir
-
-    t1 = (aabb_min - ray_start) * inv_dir
-    t2 = (aabb_max - ray_start) * inv_dir
-
-    tmin = ti.min(t1, t2)
-    tmax = ti.max(t1, t2)
-
-    t_near = ti.max(tmin.x, tmin.y, tmin.z, 0.0)
-    t_far = ti.min(tmax.x, tmax.y, tmax.z)
-
-    # Check if ray intersects AABB
-    if t_near <= t_far:
-        result = t_near
-
-    return result
-
-
-@ti.kernel
-def kernel_update_aabbs(
-    free_verts_state: array_class.VertsState,
-    fixed_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    aabb_state: ti.template(),
-):
-    for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
-        aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-ti.math.inf)
-
-        for i in ti.static(range(3)):
-            i_v = faces_info.verts_idx[i_f][i]
-            i_fv = verts_info.verts_state_idx[i_v]
-            if verts_info.is_fixed[i_v]:
-                pos_v = fixed_verts_state.pos[i_fv]
-                aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
-            else:
-                pos_v = free_verts_state.pos[i_fv, i_b]
-                aabb_state.aabbs[i_b, i_f].min = ti.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = ti.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
 
 
 @ti.kernel
@@ -177,7 +67,6 @@ def kernel_cast_rays(
     each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
     """
 
-    n_triangles = faces_info.verts_idx.shape[0]
     n_points = ray_starts.shape[0]
     # batch, point
     for i_b, i_p in ti.ndrange(output_hits.shape[0], n_points):
@@ -195,56 +84,20 @@ def kernel_cast_rays(
         ray_dir_local = ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
         ray_direction_world = ti_normalize(ti_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
 
-        # --- 2. BVH Traversal ---
-        # FIXME: this duplicates the logic in LBVH.query() which also does traversal
-
+        # --- 2. BVH Traversal for ray intersection ---
         max_range = max_ranges[i_s]
-        hit_face = -1
-
-        # Stack for non-recursive traversal
-        node_stack = ti.Vector.zero(ti.i32, STACK_SIZE)
-        node_stack[0] = 0  # Start traversal at the root node (index 0)
-        stack_idx = 1
-
-        while stack_idx > 0:
-            stack_idx -= 1
-            node_idx = node_stack[stack_idx]
-
-            node = bvh_nodes[i_b, node_idx]
-
-            # Check if ray hits the node's bounding box
-            aabb_t = ray_aabb_intersection(ray_start_world, ray_direction_world, node.bound.min, node.bound.max)
-
-            if aabb_t >= 0.0 and aabb_t < max_range:
-                if node.left == -1:  # is leaf node
-                    # A leaf node corresponds to one of the sorted triangles. Find the original triangle index.
-                    sorted_leaf_idx = node_idx - (n_triangles - 1)
-                    i_f = ti.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], ti.i32)
-
-                    tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
-                    for i in ti.static(range(3)):
-                        i_v = faces_info.verts_idx[i_f][i]
-                        i_fv = verts_info.verts_state_idx[i_v]
-                        if verts_info.is_fixed[i_v]:
-                            tri_vertices[:, i] = fixed_verts_state.pos[i_fv]
-                        else:
-                            tri_vertices[:, i] = free_verts_state.pos[i_fv, i_b]
-                    v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
-
-                    # Perform the expensive ray-triangle intersection test
-                    hit_result = ray_triangle_intersection(ray_start_world, ray_direction_world, v0, v1, v2)
-
-                    if hit_result.w > 0.0 and hit_result.x < max_range and hit_result.x >= 0.0:
-                        max_range = hit_result.x
-                        hit_face = i_f
-                        # hit_u, hit_v could be stored here if needed
-                else:  # It's an INTERNAL node
-                    # Push children onto the stack for further traversal
-                    # Make sure stack doesn't overflow
-                    if stack_idx < ti.static(STACK_SIZE - 2):
-                        node_stack[stack_idx] = node.left
-                        node_stack[stack_idx + 1] = node.right
-                        stack_idx += 2
+        hit_face, hit_distance, hit_normal = bvh_ray_cast(
+            ray_start=ray_start_world,
+            ray_dir=ray_direction_world,
+            max_range=max_range,
+            i_b=i_b,
+            bvh_nodes=bvh_nodes,
+            bvh_morton_codes=bvh_morton_codes,
+            faces_info=faces_info,
+            verts_info=verts_info,
+            fixed_verts_state=fixed_verts_state,
+            free_verts_state=free_verts_state,
+        )
 
         # --- 3. Process Hit Result ---
         # The format of output_hits is: [sensor1 points][sensor1 ranges][sensor2 points][sensor2 ranges]...
@@ -255,7 +108,7 @@ def kernel_cast_rays(
         i_p_dist = i_p_offset + n_points_in_sensor * 3 + i_p_sensor  # index for distance output
 
         if hit_face >= 0:
-            dist = max_range
+            dist = hit_distance
             # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
             output_hits[i_b, i_p_dist] = dist
 
@@ -329,24 +182,17 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
         """Rebuild BVH from current geometry in the scene."""
-        from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
-
-        kernel_update_all_verts(
+        kernel_update_verts_and_aabbs(
             geoms_info=shared_metadata.solver.geoms_info,
             geoms_state=shared_metadata.solver.geoms_state,
             verts_info=shared_metadata.solver.verts_info,
+            faces_info=shared_metadata.solver.faces_info,
             free_verts_state=shared_metadata.solver.free_verts_state,
             fixed_verts_state=shared_metadata.solver.fixed_verts_state,
             static_rigid_sim_config=shared_metadata.solver._static_rigid_sim_config,
-        )
-
-        kernel_update_aabbs(
-            free_verts_state=shared_metadata.solver.free_verts_state,
-            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
-            verts_info=shared_metadata.solver.verts_info,
-            faces_info=shared_metadata.solver.faces_info,
             aabb_state=shared_metadata.aabb,
         )
+
         shared_metadata.bvh.build()
 
     def build(self):
