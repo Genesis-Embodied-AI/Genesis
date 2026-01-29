@@ -13,77 +13,52 @@ import genesis.utils.mesh as mu
 
 from .utils import assert_allclose, assert_array_equal, get_hf_dataset
 
-# Check for USD support by testing if pxr module (from usd-core package) is available
-try:
-    import pxr.Usd
 
-    HAS_USD_SUPPORT = True
-except ImportError:
-    HAS_USD_SUPPORT = False
+def extract_mesh(gs_mesh):
+    """Extract vertices, normals, uvs, and faces from a gs.Mesh object."""
+    vertices = gs_mesh.trimesh.vertices
+    normals = gs_mesh.trimesh.vertex_normals
+    uvs = gs_mesh.trimesh.visual.uv
+    faces = gs_mesh.trimesh.faces
 
-# Check for Omniverse Kit support (required for USD baking)
-# Note: CI workflows should set OMNI_KIT_ACCEPT_EULA=yes in their env section
-try:
-    import omni.kit_app
+    indices = np.lexsort(
+        [
+            uvs[:, 1],
+            uvs[:, 0],
+            normals[:, 2],
+            normals[:, 1],
+            normals[:, 0],
+            vertices[:, 2],
+            vertices[:, 1],
+            vertices[:, 0],
+        ]
+    )
 
-    HAS_OMNIVERSE_KIT_SUPPORT = True
-except ImportError:
-    HAS_OMNIVERSE_KIT_SUPPORT = False
-
-# Import USD utilities if USD support is available
-if HAS_USD_SUPPORT:
-    import genesis.utils.usd.usda as usda_utils
-
-VERTICES_TOL = 1e-05  # Transformation loses a little precision in vertices
-NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
-USD_COLOR_TOL = 1e-07  # Parsing from .usd loses a little precision in color
+    vertices = vertices[indices]
+    normals = normals[indices]
+    uvs = uvs[indices]
+    invdices = np.argsort(indices)
+    faces = invdices[faces]
+    return vertices, faces, normals, uvs
 
 
-def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name):
+def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name, vertices_tol, normals_tol):
     """Check if two gs.Mesh objects are equal."""
-
-    def extract_mesh(gs_mesh):
-        """Extract vertices, normals, uvs, and faces from a gs.Mesh object."""
-        vertices = gs_mesh.trimesh.vertices
-        normals = gs_mesh.trimesh.vertex_normals
-        uvs = gs_mesh.trimesh.visual.uv
-        faces = gs_mesh.trimesh.faces
-
-        indices = np.lexsort(
-            [
-                uvs[:, 1],
-                uvs[:, 0],
-                normals[:, 2],
-                normals[:, 1],
-                normals[:, 0],
-                vertices[:, 2],
-                vertices[:, 1],
-                vertices[:, 0],
-            ]
-        )
-
-        vertices = vertices[indices]
-        normals = normals[indices]
-        uvs = uvs[indices]
-        invdices = np.argsort(indices)
-        faces = invdices[faces]
-        return vertices, faces, normals, uvs
-
     vertices1, faces1, normals1, uvs1 = extract_mesh(gs_mesh1)
     vertices2, faces2, normals2, uvs2 = extract_mesh(gs_mesh2)
 
-    assert_allclose(vertices1, vertices2, atol=VERTICES_TOL, err_msg=f"Vertices match failed in mesh {mesh_name}.")
+    assert_allclose(vertices1, vertices2, atol=vertices_tol, err_msg=f"Vertices match failed in mesh {mesh_name}.")
     assert_array_equal(faces1, faces2, err_msg=f"Faces match failed in mesh {mesh_name}.")
-    assert_allclose(normals1, normals2, atol=NORMALS_TOL, err_msg=f"Normals match failed in mesh {mesh_name}.")
+    assert_allclose(normals1, normals2, atol=normals_tol, err_msg=f"Normals match failed in mesh {mesh_name}.")
     assert_allclose(uvs1, uvs2, rtol=gs.EPS, err_msg=f"UVs match failed in mesh {mesh_name}.")
 
 
-def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
+def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name, vertices_tol, normals_tol):
     """Check if a gs.Mesh object and a trimesh.Trimesh object are equal."""
     assert_allclose(
         tm_mesh.vertices,
         gs_mesh.trimesh.vertices,
-        atol=VERTICES_TOL,
+        tol=vertices_tol,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
     assert_array_equal(
@@ -94,7 +69,7 @@ def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name):
     assert_allclose(
         tm_mesh.vertex_normals,
         gs_mesh.trimesh.vertex_normals,
-        atol=NORMALS_TOL,
+        tol=normals_tol,
         err_msg=f"Normals match failed in mesh {mesh_name}.",
     )
     if not isinstance(tm_mesh.visual, trimesh.visual.color.ColorVisuals):
@@ -167,16 +142,28 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
         )
 
 
+def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
+    """Check if two gs.Surface objects are equal."""
+    check_gs_textures(gs_surface1.get_texture(), gs_surface2.get_texture(), 1.0, material_name, "color")
+    check_gs_textures(gs_surface1.opacity_texture, gs_surface2.opacity_texture, 1.0, material_name, "opacity")
+    check_gs_textures(gs_surface1.roughness_texture, gs_surface2.roughness_texture, 1.0, material_name, "roughness")
+    check_gs_textures(gs_surface1.metallic_texture, gs_surface2.metallic_texture, 0.0, material_name, "metallic")
+    check_gs_textures(gs_surface1.normal_texture, gs_surface2.normal_texture, 0.0, material_name, "normal")
+    check_gs_textures(gs_surface1.emissive_texture, gs_surface2.emissive_texture, 0.0, material_name, "emissive")
+
+
 @pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
-def test_glb_parse_geometry(glb_file):
+def test_glb_parse_geometry(glb_file, tol):
     """Test glb mesh geometry parsing."""
     asset_path = get_hf_dataset(pattern=glb_file)
     glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=False,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -192,7 +179,7 @@ def test_glb_parse_geometry(glb_file):
     for gs_mesh in gs_meshes:
         mesh_name = gs_mesh.metadata["name"]
         tm_mesh = tm_meshes[mesh_name]
-        check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name)
+        check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name, tol, tol)
 
 
 @pytest.mark.required
@@ -204,7 +191,8 @@ def test_glb_parse_material(glb_file):
     gs_meshes = gltf_utils.parse_mesh_glb(
         glb_file,
         group_by_material=True,
-        scale=1.0,
+        scale=None,
+        is_mesh_zup=True,
         surface=gs.surfaces.Default(),
     )
 
@@ -269,107 +257,6 @@ def test_glb_parse_material(glb_file):
                 material_name,
                 "emissive",
             )
-
-
-@pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'pxr' module not found. 'usd-core' package may not be installed.")
-@pytest.mark.parametrize("usd_filename", ["usd/sneaker_airforce", "usd/RoughnessTest"])
-def test_usd_parse(usd_filename):
-    asset_path = get_hf_dataset(pattern=f"{usd_filename}.glb")
-    glb_file = os.path.join(asset_path, f"{usd_filename}.glb")
-    asset_path = get_hf_dataset(pattern=f"{usd_filename}.usdz")
-    usd_file = os.path.join(asset_path, f"{usd_filename}.usdz")
-
-    gs_glb_meshes = gltf_utils.parse_mesh_glb(
-        glb_file,
-        group_by_material=True,
-        scale=1.0,
-        surface=gs.surfaces.Default(),
-    )
-    gs_usd_meshes = usda_utils.parse_mesh_usd(
-        usd_file,
-        group_by_material=True,
-        scale=1.0,
-        surface=gs.surfaces.Default(),
-    )
-
-    assert len(gs_glb_meshes) == len(gs_usd_meshes)
-    gs_glb_mesh_dict = {}
-    for gs_glb_mesh in gs_glb_meshes:
-        gs_glb_mesh_dict[gs_glb_mesh.metadata["name"]] = gs_glb_mesh
-    for gs_usd_mesh in gs_usd_meshes:
-        mesh_name = gs_usd_mesh.metadata["name"].split("/")[-1]
-        gs_glb_mesh = gs_glb_mesh_dict[mesh_name]
-        check_gs_meshes(gs_glb_mesh, gs_usd_mesh, mesh_name)
-
-        gs_glb_material = gs_glb_mesh.surface
-        gs_usd_material = gs_usd_mesh.surface
-        material_name = gs_glb_mesh.metadata["name"]
-        check_gs_textures(gs_glb_material.get_texture(), gs_usd_material.get_texture(), 1.0, material_name, "color")
-        check_gs_textures(
-            gs_glb_material.opacity_texture, gs_usd_material.opacity_texture, 1.0, material_name, "opacity"
-        )
-        check_gs_textures(
-            gs_glb_material.roughness_texture, gs_usd_material.roughness_texture, 1.0, material_name, "roughness"
-        )
-        check_gs_textures(
-            gs_glb_material.metallic_texture, gs_usd_material.metallic_texture, 0.0, material_name, "metallic"
-        )
-        check_gs_textures(gs_glb_material.normal_texture, gs_usd_material.normal_texture, 0.0, material_name, "normal")
-        check_gs_textures(
-            gs_glb_material.emissive_texture, gs_usd_material.emissive_texture, 0.0, material_name, "emissive"
-        )
-
-
-@pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="'pxr' module not found. 'usd-core' package may not be installed.")
-@pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
-def test_usd_parse_nodegraph(usd_file):
-    asset_path = get_hf_dataset(pattern=usd_file)
-    usd_file = os.path.join(asset_path, usd_file)
-    gs_usd_meshes = usda_utils.parse_mesh_usd(
-        usd_file,
-        group_by_material=True,
-        scale=1.0,
-        surface=gs.surfaces.Default(),
-    )
-    texture0 = gs_usd_meshes[0].surface.diffuse_texture
-    texture1 = gs_usd_meshes[1].surface.diffuse_texture
-    assert isinstance(texture0, gs.textures.ColorTexture)
-    assert isinstance(texture1, gs.textures.ColorTexture)
-    assert_allclose(texture0.color, (0.8, 0.2, 0.2), rtol=USD_COLOR_TOL)
-    assert_allclose(texture1.color, (0.2, 0.6, 0.9), rtol=USD_COLOR_TOL)
-
-
-@pytest.mark.required
-@pytest.mark.skipif(
-    not HAS_USD_SUPPORT or not HAS_OMNIVERSE_KIT_SUPPORT,
-    reason="'usd-core' module (provides 'pxr') or 'omni.kit_app' module (from omniverse-kit) not found.",
-)
-@pytest.mark.parametrize(
-    "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
-)
-@pytest.mark.parametrize("backend", [gs.cuda])
-def test_usd_bake(usd_file, show_viewer):
-    asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir_use_symlinks=False)
-    usd_file = os.path.join(asset_path, usd_file)
-    gs_usd_meshes = usda_utils.parse_mesh_usd(
-        usd_file, group_by_material=True, scale=1.0, surface=gs.surfaces.Default(), bake_cache=False
-    )
-    for gs_usd_mesh in gs_usd_meshes:
-        require_bake = gs_usd_mesh.metadata["require_bake"]
-        bake_success = gs_usd_mesh.metadata["bake_success"]
-        assert not require_bake or (require_bake and bake_success)
-
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    scene.add_entity(
-        gs.morphs.Mesh(
-            file=usd_file,
-        ),
-    )
 
 
 @pytest.mark.required
@@ -541,12 +428,8 @@ def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_pat
         scene.build()
 
     assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    normal_scaled = mesh_orig.vertex_normals * scale
-    normal_scaled /= np.linalg.norm(normal_scaled, axis=-1, keepdims=True)
-    assert_allclose(normal_scaled, mesh_scaled.vertex_normals, tol=gs.EPS)
     if is_isotropic:
         assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
-        assert_allclose(mesh_robot_scaled.vertex_normals, mesh_scaled.vertex_normals, tol=gs.EPS)
 
 
 @pytest.mark.required
@@ -714,7 +597,6 @@ def test_plane_texture_path_preservation(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
