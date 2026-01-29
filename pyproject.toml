@@ -36,8 +36,6 @@ dependencies = [
     "pygltflib==1.16.0",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen==0.8.2",
-    # Optional requirement of 'tetgen' that is being used to pass custom geometry as input
-    "pyvista",
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
     # Used to convert VTK output to numpy when converting volume to particles for PBS
@@ -74,8 +72,9 @@ dev = [
     "pytest-forked",
     "pytest-random-order",
     "pytest-print",
+    # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
-    "pytest-rerunfailures!=16.0",
+    # "pytest-rerunfailures!=16.0",
     "setproctitle", # allows renaming the test processes on the cluster
     "syrupy",
     "huggingface_hub[hf_xet]",
@@ -117,9 +116,7 @@ render = [
 ]
 usd = [
     # Used for parsing `.usd` mesh files
-    "usd-core<25.11",
-    # import stubs to static code analysis
-    "types-usd==24.5.2",
+    "usd-core==25.11",
 ]
 
 [project.scripts]
