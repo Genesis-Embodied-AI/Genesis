@@ -7,8 +7,8 @@ loaded from USD files match equivalent scenes loaded from compared files.
 
 import os
 import time
-
 import xml.etree.ElementTree as ET
+
 import numpy as np
 import pytest
 
@@ -33,29 +33,12 @@ USD_NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision
 
 
 def to_array(s: str) -> np.ndarray:
-    """
-    Convert a string of space-separated floats to a numpy array.
-    """
+    """Convert a string of space-separated floats to a numpy array."""
     return np.array([float(x) for x in s.split()])
 
 
 def compare_links(compared_links, usd_links, tol, strict=True):
-    """
-    Generic function to compare links between two scenes.
-    Compares as much link data as possible including positions, orientations,
-    inertial properties, structural properties, etc.
-
-    Parameters
-    ----------
-    compared_links : list
-        List of links from compared scene
-    usd_links : list
-        List of links from USD scene
-    tol : float, optional
-        Tolerance for numerical comparisons.
-    strict : bool, optional
-        Whether to compare geometric details.
-    """
+    """Compare links between two scenes."""
     # Check number of links
     assert len(compared_links) == len(usd_links)
 
@@ -111,20 +94,7 @@ def compare_links(compared_links, usd_links, tol, strict=True):
 
 
 def compare_joints(compared_joints, usd_joints, tol):
-    """
-    Generic function to compare joints between two scenes.
-    Compares as much joint data as possible including positions, orientations,
-    degrees of freedom, limits, dynamics properties, etc.
-
-    Parameters
-    ----------
-    compared_joints : list
-        List of joints from compared scene
-    usd_joints : list
-        List of joints from USD scene
-    tol : float, optional
-        Tolerance for numerical comparisons.
-    """
+    """Compare joints between two scenes."""
     # Check number of joints
     assert len(compared_joints) == len(usd_joints)
 
@@ -176,19 +146,7 @@ def compare_joints(compared_joints, usd_joints, tol):
 
 
 def compare_geoms(compared_geoms, usd_geoms, tol):
-    """
-    Generic function to compare geoms between two scenes.
-    Compares as much geom data as possible including positions, orientations, sizes, etc.
-
-    Parameters
-    ----------
-    compared_geoms : list
-        List of geoms from compared scene
-    usd_geoms : list
-        List of geoms from USD scene
-    tol : float, optional
-        Tolerance for numerical comparisons.
-    """
+    """Compare geoms between two scenes."""
     assert len(compared_geoms) == len(usd_geoms)
 
     # Sort geoms by link name for consistent comparison
@@ -205,21 +163,7 @@ def compare_geoms(compared_geoms, usd_geoms, tol):
 
 
 def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
-    """
-    Generic function to compare visual geoms between two scenes.
-    Compares as much visual geom data as possible including positions, orientations, shapes, etc.
-
-    Parameters
-    ----------
-    compared_vgeoms : list
-        List of visual geoms from compared scene
-    usd_vgeoms : list
-        List of visual geoms from USD scene
-    tol : float, optional
-        Tolerance for numerical comparisons.
-    strict : bool, optional
-        Whether to compare geometric details.
-    """
+    """Compare visual geoms between two scenes."""
     assert len(compared_vgeoms) == len(usd_vgeoms)
 
     # Sort geoms by link name for consistent comparison
@@ -252,21 +196,7 @@ def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
 
 
 def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float, strict: bool = True):
-    """
-    Compare structure and data between compared scene and USD scene.
-    Compares as much scene data as possible including links, joints, geoms, etc.
-
-    Parameters
-    ----------
-    compared_scene : gs.Scene
-        The compared scene
-    usd_scene : gs.Scene
-        The USD scene
-    tol : float, optional
-        Tolerance for numerical comparisons.
-    strict : bool, optional
-        Whether to compare geometric details.
-    """
+    """Compare structure and data between compared scene and USD scene."""
     compared_entities = compared_scene.entities
     usd_entities = usd_scene.entities
 
@@ -284,19 +214,7 @@ def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float, str
 
 
 def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
-    """
-    Compare mesh data between mesh scene and USD scene.
-    Meshes are loaded with transformations baked. Therefore, we only compare mesh data.
-
-    Parameters
-    ----------
-    compared_scene : gs.Scene
-        The compared scene
-    usd_scene : gs.Scene
-        The USD scene
-    tol : float, optional
-        Tolerance for numerical comparisons.
-    """
+    """Compare mesh data between mesh scene and USD scene."""
     compared_entities = compared_scene.entities
     usd_entities = usd_scene.entities
     compared_vgeoms = [vgeom for entity in compared_entities for vgeom in entity.vgeoms]
@@ -305,20 +223,7 @@ def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float
 
 
 def build_mjcf_scene(xml_path: str, scale: float):
-    """
-    Build a MJCF scene from its file path.
-
-    Parameters
-    ----------
-    xml_path : str
-        Path to the MJCF/XML file
-    scale : float
-        Scale factor to apply to the scene
-    Returns
-    -------
-    mjcf_scene : gs.Scene
-        The MJCF scene
-    """
+    """Build a MJCF scene from its file path."""
     # Create MJCF scene
     mjcf_scene = gs.Scene()
 
@@ -344,26 +249,7 @@ def build_usd_scene(
     is_stage: bool = True,
     fixed: bool = False,
 ):
-    """
-    Build a USD scene from its file path.
-
-    Parameters
-    ----------
-    usd_file : str
-        Path to the USD file
-    scale : float
-        Scale factor to apply to the scene
-    vis_mode : str
-        The visualization mode of the scene
-    is_stage : bool
-        Whether to add the USD file as a stage or as an entity
-    fixed : bool
-        Whether the object should be fixed
-    Returns
-    -------
-    usd_scene : gs.Scene
-        The USD scene
-    """
+    """Build a USD scene from its file path."""
     # Create USD scene
     scene = gs.Scene()
 
@@ -396,20 +282,7 @@ def build_usd_scene(
 
 
 def build_mesh_scene(mesh_file: str, scale: float):
-    """
-    Build a mesh scene from its file path.
-
-    Parameters
-    ----------
-    mesh_file : str
-        Path to the mesh file
-    scale : float
-        Scale factor to apply to the scene
-    Returns
-    -------
-    mesh_scene : gs.Scene
-        The mesh scene
-    """
+    """Build a mesh scene from its file path."""
     mesh_scene = gs.Scene()
     mesh_morph = gs.morphs.Mesh(
         file=mesh_file,
@@ -438,12 +311,7 @@ def xml_path(request, tmp_path, model_name):
 
 @pytest.fixture(scope="session")
 def all_primitives_mjcf():
-    """
-    Generate an MJCF model with various geometric primitives on a plane.
-
-    Includes: box, cylinder, capsule, and sphere.
-    - Using the USD path syntax for the names of the bodies and joints to keep track of the hierarchy.
-    """
+    """Generate an MJCF model with various geometric primitives on a plane."""
     mjcf = ET.Element("mujoco", model="primitives")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(default, "joint", armature="0.0")
@@ -477,10 +345,7 @@ def all_primitives_mjcf():
 
 @pytest.fixture(scope="session")
 def all_primitives_usd(asset_tmp_path, all_primitives_mjcf: ET.ElementTree):
-    """Generate a USD file equivalent to the MJCF all_primitives_mjcf fixture.
-
-    Extracts data from the MJCF XML structure to build the USD file.
-    """
+    """Generate a USD file equivalent to the MJCF all_primitives_mjcf fixture."""
     # Extract data from MJCF XML structure
     worldbody = all_primitives_mjcf.find("worldbody")
 
@@ -608,6 +473,8 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
     usd_scene = build_usd_scene(all_primitives_usd, scale=scale)
+    # TODO: Now parsed primitives have the same geometry for both visual and collision meshes
+    # which is different from the how we parsed in MJCF.
     compare_scene(mjcf_scene, usd_scene, tol=tol, strict=False)
 
 
@@ -616,10 +483,7 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
 
 @pytest.fixture(scope="session")
 def all_joints_mjcf():
-    """
-    Generate an MJCF model with all joint types: prismatic, revolute, spherical, fixed, and free.
-    Each joint type is in a separate branch from the base.
-    """
+    """Generate an MJCF model with all joint types: prismatic, revolute, spherical, fixed, and free."""
     mjcf = ET.Element("mujoco", model="all_joints")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(default, "joint", armature="0.0")
