@@ -10,8 +10,9 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import support_field, support_field_local
+from genesis.engine.solvers.rigid.collider import support_field, support_field_local, mpr
 from genesis.utils import array_class
+
 
 
 @ti.func
@@ -223,19 +224,11 @@ def mpr_refine_portal_local(
     Returns:
         ret: Status code (-1: refinement failed, >=0: success)
     """
-    from genesis.engine.solvers.rigid.collider.mpr import (
-        mpr_expand_portal,
-        mpr_portal_can_encapsule_origin,
-        mpr_portal_dir,
-        mpr_portal_encapsules_origin,
-        mpr_portal_reach_tolerance,
-    )
-
     ret = 1
     while True:
-        direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
+        direction = mpr.mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
 
-        if mpr_portal_encapsules_origin(mpr_state, mpr_info, direction, i_ga, i_gb, i_b):
+        if mpr.mpr_portal_encapsules_origin(mpr_state, mpr_info, direction, i_ga, i_gb, i_b):
             ret = 0
             break
 
@@ -254,13 +247,13 @@ def mpr_refine_portal_local(
             quat_b,
         )
 
-        if not mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr_portal_reach_tolerance(
+        if not mpr.mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr.mpr_portal_reach_tolerance(
             mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b
         ):
             ret = -1
             break
 
-        mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
+        mpr.mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
     return ret
 
 
@@ -309,14 +302,6 @@ def mpr_find_penetration_local(
         penetration: Penetration depth
         pos: Contact position in world space
     """
-    from genesis.engine.solvers.rigid.collider.mpr import (
-        mpr_expand_portal,
-        mpr_find_pos,
-        mpr_point_tri_depth,
-        mpr_portal_dir,
-        mpr_portal_reach_tolerance,
-    )
-
     iterations = 0
 
     is_col = False
@@ -325,7 +310,7 @@ def mpr_find_penetration_local(
     penetration = gs.ti_float(0.0)
 
     while True:
-        direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
+        direction = mpr.mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
         v, v1, v2 = compute_support_local(
             geoms_info,
             collider_state,
@@ -341,7 +326,7 @@ def mpr_find_penetration_local(
             quat_b,
         )
         if (
-            mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
+            mpr.mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
             or iterations > mpr_info.CCD_ITERATIONS[None]
         ):
             # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
@@ -379,10 +364,10 @@ def mpr_find_penetration_local(
                 normal = -direction
 
             is_col = True
-            pos = mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_info, i_ga, i_gb, i_b)
+            pos = mpr.mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_info, i_ga, i_gb, i_b)
             break
 
-        mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
+        mpr.mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
         iterations += 1
 
     return is_col, normal, penetration, pos
@@ -435,8 +420,6 @@ def mpr_discover_portal_local(
     Returns:
         ret: Status code (-1: no collision, 0: portal found, 1: touching, 2: segment)
     """
-    from genesis.engine.solvers.rigid.collider.mpr import mpr_swap
-
     mpr_state.simplex_support.v1[0, i_b] = center_a
     mpr_state.simplex_support.v2[0, i_b] = center_b
     mpr_state.simplex_support.v[0, i_b] = center_a - center_b
@@ -511,7 +494,7 @@ def mpr_discover_portal_local(
 
                 dot = direction.dot(mpr_state.simplex_support.v[0, i_b])
                 if dot > 0:
-                    mpr_swap(mpr_state, 1, 2, i_ga, i_gb, i_b)
+                    mpr.mpr_swap(mpr_state, 1, 2, i_ga, i_gb, i_b)
                     direction = -direction
 
                 # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
@@ -740,8 +723,6 @@ def func_mpr_contact_from_centers_local(
         penetration: Penetration depth
         pos: Contact position in world space
     """
-    from genesis.engine.solvers.rigid.collider.mpr import mpr_find_penetr_segment, mpr_find_penetr_touch
-
     res = mpr_discover_portal_local(
         geoms_info=geoms_info,
         support_field_info=support_field_info,
@@ -766,9 +747,9 @@ def func_mpr_contact_from_centers_local(
     penetration = gs.ti_float(0.0)
 
     if res == 1:
-        is_col, normal, penetration, pos = mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
+        is_col, normal, penetration, pos = mpr.mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
     elif res == 2:
-        is_col, normal, penetration, pos = mpr_find_penetr_segment(mpr_state, i_ga, i_gb, i_b)
+        is_col, normal, penetration, pos = mpr.mpr_find_penetr_segment(mpr_state, i_ga, i_gb, i_b)
     elif res == 0:
         res = mpr_refine_portal_local(
             geoms_info,
