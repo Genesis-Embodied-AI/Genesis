@@ -469,7 +469,7 @@ def postprocess_collision_geoms(
 
 def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
     meshes = []
-    scene = trimesh.load_scene(path, group_material=group_by_material, process=False)
+    scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")
