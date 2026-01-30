@@ -65,18 +65,20 @@ class IPCTransformData:
         self.stored_qpos_start = ti.field(dtype=ti.i32, shape=max_links)  # DOF start index per entity
 
 
-@ti.data_oriented
 class IPCCouplingData:
-    """Data-oriented class for IPC coupling force computation."""
+    """Data-oriented class for IPC coupling force computation using numpy arrays."""
 
     def __init__(self, max_links):
-        # Pre-allocated buffers for coupling force computation
-        self.link_indices = ti.field(dtype=ti.i32, shape=max_links)
-        self.env_indices = ti.field(dtype=ti.i32, shape=max_links)
-        self.ipc_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=max_links)
-        self.aim_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=max_links)
-        self.link_masses = ti.field(dtype=gs.ti_float, shape=max_links)
-        self.inertia_tensors = ti.Matrix.field(3, 3, dtype=gs.ti_float, shape=max_links)
-        self.out_forces = ti.Vector.field(3, dtype=gs.ti_float, shape=max_links)
-        self.out_torques = ti.Vector.field(3, dtype=gs.ti_float, shape=max_links)
-        self.n_items = ti.field(dtype=ti.i32, shape=())
+        # Pre-allocated numpy buffers for coupling force computation
+        # These will be passed directly to Taichi kernels using ti.types.ndarray()
+        import numpy as np
+
+        self.link_indices = np.empty(max_links, dtype=np.int32)
+        self.env_indices = np.empty(max_links, dtype=np.int32)
+        self.ipc_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
+        self.aim_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
+        self.link_masses = np.empty(max_links, dtype=gs.np_float)
+        self.inertia_tensors = np.empty((max_links, 3, 3), dtype=gs.np_float)
+        self.out_forces = np.empty((max_links, 3), dtype=gs.np_float)
+        self.out_torques = np.empty((max_links, 3), dtype=gs.np_float)
+        self.n_items = 0  # Track actual number of items used

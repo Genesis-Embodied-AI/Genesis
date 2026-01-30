@@ -14,7 +14,7 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level=logging.INFO)
+    gs.init(backend=gs.gpu, logging_level=logging.INFO, performance_mode=True)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
