@@ -650,6 +650,8 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
     n_contacts_per_pair: int
     # ccd algorithm
     ccd_algorithm: int
+    # use thread-local multi-contact functions (set via GS_MULTICONTACT_LOCAL env var)
+    use_multicontact_local: bool
 
 
 # =========================================== MPR ===========================================

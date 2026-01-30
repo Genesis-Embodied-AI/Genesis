@@ -6,6 +6,7 @@ including broad-phase (sweep-and-prune), narrow-phase (convex-convex, SDF-based,
 terrain), and contact management.
 """
 
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -171,6 +172,8 @@ class Collider:
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
+        use_multicontact_local = os.environ.get("GS_MULTICONTACT_LOCAL", "0") == "1"
+
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_any_vs_terrain,
             has_convex_convex=has_convex_vs_convex,
@@ -178,6 +181,7 @@ class Collider:
             has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
+            use_multicontact_local=use_multicontact_local,
         )
 
     def _init_collision_fields(self) -> None:

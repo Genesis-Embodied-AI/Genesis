@@ -494,8 +494,6 @@ def func_potential_mesh_edge_normals_local(
     return n_normals
 
 
-
-
 @ti.func
 def func_box_face_local(
     geoms_info: array_class.GeomsInfo,
