@@ -139,17 +139,17 @@ def func_convex_convex_contact_local(
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
         # Load original geometry state into thread-local variables
-        # These are the UNPERTURBED states that we restore from
+        # These are the UNPERTURBED states used as reference point for each independent perturbation
         ga_pos_original = geoms_state.pos[i_ga, i_b]
         ga_quat_original = geoms_state.quat[i_ga, i_b]
         gb_pos_original = geoms_state.pos[i_gb, i_b]
         gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-        # Current (possibly perturbed) thread-local state
-        ga_pos_current = ga_pos_original
-        ga_quat_current = ga_quat_original
-        gb_pos_current = gb_pos_original
-        gb_quat_current = gb_quat_original
+        # Current (possibly perturbed) state - will be set in each loop iteration
+        ga_pos_current = ti.Vector.zero(gs.ti_float, 3)
+        ga_quat_current = ti.Vector.zero(gs.ti_float, 4)
+        gb_pos_current = ti.Vector.zero(gs.ti_float, 3)
+        gb_quat_current = ti.Vector.zero(gs.ti_float, 4)
 
         # Pre-allocate buffers
         is_col_0 = False
