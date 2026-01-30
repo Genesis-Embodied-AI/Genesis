@@ -1125,7 +1125,6 @@ def func_safe_gjk_support_local(
             quat_a,
             pos_b,
             quat_b,
-            i_b,
             n_dir,
         )
         if i > 0 and num_supports > 1:
@@ -1196,7 +1195,6 @@ def count_support_driver_local(
     i_g,
     pos: ti.types.vector(3, dtype=gs.ti_float),
     quat: ti.types.vector(4, dtype=gs.ti_float),
-    i_b,
 ):
     """
     Thread-local version of count_support_driver.
@@ -1228,7 +1226,6 @@ def func_count_support_local(
     quat_a: ti.types.vector(4, dtype=gs.ti_float),
     pos_b: ti.types.vector(3, dtype=gs.ti_float),
     quat_b: ti.types.vector(4, dtype=gs.ti_float),
-    i_b,
     dir,
 ):
     """
@@ -1246,7 +1243,6 @@ def func_count_support_local(
             i_ga if i == 0 else i_gb,
             pos_a if i == 0 else pos_b,
             quat_a if i == 0 else quat_b,
-            i_b,
         )
 
     return count

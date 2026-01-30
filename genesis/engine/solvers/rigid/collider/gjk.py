@@ -1671,7 +1671,6 @@ def count_support_driver(
         i_g,
         pos,
         quat,
-        i_b,
     )
 
 
@@ -1704,7 +1703,6 @@ def func_count_support(
         quat_a,
         pos_b,
         quat_b,
-        i_b,
         dir,
     )
 
