@@ -3,7 +3,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field
+from . import mpr_local, support_field
 
 
 class MPR:
@@ -176,22 +176,11 @@ def support_driver(
     i_g,
     i_b,
 ):
-    v = ti.Vector.zero(gs.ti_float, 3)
-    geom_type = geoms_info.type[i_g]
-    if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, False)
-    elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, False)
-    elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.TERRAIN:
-        if ti.static(collider_static_config.has_terrain):
-            v, _ = support_field._func_support_prism(collider_state, direction, i_g, i_b)
-    else:
-        v, v_, vid = support_field._func_support_world(geoms_state, geoms_info, support_field_info, direction, i_g, i_b)
-    return v
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return mpr_local.support_driver_local(
+        geoms_info, collider_state, collider_static_config, support_field_info, direction, i_g, i_b, pos, quat
+    )
 
 
 @ti.func
@@ -207,31 +196,13 @@ def compute_support(
     i_gb,
     i_b,
 ):
-    v1 = support_driver(
-        geoms_state,
-        geoms_info,
-        collider_state,
-        collider_info,
-        collider_static_config,
-        support_field_info,
-        direction,
-        i_ga,
-        i_b,
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return mpr_local.compute_support_local(
+        geoms_info, collider_state, collider_static_config, support_field_info, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
     )
-    v2 = support_driver(
-        geoms_state,
-        geoms_info,
-        collider_state,
-        collider_info,
-        collider_static_config,
-        support_field_info,
-        -direction,
-        i_gb,
-        i_b,
-    )
-
-    v = v1 - v2
-    return v, v1, v2
 
 
 @ti.func
@@ -243,24 +214,9 @@ def func_geom_support(
     i_g,
     i_b,
 ):
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    direction_in_init_frame = gu.ti_inv_transform_by_quat(direction, g_quat)
-
-    dot_max = gs.ti_float(-1e10)
-    v = ti.Vector.zero(gs.ti_float, 3)
-    vid = 0
-
-    for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
-        pos = verts_info.init_pos[i_v]
-        dot = pos.dot(direction_in_init_frame)
-        if dot > dot_max:
-            v = pos
-            dot_max = dot
-            vid = i_v
-    v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
-
-    return v_, vid
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return mpr_local.func_geom_support_local(geoms_info, verts_info, direction, i_g, pos, quat)
 
 
 @ti.func

@@ -6,7 +6,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field
+from . import gjk_local, support_field
 
 
 class RETURN_CODE(IntEnum):
@@ -1310,50 +1310,28 @@ def func_support(
     dir: gs.ti_vec3
         The direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
     """
-    support_point_obj1 = gs.ti_vec3(0, 0, 0)
-    support_point_obj2 = gs.ti_vec3(0, 0, 0)
-    support_point_localpos1 = gs.ti_vec3(0, 0, 0)
-    support_point_localpos2 = gs.ti_vec3(0, 0, 0)
-    support_point_id_obj1 = -1
-    support_point_id_obj2 = -1
-    for i in range(2):
-        d = dir if i == 0 else -dir
-        i_g = i_ga if i == 0 else i_gb
-
-        sp, sp_, si = support_driver(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            d,
-            i_g,
-            i_b,
-            i,
-            shrink_sphere,
-        )
-        if i == 0:
-            support_point_obj1 = sp
-            support_point_id_obj1 = si
-            support_point_localpos1 = sp_
-        else:
-            support_point_obj2 = sp
-            support_point_id_obj2 = si
-            support_point_localpos2 = sp_
-    support_point_minkowski = support_point_obj1 - support_point_obj2
-
-    return (
-        support_point_obj1,
-        support_point_obj2,
-        support_point_localpos1,
-        support_point_localpos2,
-        support_point_id_obj1,
-        support_point_id_obj2,
-        support_point_minkowski,
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return gjk_local.func_support_local(
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        i_b,
+        dir,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        shrink_sphere,
     )
 
 
@@ -1514,38 +1492,9 @@ def support_mesh(
     """
     Find the support point on a mesh in the given direction.
     """
-    g_quat = geoms_state.quat[i_g, i_b]
-    g_pos = geoms_state.pos[i_g, i_b]
-    d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_quat))
-
-    # Exhaustively search for the vertex with maximum dot product
-    fmax = -gjk_info.FLOAT_MAX[None]
-    imax = 0
-
-    vert_start = geoms_info.vert_start[i_g]
-    vert_end = geoms_info.vert_end[i_g]
-
-    # Use the previous maximum vertex if it is within the current range
-    prev_imax = gjk_state.support_mesh_prev_vertex_id[i_b, i_o]
-    if (prev_imax >= vert_start) and (prev_imax < vert_end):
-        pos = verts_info.init_pos[prev_imax]
-        fmax = d_mesh.dot(pos)
-        imax = prev_imax
-
-    for i in range(vert_start, vert_end):
-        pos = verts_info.init_pos[i]
-        vdot = d_mesh.dot(pos)
-        if vdot > fmax:
-            fmax = vdot
-            imax = i
-
-    v = verts_info.init_pos[imax]
-    vid = imax
-
-    gjk_state.support_mesh_prev_vertex_id[i_b, i_o] = vid
-
-    v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
-    return v_, vid
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return gjk_local.support_mesh_local(geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, pos, quat, i_b, i_o)
 
 
 @ti.func
@@ -1568,35 +1517,25 @@ def support_driver(
     """
     @ shrink_sphere: If True, use point and line support for sphere and capsule.
     """
-    v = ti.Vector.zero(gs.ti_float, 3)
-    v_ = ti.Vector.zero(gs.ti_float, 3)
-    vid = -1
-
-    geom_type = geoms_info.type[i_g]
-    if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
-    elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
-    elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.TERRAIN:
-        if ti.static(collider_static_config.has_terrain):
-            v, vid = support_field._func_support_prism(collider_state, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
-        # If mujoco-compatible, do exhaustive search for the vertex
-        v, vid = support_mesh(geoms_state, geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, i_b, i_o)
-    else:
-        v, v_, vid = support_field._func_support_world(
-            geoms_state,
-            geoms_info,
-            support_field_info,
-            direction,
-            i_g,
-            i_b,
-        )
-    return v, v_, vid
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return gjk_local.support_driver_local(
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        direction,
+        i_g,
+        pos,
+        quat,
+        i_b,
+        i_o,
+        shrink_sphere,
+    )
 
 
 @ti.func
