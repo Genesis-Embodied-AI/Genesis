@@ -172,7 +172,7 @@ class Collider:
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
-        use_multicontact_local = os.environ.get("GS_MULTICONTACT_LOCAL", "0") == "1"
+        use_multicontact_local = os.environ.get("GS_MULTICONTACT_LOCAL", "1") == "1"
 
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_any_vs_terrain,
