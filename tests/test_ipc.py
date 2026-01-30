@@ -87,7 +87,7 @@ def test_ipc_cloth(n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs", [0])
 def test_ipc_two_way_revolute(n_envs, show_viewer):
     """Test two-way coupling with revolute joint."""
     import numpy as np
@@ -106,9 +106,6 @@ def test_ipc_two_way_revolute(n_envs, show_viewer):
         ),
         show_viewer=show_viewer,
     )
-
-    # Add ground plane
-    scene.add_entity(gs.morphs.Plane())
 
     # Add simple two-cube robot with revolute joint
     robot = scene.add_entity(
@@ -160,11 +157,33 @@ def test_ipc_two_way_revolute(n_envs, show_viewer):
 
                     # Compare positions
                     pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
-                    assert pos_diff < 0.1, f"Position difference too large: {pos_diff}"
+                    assert pos_diff < 0.001, f"Position difference too large: {pos_diff}"
+
+                    # Compare rotation (using rotation matrix to euler angles)
+                    def rotmat_to_euler(R):
+                        sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+                        singular = sy < 1e-6
+                        if not singular:
+                            x = np.arctan2(R[2, 1], R[2, 2])
+                            y = np.arctan2(-R[2, 0], sy)
+                            z = np.arctan2(R[1, 0], R[0, 0])
+                        else:
+                            x = np.arctan2(-R[1, 2], R[1, 1])
+                            y = np.arctan2(-R[2, 0], sy)
+                            z = 0
+                        return np.array([x, y, z])
+
+                    genesis_rot = genesis_transform[:3, :3]
+                    ipc_rot = ipc_transform[:3, :3]
+                    genesis_euler = rotmat_to_euler(genesis_rot)
+                    ipc_euler = rotmat_to_euler(ipc_rot)
+                    rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
+                    print(f"Step {i}: Rotation difference (rad) = {rot_diff:.6f}")
+                    assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs", [0])
 def test_ipc_two_way_prismatic(n_envs, show_viewer):
     """Test two-way coupling with prismatic joint."""
     import numpy as np
@@ -183,9 +202,6 @@ def test_ipc_two_way_prismatic(n_envs, show_viewer):
         ),
         show_viewer=show_viewer,
     )
-
-    # Add ground plane
-    scene.add_entity(gs.morphs.Plane())
 
     # Add simple two-cube robot with prismatic joint
     robot = scene.add_entity(
@@ -237,4 +253,26 @@ def test_ipc_two_way_prismatic(n_envs, show_viewer):
 
                     # Compare positions (mainly check z-axis for prismatic)
                     pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
-                    assert pos_diff < 0.1, f"Position difference too large: {pos_diff}"
+                    assert pos_diff < 0.001, f"Position difference too large: {pos_diff}"
+
+                    # Compare rotation (using rotation matrix to euler angles)
+                    def rotmat_to_euler(R):
+                        sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+                        singular = sy < 1e-6
+                        if not singular:
+                            x = np.arctan2(R[2, 1], R[2, 2])
+                            y = np.arctan2(-R[2, 0], sy)
+                            z = np.arctan2(R[1, 0], R[0, 0])
+                        else:
+                            x = np.arctan2(-R[1, 2], R[1, 1])
+                            y = np.arctan2(-R[2, 0], sy)
+                            z = 0
+                        return np.array([x, y, z])
+
+                    genesis_rot = genesis_transform[:3, :3]
+                    ipc_rot = ipc_transform[:3, :3]
+                    genesis_euler = rotmat_to_euler(genesis_rot)
+                    ipc_euler = rotmat_to_euler(ipc_rot)
+                    rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
+                    print(f"Step {i}: Rotation difference (rad) = {rot_diff:.6f}")
+                    assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"

@@ -797,6 +797,13 @@ class IPCCoupler(RBC):
         # Initialize data-oriented coupling data structure
         self.coupling_data = IPCCouplingData(self.MAX_LINKS)
 
+        # Mapping from link_idx to ABD geometry for articulation constraint
+        # Structure: {(env_idx, link_idx): abd_geometry}
+        self._link_to_abd_geo = {}
+        # Mapping from link_idx to ABD geometry slot for articulation constraint
+        # Structure: {(env_idx, link_idx): abd_geometry_slot}
+        self._link_to_abd_slot = {}
+
         # ============ AffineBodyStateAccessorFeature for efficient state retrieval ============
         # Optimized batch ABD state retrieval (initialized in _finalize_ipc)
         self._abd_state_feature = None  # AffineBodyStateAccessorFeature instance
@@ -1478,7 +1485,20 @@ class IPCCoupler(RBC):
                         rigid_solver._mesh_handles[f"rigid_link_{i_b}_{link_idx}"] = merged_mesh
 
                         link_obj_counter += 1
+                        # Store ABD geometry and slot mapping for articulation constraint
+                        # Store for target link
+                        self._link_to_abd_geo[(i_b, link_idx)] = merged_mesh
+                        self._link_to_abd_slot[(i_b, link_idx)] = abd_slot
 
+                        # Also store mappings for all original links that were merged into this target
+                        # This allows joints connecting to child links (via fixed joints) to find the merged ABD
+                        if "original_to_target" in link_data:
+                            for original_link_idx in link_data["original_to_target"].keys():
+                                self._link_to_abd_geo[(i_b, original_link_idx)] = merged_mesh
+                                self._link_to_abd_slot[(i_b, original_link_idx)] = abd_slot
+                                gs.logger.info(
+                                    f"Created ABD slot mapping: link {original_link_idx} -> target link {link_idx} (merged via fixed joint)"
+                                )
                 except Exception as e:
                     gs.logger.warning(f"Failed to create IPC object for link {link_idx}: {e}")
                     continue
