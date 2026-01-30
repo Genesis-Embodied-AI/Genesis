@@ -135,7 +135,7 @@ def _func_support_world(
     """
     pos = geoms_state.pos[i_g, i_b]
     quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_support_world_local(geoms_info, support_field_info, d, i_g, pos, quat)
+    return support_field_local._func_support_world_local(support_field_info, d, i_g, pos, quat)
 
 
 @ti.func
@@ -272,7 +272,7 @@ def _func_count_supports_world(
     Count the number of valid support points for the given world direction.
     """
     quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_count_supports_world_local(geoms_info, support_field_info, d, i_g, quat)
+    return support_field_local._func_count_supports_world_local(support_field_info, d, i_g, quat)
 
 
 @ti.func

@@ -178,7 +178,6 @@ def _func_support_box_local(
 
 @ti.func
 def _func_support_world_local(
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
@@ -193,12 +192,11 @@ def _func_support_world_local(
     modification; only the transformation to world space uses pos/quat.
 
     Args:
-        geoms_info: Geometry information
         support_field_info: Pre-computed support field data
         d: Support direction in world frame
         i_g: Geometry index
-        pos: Geometry position in world frame (thread-local, 28 bytes)
-        quat: Geometry quaternion (thread-local, 28 bytes)
+        pos: Geometry position in world frame (thread-local)
+        quat: Geometry quaternion (thread-local)
 
     Returns:
         v: Support point in world frame
@@ -277,7 +275,6 @@ def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh,
 
 @ti.func
 def _func_count_supports_world_local(
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
@@ -290,11 +287,10 @@ def _func_count_supports_world_local(
     Only needs quat since counting doesn't depend on position.
 
     Args:
-        geoms_info: Geometry information
         support_field_info: Pre-computed support field data
         d: Support direction in world frame
         i_g: Geometry index
-        quat: Geometry quaternion (thread-local, 28 bytes)
+        quat: Geometry quaternion (thread-local)
 
     Returns:
         count: Number of support points
