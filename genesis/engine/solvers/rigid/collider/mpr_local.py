@@ -62,7 +62,7 @@ def support_driver_local(
         if ti.static(collider_static_config.has_terrain):
             # Terrain support doesn't depend on geometry pos/quat - uses collider_state.prism
             # Terrain is global and not perturbed, so we use the global state directly
-            v, _ = support_field._func_support_prism(collider_state, direction, i_g, i_b)
+            v, _ = support_field._func_support_prism(collider_state, direction, i_b)
     else:
         # Mesh geometries
         v, v_, vid = support_field_local._func_support_world_local(support_field_info, direction, i_g, pos, quat)

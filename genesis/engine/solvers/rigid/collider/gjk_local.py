@@ -659,7 +659,7 @@ def support_driver_local(
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
             # Terrain support doesn't depend on geometry pos/quat - uses collider_state.prism
-            v, vid = support_field._func_support_prism(collider_state, direction, i_g, i_b)
+            v, vid = support_field._func_support_prism(collider_state, direction, i_b)
     elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
         # MuJoCo-compatible mesh support requires exhaustive vertex search
         v, vid = support_mesh_local(

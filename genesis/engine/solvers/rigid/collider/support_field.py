@@ -228,7 +228,6 @@ def _func_support_capsule(
 def _func_support_prism(
     collider_state: array_class.ColliderState,
     d,
-    i_g,
     i_b,
 ):
     istart = 3
@@ -261,8 +260,6 @@ def _func_support_box(
 
 @ti.func
 def _func_count_supports_mesh(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d_mesh,
     i_g,
