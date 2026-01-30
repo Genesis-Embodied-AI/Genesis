@@ -6,6 +6,7 @@ import genesis as gs
 
 from .options import Options
 
+
 IS_PYAV_AVAILABLE = False
 try:
     import av
