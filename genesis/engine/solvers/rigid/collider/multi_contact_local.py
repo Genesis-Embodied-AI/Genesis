@@ -16,51 +16,146 @@ from genesis.utils import array_class
 
 
 @ti.func
-def func_mesh_face_local(
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
+def func_potential_box_normals_local(
+    geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
     quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
-    i_o,
-    face_idx,
+    dim,
+    v1,
+    v2,
+    v3,
+    dir,
 ):
     """
-    Thread-local version of func_mesh_face.
+    Thread-local version of func_potential_box_normals.
 
-    Get the face vertices of the mesh, using thread-local pos/quat.
+    For a simplex defined on a box with three vertices [v1, v2, v3], we find which face normals are potentially
+    related to the simplex, using thread-local quat.
 
-    Thread-safety note: Geometry index `i_g` is only used to pass through to `faces_info`
-    and `verts_info` for read-only metadata access (face vertex indices, initial positions).
-    It does not access `geoms_state.pos` or `geoms_state.quat`.
+    If the simplex is a triangle, at most one face normal is related.
+    If the simplex is a line, at most two face normals are related.
+    If the simplex is a point, at most three face normals are related.
+
+    We identify related face normals to the simplex by checking the vertex indices of the simplex.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (vertex start index). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    Note that this function only uses quat (not pos) since face normals are orientation-dependent
+    but not position-dependent.
 
     Args:
-        verts_info: Vertex information
-        faces_info: Face information
-        gjk_state: GJK algorithm state (for storing contact face vertices)
+        geoms_info: Geometry information
+        gjk_state: GJK algorithm state (for storing contact normals)
+        gjk_info: GJK algorithm parameters
         i_g: Geometry index (for metadata only)
-        pos: Thread-local position of the geometry
         quat: Thread-local quaternion of the geometry
         i_b: Batch/environment index
-        i_o: Object index (0 or 1, determines which contact face to write to)
-        face_idx: Index of the face to get vertices for
+        dim: Dimension of the simplex (1=point, 2=line, 3=triangle)
+        v1: First vertex index
+        v2: Second vertex index
+        v3: Third vertex index
+        dir: Collision direction vector
 
     Returns:
-        Number of vertices in the face (always 3 for triangular meshes)
+        Number of face normals found
     """
-    nvert = 3
-    for i in range(nvert):
-        i_v = faces_info[face_idx].verts_idx[i]
-        v = verts_info.init_pos[i_v]
-        v = gu.ti_transform_by_trans_quat(v, pos, quat)
-        if i_o == 0:
-            gjk_state.contact_faces[i_b, i].vert1 = v
-        else:
-            gjk_state.contact_faces[i_b, i].vert2 = v
+    # Change to local vertex indices
+    v1 -= geoms_info.vert_start[i_g]
+    v2 -= geoms_info.vert_start[i_g]
+    v3 -= geoms_info.vert_start[i_g]
 
-    return nvert
+    # Number of potential face normals
+    n_normals = 0
+
+    # Fallback if the simplex is degenerate
+    is_degenerate_simplex = False
+
+    c = 0
+    xyz = gs.ti_ivec3(0, 0, 0)
+    for i in range(3):
+        # 1 when every vertex has positive xyz coordinate,
+        # -1 when every vertex has negative xyz coordinate,
+        # 0 when vertices are mixed
+        # Import func_cmp_bit from parent module
+        xyz[i] = multi_contact.func_cmp_bit(v1, v2, v3, dim, i)
+
+    for i in range(1 if dim == 3 else 3):
+        # Determine the normal vector in the local space
+        local_n = gs.ti_vec3(xyz[0], xyz[1], xyz[2])
+        w = 1
+
+        if dim == 2:
+            w = xyz[i]
+
+        if dim == 2 or dim == 1:
+            local_n = gs.ti_vec3(0, 0, 0)
+            local_n[i] = xyz[i]
+
+        global_n = gu.ti_transform_by_quat(local_n, quat)
+
+        if dim == 3:
+            gjk_state.contact_normals[i_b, 0].normal = global_n
+
+            # Note that only one of [x, y, z] could be non-zero, because the triangle is on the box face.
+            sgn = xyz.sum()
+            for j in range(3):
+                if xyz[j]:
+                    gjk_state.contact_normals[i_b, c].id = j * 2
+                    c += 1
+
+            if sgn == -1:
+                # Flip if needed
+                gjk_state.contact_normals[i_b, 0].id = gjk_state.contact_normals[i_b, 0].id + 1
+
+        elif dim == 2:
+            if w:
+                if (i == 0) or (i == 1):
+                    gjk_state.contact_normals[i_b, c].normal = global_n
+                else:
+                    gjk_state.contact_normals[i_b, 1].normal = global_n
+
+                for j in range(3):
+                    if i == j:
+                        gjk_state.contact_normals[i_b, c].id = j * 2 if xyz[j] > 0 else j * 2 + 1
+                        break
+
+                c += 1
+
+        elif dim == 1:
+            gjk_state.contact_normals[i_b, c].normal = global_n
+
+            for j in range(3):
+                if i == j:
+                    gjk_state.contact_normals[i_b, c].id = j * 2 if xyz[j] > 0 else j * 2 + 1
+                    break
+            c += 1
+
+    # Check [c] for detecting degenerate cases
+    if dim == 3:
+        # [c] should be 1 in normal case, but if triangle does not lie on the box face, it could be other values.
+        n_normals = 1
+        is_degenerate_simplex = c != 1
+    elif dim == 2:
+        # [c] should be 2 in normal case, but if edge does not lie on the box edge, it could be other values.
+        n_normals = 2
+        is_degenerate_simplex = c != 2
+    elif dim == 1:
+        n_normals = 3
+        is_degenerate_simplex = False
+
+    # If the simplex was degenerate, find the face normal using collision normal
+    if is_degenerate_simplex:
+        n_normals = (
+            1
+            if func_box_normal_from_collision_normal_local(gjk_state, gjk_info, i_g, quat, i_b, dir)
+            == multi_contact.RETURN_CODE.SUCCESS
+            else 0
+        )
+
+    return n_normals
 
 
 @ti.func
@@ -117,21 +212,102 @@ def func_box_normal_from_collision_normal_local(
 
 
 @ti.func
-def func_safe_normalize(
+def func_potential_mesh_normals_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
-    v,
+    i_g,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    i_b,
+    dim,
+    v1,
+    v2,
+    v3,
 ):
     """
-    Safely normalize a vector (helper function for edge normal computation).
+    Thread-local version of func_potential_mesh_normals.
 
-    This is a simple utility that doesn't access geoms_state, included here
-    for convenience when using local functions.
+    For a simplex defined on a mesh with three vertices [v1, v2, v3],
+    we find which face normals are potentially related to the simplex,
+    using thread-local quat.
+
+    If the simplex is a triangle, at most one face normal is related.
+    If the simplex is a line, at most two face normals are related.
+    If the simplex is a point, multiple faces that are adjacent to the point could be related.
+
+    We identify related face normals to the simplex by checking the vertex indices of the simplex.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (face start/end indices). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    Note that this function only uses quat (not pos) since face normals are orientation-dependent
+    but not position-dependent.
+
+    Args:
+        geoms_info: Geometry information
+        verts_info: Vertex information
+        faces_info: Face information
+        gjk_state: GJK algorithm state (for storing contact normals)
+        gjk_info: GJK algorithm parameters
+        i_g: Geometry index (for metadata only)
+        quat: Thread-local quaternion of the geometry
+        i_b: Batch/environment index
+        dim: Dimension of the simplex (1=point, 2=line, 3=triangle)
+        v1: First vertex index
+        v2: Second vertex index
+        v3: Third vertex index
+
+    Returns:
+        Number of face normals found
     """
-    norm = v.norm()
-    if norm > gjk_info.FLOAT_MIN[None]:
-        return v / norm
-    else:
-        return gs.ti_vec3(0.0, 0.0, 0.0)
+    # Number of potential face normals
+    n_normals = 0
+
+    # Exhaustive search for the face normals
+    # @TODO: This would require a lot of cost if the mesh is large. It would be better to precompute adjacency
+    # information in the solver and use it here.
+    face_start = geoms_info.face_start[i_g]
+    face_end = geoms_info.face_end[i_g]
+
+    for i_f in range(face_start, face_end):
+        face = faces_info[i_f].verts_idx
+        has_vs = gs.ti_ivec3(0, 0, 0)
+        if v1 == face[0] or v1 == face[1] or v1 == face[2]:
+            has_vs[0] = 1
+        if v2 == face[0] or v2 == face[1] or v2 == face[2]:
+            has_vs[1] = 1
+        if v3 == face[0] or v3 == face[1] or v3 == face[2]:
+            has_vs[2] = 1
+
+        compute_normal = True
+        for j in range(dim):
+            compute_normal = compute_normal and (has_vs[j] == 1)
+
+        if compute_normal:
+            v1pos = verts_info.init_pos[face[0]]
+            v2pos = verts_info.init_pos[face[1]]
+            v3pos = verts_info.init_pos[face[2]]
+
+            # Compute the face normal
+            n = (v2pos - v1pos).cross(v3pos - v1pos)
+            n = n.normalized()
+            n = gu.ti_transform_by_quat(n, quat)
+
+            gjk_state.contact_normals[i_b, n_normals].normal = n
+            gjk_state.contact_normals[i_b, n_normals].id = i_f
+            n_normals += 1
+
+            if dim == 3:
+                break
+            elif dim == 2:
+                if n_normals == 2:
+                    break
+            else:
+                if n_normals == gjk_info.max_contact_polygon_verts[None]:
+                    break
+
+    return n_normals
 
 
 @ti.func
@@ -318,102 +494,21 @@ def func_potential_mesh_edge_normals_local(
 
 
 @ti.func
-def func_potential_mesh_normals_local(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    gjk_state: array_class.GJKState,
+def func_safe_normalize(
     gjk_info: array_class.GJKInfo,
-    i_g,
-    quat: ti.types.vector(4, dtype=gs.ti_float),
-    i_b,
-    dim,
-    v1,
-    v2,
-    v3,
+    v,
 ):
     """
-    Thread-local version of func_potential_mesh_normals.
+    Safely normalize a vector (helper function for edge normal computation).
 
-    For a simplex defined on a mesh with three vertices [v1, v2, v3],
-    we find which face normals are potentially related to the simplex,
-    using thread-local quat.
-
-    If the simplex is a triangle, at most one face normal is related.
-    If the simplex is a line, at most two face normals are related.
-    If the simplex is a point, multiple faces that are adjacent to the point could be related.
-
-    We identify related face normals to the simplex by checking the vertex indices of the simplex.
-
-    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
-    (face start/end indices). It does not access `geoms_state.pos` or `geoms_state.quat`.
-    Note that this function only uses quat (not pos) since face normals are orientation-dependent
-    but not position-dependent.
-
-    Args:
-        geoms_info: Geometry information
-        verts_info: Vertex information
-        faces_info: Face information
-        gjk_state: GJK algorithm state (for storing contact normals)
-        gjk_info: GJK algorithm parameters
-        i_g: Geometry index (for metadata only)
-        quat: Thread-local quaternion of the geometry
-        i_b: Batch/environment index
-        dim: Dimension of the simplex (1=point, 2=line, 3=triangle)
-        v1: First vertex index
-        v2: Second vertex index
-        v3: Third vertex index
-
-    Returns:
-        Number of face normals found
+    This is a simple utility that doesn't access geoms_state, included here
+    for convenience when using local functions.
     """
-    # Number of potential face normals
-    n_normals = 0
-
-    # Exhaustive search for the face normals
-    # @TODO: This would require a lot of cost if the mesh is large. It would be better to precompute adjacency
-    # information in the solver and use it here.
-    face_start = geoms_info.face_start[i_g]
-    face_end = geoms_info.face_end[i_g]
-
-    for i_f in range(face_start, face_end):
-        face = faces_info[i_f].verts_idx
-        has_vs = gs.ti_ivec3(0, 0, 0)
-        if v1 == face[0] or v1 == face[1] or v1 == face[2]:
-            has_vs[0] = 1
-        if v2 == face[0] or v2 == face[1] or v2 == face[2]:
-            has_vs[1] = 1
-        if v3 == face[0] or v3 == face[1] or v3 == face[2]:
-            has_vs[2] = 1
-
-        compute_normal = True
-        for j in range(dim):
-            compute_normal = compute_normal and (has_vs[j] == 1)
-
-        if compute_normal:
-            v1pos = verts_info.init_pos[face[0]]
-            v2pos = verts_info.init_pos[face[1]]
-            v3pos = verts_info.init_pos[face[2]]
-
-            # Compute the face normal
-            n = (v2pos - v1pos).cross(v3pos - v1pos)
-            n = n.normalized()
-            n = gu.ti_transform_by_quat(n, quat)
-
-            gjk_state.contact_normals[i_b, n_normals].normal = n
-            gjk_state.contact_normals[i_b, n_normals].id = i_f
-            n_normals += 1
-
-            if dim == 3:
-                break
-            elif dim == 2:
-                if n_normals == 2:
-                    break
-            else:
-                if n_normals == gjk_info.max_contact_polygon_verts[None]:
-                    break
-
-    return n_normals
+    norm = v.norm()
+    if norm > gjk_info.FLOAT_MIN[None]:
+        return v / norm
+    else:
+        return gs.ti_vec3(0.0, 0.0, 0.0)
 
 
 @ti.func
@@ -494,144 +589,48 @@ def func_box_face_local(
 
 
 @ti.func
-def func_potential_box_normals_local(
-    geoms_info: array_class.GeomsInfo,
+def func_mesh_face_local(
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
     i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
     quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
-    dim,
-    v1,
-    v2,
-    v3,
-    dir,
+    i_o,
+    face_idx,
 ):
     """
-    Thread-local version of func_potential_box_normals.
+    Thread-local version of func_mesh_face.
 
-    For a simplex defined on a box with three vertices [v1, v2, v3], we find which face normals are potentially
-    related to the simplex, using thread-local quat.
+    Get the face vertices of the mesh, using thread-local pos/quat.
 
-    If the simplex is a triangle, at most one face normal is related.
-    If the simplex is a line, at most two face normals are related.
-    If the simplex is a point, at most three face normals are related.
-
-    We identify related face normals to the simplex by checking the vertex indices of the simplex.
-
-    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
-    (vertex start index). It does not access `geoms_state.pos` or `geoms_state.quat`.
-    Note that this function only uses quat (not pos) since face normals are orientation-dependent
-    but not position-dependent.
+    Thread-safety note: Geometry index `i_g` is only used to pass through to `faces_info`
+    and `verts_info` for read-only metadata access (face vertex indices, initial positions).
+    It does not access `geoms_state.pos` or `geoms_state.quat`.
 
     Args:
-        geoms_info: Geometry information
-        gjk_state: GJK algorithm state (for storing contact normals)
-        gjk_info: GJK algorithm parameters
+        verts_info: Vertex information
+        faces_info: Face information
+        gjk_state: GJK algorithm state (for storing contact face vertices)
         i_g: Geometry index (for metadata only)
+        pos: Thread-local position of the geometry
         quat: Thread-local quaternion of the geometry
         i_b: Batch/environment index
-        dim: Dimension of the simplex (1=point, 2=line, 3=triangle)
-        v1: First vertex index
-        v2: Second vertex index
-        v3: Third vertex index
-        dir: Collision direction vector
+        i_o: Object index (0 or 1, determines which contact face to write to)
+        face_idx: Index of the face to get vertices for
 
     Returns:
-        Number of face normals found
+        Number of vertices in the face (always 3 for triangular meshes)
     """
-    # Change to local vertex indices
-    v1 -= geoms_info.vert_start[i_g]
-    v2 -= geoms_info.vert_start[i_g]
-    v3 -= geoms_info.vert_start[i_g]
+    nvert = 3
+    for i in range(nvert):
+        i_v = faces_info[face_idx].verts_idx[i]
+        v = verts_info.init_pos[i_v]
+        v = gu.ti_transform_by_trans_quat(v, pos, quat)
+        if i_o == 0:
+            gjk_state.contact_faces[i_b, i].vert1 = v
+        else:
+            gjk_state.contact_faces[i_b, i].vert2 = v
 
-    # Number of potential face normals
-    n_normals = 0
-
-    # Fallback if the simplex is degenerate
-    is_degenerate_simplex = False
-
-    c = 0
-    xyz = gs.ti_ivec3(0, 0, 0)
-    for i in range(3):
-        # 1 when every vertex has positive xyz coordinate,
-        # -1 when every vertex has negative xyz coordinate,
-        # 0 when vertices are mixed
-        # Import func_cmp_bit from parent module
-        xyz[i] = multi_contact.func_cmp_bit(v1, v2, v3, dim, i)
-
-    for i in range(1 if dim == 3 else 3):
-        # Determine the normal vector in the local space
-        local_n = gs.ti_vec3(xyz[0], xyz[1], xyz[2])
-        w = 1
-
-        if dim == 2:
-            w = xyz[i]
-
-        if dim == 2 or dim == 1:
-            local_n = gs.ti_vec3(0, 0, 0)
-            local_n[i] = xyz[i]
-
-        global_n = gu.ti_transform_by_quat(local_n, quat)
-
-        if dim == 3:
-            gjk_state.contact_normals[i_b, 0].normal = global_n
-
-            # Note that only one of [x, y, z] could be non-zero, because the triangle is on the box face.
-            sgn = xyz.sum()
-            for j in range(3):
-                if xyz[j]:
-                    gjk_state.contact_normals[i_b, c].id = j * 2
-                    c += 1
-
-            if sgn == -1:
-                # Flip if needed
-                gjk_state.contact_normals[i_b, 0].id = gjk_state.contact_normals[i_b, 0].id + 1
-
-        elif dim == 2:
-            if w:
-                if (i == 0) or (i == 1):
-                    gjk_state.contact_normals[i_b, c].normal = global_n
-                else:
-                    gjk_state.contact_normals[i_b, 1].normal = global_n
-
-                for j in range(3):
-                    if i == j:
-                        gjk_state.contact_normals[i_b, c].id = j * 2 if xyz[j] > 0 else j * 2 + 1
-                        break
-
-                c += 1
-
-        elif dim == 1:
-            gjk_state.contact_normals[i_b, c].normal = global_n
-
-            for j in range(3):
-                if i == j:
-                    gjk_state.contact_normals[i_b, c].id = j * 2 if xyz[j] > 0 else j * 2 + 1
-                    break
-            c += 1
-
-    # Check [c] for detecting degenerate cases
-    if dim == 3:
-        # [c] should be 1 in normal case, but if triangle does not lie on the box face, it could be other values.
-        n_normals = 1
-        is_degenerate_simplex = c != 1
-    elif dim == 2:
-        # [c] should be 2 in normal case, but if edge does not lie on the box edge, it could be other values.
-        n_normals = 2
-        is_degenerate_simplex = c != 2
-    elif dim == 1:
-        n_normals = 3
-        is_degenerate_simplex = False
-
-    # If the simplex was degenerate, find the face normal using collision normal
-    if is_degenerate_simplex:
-        n_normals = (
-            1
-            if func_box_normal_from_collision_normal_local(gjk_state, gjk_info, i_g, quat, i_b, dir)
-            == multi_contact.RETURN_CODE.SUCCESS
-            else 0
-        )
-
-    return n_normals
-
+    return nvert
