@@ -364,22 +364,18 @@ def _func_count_supports_mesh(
 
 @ti.func
 def _func_count_supports_box_local(
-    geoms_info: array_class.GeomsInfo,
     d,
-    i_g,
     quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Thread-local version of _func_count_supports_box.
 
     Count the number of valid support points for a box in the given direction.
-    Only needs quat since counting doesn't depend on position.
+    Only needs quat since counting doesn't depend on position or geometry-specific data.
 
     Args:
-        geoms_info: Geometry information
         d: Support direction in world frame
-        i_g: Geometry index
-        quat: Geometry quaternion (thread-local, 28 bytes)
+        quat: Geometry quaternion (thread-local)
 
     Returns:
         count: Number of support points (1, 2, 4, or 8)

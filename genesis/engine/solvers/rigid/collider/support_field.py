@@ -340,7 +340,7 @@ def _func_count_supports_box(
     components, there are 4 possible support points.
     """
     quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_count_supports_box_local(geoms_info, d, i_g, quat)
+    return support_field_local._func_count_supports_box_local(geoms_info, d, quat)
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
