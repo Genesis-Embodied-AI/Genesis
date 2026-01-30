@@ -8,8 +8,7 @@ that accept pos/quat as direct parameters instead of reading from geoms_state.
 import gstaichi as ti
 
 import genesis as gs
-from genesis.utils import geom_utils as gu
-
+import genesis.utils.geom as gu
 
 @ti.func
 def func_rotate_frame_local(

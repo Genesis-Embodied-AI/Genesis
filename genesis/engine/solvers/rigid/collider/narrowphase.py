@@ -18,7 +18,7 @@ from . import mpr
 from . import gjk
 from . import diff_gjk
 from . import support_field
-from .narrowphase_local import func_convex_convex_contact_local
+from . import narrowphase_local
 
 from .broadphase import func_point_in_geom_aabb
 from .contact import (
@@ -966,7 +966,7 @@ def func_narrow_phase_convex_vs_convex(
             ):
                 if ti.static(sys.platform == "darwin"):
                     if ti.static(collider_static_config.use_multicontact_local):
-                        func_convex_convex_contact_local(
+                        narrowphase_local.func_convex_convex_contact_local(
                             i_ga=i_ga,
                             i_gb=i_gb,
                             i_b=i_b,
@@ -1026,7 +1026,7 @@ def func_narrow_phase_convex_vs_convex(
                 else:
                     if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
                         if ti.static(collider_static_config.use_multicontact_local):
-                            func_convex_convex_contact_local(
+                            narrowphase_local.func_convex_convex_contact_local(
                                 i_ga=i_ga,
                                 i_gb=i_gb,
                                 i_b=i_b,

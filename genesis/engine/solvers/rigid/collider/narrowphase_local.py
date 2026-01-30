@@ -88,8 +88,9 @@ from genesis.engine.solvers.rigid.collider.contact import (
     func_contact_orthogonals,
 )
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
-from genesis.engine.solvers.rigid.collider.narrowphase import CCD_ALGORITHM_CODE
-from genesis.utils import array_class, geom_utils as gu
+from genesis.engine.solvers.rigid.collider import narrowphase
+from genesis.utils import array_class
+import genesis.utils.geom as gu
 
 
 @ti.func
@@ -208,8 +209,8 @@ def func_convex_convex_contact_local(
 
         for i_detection in range(5):
             prefer_gjk = (
-                collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.GJK
-                or collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
+                collider_static_config.ccd_algorithm == narrowphase.CCD_ALGORITHM_CODE.GJK
+                or collider_static_config.ccd_algorithm == narrowphase.CCD_ALGORITHM_CODE.MJ_GJK
             )
 
             # Apply perturbations to thread-local state
@@ -256,7 +257,7 @@ def func_convex_convex_contact_local(
                 else:
                     ### MPR, MJ_MPR
                     if ti.static(
-                        collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
+                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
                     ):
                         # Try using MPR before anything else
                         is_mpr_updated = False
@@ -301,7 +302,7 @@ def func_convex_convex_contact_local(
                         # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
                         # large, and either no collision direction was cached or the geometries have large overlap. This
                         # contact information provided by MPR may be unreliable in these cases.
-                        if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                        if ti.static(collider_static_config.ccd_algorithm == narrowphase.CCD_ALGORITHM_CODE.MPR):
                             if penetration > tolerance:
                                 prefer_gjk = not is_mpr_guess_direction_available or (
                                     collider_info.mc_tolerance[None] * penetration
@@ -309,7 +310,7 @@ def func_convex_convex_contact_local(
                                 )
 
                     ### GJK, MJ_GJK
-                    if ti.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
+                    if ti.static(collider_static_config.ccd_algorithm != narrowphase.CCD_ALGORITHM_CODE.MJ_MPR):
                         if prefer_gjk:
                             if ti.static(static_rigid_sim_config.requires_grad):
                                 # TODO: Implement thread-local diff_gjk version if needed
@@ -479,7 +480,7 @@ def func_convex_convex_contact_local(
                         n_con = 1
 
                     if ti.static(
-                        collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
+                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
                     ):
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
                 else:
@@ -488,7 +489,7 @@ def func_convex_convex_contact_local(
 
             # Subsequent detections: correct contact position and add if valid
             elif multi_contact and is_col_0 > 0 and is_col > 0:
-                if ti.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
+                if ti.static(collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     # Project contact points and correct for perturbation
                     contact_point_a = (
                         gu.ti_transform_by_quat(
@@ -524,7 +525,7 @@ def func_convex_convex_contact_local(
                     # contact points and thefore more continuous contact forces, without changing the mean-field
                     # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
-                if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                if ti.static(collider_static_config.ccd_algorithm == narrowphase.CCD_ALGORITHM_CODE.MJ_GJK):
                     # Only change penetration to the initial one, because the normal vector could change abruptly
                     # under MuJoCo's GJK-EPA.
                     penetration = penetration_0

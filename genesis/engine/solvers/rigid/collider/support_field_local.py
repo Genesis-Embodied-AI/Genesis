@@ -57,10 +57,7 @@ import genesis.utils.geom as gu
 # These don't need pos/quat so they're shared with the non-local version
 # This is safe because support_field.py imports support_field_local as a module,
 # not specific functions, so there's no circular dependency
-from genesis.engine.solvers.rigid.collider.support_field import (
-    _func_count_supports_mesh,
-    _func_support_mesh,
-)
+from genesis.engine.solvers.rigid.collider import support_field
 
 
 @ti.func
@@ -94,7 +91,7 @@ def _func_support_world_local(
     d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
 
     # Look up support point in mesh frame (uses pre-computed support field)
-    v_, vid = _func_support_mesh(support_field_info, d_mesh, i_g)
+    v_, vid = support_field._func_support_mesh(support_field_info, d_mesh, i_g)
 
     # Transform support point to world frame
     v = gu.ti_transform_by_trans_quat(v_, pos, quat)
@@ -282,7 +279,7 @@ def _func_count_supports_world_local(
         count: Number of support points
     """
     d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
-    return _func_count_supports_mesh(support_field_info, d_mesh, i_g)
+    return support_field._func_count_supports_mesh(support_field_info, d_mesh, i_g)
 
 
 @ti.func
