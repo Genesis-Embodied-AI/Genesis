@@ -11,7 +11,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field
+from . import epa_local, support_field
 
 # Import shared constants and helper functions from gjk
 from .gjk import (
@@ -817,25 +817,19 @@ def func_epa_support(
     """
     Find support points on the two objects using [dir] and insert them into the polytope.
 
+    This is a thin wrapper that extracts geometry poses from global state
+    and delegates to the thread-local version for the actual computation.
+
     Parameters
     ----------
     dir: gs.ti_vec3
         Vector from [ga] (obj1) to [gb] (obj2).
     """
-    d = gs.ti_vec3(1, 0, 0)
-    if dir_norm > gjk_info.FLOAT_MIN[None]:
-        d = dir / dir_norm
-
-    (
-        support_point_obj1,
-        support_point_obj2,
-        support_point_localpos1,
-        support_point_localpos2,
-        support_point_id_obj1,
-        support_point_id_obj2,
-        support_point_minkowski,
-    ) = func_support(
-        geoms_state,
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return epa_local.func_epa_support_local(
         geoms_info,
         verts_info,
         static_rigid_sim_config,
@@ -846,25 +840,14 @@ def func_epa_support(
         support_field_info,
         i_ga,
         i_gb,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
         i_b,
-        d,
-        False,
+        dir,
+        dir_norm,
     )
-
-    # Insert the support points into the polytope
-    v_index = func_epa_insert_vertex_to_polytope(
-        gjk_state,
-        i_b,
-        support_point_obj1,
-        support_point_obj2,
-        support_point_localpos1,
-        support_point_localpos2,
-        support_point_id_obj1,
-        support_point_id_obj2,
-        support_point_minkowski,
-    )
-
-    return v_index
 
 
 @ti.func
