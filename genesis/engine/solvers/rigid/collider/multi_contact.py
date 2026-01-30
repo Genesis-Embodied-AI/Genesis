@@ -607,46 +607,26 @@ def func_potential_box_edge_normals(
     If the simplex is a point, at most three edge normals are related.
 
     We identify related edge normals to the simplex by checking the vertex indices of the simplex.
+
+    This is a thin wrapper that extracts geometry pose from global state
+    and delegates to the thread-local version for the actual computation.
     """
-    # Get the geometry state and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    g_size_x = geoms_info.data[0] * 0.5
-    g_size_y = geoms_info.data[1] * 0.5
-    g_size_z = geoms_info.data[2] * 0.5
-
-    v1i -= geoms_info.vert_start[i_g]
-    v2i -= geoms_info.vert_start[i_g]
-
-    n_normals = 0
-
-    if dim == 2:
-        # If the nearest face is an edge
-        gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_info, v2 - v1)
-
-        n_normals = 1
-    elif dim == 1:
-        # If the nearest face is a point, consider three adjacent edges
-        x = g_size_x if (v1i & 1) else -g_size_x
-        y = g_size_y if (v1i & 2) else -g_size_y
-        z = g_size_z if (v1i & 4) else -g_size_z
-
-        for i in range(3):
-            bv = gs.ti_vec3(-x, y, z)
-            if i == 1:
-                bv = gs.ti_vec3(x, -y, z)
-            elif i == 2:
-                bv = gs.ti_vec3(x, y, -z)
-            ev = gu.ti_transform_by_trans_quat(bv, g_pos, g_quat)
-            r = func_safe_normalize(gjk_info, ev - v1)
-
-            gjk_state.contact_normals[i_b, i].endverts = ev
-            gjk_state.contact_normals[i_b, i].normal = r
-
-        n_normals = 3
-
-    return n_normals
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return multi_contact_local.func_potential_box_edge_normals_local(
+        geoms_info,
+        gjk_state,
+        gjk_info,
+        i_g,
+        pos,
+        quat,
+        i_b,
+        dim,
+        v1,
+        v2,
+        v1i,
+        v2i,
+    )
 
 
 @ti.func
