@@ -218,3 +218,100 @@ def func_potential_box_edge_normals_local(
 
     return n_normals
 
+
+@ti.func
+def func_potential_mesh_edge_normals_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    i_b,
+    dim,
+    v1,
+    v2,
+    v1i,
+    v2i,
+):
+    """
+    Thread-local version of func_potential_mesh_edge_normals.
+
+    For a simplex defined on a mesh with two vertices [v1, v2],
+    we find which edge normals are potentially related to the simplex,
+    using thread-local pos/quat.
+
+    If the simplex is a line, at most one edge normal are related.
+    If the simplex is a point, multiple edges that are adjacent to the point could be related.
+
+    We identify related edge normals to the simplex by checking the vertex indices of the simplex.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (face start/end indices). It does not access `geoms_state.pos` or `geoms_state.quat`.
+
+    Args:
+        geoms_info: Geometry information
+        verts_info: Vertex information
+        faces_info: Face information
+        gjk_state: GJK algorithm state (for storing contact normals)
+        gjk_info: GJK algorithm parameters
+        i_g: Geometry index (for metadata only)
+        pos: Thread-local position of the geometry
+        quat: Thread-local quaternion of the geometry
+        i_b: Batch/environment index
+        dim: Dimension of the simplex (1=point, 2=line)
+        v1: First vertex position
+        v2: Second vertex position
+        v1i: First vertex index
+        v2i: Second vertex index
+
+    Returns:
+        Number of edge normals found
+    """
+    # Number of potential face normals
+    n_normals = 0
+
+    if dim == 2:
+        # If the nearest face is an edge
+        gjk_state.contact_normals[i_b, 0].endverts = v2
+        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_info, v2 - v1)
+
+        n_normals = 1
+
+    elif dim == 1:
+        # If the nearest face is a point, consider every adjacent edge
+        # Exhaustive search for the edge normals
+        face_start = geoms_info.face_start[i_g]
+        face_end = geoms_info.face_end[i_g]
+        for i_f in range(face_start, face_end):
+            face = faces_info[i_f].verts_idx
+
+            v1_idx = -1
+            if v1i == face[0]:
+                v1_idx = 0
+            elif v1i == face[1]:
+                v1_idx = 1
+            elif v1i == face[2]:
+                v1_idx = 2
+
+            if v1_idx != -1:
+                # Consider the next vertex of [v1] in the face
+                v2_idx = (v1_idx + 1) % 3
+                t_v2i = face[v2_idx]
+
+                # Compute the edge normal
+                v2_pos = verts_info.init_pos[t_v2i]
+                v2_pos = gu.ti_transform_by_trans_quat(v2_pos, pos, quat)
+                t_res = func_safe_normalize(gjk_info, v2_pos - v1)
+
+                gjk_state.contact_normals[i_b, n_normals].normal = t_res
+                gjk_state.contact_normals[i_b, n_normals].endverts = v2_pos
+
+                n_normals += 1
+                if n_normals == gjk_info.max_contact_polygon_verts[None]:
+                    break
+
+    return n_normals
+
