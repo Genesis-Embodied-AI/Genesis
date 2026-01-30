@@ -757,13 +757,10 @@ def count_support_driver_local(
         count = support_field_local._func_count_supports_box_local(d, quat)
     elif geom_type == gs.GEOM_TYPE.MESH:
         count = support_field_local._func_count_supports_world_local(
-            geoms_info,
             support_field_info,
             d,
             i_g,
-            pos,
             quat,
-            i_b,
         )
     return count
 

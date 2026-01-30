@@ -65,7 +65,7 @@ def support_driver_local(
     else:
         # Mesh geometries
         v, v_, vid = support_field_local._func_support_world_local(
-            geoms_info, support_field_info, direction, i_g, pos, quat
+            support_field_info, direction, i_g, pos, quat
         )
 
     return v
