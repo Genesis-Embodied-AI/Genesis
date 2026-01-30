@@ -11,6 +11,10 @@ import gstaichi as ti
 import genesis as gs
 from genesis.engine.solvers.rigid.collider import epa, gjk
 from genesis.utils import array_class
+import genesis.utils.geom as gu
+from genesis.engine.solvers.rigid import collider
+
+
 
 
 @ti.func
@@ -255,9 +259,6 @@ def func_epa_init_polytope_2d_local(
     int
         0 when successful, or a flag indicating an error.
     """
-    # Import here to avoid circular import
-    import genesis.utils.geom as gu
-
     flag = epa.EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
@@ -577,9 +578,6 @@ def func_epa_support_local(
     if dir_norm > gjk_info.FLOAT_MIN[None]:
         d = dir / dir_norm
 
-    # Import gjk_local here to avoid circular import
-    from genesis.engine.solvers.rigid.collider import gjk_local
-
     (
         support_point_obj1,
         support_point_obj2,
@@ -588,7 +586,7 @@ def func_epa_support_local(
         support_point_id_obj1,
         support_point_id_obj2,
         support_point_minkowski,
-    ) = gjk_local.func_support_local(
+    ) = collider.gjk_local.func_support_local(
         geoms_info,
         verts_info,
         static_rigid_sim_config,
