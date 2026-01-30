@@ -15,6 +15,9 @@ import genesis.utils.array_class as array_class
 # Import helper functions from gjk
 from .gjk import func_is_equal_vec, RETURN_CODE
 
+# Import thread-local versions
+from . import multi_contact_local
+
 
 @ti.func
 def func_multi_contact(
@@ -863,22 +866,23 @@ def func_mesh_face(
 ):
     """
     Get the face vertices of the mesh.
+
+    This is a thin wrapper that extracts geometry pose from global state
+    and delegates to the thread-local version for the actual computation.
     """
-    # Get geometry position and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-
-    nvert = 3
-    for i in range(nvert):
-        i_v = faces_info[face_idx].verts_idx[i]
-        v = verts_info.init_pos[i_v]
-        v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
-        if i_o == 0:
-            gjk_state.contact_faces[i_b, i].vert1 = v
-        else:
-            gjk_state.contact_faces[i_b, i].vert2 = v
-
-    return nvert
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return multi_contact_local.func_mesh_face_local(
+        verts_info,
+        faces_info,
+        gjk_state,
+        i_g,
+        pos,
+        quat,
+        i_b,
+        i_o,
+        face_idx,
+    )
 
 
 @ti.func
