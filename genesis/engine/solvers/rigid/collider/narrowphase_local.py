@@ -16,7 +16,14 @@ import sys
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.collider import box_contact, contact, contact_local, diff_gjk, gjk_local, mpr_local, multi_contact_local
+from genesis.engine.solvers.rigid.collider import box_contact, diff_gjk, gjk_local, mpr_local, multi_contact_local
+from genesis.engine.solvers.rigid.collider.contact import (
+    func_add_contact,
+    func_add_diff_contact_input,
+    func_compute_tolerance,
+    func_contact_orthogonals,
+)
+from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.engine.solvers.rigid.collider.narrowphase import CCD_ALGORITHM_CODE
 from genesis.utils import array_class, geom_utils as gu
 
@@ -92,10 +99,10 @@ def func_convex_convex_contact_local(
             and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
         )
 
-        tolerance = contact.func_compute_tolerance(
+        tolerance = func_compute_tolerance(
             i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
         )
-        diff_pos_tolerance = contact.func_compute_tolerance(
+        diff_pos_tolerance = func_compute_tolerance(
             i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
         )
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
@@ -143,11 +150,11 @@ def func_convex_convex_contact_local(
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
                 # Apply perturbation starting from original state
-                ga_result = contact_local.func_rotate_frame_local(ga_pos_original, ga_quat_original, contact_pos_0, qrot)
+                ga_result = func_rotate_frame_local(ga_pos_original, ga_quat_original, contact_pos_0, qrot)
                 ga_pos_current = ga_result.pos
                 ga_quat_current = ga_result.quat
 
-                gb_result = contact_local.func_rotate_frame_local(
+                gb_result = func_rotate_frame_local(
                     gb_pos_original, gb_quat_original, contact_pos_0, gu.ti_inv_quat(qrot)
                 )
                 gb_pos_current = gb_result.pos
@@ -312,7 +319,7 @@ def func_convex_convex_contact_local(
                             if is_col:
                                 if ti.static(static_rigid_sim_config.requires_grad):
                                     for i_c in range(n_contacts):
-                                        contact.func_add_diff_contact_input(
+                                        func_add_diff_contact_input(
                                             i_ga,
                                             i_gb,
                                             i_b,
@@ -321,7 +328,7 @@ def func_convex_convex_contact_local(
                                             collider_state,
                                             collider_info,
                                         )
-                                        contact.func_add_contact(
+                                        func_add_contact(
                                             i_ga,
                                             i_gb,
                                             gjk_state.normal[i_b, i_c],
@@ -343,7 +350,7 @@ def func_convex_convex_contact_local(
                                                 normal = gjk_state.normal[i_b, i_c]
                                                 if ti.static(static_rigid_sim_config.requires_grad):
                                                     penetration = gjk_state.diff_penetration[i_b, i_c]
-                                                contact.func_add_contact(
+                                                func_add_contact(
                                                     i_ga,
                                                     i_gb,
                                                     normal,
@@ -365,7 +372,7 @@ def func_convex_convex_contact_local(
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
-                    contact.func_add_contact(
+                    func_add_contact(
                         i_ga,
                         i_gb,
                         normal_0,
@@ -380,7 +387,7 @@ def func_convex_convex_contact_local(
                     )
                     if multi_contact:
                         # Compute perturbation axes for subsequent detections
-                        axis_0, axis_1 = contact.func_contact_orthogonals(
+                        axis_0, axis_1 = func_contact_orthogonals(
                             i_ga,
                             i_gb,
                             normal,
