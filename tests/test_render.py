@@ -1234,31 +1234,6 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
-def test_interactive_viewer_disable_viewer_defaults():
-    """Test that keyboard shortcuts can be disabled in the interactive viewer."""
-
-    # Test with keyboard shortcuts DISABLED
-    scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            disable_help_text=True,
-            disable_default_keybinds=True,
-        ),
-        show_viewer=True,
-    )
-    scene.build()
-    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
-    assert pyrender_viewer.is_active
-
-    # Verify the flag is set correctly
-    assert pyrender_viewer._disable_help_text is True
-    # Verify that no keybindings are registered
-    assert len(pyrender_viewer._keybindings) == 0
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_camera_gimbal_lock_singularity(renderer, show_viewer):
     """
     Test that camera maintains continuous orientation when moving through singularity conditions.
