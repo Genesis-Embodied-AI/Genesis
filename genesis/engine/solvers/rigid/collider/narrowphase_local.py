@@ -180,7 +180,9 @@ def func_convex_convex_contact_local(
                 geoms_state.pos[i_ga, i_b] = ga_result.pos
                 geoms_state.quat[i_ga, i_b] = ga_result.quat
 
-                gb_result = func_rotate_frame_local(gb_pos_original, gb_quat_original, contact_pos_0, gu.ti_inv_quat(qrot))
+                gb_result = func_rotate_frame_local(
+                    gb_pos_original, gb_quat_original, contact_pos_0, gu.ti_inv_quat(qrot)
+                )
                 geoms_state.pos[i_gb, i_b] = gb_result.pos
                 geoms_state.quat[i_gb, i_b] = gb_result.quat
 
@@ -468,4 +470,3 @@ from genesis.engine.solvers.rigid.collider.narrowphase import CCD_ALGORITHM_CODE
 
 # Import sys for platform check
 import sys
-
