@@ -221,12 +221,20 @@ def func_convex_convex_contact_local(
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
                 # Apply perturbation starting from original state
-                ga_result = func_rotate_frame_local(ga_pos_original, ga_quat_original, contact_pos_0, qrot)
+                ga_result = func_rotate_frame_local(
+                    pos=ga_pos_original,
+                    quat=ga_quat_original,
+                    contact_pos=contact_pos_0,
+                    qrot=qrot
+                )
                 ga_pos_current = ga_result.pos
                 ga_quat_current = ga_result.quat
 
                 gb_result = func_rotate_frame_local(
-                    gb_pos_original, gb_quat_original, contact_pos_0, gu.ti_inv_quat(qrot)
+                    pos=gb_pos_original,
+                    quat=gb_quat_original,
+                    contact_pos=contact_pos_0,
+                    qrot=gu.ti_inv_quat(qrot)
                 )
                 gb_pos_current = gb_result.pos
                 gb_quat_current = gb_result.quat
