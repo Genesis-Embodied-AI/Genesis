@@ -371,7 +371,7 @@ def func_potential_box_edge_normals_local(
     if dim == 2:
         # If the nearest face is an edge
         gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_info, v2 - v1)
+        gjk_state.contact_normals[i_b, 0].normal = multi_contact.func_safe_normalize(gjk_info, v2 - v1)
 
         n_normals = 1
     elif dim == 1:
@@ -387,7 +387,7 @@ def func_potential_box_edge_normals_local(
             elif i == 2:
                 bv = gs.ti_vec3(x, y, -z)
             ev = gu.ti_transform_by_trans_quat(bv, pos, quat)
-            r = func_safe_normalize(gjk_info, ev - v1)
+            r = multi_contact.func_safe_normalize(gjk_info, ev - v1)
 
             gjk_state.contact_normals[i_b, i].endverts = ev
             gjk_state.contact_normals[i_b, i].normal = r
@@ -454,7 +454,7 @@ def func_potential_mesh_edge_normals_local(
     if dim == 2:
         # If the nearest face is an edge
         gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(gjk_info, v2 - v1)
+        gjk_state.contact_normals[i_b, 0].normal = multi_contact.func_safe_normalize(gjk_info, v2 - v1)
 
         n_normals = 1
 
@@ -482,7 +482,7 @@ def func_potential_mesh_edge_normals_local(
                 # Compute the edge normal
                 v2_pos = verts_info.init_pos[t_v2i]
                 v2_pos = gu.ti_transform_by_trans_quat(v2_pos, pos, quat)
-                t_res = func_safe_normalize(gjk_info, v2_pos - v1)
+                t_res = multi_contact.func_safe_normalize(gjk_info, v2_pos - v1)
 
                 gjk_state.contact_normals[i_b, n_normals].normal = t_res
                 gjk_state.contact_normals[i_b, n_normals].endverts = v2_pos
@@ -494,22 +494,6 @@ def func_potential_mesh_edge_normals_local(
     return n_normals
 
 
-@ti.func
-def func_safe_normalize(
-    gjk_info: array_class.GJKInfo,
-    v,
-):
-    """
-    Safely normalize a vector (helper function for edge normal computation).
-
-    This is a simple utility that doesn't access geoms_state, included here
-    for convenience when using local functions.
-    """
-    norm = v.norm()
-    if norm > gjk_info.FLOAT_MIN[None]:
-        return v / norm
-    else:
-        return gs.ti_vec3(0.0, 0.0, 0.0)
 
 
 @ti.func
