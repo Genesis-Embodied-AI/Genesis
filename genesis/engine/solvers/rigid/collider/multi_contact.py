@@ -506,57 +506,25 @@ def func_potential_mesh_normals(
     could be related.
 
     We identify related face normals to the simplex by checking the vertex indices of the simplex.
+
+    This is a thin wrapper that extracts geometry quaternion from global state
+    and delegates to the thread-local version for the actual computation.
     """
-    # Get the geometry state and quaternion
-    g_quat = geoms_state.quat[i_g, i_b]
-
-    # Number of potential face normals
-    n_normals = 0
-
-    # Exhaustive search for the face normals
-    # @TODO: This would require a lot of cost if the mesh is large. It would be better to precompute adjacency
-    # information in the solver and use it here.
-    face_start = geoms_info.face_start[i_g]
-    face_end = geoms_info.face_end[i_g]
-
-    for i_f in range(face_start, face_end):
-        face = faces_info[i_f].verts_idx
-        has_vs = gs.ti_ivec3(0, 0, 0)
-        if v1 == face[0] or v1 == face[1] or v1 == face[2]:
-            has_vs[0] = 1
-        if v2 == face[0] or v2 == face[1] or v2 == face[2]:
-            has_vs[1] = 1
-        if v3 == face[0] or v3 == face[1] or v3 == face[2]:
-            has_vs[2] = 1
-
-        compute_normal = True
-        for j in range(dim):
-            compute_normal = compute_normal and (has_vs[j] == 1)
-
-        if compute_normal:
-            v1pos = verts_info.init_pos[face[0]]
-            v2pos = verts_info.init_pos[face[1]]
-            v3pos = verts_info.init_pos[face[2]]
-
-            # Compute the face normal
-            n = (v2pos - v1pos).cross(v3pos - v1pos)
-            n = n.normalized()
-            n = gu.ti_transform_by_quat(n, g_quat)
-
-            gjk_state.contact_normals[i_b, n_normals].normal = n
-            gjk_state.contact_normals[i_b, n_normals].id = i_f
-            n_normals += 1
-
-            if dim == 3:
-                break
-            elif dim == 2:
-                if n_normals == 2:
-                    break
-            else:
-                if n_normals == gjk_info.max_contact_polygon_verts[None]:
-                    break
-
-    return n_normals
+    quat = geoms_state.quat[i_g, i_b]
+    return multi_contact_local.func_potential_mesh_normals_local(
+        geoms_info,
+        verts_info,
+        faces_info,
+        gjk_state,
+        gjk_info,
+        i_g,
+        quat,
+        i_b,
+        dim,
+        v1,
+        v2,
+        v3,
+    )
 
 
 @ti.func

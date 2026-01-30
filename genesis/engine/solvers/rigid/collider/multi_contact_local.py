@@ -315,3 +315,102 @@ def func_potential_mesh_edge_normals_local(
 
     return n_normals
 
+
+@ti.func
+def func_potential_mesh_normals_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    i_g,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    i_b,
+    dim,
+    v1,
+    v2,
+    v3,
+):
+    """
+    Thread-local version of func_potential_mesh_normals.
+
+    For a simplex defined on a mesh with three vertices [v1, v2, v3],
+    we find which face normals are potentially related to the simplex,
+    using thread-local quat.
+
+    If the simplex is a triangle, at most one face normal is related.
+    If the simplex is a line, at most two face normals are related.
+    If the simplex is a point, multiple faces that are adjacent to the point could be related.
+
+    We identify related face normals to the simplex by checking the vertex indices of the simplex.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (face start/end indices). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    Note that this function only uses quat (not pos) since face normals are orientation-dependent
+    but not position-dependent.
+
+    Args:
+        geoms_info: Geometry information
+        verts_info: Vertex information
+        faces_info: Face information
+        gjk_state: GJK algorithm state (for storing contact normals)
+        gjk_info: GJK algorithm parameters
+        i_g: Geometry index (for metadata only)
+        quat: Thread-local quaternion of the geometry
+        i_b: Batch/environment index
+        dim: Dimension of the simplex (1=point, 2=line, 3=triangle)
+        v1: First vertex index
+        v2: Second vertex index
+        v3: Third vertex index
+
+    Returns:
+        Number of face normals found
+    """
+    # Number of potential face normals
+    n_normals = 0
+
+    # Exhaustive search for the face normals
+    # @TODO: This would require a lot of cost if the mesh is large. It would be better to precompute adjacency
+    # information in the solver and use it here.
+    face_start = geoms_info.face_start[i_g]
+    face_end = geoms_info.face_end[i_g]
+
+    for i_f in range(face_start, face_end):
+        face = faces_info[i_f].verts_idx
+        has_vs = gs.ti_ivec3(0, 0, 0)
+        if v1 == face[0] or v1 == face[1] or v1 == face[2]:
+            has_vs[0] = 1
+        if v2 == face[0] or v2 == face[1] or v2 == face[2]:
+            has_vs[1] = 1
+        if v3 == face[0] or v3 == face[1] or v3 == face[2]:
+            has_vs[2] = 1
+
+        compute_normal = True
+        for j in range(dim):
+            compute_normal = compute_normal and (has_vs[j] == 1)
+
+        if compute_normal:
+            v1pos = verts_info.init_pos[face[0]]
+            v2pos = verts_info.init_pos[face[1]]
+            v3pos = verts_info.init_pos[face[2]]
+
+            # Compute the face normal
+            n = (v2pos - v1pos).cross(v3pos - v1pos)
+            n = n.normalized()
+            n = gu.ti_transform_by_quat(n, quat)
+
+            gjk_state.contact_normals[i_b, n_normals].normal = n
+            gjk_state.contact_normals[i_b, n_normals].id = i_f
+            n_normals += 1
+
+            if dim == 3:
+                break
+            elif dim == 2:
+                if n_normals == 2:
+                    break
+            else:
+                if n_normals == gjk_info.max_contact_polygon_verts[None]:
+                    break
+
+    return n_normals
+
