@@ -371,12 +371,9 @@ def test_obj_morphes_yup(show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("scale", [(2.0, 3.0, 5.0), (2.0, 2.0, 2.0)])
-@pytest.mark.parametrize(
-    "mesh_file, file_meshes_are_zup",
-    [("meshes/camera/camera.glb", False), ("meshes/axis.obj", True)],
-)
-def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_path):
+@pytest.mark.parametrize("scale", [(0.5, 2.0, 8.0), (2.0, 2.0, 2.0)])
+@pytest.mark.parametrize("mesh_file", ["meshes/camera/camera.glb", "meshes/axis.obj"])
+def test_morph_scale(scale, mesh_file, show_viewer, tmp_path):
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="cannon">
@@ -393,43 +390,69 @@ def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_pat
     obj_orig = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=mesh_file,
+            file_meshes_are_zup=False,
             pos=(0, 0, 1.0),
-            scale=(1.0, 1.0, 1.0),
+            scale=1.0,
             convexify=False,
             fixed=True,
         ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
     )
-    mesh_orig = obj_orig.vgeoms[0].vmesh.trimesh
+    for vgeom in obj_orig.vgeoms:
+        mesh_orig = vgeom.vmesh.trimesh
+        mesh_orig.apply_transform(mu.Y_UP_TRANSFORM)
+        mesh_orig.apply_scale(scale)
+
     obj_scaled = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=mesh_file,
+            file_meshes_are_zup=True,
             pos=(0, 0, 1.0),
             scale=scale,
             convexify=False,
             fixed=True,
         ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 1.0, 0.0, 1.0),
+        ),
     )
-    mesh_scaled = obj_scaled.vgeoms[0].vmesh.trimesh
+    assert obj_orig.n_vgeoms == obj_scaled.n_vgeoms
 
     is_isotropic = np.unique(scale).size == 1
     with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
         robot_scaled = scene.add_entity(
             gs.morphs.URDF(
                 file=urdf_path,
+                file_meshes_are_zup=True,
+                pos=(0, 0, 1.0),
+                scale=scale,
                 convexify=False,
                 fixed=True,
-                scale=scale,
-                file_meshes_are_zup=file_meshes_are_zup,
+            ),
+            surface=gs.surfaces.Default(
+                color=(0.0, 0.0, 1.0, 1.0),
             ),
         )
-        mesh_robot_scaled = robot_scaled.vgeoms[0].vmesh.trimesh
+        assert robot_scaled.n_vgeoms == obj_scaled.n_vgeoms
 
     if show_viewer:
         scene.build()
 
-    assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    if is_isotropic:
-        assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
+    for i_vg in range(obj_orig.n_vgeoms):
+        mesh_orig = obj_orig.vgeoms[i_vg].vmesh.trimesh.copy()
+        mesh_orig.apply_transform(gu.trans_quat_to_T(obj_orig.base_link.pos, obj_orig.base_link.quat))
+        mesh_scaled = obj_scaled.vgeoms[i_vg].vmesh.trimesh.copy()
+        mesh_scaled.apply_transform(gu.trans_quat_to_T(obj_scaled.base_link.pos, obj_scaled.base_link.quat))
+        assert_allclose(mesh_orig.vertices, mesh_scaled.vertices, tol=gs.EPS)
+
+        if is_isotropic:
+            mesh_robot_scaled = robot_scaled.vgeoms[i_vg].vmesh.trimesh.copy()
+            mesh_robot_scaled.apply_transform(
+                gu.trans_quat_to_T(robot_scaled.base_link.pos, robot_scaled.base_link.quat)
+            )
+            assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
 
 
 @pytest.mark.required
