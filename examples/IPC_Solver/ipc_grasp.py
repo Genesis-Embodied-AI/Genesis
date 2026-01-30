@@ -21,10 +21,13 @@ def main():
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
             ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
+            # coupling_strategy="external_articulation",
+            disable_ipc_ground_contact=True,
+            disable_ipc_logging=False,
+            IPC_self_contact=False,
             contact_friction_mu=0.8,
-            IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
             enable_ipc_gui=args.vis_ipc,
+            newton_transrate_tol=10,
         )
         if args.ipc
         else None
@@ -33,6 +36,7 @@ def main():
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
+        rigid_options=None,
         coupler_options=coupler_options,
         show_viewer=args.vis,
     )
@@ -43,16 +47,21 @@ def main():
     scene.add_entity(gs.morphs.Plane())
 
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
     )
 
-    scene.sim.coupler.set_ipc_link_filter(
-        entity=franka,
-        link_names=["left_finger", "right_finger"],
-    )
+    if args.ipc:
+        scene.sim.coupler.set_entity_coupling_type(
+            entity=franka,
+            coupling_type="two_way_soft_constraint",
+        )
+        scene.sim.coupler.set_ipc_coupling_link_filter(
+            entity=franka,
+            link_names=["left_finger", "right_finger"],
+        )
 
     material = (
-        gs.materials.FEM.Elastic(E=5.0e3, nu=0.45, rho=1000.0, model="stable_neohookean")
+        gs.materials.FEM.Elastic(E=5.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")
         if args.ipc
         else gs.materials.Rigid()
     )
@@ -68,27 +77,46 @@ def main():
 
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
-    franka.set_qpos(qpos)
-    scene.step()
+    # qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    current_kp = franka.get_dofs_kp()
+    new_kp = current_kp
+    new_kp[fingers_dof] = current_kp[fingers_dof] * 5.0
+    franka.set_dofs_kp(new_kp)
     end_effector = franka.get_link("hand")
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.4]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+    # hold
+    for i in range(int(2 / dt)):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(np.array([0.04, 0.04]), fingers_dof)
+        scene.step()
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.array([0.65, 0.0, 0.25]),
+        quat=np.array([0, 1, 0, 0]),
+    )
+    # hold
+    for i in range(int(1 / dt)):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(np.array([0.04, 0.04]), fingers_dof)
+        scene.step()
+
     qpos = franka.inverse_kinematics(
         link=end_effector,
         pos=np.array([0.65, 0.0, 0.135]),
         quat=np.array([0, 1, 0, 0]),
     )
-    franka.control_dofs_position(qpos[:-2], motors_dof)
+
     # hold
-    for i in range(int(0.1 / dt)):
-        franka.set_qpos(qpos)
+    for i in range(int(0.5 / dt)):
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(np.array([0.04, 0.04]), fingers_dof)
         scene.step()
 
-    current_kp = franka.get_dofs_kp()
-    new_kp = current_kp
-    new_kp[fingers_dof] = current_kp[fingers_dof] * 10
-    franka.set_dofs_kp(new_kp)
-
-    print(f"New kp: {franka.get_dofs_kp()}")
+    # print(f"New kp: {franka.get_dofs_kp()}")
     # grasp
     finder_pos = 0.0
     for i in range(int(0.1 / dt)):

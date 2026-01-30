@@ -21,16 +21,12 @@ This repo shows how to use IPC coupler. (Incremental Potential Contact) algorith
    ```
  Expected: Franka Panda arm grasps and manipulates a deformable object with IPC contact resolution
 
-3. **Interactive cloth manipulation (requires trajectory data):**
+3. **Interactive cloth manipulation:**
    ```bash
    python examples/IPC_Solver/ipc_arm_cloth.py -v --ipc
    ```
-    Expected: Playback of recorded trajectory showing arm-cloth interaction
+    Expected: Interactive Franka Panda arm manipulation and manipulates two pieces of cloths
 
-   ```bash
-   python examples/IPC_Solver/ipc_twist_cloth_band.py -v
-   ```
-    Expected: four rigid cubes hold and twist a cloth band
     
 
 **Verification:**
