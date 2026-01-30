@@ -414,3 +414,80 @@ def func_potential_mesh_normals_local(
 
     return n_normals
 
+
+@ti.func
+def func_box_face_local(
+    geoms_info: array_class.GeomsInfo,
+    gjk_state: array_class.GJKState,
+    i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    i_b,
+    i_o,
+    face_idx,
+):
+    """
+    Thread-local version of func_box_face.
+
+    Get the face vertices of the box geometry using thread-local pos/quat.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (geometry size data). It does not access `geoms_state.pos` or `geoms_state.quat`.
+
+    Args:
+        geoms_info: Geometry information
+        gjk_state: GJK algorithm state (for storing contact faces)
+        i_g: Geometry index (for metadata only)
+        pos: Thread-local position of the geometry
+        quat: Thread-local quaternion of the geometry
+        i_b: Batch/environment index
+        i_o: Object index (0 or 1) - determines which vert field to write to
+        face_idx: Face index (0-5 for box faces)
+
+    Returns:
+        Number of face vertices (4 for valid face, 0 otherwise)
+    """
+    g_size_x = geoms_info.data[i_g][0]
+    g_size_y = geoms_info.data[i_g][1]
+    g_size_z = geoms_info.data[i_g][2]
+
+    # Axis to fix, 0: x, 1: y, 2: z
+    axis = face_idx // 2
+    # Side of the fixed axis, 1: positive, -1: negative
+    side = 1 - 2 * (face_idx & 1)
+
+    nface = 4 if face_idx >= 0 and face_idx < 6 else 0
+
+    vs = ti.Vector([0.0 for _ in range(3 * 4)], dt=gs.ti_float)
+    if nface:
+        for i in ti.static(range(4)):
+            b0 = i & 1
+            b1 = i >> 1
+            # +1, +1, -1, -1
+            su = 1 - 2 * b1
+            # +1, -1, -1, +1
+            sv = 1 - 2 * (b0 ^ b1)
+
+            # Flip sv based on [side]
+            sv = sv * side
+
+            s = gs.ti_vec3(0, 0, 0)
+            s[axis] = side
+            s[(axis + 1) % 3] = su
+            s[(axis + 2) % 3] = sv
+
+            vs[3 * i + 0] = s[0] * g_size_x
+            vs[3 * i + 1] = s[1] * g_size_y
+            vs[3 * i + 2] = s[2] * g_size_z
+
+    # Transform the vertices to the global coordinates
+    for i in range(nface):
+        v = gs.ti_vec3(vs[3 * i + 0], vs[3 * i + 1], vs[3 * i + 2]) * 0.5
+        v = gu.ti_transform_by_trans_quat(v, pos, quat)
+        if i_o == 0:
+            gjk_state.contact_faces[i_b, i].vert1 = v
+        else:
+            gjk_state.contact_faces[i_b, i].vert2 = v
+
+    return nface
+

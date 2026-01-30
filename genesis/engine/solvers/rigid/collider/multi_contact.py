@@ -714,54 +714,22 @@ def func_box_face(
 ):
     """
     Get the face vertices of the box geometry.
+
+    This is a thin wrapper that extracts geometry pose from global state
+    and delegates to the thread-local version for the actual computation.
     """
-    g_size_x = geoms_info.data[i_g][0]
-    g_size_y = geoms_info.data[i_g][1]
-    g_size_z = geoms_info.data[i_g][2]
-
-    # Axis to fix, 0: x, 1: y, 2: z
-    axis = face_idx // 2
-    # Side of the fixed axis, 1: positive, -1: negative
-    side = 1 - 2 * (face_idx & 1)
-
-    nface = 4 if face_idx >= 0 and face_idx < 6 else 0
-
-    vs = ti.Vector([0.0 for _ in range(3 * 4)], dt=gs.ti_float)
-    if nface:
-        for i in ti.static(range(4)):
-            b0 = i & 1
-            b1 = i >> 1
-            # +1, +1, -1, -1
-            su = 1 - 2 * b1
-            # +1, -1, -1, +1
-            sv = 1 - 2 * (b0 ^ b1)
-
-            # Flip sv based on [side]
-            sv = sv * side
-
-            s = gs.ti_vec3(0, 0, 0)
-            s[axis] = side
-            s[(axis + 1) % 3] = su
-            s[(axis + 2) % 3] = sv
-
-            vs[3 * i + 0] = s[0] * g_size_x
-            vs[3 * i + 1] = s[1] * g_size_y
-            vs[3 * i + 2] = s[2] * g_size_z
-
-    # Get geometry position and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-
-    # Transform the vertices to the global coordinates
-    for i in range(nface):
-        v = gs.ti_vec3(vs[3 * i + 0], vs[3 * i + 1], vs[3 * i + 2]) * 0.5
-        v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
-        if i_o == 0:
-            gjk_state.contact_faces[i_b, i].vert1 = v
-        else:
-            gjk_state.contact_faces[i_b, i].vert2 = v
-
-    return nface
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return multi_contact_local.func_box_face_local(
+        geoms_info,
+        gjk_state,
+        i_g,
+        pos,
+        quat,
+        i_b,
+        i_o,
+        face_idx,
+    )
 
 
 @ti.func
