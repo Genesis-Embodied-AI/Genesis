@@ -22,7 +22,7 @@ def test_ipc_cloth(n_envs, show_viewer):
             contact_friction_mu=0.3,
             IPC_self_contact=False,
             two_way_coupling=True,
-            disable_genesis_ground_contact=True,
+            disable_genesis_contact=True,
             enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
@@ -48,7 +48,7 @@ def test_ipc_cloth(n_envs, show_viewer):
             double_sided=True,
         ),
     )
-    scene.add_entity(
+    box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.2, 0.2, 0.2),
             pos=(0, 0, 0.3),
@@ -60,6 +60,10 @@ def test_ipc_cloth(n_envs, show_viewer):
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
         ),
+    )
+    scene.sim.coupler.set_entity_coupling_type(
+        entity=box,
+        coupling_type="two_way_soft_constraint",
     )
     soft_ball = scene.add_entity(
         morph=gs.morphs.Sphere(
