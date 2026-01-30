@@ -260,22 +260,6 @@ def _func_support_box(
 
 
 @ti.func
-def _func_count_supports_world(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    d,
-    i_g,
-    i_b,
-):
-    """
-    Count the number of valid support points for the given world direction.
-    """
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_count_supports_world_local(support_field_info, d, i_g, quat)
-
-
-@ti.func
 def _func_count_supports_mesh(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -323,24 +307,6 @@ def _func_count_supports_mesh(
             count += 1
 
     return count
-
-
-@ti.func
-def _func_count_supports_box(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    d,
-    i_g,
-    i_b,
-):
-    """
-    Count the number of valid support points for a box in the given direction.
-
-    If the direction has 1 zero component, there are 2 possible support points. If the direction has 2 zero
-    components, there are 4 possible support points.
-    """
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_count_supports_box_local(d, quat)
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
