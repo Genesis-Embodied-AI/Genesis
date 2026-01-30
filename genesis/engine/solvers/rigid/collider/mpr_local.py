@@ -64,9 +64,7 @@ def support_driver_local(
             v, _ = support_field._func_support_prism(collider_state, direction, i_g, i_b)
     else:
         # Mesh geometries
-        v, v_, vid = support_field_local._func_support_world_local(
-            support_field_info, direction, i_g, pos, quat
-        )
+        v, v_, vid = support_field_local._func_support_world_local(support_field_info, direction, i_g, pos, quat)
 
     return v
 

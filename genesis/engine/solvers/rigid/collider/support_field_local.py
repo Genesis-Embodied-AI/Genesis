@@ -63,8 +63,6 @@ from genesis.engine.solvers.rigid.collider.support_field import (
 )
 
 
-
-
 @ti.func
 def _func_support_world_local(
     support_field_info: array_class.SupportFieldInfo,

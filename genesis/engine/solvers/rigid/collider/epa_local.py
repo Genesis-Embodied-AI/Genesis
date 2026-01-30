@@ -476,9 +476,7 @@ def func_epa_init_polytope_3d_local(
         v = v4 if i == 0 else v5
         if gjk.func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
             flag = (
-                epa.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4
-                if i == 0
-                else epa.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
+                epa.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else epa.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
             )
             break
 
@@ -489,7 +487,9 @@ def func_epa_init_polytope_3d_local(
         tets_has_origin = gs.ti_ivec2(0, 0)
         for i in range(2):
             v = v4 if i == 0 else v5
-            tets_has_origin[i] = 1 if gjk.func_origin_tetra_intersection(v1, v2, v3, v) == gjk.RETURN_CODE.SUCCESS else 0
+            tets_has_origin[i] = (
+                1 if gjk.func_origin_tetra_intersection(v1, v2, v3, v) == gjk.RETURN_CODE.SUCCESS else 0
+            )
 
         # @TODO: It's possible for GJK to return a triangle with origin not contained in it but within tolerance
         # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but

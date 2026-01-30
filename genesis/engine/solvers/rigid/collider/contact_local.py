@@ -47,4 +47,3 @@ def func_rotate_frame_local(
 
     # Return struct with both updated values
     return ti.Struct(pos=new_pos, quat=new_quat)
-
