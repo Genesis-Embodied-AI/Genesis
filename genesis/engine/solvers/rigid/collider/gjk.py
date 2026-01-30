@@ -1237,7 +1237,9 @@ def support_mesh(
     """
     pos = geoms_state.pos[i_g, i_b]
     quat = geoms_state.quat[i_g, i_b]
-    return gjk_local.support_mesh_local(geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, pos, quat, i_b, i_o)
+    return gjk_local.support_mesh_local(
+        geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, pos, quat, i_b, i_o
+    )
 
 
 @ti.func

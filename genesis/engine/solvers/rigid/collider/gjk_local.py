@@ -991,15 +991,11 @@ def func_search_valid_simplex_vertex_local(
             id2 = geoms_info.vert_start[i_gb] + j
             for p in range(2):
                 if p == 0:
-                    obj, local_obj = func_get_discrete_geom_vertex_local(
-                        geoms_info, verts_info, i_ga, pos_a, quat_a, i
-                    )
+                    obj, local_obj = func_get_discrete_geom_vertex_local(geoms_info, verts_info, i_ga, pos_a, quat_a, i)
                     obj1 = obj
                     local_obj1 = local_obj
                 else:
-                    obj, local_obj = func_get_discrete_geom_vertex_local(
-                        geoms_info, verts_info, i_gb, pos_b, quat_b, j
-                    )
+                    obj, local_obj = func_get_discrete_geom_vertex_local(geoms_info, verts_info, i_gb, pos_b, quat_b, j)
                     obj2 = obj
                     local_obj2 = local_obj
             minkowski = obj1 - obj2
