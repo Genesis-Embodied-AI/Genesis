@@ -10,6 +10,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.solvers.rigid.collider import multi_contact
 from genesis.engine.solvers.rigid.collider.gjk import RETURN_CODE
 from genesis.utils import array_class
 
@@ -490,4 +491,147 @@ def func_box_face_local(
             gjk_state.contact_faces[i_b, i].vert2 = v
 
     return nface
+
+
+@ti.func
+def func_potential_box_normals_local(
+    geoms_info: array_class.GeomsInfo,
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    i_g,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    i_b,
+    dim,
+    v1,
+    v2,
+    v3,
+    dir,
+):
+    """
+    Thread-local version of func_potential_box_normals.
+
+    For a simplex defined on a box with three vertices [v1, v2, v3], we find which face normals are potentially
+    related to the simplex, using thread-local quat.
+
+    If the simplex is a triangle, at most one face normal is related.
+    If the simplex is a line, at most two face normals are related.
+    If the simplex is a point, at most three face normals are related.
+
+    We identify related face normals to the simplex by checking the vertex indices of the simplex.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (vertex start index). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    Note that this function only uses quat (not pos) since face normals are orientation-dependent
+    but not position-dependent.
+
+    Args:
+        geoms_info: Geometry information
+        gjk_state: GJK algorithm state (for storing contact normals)
+        gjk_info: GJK algorithm parameters
+        i_g: Geometry index (for metadata only)
+        quat: Thread-local quaternion of the geometry
+        i_b: Batch/environment index
+        dim: Dimension of the simplex (1=point, 2=line, 3=triangle)
+        v1: First vertex index
+        v2: Second vertex index
+        v3: Third vertex index
+        dir: Collision direction vector
+
+    Returns:
+        Number of face normals found
+    """
+    # Change to local vertex indices
+    v1 -= geoms_info.vert_start[i_g]
+    v2 -= geoms_info.vert_start[i_g]
+    v3 -= geoms_info.vert_start[i_g]
+
+    # Number of potential face normals
+    n_normals = 0
+
+    # Fallback if the simplex is degenerate
+    is_degenerate_simplex = False
+
+    c = 0
+    xyz = gs.ti_ivec3(0, 0, 0)
+    for i in range(3):
+        # 1 when every vertex has positive xyz coordinate,
+        # -1 when every vertex has negative xyz coordinate,
+        # 0 when vertices are mixed
+        # Import func_cmp_bit from parent module
+        xyz[i] = multi_contact.func_cmp_bit(v1, v2, v3, dim, i)
+
+    for i in range(1 if dim == 3 else 3):
+        # Determine the normal vector in the local space
+        local_n = gs.ti_vec3(xyz[0], xyz[1], xyz[2])
+        w = 1
+
+        if dim == 2:
+            w = xyz[i]
+
+        if dim == 2 or dim == 1:
+            local_n = gs.ti_vec3(0, 0, 0)
+            local_n[i] = xyz[i]
+
+        global_n = gu.ti_transform_by_quat(local_n, quat)
+
+        if dim == 3:
+            gjk_state.contact_normals[i_b, 0].normal = global_n
+
+            # Note that only one of [x, y, z] could be non-zero, because the triangle is on the box face.
+            sgn = xyz.sum()
+            for j in range(3):
+                if xyz[j]:
+                    gjk_state.contact_normals[i_b, c].id = j * 2
+                    c += 1
+
+            if sgn == -1:
+                # Flip if needed
+                gjk_state.contact_normals[i_b, 0].id = gjk_state.contact_normals[i_b, 0].id + 1
+
+        elif dim == 2:
+            if w:
+                if (i == 0) or (i == 1):
+                    gjk_state.contact_normals[i_b, c].normal = global_n
+                else:
+                    gjk_state.contact_normals[i_b, 1].normal = global_n
+
+                for j in range(3):
+                    if i == j:
+                        gjk_state.contact_normals[i_b, c].id = j * 2 if xyz[j] > 0 else j * 2 + 1
+                        break
+
+                c += 1
+
+        elif dim == 1:
+            gjk_state.contact_normals[i_b, c].normal = global_n
+
+            for j in range(3):
+                if i == j:
+                    gjk_state.contact_normals[i_b, c].id = j * 2 if xyz[j] > 0 else j * 2 + 1
+                    break
+            c += 1
+
+    # Check [c] for detecting degenerate cases
+    if dim == 3:
+        # [c] should be 1 in normal case, but if triangle does not lie on the box face, it could be other values.
+        n_normals = 1
+        is_degenerate_simplex = c != 1
+    elif dim == 2:
+        # [c] should be 2 in normal case, but if edge does not lie on the box edge, it could be other values.
+        n_normals = 2
+        is_degenerate_simplex = c != 2
+    elif dim == 1:
+        n_normals = 3
+        is_degenerate_simplex = False
+
+    # If the simplex was degenerate, find the face normal using collision normal
+    if is_degenerate_simplex:
+        n_normals = (
+            1
+            if func_box_normal_from_collision_normal_local(gjk_state, gjk_info, i_g, quat, i_b, dir)
+            == multi_contact.RETURN_CODE.SUCCESS
+            else 0
+        )
+
+    return n_normals
 
