@@ -490,115 +490,36 @@ def func_gjk_intersect(
     i_b,
 ):
     """
-    Check if the two objects intersect using the GJK algorithm.
+    Check if two objects intersect using the GJK algorithm.
 
-    This function refines the simplex until it contains the origin or it is determined that the objects are
-    separated. It is used to check if the objects intersect, not to find the minimum distance between them.
+    This is a thin wrapper that extracts geometry poses from global state
+    and delegates to the thread-local version for the actual computation.
+
+    This function refines the simplex until it contains the origin or it is determined
+    that the objects are separated. It is used to check if objects intersect, not to
+    find the minimum distance between them.
     """
-    # Copy simplex to temporary storage
-    for i in ti.static(range(4)):
-        gjk_state.simplex_vertex_intersect.obj1[i_b, i] = gjk_state.simplex_vertex.obj1[i_b, i]
-        gjk_state.simplex_vertex_intersect.obj2[i_b, i] = gjk_state.simplex_vertex.obj2[i_b, i]
-        gjk_state.simplex_vertex_intersect.id1[i_b, i] = gjk_state.simplex_vertex.id1[i_b, i]
-        gjk_state.simplex_vertex_intersect.id2[i_b, i] = gjk_state.simplex_vertex.id2[i_b, i]
-        gjk_state.simplex_vertex_intersect.mink[i_b, i] = gjk_state.simplex_vertex.mink[i_b, i]
-
-    # Simplex index
-    si = ti.Vector([0, 1, 2, 3], dt=gs.ti_int)
-
-    flag = GJK_RETURN_CODE.NUM_ERROR
-    for i in range(gjk_info.gjk_max_iterations[None]):
-        # Compute normal and signed distance of the triangle faces of the simplex with respect to the origin.
-        # These normals are supposed to point outwards from the simplex.
-        # If the origin is inside the plane, [sdist] will be positive.
-        is_sdist_all_zero = True
-        for j in range(4):
-            s0, s1, s2 = si[2], si[1], si[3]
-            if j == 1:
-                s0, s1, s2 = si[0], si[2], si[3]
-            elif j == 2:
-                s0, s1, s2 = si[1], si[0], si[3]
-            elif j == 3:
-                s0, s1, s2 = si[0], si[1], si[2]
-
-            n, s = func_gjk_triangle_info(gjk_state, gjk_info, i_b, s0, s1, s2)
-
-            gjk_state.simplex_buffer_intersect.normal[i_b, j] = n
-            gjk_state.simplex_buffer_intersect.sdist[i_b, j] = s
-
-            if ti.abs(s) > gjk_info.FLOAT_MIN[None]:
-                is_sdist_all_zero = False
-
-        # If the origin is strictly on any affine hull of the faces, convergence will fail, so ignore this case
-        if is_sdist_all_zero:
-            break
-
-        # Find the face with the smallest signed distance. We need to find [min_i] for the next iteration.
-        min_i = 0
-        for j in ti.static(range(1, 4)):
-            if gjk_state.simplex_buffer_intersect.sdist[i_b, j] < gjk_state.simplex_buffer_intersect.sdist[i_b, min_i]:
-                min_i = j
-
-        min_si = si[min_i]
-        min_normal = gjk_state.simplex_buffer_intersect.normal[i_b, min_i]
-        min_sdist = gjk_state.simplex_buffer_intersect.sdist[i_b, min_i]
-
-        # If origin is inside the simplex, the signed distances will all be positive
-        if min_sdist >= 0:
-            # Origin is inside the simplex, so we can stop
-            flag = GJK_RETURN_CODE.INTERSECT
-
-            # Copy the temporary simplex to the main simplex
-            for j in ti.static(range(4)):
-                gjk_state.simplex_vertex.obj1[i_b, j] = gjk_state.simplex_vertex_intersect.obj1[i_b, si[j]]
-                gjk_state.simplex_vertex.obj2[i_b, j] = gjk_state.simplex_vertex_intersect.obj2[i_b, si[j]]
-                gjk_state.simplex_vertex.id1[i_b, j] = gjk_state.simplex_vertex_intersect.id1[i_b, si[j]]
-                gjk_state.simplex_vertex.id2[i_b, j] = gjk_state.simplex_vertex_intersect.id2[i_b, si[j]]
-                gjk_state.simplex_vertex.mink[i_b, j] = gjk_state.simplex_vertex_intersect.mink[i_b, si[j]]
-            break
-
-        # Replace the worst vertex (which has the smallest signed distance) with new candidate
-        (
-            gjk_state.simplex_vertex_intersect.obj1[i_b, min_si],
-            gjk_state.simplex_vertex_intersect.obj2[i_b, min_si],
-            gjk_state.simplex_vertex_intersect.local_obj1[i_b, min_si],
-            gjk_state.simplex_vertex_intersect.local_obj2[i_b, min_si],
-            gjk_state.simplex_vertex_intersect.id1[i_b, min_si],
-            gjk_state.simplex_vertex_intersect.id2[i_b, min_si],
-            gjk_state.simplex_vertex_intersect.mink[i_b, min_si],
-        ) = func_support(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            min_normal,
-            False,
-        )
-
-        # Check if the origin is strictly outside of the Minkowski difference (which means there is no collision)
-        new_minkowski = gjk_state.simplex_vertex_intersect.mink[i_b, min_si]
-
-        is_no_collision = new_minkowski.dot(min_normal) < 0
-        if is_no_collision:
-            flag = GJK_RETURN_CODE.SEPARATED
-            break
-
-        # Swap vertices in the simplex to retain orientation
-        m = (min_i + 1) % 4
-        n = (min_i + 2) % 4
-        swap = si[m]
-        si[m] = si[n]
-        si[n] = swap
-
-    return flag
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return gjk_local.func_gjk_intersect_local(
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        i_b,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+    )
 
 
 @ti.func
