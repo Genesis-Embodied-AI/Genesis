@@ -122,23 +122,6 @@ def _kernel_init_support(
 
 
 @ti.func
-def _func_support_world(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    d,
-    i_g,
-    i_b,
-):
-    """
-    support position for a world direction
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_support_world_local(support_field_info, d, i_g, pos, quat)
-
-
-@ti.func
 def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh, i_g):
     """
     support point at mesh frame coordinate.
@@ -181,47 +164,6 @@ def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh,
             vid = _vid
 
     return v, vid
-
-
-@ti.func
-def _func_support_sphere(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    d,
-    i_g,
-    i_b,
-    shrink,
-):
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_support_sphere_local(geoms_info, d, i_g, pos, quat, shrink)
-
-
-@ti.func
-def _func_support_ellipsoid(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    d,
-    i_g,
-    i_b,
-):
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_support_ellipsoid_local(geoms_info, d, i_g, pos, quat)
-
-
-@ti.func
-def _func_support_capsule(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    d,
-    i_g,
-    i_b,
-    shrink,
-):
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_support_capsule_local(geoms_info, d, i_g, pos, quat, shrink)
 
 
 @ti.func
