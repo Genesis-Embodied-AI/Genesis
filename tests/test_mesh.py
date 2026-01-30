@@ -2,6 +2,7 @@ import os
 import platform
 from contextlib import nullcontext
 
+import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import trimesh
@@ -153,6 +154,146 @@ def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("scale", [(2.0, 3.0, 5.0), (2.0, 2.0, 2.0)])
+@pytest.mark.parametrize(
+    "mesh_file, file_meshes_are_zup",
+    [("meshes/camera/camera.glb", False), ("meshes/axis.obj", True)],
+)
+def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_path):
+    urdf_path = tmp_path / "model.urdf"
+    urdf_path.write_text(
+        f"""<robot name="cannon">
+              <link name="base">
+                <visual>
+                  <geometry><mesh filename="{mu.get_asset_path(mesh_file)}"/></geometry>
+                </visual>
+              </link>
+            </robot>
+         """
+    )
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    obj_orig = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=mesh_file,
+            pos=(0, 0, 1.0),
+            scale=(1.0, 1.0, 1.0),
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    mesh_orig = obj_orig.vgeoms[0].vmesh.trimesh
+    obj_scaled = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=mesh_file,
+            pos=(0, 0, 1.0),
+            scale=scale,
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    mesh_scaled = obj_scaled.vgeoms[0].vmesh.trimesh
+
+    is_isotropic = np.unique(scale).size == 1
+    with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
+        robot_scaled = scene.add_entity(
+            gs.morphs.URDF(
+                file=urdf_path,
+                convexify=False,
+                fixed=True,
+                scale=scale,
+                file_meshes_are_zup=file_meshes_are_zup,
+            ),
+        )
+        mesh_robot_scaled = robot_scaled.vgeoms[0].vmesh.trimesh
+
+    if show_viewer:
+        scene.build()
+
+    assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
+    if is_isotropic:
+        assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_obj_morphes_yup(show_viewer):
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    asset_path = get_hf_dataset(pattern="yup_zup_coverage/*")
+
+    glb_y = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_y.glb",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=False,
+        ),
+    )
+    glb_geom_y = glb_y.vgeoms[0]
+    glb_z = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_z.glb",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=True,
+        ),
+    )
+    glb_geom_z = glb_z.vgeoms[0]
+    stl_y = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.stl",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=False,
+        ),
+    )
+    stl_geom_y = stl_y.vgeoms[0]
+    stl_z = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_z_y.stl",
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    stl_geom_z = stl_z.vgeoms[0]
+    obj_y = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.obj",
+            convexify=False,
+            fixed=True,
+            file_meshes_are_zup=False,
+        ),
+    )
+    obj_geom_y = obj_y.vgeoms[0]
+    obj_z = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/yup_zup_coverage/cannon_z_y.obj",
+            convexify=False,
+            fixed=True,
+        ),
+    )
+    obj_geom_z = obj_z.vgeoms[0]
+
+    if show_viewer:
+        scene.build()
+
+    assert not glb_geom_y.vmesh.metadata["imported_as_zup"]
+    assert not glb_geom_z.vmesh.metadata["imported_as_zup"]
+    assert not stl_geom_y.vmesh.metadata["imported_as_zup"]
+    assert stl_geom_z.vmesh.metadata["imported_as_zup"]
+    assert not obj_geom_y.vmesh.metadata["imported_as_zup"]
+    assert obj_geom_z.vmesh.metadata["imported_as_zup"]
+
+    for geom in (glb_geom_y, glb_geom_z, stl_geom_y, stl_geom_z, obj_geom_y, obj_geom_z):
+        mesh = geom.vmesh.copy()
+        mesh.apply_transform(gu.trans_quat_to_T(geom.link.pos, geom.link.quat))
+        assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+
+
+# ==================== GLTF Tests ====================
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file, tol):
@@ -259,6 +400,9 @@ def test_glb_parse_material(glb_file):
             )
 
 
+# ==================== URDF Tests ====================
+
+
 @pytest.mark.required
 @pytest.mark.parametrize(
     "mesh_file, file_meshes_are_zup",
@@ -293,143 +437,6 @@ def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
         scene.build()
 
     assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
-
-
-@pytest.mark.required
-def test_obj_morphes_yup(show_viewer):
-    scene = gs.Scene(show_viewer=show_viewer)
-
-    asset_path = get_hf_dataset(pattern="yup_zup_coverage/*")
-
-    glb_y = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/yup_zup_coverage/cannon_y.glb",
-            convexify=False,
-            fixed=True,
-            file_meshes_are_zup=False,
-        ),
-    )
-    glb_geom_y = glb_y.vgeoms[0]
-    glb_z = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/yup_zup_coverage/cannon_z.glb",
-            convexify=False,
-            fixed=True,
-            file_meshes_are_zup=True,
-        ),
-    )
-    glb_geom_z = glb_z.vgeoms[0]
-    stl_y = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.stl",
-            convexify=False,
-            fixed=True,
-            file_meshes_are_zup=False,
-        ),
-    )
-    stl_geom_y = stl_y.vgeoms[0]
-    stl_z = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/yup_zup_coverage/cannon_z_y.stl",
-            convexify=False,
-            fixed=True,
-        ),
-    )
-    stl_geom_z = stl_z.vgeoms[0]
-    obj_y = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.obj",
-            convexify=False,
-            fixed=True,
-            file_meshes_are_zup=False,
-        ),
-    )
-    obj_geom_y = obj_y.vgeoms[0]
-    obj_z = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/yup_zup_coverage/cannon_z_y.obj",
-            convexify=False,
-            fixed=True,
-        ),
-    )
-    obj_geom_z = obj_z.vgeoms[0]
-
-    if show_viewer:
-        scene.build()
-
-    assert not glb_geom_y.vmesh.metadata["imported_as_zup"]
-    assert not glb_geom_z.vmesh.metadata["imported_as_zup"]
-    assert not stl_geom_y.vmesh.metadata["imported_as_zup"]
-    assert stl_geom_z.vmesh.metadata["imported_as_zup"]
-    assert not obj_geom_y.vmesh.metadata["imported_as_zup"]
-    assert obj_geom_z.vmesh.metadata["imported_as_zup"]
-
-    for geom in (glb_geom_y, glb_geom_z, stl_geom_y, stl_geom_z, obj_geom_y, obj_geom_z):
-        mesh = geom.vmesh.copy()
-        mesh.apply_transform(gu.trans_quat_to_T(geom.link.pos, geom.link.quat))
-        assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("scale", [(2.0, 3.0, 5.0), (2.0, 2.0, 2.0)])
-@pytest.mark.parametrize(
-    "mesh_file, file_meshes_are_zup",
-    [("meshes/camera/camera.glb", False), ("meshes/axis.obj", True)],
-)
-def test_morph_scale(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_path):
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="cannon">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{mu.get_asset_path(mesh_file)}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-
-    scene = gs.Scene(show_viewer=show_viewer)
-    obj_orig = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=mesh_file,
-            pos=(0, 0, 1.0),
-            scale=(1.0, 1.0, 1.0),
-            convexify=False,
-            fixed=True,
-        ),
-    )
-    mesh_orig = obj_orig.vgeoms[0].vmesh.trimesh
-    obj_scaled = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=mesh_file,
-            pos=(0, 0, 1.0),
-            scale=scale,
-            convexify=False,
-            fixed=True,
-        ),
-    )
-    mesh_scaled = obj_scaled.vgeoms[0].vmesh.trimesh
-
-    is_isotropic = np.unique(scale).size == 1
-    with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
-        robot_scaled = scene.add_entity(
-            gs.morphs.URDF(
-                file=urdf_path,
-                convexify=False,
-                fixed=True,
-                scale=scale,
-                file_meshes_are_zup=file_meshes_are_zup,
-            ),
-        )
-        mesh_robot_scaled = robot_scaled.vgeoms[0].vmesh.trimesh
-
-    if show_viewer:
-        scene.build()
-
-    assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    if is_isotropic:
-        assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
 
 
 @pytest.mark.required
@@ -569,6 +576,116 @@ def test_urdf_scaling(mesh_file, tmp_path, show_viewer):
     mesh_2 = obj_2.vgeoms[0].vmesh.trimesh
 
     assert_allclose(SCALE_FACTOR * mesh_1.extents, mesh_2.extents, tol=gs.EPS)
+
+
+# ==================== MJCF Tests ====================
+
+
+@pytest.fixture
+def material_mjcf(tmp_path):
+    """
+    Generate an MJCF model with materials and geom-level colors.
+    Tests both material-level rgba/specular/shininess and geom-level rgba.
+    """
+    mjcf = ET.Element("mujoco", model="materials")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "joint", armature="0.0")
+
+    # Define materials with different properties (at top level, not in default)
+    asset = ET.SubElement(mjcf, "asset")
+    ET.SubElement(
+        asset,
+        "material",
+        name="red_material",
+        rgba="1.0 0.0 0.0 0.6",
+        specular="0.5",
+        shininess="0.3",
+    )
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
+    ET.SubElement(floor, "geom", type="plane", pos="0. 0. 0.", size="40. 40. 40.")
+
+    # Box with red material (material-level rgba)
+    box1 = ET.SubElement(worldbody, "body", name="/worldbody/box1", pos="-0.3 0. 0.3")
+    ET.SubElement(
+        box1,
+        "geom",
+        type="box",
+        size="0.2 0.2 0.2",
+        pos="0. 0. 0.",
+        material="red_material",
+        contype="0",
+        conaffinity="0",
+    )
+    ET.SubElement(box1, "joint", name="/worldbody/box1_joint", type="free")
+
+    # Box with geom-level rgba (no material, tests geom-level color)
+    box2 = ET.SubElement(worldbody, "body", name="/worldbody/box2", pos="0.0 0. 0.6")
+    ET.SubElement(
+        box2,
+        "geom",
+        type="box",
+        size="0.2 0.2 0.2",
+        pos="0. 0. 0.",
+        rgba="0.0 1.0 0.0 1.0",
+        contype="0",
+        conaffinity="0",
+    )
+    ET.SubElement(box2, "joint", name="/worldbody/box2_joint", type="free")
+
+    # Write to temporary file
+    xml_tree = ET.ElementTree(mjcf)
+    file_path = str(tmp_path / "material_mjcf.xml")
+    xml_tree.write(file_path, encoding="utf-8", xml_declaration=True)
+    return file_path
+
+
+@pytest.mark.parametrize("precision", ["32"])
+def test_mjcf_parse_material(material_mjcf, tol):
+    """
+    Test that MJCF materials and geom colors are correctly parsed.
+    Tests:
+    - Material-level rgba → diffuse color
+    - Geom-level rgba → diffuse color (when no material)
+    - Material shininess → glossiness → roughness conversion
+    """
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=material_mjcf,
+            scale=1.0,
+            convexify=False,
+        ),
+        material=gs.materials.Rigid(rho=1000.0),
+    )
+    scene.build()
+
+    # Find boxes by their names
+    box1_vgeom = None
+    box2_vgeom = None
+    for link in entity.links:
+        if link.name == "/worldbody/box1":
+            box1_vgeom = link.vgeoms[0]
+        elif link.name == "/worldbody/box2":
+            box2_vgeom = link.vgeoms[0]
+    assert box1_vgeom is not None, "box1 not found"
+    assert box2_vgeom is not None, "box2 not found"
+
+    # Check red material (box1) - material-level rgba
+    box1_surface = box1_vgeom.vmesh.surface
+    box1_roughness = mu.glossiness_to_roughness(0.3 * 128.0)
+    check_gs_textures(
+        box1_surface.diffuse_texture, gs.textures.ColorTexture(color=(1.0, 0.0, 0.0)), 1.0, "box1", "color"
+    )
+    check_gs_textures(box1_surface.roughness_texture, None, box1_roughness, "box1", "roughness")
+    check_gs_textures(box1_surface.opacity_texture, None, 0.6, "box1", "opacity")
+
+    box2_surface = box2_vgeom.vmesh.surface
+    check_gs_textures(
+        box2_surface.diffuse_texture, gs.textures.ColorTexture(color=(0.0, 1.0, 0.0)), 1.0, "box2", "color"
+    )
+    check_gs_textures(box2_surface.opacity_texture, None, 1.0, "box2", "opacity")
 
 
 @pytest.mark.required

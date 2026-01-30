@@ -747,8 +747,8 @@ def png_snapshot(request, snapshot):
     snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
     snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
 
-    must_update_snapshop = request.config.getoption("--snapshot-update")
-    if must_update_snapshop:
+    must_update_snapshot = request.config.getoption("--snapshot-update")
+    if must_update_snapshot:
         for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
             assert path.is_file()
             path.unlink()
