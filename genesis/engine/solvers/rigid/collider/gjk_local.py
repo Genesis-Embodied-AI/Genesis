@@ -1239,25 +1239,14 @@ def func_count_support_local(
     """
     count = 1
     for i in range(2):
-        if i == 0:
-            count *= count_support_driver_local(
-                geoms_info,
-                support_field_info,
-                dir,
-                i_ga,
-                pos_a,
-                quat_a,
-                i_b,
-            )
-        else:
-            count *= count_support_driver_local(
-                geoms_info,
-                support_field_info,
-                -dir,
-                i_gb,
-                pos_b,
-                quat_b,
-                i_b,
-            )
+        count *= count_support_driver_local(
+            geoms_info,
+            support_field_info,
+            dir if i == 0 else -dir,
+            i_ga if i == 0 else i_gb,
+            pos_a if i == 0 else pos_b,
+            quat_a if i == 0 else quat_b,
+            i_b,
+        )
 
     return count
