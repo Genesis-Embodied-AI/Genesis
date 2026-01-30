@@ -274,3 +274,587 @@ def guess_geoms_center_local(
                     center_b = center_b - dir_offset * length_b * offset_ratio
 
     return center_a, center_b
+
+
+@ti.func
+def mpr_discover_portal_local(
+    geoms_info: array_class.GeomsInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    center_a,
+    center_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Thread-local version of mpr_discover_portal.
+
+    Discovers the initial portal (simplex) for MPR algorithm, which is used
+    to determine if two geometries are colliding and to find the collision normal.
+
+    This function builds up the MPR simplex by iteratively finding support points
+    until it constructs a tetrahedron (4-simplex) that encloses the origin.
+
+    Args:
+        geoms_info: Geometry information
+        support_field_info: Pre-computed support field data
+        collider_state: Collider state (for terrain)
+        collider_static_config: Static configuration
+        mpr_state: MPR algorithm state (simplex, etc.)
+        mpr_info: MPR algorithm parameters (tolerances, iteration limits)
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        center_a: Center point for first geometry
+        center_b: Center point for second geometry
+        pos_a: First geometry position (thread-local, 28 bytes)
+        quat_a: First geometry quaternion (thread-local, 28 bytes)
+        pos_b: Second geometry position (thread-local, 28 bytes)
+        quat_b: Second geometry quaternion (thread-local, 28 bytes)
+
+    Returns:
+        ret: Status code (-1: no collision, 0: portal found, 1: touching, 2: segment)
+    """
+    from genesis.engine.solvers.rigid.collider.mpr import mpr_swap
+
+    mpr_state.simplex_support.v1[0, i_b] = center_a
+    mpr_state.simplex_support.v2[0, i_b] = center_b
+    mpr_state.simplex_support.v[0, i_b] = center_a - center_b
+    mpr_state.simplex_size[i_b] = 1
+
+    if (ti.abs(mpr_state.simplex_support.v[0, i_b]) < mpr_info.CCD_EPS[None]).all():
+        mpr_state.simplex_support.v[0, i_b][0] += 10.0 * mpr_info.CCD_EPS[None]
+
+    direction = -mpr_state.simplex_support.v[0, i_b].normalized()
+
+    v, v1, v2 = compute_support_local(
+        geoms_info,
+        collider_state,
+        collider_static_config,
+        support_field_info,
+        direction,
+        i_ga,
+        i_gb,
+        i_b,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+    )
+
+    mpr_state.simplex_support.v1[1, i_b] = v1
+    mpr_state.simplex_support.v2[1, i_b] = v2
+    mpr_state.simplex_support.v[1, i_b] = v
+    mpr_state.simplex_size[i_b] = 2
+
+    dot = v.dot(direction)
+
+    ret = 0
+    if dot < mpr_info.CCD_EPS[None]:
+        ret = -1
+    else:
+        direction = mpr_state.simplex_support.v[0, i_b].cross(mpr_state.simplex_support.v[1, i_b])
+        if direction.dot(direction) < mpr_info.CCD_EPS[None]:
+            if (ti.abs(mpr_state.simplex_support.v[1, i_b]) < mpr_info.CCD_EPS[None]).all():
+                ret = 1
+            else:
+                ret = 2
+        else:
+            direction = direction.normalized()
+            v, v1, v2 = compute_support_local(
+                geoms_info,
+                collider_state,
+                collider_static_config,
+                support_field_info,
+                direction,
+                i_ga,
+                i_gb,
+                i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+            )
+            dot = v.dot(direction)
+            if dot < mpr_info.CCD_EPS[None]:
+                ret = -1
+            else:
+                mpr_state.simplex_support.v1[2, i_b] = v1
+                mpr_state.simplex_support.v2[2, i_b] = v2
+                mpr_state.simplex_support.v[2, i_b] = v
+                mpr_state.simplex_size[i_b] = 3
+
+                va = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
+                vb = mpr_state.simplex_support.v[2, i_b] - mpr_state.simplex_support.v[0, i_b]
+                direction = va.cross(vb)
+                direction = direction.normalized()
+
+                dot = direction.dot(mpr_state.simplex_support.v[0, i_b])
+                if dot > 0:
+                    mpr_swap(mpr_state, 1, 2, i_ga, i_gb, i_b)
+                    direction = -direction
+
+                # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
+                # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
+                # Since this deadlock happens very rarely, a simple fix is to abort computation after a few trials.
+                num_trials = gs.ti_int(0)
+                while mpr_state.simplex_size[i_b] < 4:
+                    v, v1, v2 = compute_support_local(
+                        geoms_info,
+                        collider_state,
+                        collider_static_config,
+                        support_field_info,
+                        direction,
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
+                    )
+                    dot = v.dot(direction)
+                    if dot < mpr_info.CCD_EPS[None]:
+                        ret = -1
+                        break
+
+                    cont = False
+
+                    va = mpr_state.simplex_support.v[1, i_b].cross(v)
+                    dot = va.dot(mpr_state.simplex_support.v[0, i_b])
+                    if dot < -mpr_info.CCD_EPS[None]:
+                        mpr_state.simplex_support.v1[2, i_b] = v1
+                        mpr_state.simplex_support.v2[2, i_b] = v2
+                        mpr_state.simplex_support.v[2, i_b] = v
+                        cont = True
+
+                    if not cont:
+                        va = v.cross(mpr_state.simplex_support.v[2, i_b])
+                        dot = va.dot(mpr_state.simplex_support.v[0, i_b])
+                        if dot < -mpr_info.CCD_EPS[None]:
+                            mpr_state.simplex_support.v1[1, i_b] = v1
+                            mpr_state.simplex_support.v2[1, i_b] = v2
+                            mpr_state.simplex_support.v[1, i_b] = v
+                            cont = True
+
+                    if cont:
+                        va = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
+                        vb = mpr_state.simplex_support.v[2, i_b] - mpr_state.simplex_support.v[0, i_b]
+                        direction = va.cross(vb)
+                        direction = direction.normalized()
+                        num_trials = num_trials + 1
+                        if num_trials == 15:
+                            ret = -1
+                            break
+                    else:
+                        mpr_state.simplex_support.v1[3, i_b] = v1
+                        mpr_state.simplex_support.v2[3, i_b] = v2
+                        mpr_state.simplex_support.v[3, i_b] = v
+                        mpr_state.simplex_size[i_b] = 4
+
+    return ret
+
+
+@ti.func
+def mpr_refine_portal_local(
+    geoms_info: array_class.GeomsInfo,
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Thread-local version of mpr_refine_portal.
+
+    Refines the MPR portal by iteratively expanding it towards the origin
+    of the Minkowski difference. This is the main iteration loop of MPR.
+
+    Args:
+        geoms_info: Geometry information
+        collider_state: Collider state (for terrain)
+        collider_static_config: Static configuration
+        mpr_state: MPR algorithm state (simplex, etc.)
+        mpr_info: MPR algorithm parameters (tolerances, iteration limits)
+        support_field_info: Pre-computed support field data
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        pos_a: First geometry position (thread-local, 28 bytes)
+        quat_a: First geometry quaternion (thread-local, 28 bytes)
+        pos_b: Second geometry position (thread-local, 28 bytes)
+        quat_b: Second geometry quaternion (thread-local, 28 bytes)
+
+    Returns:
+        ret: Status code (-1: refinement failed, >=0: success)
+    """
+    from genesis.engine.solvers.rigid.collider.mpr import mpr_expand_portal, mpr_portal_dir, mpr_portal_can_enclosing_origin
+
+    for i in range(mpr_info.REFINE_ITERATIONS[None]):
+        direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
+        v, v1, v2 = compute_support_local(
+            geoms_info,
+            collider_state,
+            collider_static_config,
+            support_field_info,
+            direction,
+            i_ga,
+            i_gb,
+            i_b,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+        )
+
+        if not mpr_portal_can_enclosing_origin(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b):
+            return -1
+
+        mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
+
+        if mpr_portal_dir(mpr_state, i_ga, i_gb, i_b).norm() < mpr_info.CCD_EPS[None]:
+            break
+
+    return 0
+
+
+@ti.func
+def mpr_find_penetration_local(
+    geoms_info: array_class.GeomsInfo,
+    static_rigid_sim_config: ti.template(),
+    support_field_info: array_class.SupportFieldInfo,
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Thread-local version of mpr_find_penetration.
+
+    Finds the penetration depth and contact information after the portal has
+    been refined. This is the final step of MPR collision detection.
+
+    Args:
+        geoms_info: Geometry information
+        static_rigid_sim_config: Static simulation configuration
+        support_field_info: Pre-computed support field data
+        collider_state: Collider state (for terrain)
+        collider_static_config: Static configuration
+        mpr_state: MPR algorithm state (simplex, etc.)
+        mpr_info: MPR algorithm parameters (tolerances, iteration limits)
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        pos_a: First geometry position (thread-local, 28 bytes)
+        quat_a: First geometry quaternion (thread-local, 28 bytes)
+        pos_b: Second geometry position (thread-local, 28 bytes)
+        quat_b: Second geometry quaternion (thread-local, 28 bytes)
+
+    Returns:
+        is_col: True if collision detected
+        normal: Contact normal in world space
+        penetration: Penetration depth
+        pos: Contact position in world space
+    """
+    from genesis.engine.solvers.rigid.collider.mpr import (
+        mpr_expand_portal,
+        mpr_find_pos,
+        mpr_point_tri_depth,
+        mpr_portal_dir,
+        mpr_portal_reach_tolerance,
+    )
+
+    iterations = 0
+
+    is_col = False
+    pos = gs.ti_vec3([0.0, 0.0, 0.0])
+    normal = gs.ti_vec3([0.0, 0.0, 0.0])
+    penetration = gs.ti_float(0.0)
+
+    while True:
+        direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
+        v, v1, v2 = compute_support_local(
+            geoms_info,
+            collider_state,
+            collider_static_config,
+            support_field_info,
+            direction,
+            i_ga,
+            i_gb,
+            i_b,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+        )
+        if (
+            mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
+            or iterations > mpr_info.CCD_ITERATIONS[None]
+        ):
+            # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
+            # to the origin that lies inside the portal.
+            # Let's consider the portal as an infinite plane rather than a face triangle. This makes sense because
+            # the projection of the origin must be strictly included into the portal triangle for it to correspond
+            # to the true penetration depth.
+            # For reference about this property, see 'Collision Handling with Variable-Step Integrators' Theorem 4.2:
+            # https://modiasim.github.io/Modia3D.jl/resources/documentation/CollisionHandling_Neumayr_Otter_2017.pdf
+            #
+            # In theory, the center should have been shifted until to end up with the one and only portal satisfying
+            # this condition. However, a naive implementation of this process must be avoided because it would be
+            # very costly. In practice, assuming the portal is infinite provides a decent approximation of the true
+            # penetration depth (it is actually a lower-bound estimate according to Theorem 4.3) and normal without
+            # requiring any additional computations.
+            # See: https://github.com/danfis/libccd/issues/71#issuecomment-660415008
+            #
+            # An improved version of MPR has been proposed to find the right portal in an efficient way.
+            # See: https://arxiv.org/pdf/2304.07357
+            # Implementation: https://github.com/weigao95/mind-fcl/blob/main/include/fcl/cvx_collide/mpr.h
+            #
+            # The original paper introducing MPR algorithm is available here:
+            # https://archive.org/details/game-programming-gems-7
+            if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
+                penetration, pdir = mpr_point_tri_depth(
+                    mpr_info,
+                    gs.ti_vec3([0.0, 0.0, 0.0]),
+                    mpr_state.simplex_support.v[1, i_b],
+                    mpr_state.simplex_support.v[2, i_b],
+                    mpr_state.simplex_support.v[3, i_b],
+                )
+                normal = -pdir.normalized()
+            else:
+                penetration = direction.dot(mpr_state.simplex_support.v[1, i_b])
+                normal = -direction
+
+            is_col = True
+            pos = mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_info, i_ga, i_gb, i_b)
+            break
+
+        mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
+        iterations += 1
+
+    return is_col, normal, penetration, pos
+
+
+@ti.func
+def func_mpr_contact_from_centers_local(
+    geoms_info: array_class.GeomsInfo,
+    static_rigid_sim_config: ti.template(),
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    center_a,
+    center_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Thread-local version of func_mpr_contact_from_centers.
+
+    Performs MPR collision detection given pre-computed geometry centers.
+    This is the main MPR algorithm orchestrator.
+
+    Args:
+        geoms_info: Geometry information
+        static_rigid_sim_config: Static simulation configuration
+        collider_state: Collider state (for terrain)
+        collider_static_config: Static configuration
+        mpr_state: MPR algorithm state (simplex, etc.)
+        mpr_info: MPR algorithm parameters
+        support_field_info: Pre-computed support field data
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        center_a: Center point for first geometry
+        center_b: Center point for second geometry
+        pos_a: First geometry position (thread-local, 28 bytes)
+        quat_a: First geometry quaternion (thread-local, 28 bytes)
+        pos_b: Second geometry position (thread-local, 28 bytes)
+        quat_b: Second geometry quaternion (thread-local, 28 bytes)
+
+    Returns:
+        is_col: True if collision detected
+        normal: Contact normal in world space
+        penetration: Penetration depth
+        pos: Contact position in world space
+    """
+    from genesis.engine.solvers.rigid.collider.mpr import mpr_find_penetr_segment, mpr_find_penetr_touch
+
+    res = mpr_discover_portal_local(
+        geoms_info=geoms_info,
+        support_field_info=support_field_info,
+        collider_state=collider_state,
+        collider_static_config=collider_static_config,
+        mpr_state=mpr_state,
+        mpr_info=mpr_info,
+        i_ga=i_ga,
+        i_gb=i_gb,
+        i_b=i_b,
+        center_a=center_a,
+        center_b=center_b,
+        pos_a=pos_a,
+        quat_a=quat_a,
+        pos_b=pos_b,
+        quat_b=quat_b,
+    )
+
+    is_col = False
+    pos = gs.ti_vec3([0.0, 0.0, 0.0])
+    normal = gs.ti_vec3([0.0, 0.0, 0.0])
+    penetration = gs.ti_float(0.0)
+
+    if res == 1:
+        is_col, normal, penetration, pos = mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
+    elif res == 2:
+        is_col, normal, penetration, pos = mpr_find_penetr_segment(mpr_state, i_ga, i_gb, i_b)
+    elif res == 0:
+        res = mpr_refine_portal_local(
+            geoms_info,
+            collider_state,
+            collider_static_config,
+            mpr_state,
+            mpr_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            i_b,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+        )
+        if res >= 0:
+            is_col, normal, penetration, pos = mpr_find_penetration_local(
+                geoms_info,
+                static_rigid_sim_config,
+                support_field_info,
+                collider_state,
+                collider_static_config,
+                mpr_state,
+                mpr_info,
+                i_ga,
+                i_gb,
+                i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+            )
+    return is_col, normal, penetration, pos
+
+
+@ti.func
+def func_mpr_contact_local(
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    normal_ws,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Thread-local version of func_mpr_contact.
+
+    Top-level MPR collision detection function. Computes geometry centers
+    and then performs collision detection.
+
+    This is the main entry point for thread-safe MPR collision detection that
+    works with thread-local geometry poses, enabling race-free multi-contact
+    detection when parallelizing across collision pairs.
+
+    Args:
+        geoms_info: Geometry information
+        geoms_init_AABB: Initial axis-aligned bounding boxes
+        rigid_global_info: Global simulation parameters (EPS)
+        static_rigid_sim_config: Static simulation configuration
+        collider_state: Collider state (for terrain)
+        collider_static_config: Static configuration
+        mpr_state: MPR algorithm state (simplex, etc.)
+        mpr_info: MPR algorithm parameters
+        support_field_info: Pre-computed support field data
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        normal_ws: Cached normal from previous timestep (for warm-starting)
+        pos_a: First geometry position (thread-local, 28 bytes)
+        quat_a: First geometry quaternion (thread-local, 28 bytes)
+        pos_b: Second geometry position (thread-local, 28 bytes)
+        quat_b: Second geometry quaternion (thread-local, 28 bytes)
+
+    Returns:
+        is_col: True if collision detected
+        normal: Contact normal in world space
+        penetration: Penetration depth
+        pos: Contact position in world space
+    """
+    center_a, center_b = guess_geoms_center_local(
+        geoms_info,
+        geoms_init_AABB,
+        rigid_global_info,
+        static_rigid_sim_config,
+        mpr_info,
+        i_ga,
+        i_gb,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        normal_ws,
+    )
+    return func_mpr_contact_from_centers_local(
+        geoms_info=geoms_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        collider_state=collider_state,
+        collider_static_config=collider_static_config,
+        mpr_state=mpr_state,
+        mpr_info=mpr_info,
+        support_field_info=support_field_info,
+        i_ga=i_ga,
+        i_gb=i_gb,
+        i_b=i_b,
+        center_a=center_a,
+        center_b=center_b,
+        pos_a=pos_a,
+        quat_a=quat_a,
+        pos_b=pos_b,
+        quat_b=quat_b,
+    )

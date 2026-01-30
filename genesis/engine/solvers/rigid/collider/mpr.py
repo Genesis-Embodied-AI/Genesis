@@ -712,33 +712,57 @@ def func_mpr_contact(
     i_b,
     normal_ws,
 ):
-    center_a, center_b = guess_geoms_center(
-        geoms_state,
+    """
+    Performs MPR collision detection between two convex geometries.
+
+    This is a thin wrapper that extracts geometry poses from global state
+    and delegates to the thread-local version for the actual computation.
+
+    Args:
+        geoms_state: Geometry state (pos, quat)
+        geoms_info: Geometry information
+        geoms_init_AABB: Initial axis-aligned bounding boxes
+        rigid_global_info: Global simulation parameters (EPS)
+        static_rigid_sim_config: Static simulation configuration
+        collider_state: Collider state (for terrain)
+        collider_info: Collider information (unused, kept for API compatibility)
+        collider_static_config: Static configuration
+        mpr_state: MPR algorithm state (simplex, etc.)
+        mpr_info: MPR algorithm parameters
+        support_field_info: Pre-computed support field data
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        normal_ws: Cached normal from previous timestep (for warm-starting)
+
+    Returns:
+        is_col: True if collision detected
+        normal: Contact normal in world space
+        penetration: Penetration depth
+        pos: Contact position in world space
+    """
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return mpr_local.func_mpr_contact_local(
         geoms_info,
         geoms_init_AABB,
         rigid_global_info,
         static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        mpr_state,
         mpr_info,
+        support_field_info,
         i_ga,
         i_gb,
         i_b,
         normal_ws,
-    )
-    return func_mpr_contact_from_centers(
-        geoms_state=geoms_state,
-        geoms_info=geoms_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        collider_state=collider_state,
-        collider_info=collider_info,
-        collider_static_config=collider_static_config,
-        mpr_state=mpr_state,
-        mpr_info=mpr_info,
-        support_field_info=support_field_info,
-        i_ga=i_ga,
-        i_gb=i_gb,
-        i_b=i_b,
-        center_a=center_a,
-        center_b=center_b,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
     )
 
 
