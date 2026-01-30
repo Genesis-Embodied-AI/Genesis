@@ -50,9 +50,7 @@ def support_driver_local(
     geom_type = geoms_info.type[i_g]
 
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field_local._func_support_sphere_local(
-            geoms_info, direction, i_g, pos, quat, False
-        )
+        v, v_, vid = support_field_local._func_support_sphere_local(geoms_info, direction, i_g, pos, quat, False)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
         v = support_field_local._func_support_ellipsoid_local(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
@@ -503,10 +501,22 @@ def mpr_refine_portal_local(
     Returns:
         ret: Status code (-1: refinement failed, >=0: success)
     """
-    from genesis.engine.solvers.rigid.collider.mpr import mpr_expand_portal, mpr_portal_dir, mpr_portal_can_enclosing_origin
+    from genesis.engine.solvers.rigid.collider.mpr import (
+        mpr_expand_portal,
+        mpr_portal_can_encapsule_origin,
+        mpr_portal_dir,
+        mpr_portal_encapsules_origin,
+        mpr_portal_reach_tolerance,
+    )
 
-    for i in range(mpr_info.REFINE_ITERATIONS[None]):
+    ret = 1
+    while True:
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
+
+        if mpr_portal_encapsules_origin(mpr_state, mpr_info, direction, i_ga, i_gb, i_b):
+            ret = 0
+            break
+
         v, v1, v2 = compute_support_local(
             geoms_info,
             collider_state,
@@ -522,15 +532,14 @@ def mpr_refine_portal_local(
             quat_b,
         )
 
-        if not mpr_portal_can_enclosing_origin(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b):
-            return -1
-
-        mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
-
-        if mpr_portal_dir(mpr_state, i_ga, i_gb, i_b).norm() < mpr_info.CCD_EPS[None]:
+        if not mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr_portal_reach_tolerance(
+            mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b
+        ):
+            ret = -1
             break
 
-    return 0
+        mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
+    return ret
 
 
 @ti.func
