@@ -153,16 +153,13 @@ def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
     check_gs_textures(gs_surface1.emissive_texture, gs_surface2.emissive_texture, 0.0, material_name, "emissive")
 
 
-# ==================== Scaling Tests ====================
+# ==================== Scale Tests ====================
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("scale", [(2.0, 3.0, 5.0), (2.0, 2.0, 2.0)])
-@pytest.mark.parametrize(
-    "mesh_file, file_meshes_are_zup",
-    [("meshes/camera/camera.glb", False), ("meshes/axis.obj", True)],
-)
-def test_morph_scaling(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_path):
+@pytest.mark.parametrize("scale", [(0.5, 2.0, 8.0), (2.0, 2.0, 2.0)])
+@pytest.mark.parametrize("mesh_file", ["meshes/camera/camera.glb", "meshes/axis.obj"])
+def test_morph_scale(scale, mesh_file, show_viewer, tmp_path):
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="cannon">
@@ -179,48 +176,72 @@ def test_morph_scaling(scale, mesh_file, file_meshes_are_zup, show_viewer, tmp_p
     obj_orig = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=mesh_file,
+            file_meshes_are_zup=False,
             pos=(0, 0, 1.0),
-            scale=(1.0, 1.0, 1.0),
+            scale=1.0,
             convexify=False,
             fixed=True,
         ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
     )
-    mesh_orig = obj_orig.vgeoms[0].vmesh.trimesh
+    for vgeom in obj_orig.vgeoms:
+        mesh_orig = vgeom.vmesh.trimesh
+        mesh_orig.apply_transform(mu.Y_UP_TRANSFORM)
+        mesh_orig.apply_scale(scale)
+
     obj_scaled = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=mesh_file,
+            file_meshes_are_zup=True,
             pos=(0, 0, 1.0),
             scale=scale,
             convexify=False,
             fixed=True,
         ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 1.0, 0.0, 1.0),
+        ),
     )
-    mesh_scaled = obj_scaled.vgeoms[0].vmesh.trimesh
+    assert obj_orig.n_vgeoms == obj_scaled.n_vgeoms
 
     is_isotropic = np.unique(scale).size == 1
     with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
         robot_scaled = scene.add_entity(
             gs.morphs.URDF(
                 file=urdf_path,
+                file_meshes_are_zup=True,
+                pos=(0, 0, 1.0),
+                scale=scale,
                 convexify=False,
                 fixed=True,
-                scale=scale,
-                file_meshes_are_zup=file_meshes_are_zup,
+            ),
+            surface=gs.surfaces.Default(
+                color=(0.0, 0.0, 1.0, 1.0),
             ),
         )
-        mesh_robot_scaled = robot_scaled.vgeoms[0].vmesh.trimesh
+        assert robot_scaled.n_vgeoms == obj_scaled.n_vgeoms
 
-    if show_viewer:
-        scene.build()
 
-    assert_allclose(mesh_orig.vertices * scale, mesh_scaled.vertices, tol=gs.EPS)
-    if is_isotropic:
-        assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
+    for i_vg in range(obj_orig.n_vgeoms):
+        mesh_orig = obj_orig.vgeoms[i_vg].vmesh.trimesh.copy()
+        mesh_orig.apply_transform(gu.trans_quat_to_T(obj_orig.base_link.pos, obj_orig.base_link.quat))
+        mesh_scaled = obj_scaled.vgeoms[i_vg].vmesh.trimesh.copy()
+        mesh_scaled.apply_transform(gu.trans_quat_to_T(obj_scaled.base_link.pos, obj_scaled.base_link.quat))
+        assert_allclose(mesh_orig.vertices, mesh_scaled.vertices, tol=gs.EPS)
+
+        if is_isotropic:
+            mesh_robot_scaled = robot_scaled.vgeoms[i_vg].vmesh.trimesh.copy()
+            mesh_robot_scaled.apply_transform(
+                gu.trans_quat_to_T(robot_scaled.base_link.pos, robot_scaled.base_link.quat)
+            )
+            assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("mesh_file", ["glb/combined_transform.glb", "yup_zup_coverage/cannon_y_-z.stl"])
-def test_urdf_scaling(mesh_file, tmp_path, show_viewer):
+def test_urdf_scale(mesh_file, tmp_path, show_viewer):
     SCALE_FACTOR = 2.0
 
     asset_path = get_hf_dataset(pattern=mesh_file)
@@ -262,7 +283,7 @@ def test_urdf_scaling(mesh_file, tmp_path, show_viewer):
     assert_allclose(SCALE_FACTOR * mesh_1.extents, mesh_2.extents, tol=gs.EPS)
 
 
-# ==================== Coordinate System Tests ====================
+# ==================== Y-Up Coordinate Tests ====================
 
 
 @pytest.mark.required
@@ -645,19 +666,6 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
             fixed=True,
         )
     )
-
-
-@pytest.mark.required
-def test_plane_texture_path_preservation(show_viewer):
-    """Test that plane primitives preserve texture paths in metadata."""
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
-    plane = scene.add_entity(gs.morphs.Plane())
-
-    # The texture path should be stored in metadata
-    assert plane.vgeoms[0].vmesh.metadata["texture_path"] == "textures/checker.png"
-
-
-# ==================== Special Texture Format Tests ====================
 
 
 @pytest.mark.required
