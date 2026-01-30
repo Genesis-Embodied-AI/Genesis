@@ -6,10 +6,10 @@ import sys
 import time
 
 import numpy as np
+import OpenGL.error
 import pyglet
 import pytest
 import torch
-import OpenGL.error
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -1236,13 +1236,14 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
-def test_interactive_viewer_disable_keyboard_shortcuts():
+def test_interactive_viewer_disable_viewer_defaults():
     """Test that keyboard shortcuts can be disabled in the interactive viewer."""
 
     # Test with keyboard shortcuts DISABLED
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            disable_keyboard_shortcuts=True,
+            disable_help_text=True,
+            disable_default_keybinds=True,
         ),
         show_viewer=True,
     )
@@ -1251,7 +1252,9 @@ def test_interactive_viewer_disable_keyboard_shortcuts():
     assert pyrender_viewer.is_active
 
     # Verify the flag is set correctly
-    assert pyrender_viewer._disable_keyboard_shortcuts is True
+    assert pyrender_viewer._disable_help_text is True
+    # Verify that no keybindings are registered
+    assert len(pyrender_viewer._keybindings) == 0
 
 
 @pytest.mark.required
