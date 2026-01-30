@@ -428,6 +428,12 @@ def func_epa_local(
     EPA algorithm to find the exact penetration depth and contact normal using the simplex constructed by GJK,
     using thread-local pos/quat for both geometries.
 
+    Thread-safety note: Although this function receives geometry indices `i_ga` and `i_gb`, they are
+    only used for thread-safe operations:
+    1. Checking geometry types via `geoms_info.type[i_ga/i_gb]` (static metadata, read-only)
+    2. Passing to `func_epa_witness` which only reads from pre-computed `gjk_state.polytope_verts`
+    Neither operation accesses `geoms_state.pos` or `geoms_state.quat`, so there are no race conditions.
+
     .. seealso::
     MuJoCo's original implementation:
     https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L1331
