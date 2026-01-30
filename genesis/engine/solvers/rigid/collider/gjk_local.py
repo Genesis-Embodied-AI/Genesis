@@ -640,16 +640,16 @@ def support_driver_local(
     if geom_type == gs.GEOM_TYPE.SPHERE:
         v, v_, vid = support_field_local._func_support_sphere_local(
             geoms_info=geoms_info,
-            direction=direction,
+            d=direction,
             i_g=i_g,
             pos=pos,
             quat=quat,
-            shrink_sphere=shrink_sphere,
+            shrink=shrink_sphere,
         )
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
         v = support_field_local._func_support_ellipsoid_local(
             geoms_info=geoms_info,
-            direction=direction,
+            d=direction,
             i_g=i_g,
             pos=pos,
             quat=quat,
@@ -657,16 +657,16 @@ def support_driver_local(
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
         v = support_field_local._func_support_capsule_local(
             geoms_info=geoms_info,
-            direction=direction,
+            d=direction,
             i_g=i_g,
             pos=pos,
             quat=quat,
-            shrink_sphere=shrink_sphere,
+            shrink=shrink_sphere,
         )
     elif geom_type == gs.GEOM_TYPE.BOX:
         v, v_, vid = support_field_local._func_support_box_local(
             geoms_info=geoms_info,
-            direction=direction,
+            d=direction,
             i_g=i_g,
             pos=pos,
             quat=quat,
@@ -693,7 +693,7 @@ def support_driver_local(
         # Mesh geometries with support field
         v, v_, vid = support_field_local._func_support_world_local(
             support_field_info=support_field_info,
-            direction=direction,
+            d=direction,
             i_g=i_g,
             pos=pos,
             quat=quat,
