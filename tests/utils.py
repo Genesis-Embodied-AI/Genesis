@@ -186,7 +186,6 @@ def get_hf_dataset(
     local_dir: str | None = None,
     num_retry: int = 4,
     retry_delay: float = 30.0,
-    local_dir_use_symlinks: bool = True,
 ):
     assert num_retry >= 1
 
@@ -207,7 +206,6 @@ def get_hf_dataset(
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
-                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful
