@@ -14,7 +14,6 @@ from genesis.engine.solvers.rigid.collider import support_field, support_field_l
 from genesis.utils import array_class
 
 
-
 @ti.func
 def support_driver_local(
     geoms_info: array_class.GeomsInfo,
@@ -51,13 +50,39 @@ def support_driver_local(
     geom_type = geoms_info.type[i_g]
 
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field_local._func_support_sphere_local(geoms_info, direction, i_g, pos, quat, False)
+        v, v_, vid = support_field_local._func_support_sphere_local(
+            geoms_info=geoms_info,
+            d=direction,
+            i_g=i_g,
+            pos=pos,
+            quat=quat,
+            shrink=False,
+        )
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field_local._func_support_ellipsoid_local(geoms_info, direction, i_g, pos, quat)
+        v = support_field_local._func_support_ellipsoid_local(
+            geoms_info=geoms_info,
+            d=direction,
+            i_g=i_g,
+            pos=pos,
+            quat=quat,
+        )
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field_local._func_support_capsule_local(geoms_info, direction, i_g, pos, quat, False)
+        v = support_field_local._func_support_capsule_local(
+            geoms_info=geoms_info,
+            d=direction,
+            i_g=i_g,
+            pos=pos,
+            quat=quat,
+            shrink=False,
+        )
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field_local._func_support_box_local(geoms_info, direction, i_g, pos, quat)
+        v, v_, vid = support_field_local._func_support_box_local(
+            geoms_info=geoms_info,
+            d=direction,
+            i_g=i_g,
+            pos=pos,
+            quat=quat,
+        )
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
             # Terrain support doesn't depend on geometry pos/quat - uses collider_state.prism
@@ -65,7 +90,13 @@ def support_driver_local(
             v, _ = support_field._func_support_prism(collider_state, direction, i_b)
     else:
         # Mesh geometries
-        v, v_, vid = support_field_local._func_support_world_local(support_field_info, direction, i_g, pos, quat)
+        v, v_, vid = support_field_local._func_support_world_local(
+            support_field_info=support_field_info,
+            d=direction,
+            i_g=i_g,
+            pos=pos,
+            quat=quat,
+        )
 
     return v
 
@@ -111,26 +142,26 @@ def compute_support_local(
         v2: Support point on second geometry
     """
     v1 = support_driver_local(
-        geoms_info,
-        collider_state,
-        collider_static_config,
-        support_field_info,
-        direction,
-        i_ga,
-        i_b,
-        pos_a,
-        quat_a,
+        geoms_info=geoms_info,
+        collider_state=collider_state,
+        collider_static_config=collider_static_config,
+        support_field_info=support_field_info,
+        direction=direction,
+        i_g=i_ga,
+        i_b=i_b,
+        pos=pos_a,
+        quat=quat_a,
     )
     v2 = support_driver_local(
-        geoms_info,
-        collider_state,
-        collider_static_config,
-        support_field_info,
-        -direction,
-        i_gb,
-        i_b,
-        pos_b,
-        quat_b,
+        geoms_info=geoms_info,
+        collider_state=collider_state,
+        collider_static_config=collider_static_config,
+        support_field_info=support_field_info,
+        direction=-direction,
+        i_g=i_gb,
+        i_b=i_b,
+        pos=pos_b,
+        quat=quat_b,
     )
 
     v = v1 - v2
@@ -233,18 +264,18 @@ def mpr_refine_portal_local(
             break
 
         v, v1, v2 = compute_support_local(
-            geoms_info,
-            collider_state,
-            collider_static_config,
-            support_field_info,
-            direction,
-            i_ga,
-            i_gb,
-            i_b,
-            pos_a,
-            quat_a,
-            pos_b,
-            quat_b,
+            geoms_info=geoms_info,
+            collider_state=collider_state,
+            collider_static_config=collider_static_config,
+            support_field_info=support_field_info,
+            direction=direction,
+            i_ga=i_ga,
+            i_gb=i_gb,
+            i_b=i_b,
+            pos_a=pos_a,
+            quat_a=quat_a,
+            pos_b=pos_b,
+            quat_b=quat_b,
         )
 
         if not mpr.mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr.mpr_portal_reach_tolerance(
@@ -312,18 +343,18 @@ def mpr_find_penetration_local(
     while True:
         direction = mpr.mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
         v, v1, v2 = compute_support_local(
-            geoms_info,
-            collider_state,
-            collider_static_config,
-            support_field_info,
-            direction,
-            i_ga,
-            i_gb,
-            i_b,
-            pos_a,
-            quat_a,
-            pos_b,
-            quat_b,
+            geoms_info=geoms_info,
+            collider_state=collider_state,
+            collider_static_config=collider_static_config,
+            support_field_info=support_field_info,
+            direction=direction,
+            i_ga=i_ga,
+            i_gb=i_gb,
+            i_b=i_b,
+            pos_a=pos_a,
+            quat_a=quat_a,
+            pos_b=pos_b,
+            quat_b=quat_b,
         )
         if (
             mpr.mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
@@ -351,7 +382,7 @@ def mpr_find_penetration_local(
             # The original paper introducing MPR algorithm is available here:
             # https://archive.org/details/game-programming-gems-7
             if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
-                penetration, pdir = mpr_point_tri_depth(
+                penetration, pdir = mpr.mpr_point_tri_depth(
                     mpr_info,
                     gs.ti_vec3([0.0, 0.0, 0.0]),
                     mpr_state.simplex_support.v[1, i_b],
@@ -431,18 +462,18 @@ def mpr_discover_portal_local(
     direction = -mpr_state.simplex_support.v[0, i_b].normalized()
 
     v, v1, v2 = compute_support_local(
-        geoms_info,
-        collider_state,
-        collider_static_config,
-        support_field_info,
-        direction,
-        i_ga,
-        i_gb,
-        i_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
+        geoms_info=geoms_info,
+        collider_state=collider_state,
+        collider_static_config=collider_static_config,
+        support_field_info=support_field_info,
+        direction=direction,
+        i_ga=i_ga,
+        i_gb=i_gb,
+        i_b=i_b,
+        pos_a=pos_a,
+        quat_a=quat_a,
+        pos_b=pos_b,
+        quat_b=quat_b,
     )
 
     mpr_state.simplex_support.v1[1, i_b] = v1
@@ -465,18 +496,18 @@ def mpr_discover_portal_local(
         else:
             direction = direction.normalized()
             v, v1, v2 = compute_support_local(
-                geoms_info,
-                collider_state,
-                collider_static_config,
-                support_field_info,
-                direction,
-                i_ga,
-                i_gb,
-                i_b,
-                pos_a,
-                quat_a,
-                pos_b,
-                quat_b,
+                geoms_info=geoms_info,
+                collider_state=collider_state,
+                collider_static_config=collider_static_config,
+                support_field_info=support_field_info,
+                direction=direction,
+                i_ga=i_ga,
+                i_gb=i_gb,
+                i_b=i_b,
+                pos_a=pos_a,
+                quat_a=quat_a,
+                pos_b=pos_b,
+                quat_b=quat_b,
             )
             dot = v.dot(direction)
             if dot < mpr_info.CCD_EPS[None]:
@@ -503,18 +534,18 @@ def mpr_discover_portal_local(
                 num_trials = gs.ti_int(0)
                 while mpr_state.simplex_size[i_b] < 4:
                     v, v1, v2 = compute_support_local(
-                        geoms_info,
-                        collider_state,
-                        collider_static_config,
-                        support_field_info,
-                        direction,
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        pos_a,
-                        quat_a,
-                        pos_b,
-                        quat_b,
+                        geoms_info=geoms_info,
+                        collider_state=collider_state,
+                        collider_static_config=collider_static_config,
+                        support_field_info=support_field_info,
+                        direction=direction,
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        i_b=i_b,
+                        pos_a=pos_a,
+                        quat_a=quat_a,
+                        pos_b=pos_b,
+                        quat_b=quat_b,
                     )
                     dot = v.dot(direction)
                     if dot < mpr_info.CCD_EPS[None]:
@@ -752,36 +783,36 @@ def func_mpr_contact_from_centers_local(
         is_col, normal, penetration, pos = mpr.mpr_find_penetr_segment(mpr_state, i_ga, i_gb, i_b)
     elif res == 0:
         res = mpr_refine_portal_local(
-            geoms_info,
-            collider_state,
-            collider_static_config,
-            mpr_state,
-            mpr_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            pos_a,
-            quat_a,
-            pos_b,
-            quat_b,
+            geoms_info=geoms_info,
+            collider_state=collider_state,
+            collider_static_config=collider_static_config,
+            mpr_state=mpr_state,
+            mpr_info=mpr_info,
+            support_field_info=support_field_info,
+            i_ga=i_ga,
+            i_gb=i_gb,
+            i_b=i_b,
+            pos_a=pos_a,
+            quat_a=quat_a,
+            pos_b=pos_b,
+            quat_b=quat_b,
         )
         if res >= 0:
             is_col, normal, penetration, pos = mpr_find_penetration_local(
-                geoms_info,
-                static_rigid_sim_config,
-                support_field_info,
-                collider_state,
-                collider_static_config,
-                mpr_state,
-                mpr_info,
-                i_ga,
-                i_gb,
-                i_b,
-                pos_a,
-                quat_a,
-                pos_b,
-                quat_b,
+                geoms_info=geoms_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                support_field_info=support_field_info,
+                collider_state=collider_state,
+                collider_static_config=collider_static_config,
+                mpr_state=mpr_state,
+                mpr_info=mpr_info,
+                i_ga=i_ga,
+                i_gb=i_gb,
+                i_b=i_b,
+                pos_a=pos_a,
+                quat_a=quat_a,
+                pos_b=pos_b,
+                quat_b=quat_b,
             )
     return is_col, normal, penetration, pos
 
@@ -846,18 +877,18 @@ def func_mpr_contact_local(
         pos: Contact position in world space
     """
     center_a, center_b = guess_geoms_center_local(
-        geoms_info,
-        geoms_init_AABB,
-        rigid_global_info,
-        static_rigid_sim_config,
-        mpr_info,
-        i_ga,
-        i_gb,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        normal_ws,
+        geoms_info=geoms_info,
+        geoms_init_AABB=geoms_init_AABB,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        mpr_info=mpr_info,
+        i_ga=i_ga,
+        i_gb=i_gb,
+        pos_a=pos_a,
+        quat_a=quat_a,
+        pos_b=pos_b,
+        quat_b=quat_b,
+        normal_ws=normal_ws,
     )
     return func_mpr_contact_from_centers_local(
         geoms_info=geoms_info,
