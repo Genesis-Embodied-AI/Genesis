@@ -454,7 +454,7 @@ def func_convex_convex_contact_local(
                 if not repeated:
                     if penetration > -tolerance:
                         penetration = ti.max(penetration, 0.0)
-                        contact.func_add_contact(
+                        func_add_contact(
                             i_ga,
                             i_gb,
                             normal,
