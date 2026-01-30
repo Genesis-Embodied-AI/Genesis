@@ -9,6 +9,69 @@ The key difference from the original narrowphase.py functions is that geometry p
 for multi-contact detection are performed on thread-local copies (stored in registers),
 preventing intra-environment race conditions when multiple threads process different
 collision pairs involving the same geometry.
+
+## Functions Included
+
+This module only contains functions in the multi-contact perturbation code path:
+
+- `func_convex_convex_contact_local`: Thread-local version of the main convex-convex
+  collision detection function that applies geometry perturbations for multi-contact.
+
+## Functions NOT Included (and why)
+
+The following functions from narrowphase.py do not need local versions:
+
+### SDF Collision Functions
+
+- `func_contact_sphere_sdf`
+- `func_contact_vertex_sdf`
+- `func_contact_edge_sdf`
+- `func_contact_convex_convex_sdf`
+
+**Why not localized:**
+- Use signed distance fields (SDF) for collision detection
+- No geometry perturbations - single contact point only
+- Already thread-safe
+
+### Terrain Collision Functions
+
+- `func_contact_mpr_terrain`
+- `func_add_prism_vert`
+
+**Why not localized:**
+- Terrain is static/global geometry
+- No multi-contact perturbations for terrain
+- Already thread-safe
+
+### High-Level Dispatcher Functions
+
+- `func_narrow_phase_convex_vs_convex`
+- `func_narrow_phase_diff_convex_vs_convex`
+- `func_narrow_phase_convex_specializations`
+- `func_narrow_phase_any_vs_terrain`
+- `func_narrow_phase_nonconvex_vs_nonterrain`
+
+**Why not localized:**
+- These are kernel entry points that loop over collision pairs
+- They call `func_convex_convex_contact` (or its local version) internally
+- The dispatchers themselves don't touch geometry state
+- When using the local version, the dispatcher would call
+  `func_convex_convex_contact_local` instead of `func_convex_convex_contact`
+
+## Usage
+
+To enable collision-level parallelization, use the local function instead of the
+original when parallelizing over (env, collision) pairs:
+
+```python
+# Original: Parallelizes over environments only
+for i_b, i_pair in ti.ndrange(n_envs, n_possible_pairs):
+    func_convex_convex_contact(...)  # May have race conditions
+
+# Thread-safe: Parallelizes over (env, collision) pairs
+for i_b, i_col in ti.ndrange(n_envs, max_collisions_per_env):
+    func_convex_convex_contact_local(...)  # Thread-safe!
+```
 """
 
 import sys
