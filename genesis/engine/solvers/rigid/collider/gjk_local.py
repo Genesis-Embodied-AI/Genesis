@@ -327,3 +327,222 @@ def func_get_discrete_geom_vertex_local(
     v = gu.ti_transform_by_trans_quat(v_, pos, quat)
 
     return v, v_
+
+
+@ti.func
+def func_gjk_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    static_rigid_sim_config: ti.template(),
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+    shrink_sphere,
+):
+    """
+    Thread-local version of func_gjk.
+
+    GJK algorithm to compute the minimum distance between two convex objects.
+    This implementation is based on the MuJoCo implementation.
+
+    Args:
+        geoms_info: Geometry information
+        verts_info: Vertex information
+        static_rigid_sim_config: Static simulation configuration
+        collider_state: Collider state (for terrain)
+        collider_static_config: Static configuration
+        gjk_state: GJK algorithm state (simplex, witness points, etc.)
+        gjk_info: GJK algorithm parameters (tolerances, iteration limits)
+        support_field_info: Pre-computed support field data
+        i_ga: First geometry index
+        i_gb: Second geometry index
+        i_b: Batch/environment index
+        pos_a: First geometry position (thread-local, 28 bytes)
+        quat_a: First geometry quaternion (thread-local, 28 bytes)
+        pos_b: Second geometry position (thread-local, 28 bytes)
+        quat_b: Second geometry quaternion (thread-local, 28 bytes)
+        shrink_sphere: If True, use point and line support for sphere/capsule
+
+    Returns:
+        distance: Minimum distance between the two geometries
+    """
+    from genesis.engine.solvers.rigid.collider.gjk import (
+        func_gjk_subdistance,
+        func_is_discrete_geoms,
+        func_is_equal_vec,
+        func_simplex_vertex_linear_comb,
+    )
+
+    # Simplex index
+    n = gs.ti_int(0)
+    # Final number of simplex vertices
+    nsimplex = gs.ti_int(0)
+    # Number of witness points and distance
+    nx = gs.ti_int(0)
+    dist = gs.ti_float(0.0)
+    # Lambda for barycentric coordinates
+    _lambda = gs.ti_vec4(1.0, 0.0, 0.0, 0.0)
+    # Whether or not we need to compute the exact distance.
+    get_dist = shrink_sphere
+    # We can use GJK intersection algorithm only for collision detection if we do not have to compute the distance.
+    backup_gjk = not get_dist
+    # Support vector to compute the next support point.
+    support_vector = gs.ti_vec3(0.0, 0.0, 0.0)
+    support_vector_norm = gs.ti_float(0.0)
+    # Whether or not the main loop finished early because intersection or seperation was detected.
+    early_stop = False
+
+    # Set initial guess of support vector using the thread-local positions, which should be a non-zero vector.
+    approx_witness_point_obj1 = pos_a
+    approx_witness_point_obj2 = pos_b
+    support_vector = approx_witness_point_obj1 - approx_witness_point_obj2
+    if support_vector.dot(support_vector) < gjk_info.FLOAT_MIN_SQ[None]:
+        support_vector = gs.ti_vec3(1.0, 0.0, 0.0)
+
+    # Epsilon for convergence check.
+    epsilon = gs.ti_float(0.0)
+    if not func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+        # If the objects are smooth, finite convergence is not guaranteed, so we need to set some epsilon
+        # to determine convergence.
+        epsilon = 0.5 * (gjk_info.tolerance[None] ** 2)
+
+    for i in range(gjk_info.gjk_max_iterations[None]):
+        # Compute the current support points
+        support_vector_norm = support_vector.norm()
+        if support_vector_norm < gjk_info.FLOAT_MIN[None]:
+            # If the support vector is too small, it means that origin is located in the Minkowski difference
+            # with high probability, so we can stop.
+            break
+
+        # Dir to compute the support point (pointing from obj1 to obj2)
+        dir = -support_vector * (1.0 / support_vector_norm)
+
+        (
+            gjk_state.simplex_vertex.obj1[i_b, n],
+            gjk_state.simplex_vertex.obj2[i_b, n],
+            gjk_state.simplex_vertex.local_obj1[i_b, n],
+            gjk_state.simplex_vertex.local_obj2[i_b, n],
+            gjk_state.simplex_vertex.id1[i_b, n],
+            gjk_state.simplex_vertex.id2[i_b, n],
+            gjk_state.simplex_vertex.mink[i_b, n],
+        ) = func_support_local(
+            geoms_info,
+            verts_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            i_b,
+            dir,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            shrink_sphere,
+        )
+
+        # Early stopping based on Frank-Wolfe duality gap. We need to find the minimum [support_vector_norm],
+        # and if we denote it as [x], the problem formulation is: min_x |x|^2.
+        # If we denote f(x) = |x|^2, then the Frank-Wolfe duality gap is:
+        # |x - x_min|^2 <= < grad f(x), x - s> = < 2x, x - s >,
+        # where s is the vertex of the Minkowski difference found by x. Here < 2x, x - s > is guaranteed to be
+        # non-negative, and 2 is cancelled out in the definition of the epsilon.
+        x_k = support_vector
+        s_k = gjk_state.simplex_vertex.mink[i_b, n]
+        diff = x_k - s_k
+        if diff.dot(x_k) < epsilon:
+            # Convergence condition is met, we can stop.
+            if i == 0:
+                n = 1
+            break
+
+        # Check if the objects are separated using support vector
+        if not get_dist:
+            is_separated = x_k.dot(s_k) > 0.0
+            if is_separated:
+                nsimplex = 0
+                nx = 0
+                dist = gjk_info.FLOAT_MAX[None]
+                early_stop = True
+                break
+
+        if n == 3 and backup_gjk:
+            # Tetrahedron is generated, try to detect collision if possible.
+            # TODO: This calls func_gjk_intersect which still uses geoms_state. We need to either:
+            # 1. Create func_gjk_intersect_local, OR
+            # 2. Temporarily reconstruct a geoms_state-like structure to pass
+            # For now, we skip this optimization path and fallback to distance computation.
+            # This is safe but potentially less efficient.
+            backup_gjk = False
+
+        # Compute the barycentric coordinates of the closest point to the origin in the simplex
+        _lambda = func_gjk_subdistance(gjk_state, gjk_info, i_b, n + 1)
+
+        # Remove vertices from the simplex with zero barycentric coordinates
+        n = 0
+        for j in ti.static(range(4)):
+            if _lambda[j] > 0:
+                gjk_state.simplex_vertex.obj1[i_b, n] = gjk_state.simplex_vertex.obj1[i_b, j]
+                gjk_state.simplex_vertex.obj2[i_b, n] = gjk_state.simplex_vertex.obj2[i_b, j]
+                gjk_state.simplex_vertex.id1[i_b, n] = gjk_state.simplex_vertex.id1[i_b, j]
+                gjk_state.simplex_vertex.id2[i_b, n] = gjk_state.simplex_vertex.id2[i_b, j]
+                gjk_state.simplex_vertex.mink[i_b, n] = gjk_state.simplex_vertex.mink[i_b, j]
+                _lambda[n] = _lambda[j]
+                n += 1
+
+        # Should not occur
+        if n < 1:
+            nsimplex = 0
+            nx = 0
+            dist = gjk_info.FLOAT_MAX[None]
+            early_stop = True
+            break
+
+        # Get the next support vector
+        next_support_vector = func_simplex_vertex_linear_comb(gjk_state, i_b, 2, 0, 1, 2, 3, _lambda, n)
+        if func_is_equal_vec(next_support_vector, support_vector, gjk_info.FLOAT_MIN[None]):
+            # If the next support vector is equal to the previous one, we converged to the minimum distance
+            break
+
+        support_vector = next_support_vector
+
+        if n == 4:
+            # We have a tetrahedron containing the origin, so we can return early. This is because only when
+            # the origin is inside the tetrahedron, the barycentric coordinates are all positive. While MuJoCo
+            # does not set the [support_vector_norm] to zero as we do, it is necessary, because otherwise the
+            # [support_vector_norm] could be non-zero value even if there is contact.
+            support_vector_norm = 0
+            break
+
+    if not early_stop:
+        # If [get_dist] was True and there was no numerical error, [return_code] would be SUCCESS.
+        nx = 1
+        nsimplex = n
+        dist = support_vector_norm
+
+        # Compute witness points
+        for i in range(2):
+            witness_point = func_simplex_vertex_linear_comb(gjk_state, i_b, i, 0, 1, 2, 3, _lambda, nsimplex)
+            if i == 0:
+                gjk_state.witness.point_obj1[i_b, 0] = witness_point
+            else:
+                gjk_state.witness.point_obj2[i_b, 0] = witness_point
+
+    gjk_state.n_witness[i_b] = nx
+    gjk_state.distance[i_b] = dist
+    gjk_state.nsimplex[i_b] = nsimplex
+
+    return gjk_state.distance[i_b]
