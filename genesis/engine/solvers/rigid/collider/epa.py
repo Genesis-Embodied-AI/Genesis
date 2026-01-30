@@ -596,126 +596,35 @@ def func_epa_init_polytope_3d(
     """
     Create the polytope for EPA from a 2-simplex (triangle).
 
+    This is a thin wrapper that extracts geometry poses from global state
+    and delegates to the thread-local version for the actual computation.
+
     Returns
     -------
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
-
-    # Get the simplex vertices
-    v1 = gjk_state.simplex_vertex.mink[i_b, 0]
-    v2 = gjk_state.simplex_vertex.mink[i_b, 1]
-    v3 = gjk_state.simplex_vertex.mink[i_b, 2]
-
-    # Get normal; if it is zero, we cannot proceed
-    n = (v2 - v1).cross(v3 - v1)
-    n_norm = n.norm()
-    if n_norm < gjk_info.FLOAT_MIN[None]:
-        flag = EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
-    n_neg = -n
-
-    # Save vertices in the polytope
-    vi = ti.Vector([0, 0, 0, 0, 0], dt=ti.i32)
-    for i in range(3):
-        vi[i] = func_epa_insert_vertex_to_polytope(
-            gjk_state,
-            i_b,
-            gjk_state.simplex_vertex.obj1[i_b, i],
-            gjk_state.simplex_vertex.obj2[i_b, i],
-            gjk_state.simplex_vertex.local_obj1[i_b, i],
-            gjk_state.simplex_vertex.local_obj2[i_b, i],
-            gjk_state.simplex_vertex.id1[i_b, i],
-            gjk_state.simplex_vertex.id2[i_b, i],
-            gjk_state.simplex_vertex.mink[i_b, i],
-        )
-
-    # Find the fourth and fifth vertices using the normal
-    # as the support vector. We form a hexahedron (6 faces)
-    # with these five vertices.
-    for i in range(2):
-        dir = n if i == 0 else n_neg
-        vi[i + 3] = func_epa_support(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            dir,
-            n_norm,
-        )
-    v4 = gjk_state.polytope_verts.mink[i_b, vi[3]]
-    v5 = gjk_state.polytope_verts.mink[i_b, vi[4]]
-
-    # Check if v4 or v5 located inside the triangle.
-    # If so, we do not proceed anymore.
-    for i in range(2):
-        v = v4 if i == 0 else v5
-        if func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
-            flag = EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
-            break
-
-    if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
-        # If origin does not lie inside the triangle, we need to
-        # check if the hexahedron contains the origin.
-
-        tets_has_origin = gs.ti_ivec2(0, 0)
-        for i in range(2):
-            v = v4 if i == 0 else v5
-            tets_has_origin[i] = 1 if func_origin_tetra_intersection(v1, v2, v3, v) == RETURN_CODE.SUCCESS else 0
-
-        # @TODO: It's possible for GJK to return a triangle with origin not contained in it but within tolerance
-        # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but
-        # there is penetration depth.
-        if (
-            gjk_state.simplex.dist[i_b] > 10 * gjk_info.FLOAT_MIN[None]
-            and (not tets_has_origin[0])
-            and (not tets_has_origin[1])
-        ):
-            flag = EPA_POLY_INIT_RETURN_CODE.P3_MISSING_ORIGIN
-        else:
-            # Build hexahedron (6 faces) from the five vertices.
-            for i in range(6):
-                # Vertex indices for the faces in the hexahedron
-                i_v1, i_v2, i_v3 = vi[3], vi[0], vi[1]
-                # Adjacent face indices for the faces in the hexahedron
-                i_a1, i_a2, i_a3 = 1, 3, 2
-                if i == 1:
-                    i_v1, i_v2, i_v3 = vi[3], vi[2], vi[0]
-                    i_a1, i_a2, i_a3 = 2, 4, 0
-                elif i == 2:
-                    i_v1, i_v2, i_v3 = vi[3], vi[1], vi[2]
-                    i_a1, i_a2, i_a3 = 0, 5, 1
-                elif i == 3:
-                    i_v1, i_v2, i_v3 = vi[4], vi[1], vi[0]
-                    i_a1, i_a2, i_a3 = 5, 0, 4
-                elif i == 4:
-                    i_v1, i_v2, i_v3 = vi[4], vi[0], vi[2]
-                    i_a1, i_a2, i_a3 = 3, 1, 5
-                elif i == 5:
-                    i_v1, i_v2, i_v3 = vi[4], vi[2], vi[1]
-                    i_a1, i_a2, i_a3 = 4, 2, 3
-
-                dist2 = func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
-                if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
-                    flag = EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
-                    break
-
-    if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
-        # Initialize face map
-        for i in ti.static(range(6)):
-            gjk_state.polytope_faces_map[i_b, i] = i
-            gjk_state.polytope_faces.map_idx[i_b, i] = i
-        gjk_state.polytope.nfaces_map[i_b] = 6
-
-    return flag
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return epa_local.func_epa_init_polytope_3d_local(
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        i_b,
+    )
 
 
 @ti.func
@@ -728,6 +637,11 @@ def func_epa_init_polytope_4d(
 ):
     """
     Create the polytope for EPA from a 3-simplex (tetrahedron).
+
+    Thread-safety note: This function is already thread-safe and does NOT require a local version.
+    It only manipulates existing simplex vertices that were previously computed by GJK, without
+    reading `geoms_state.pos` or `geoms_state.quat`, and without calling any support functions.
+    All geometry state accesses happen through the pre-computed simplex data in `gjk_state`.
 
     Returns
     -------
