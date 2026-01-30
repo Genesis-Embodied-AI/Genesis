@@ -119,11 +119,11 @@ def func_convex_convex_contact_local(
         gb_pos_original = geoms_state.pos[i_gb, i_b]
         gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-        # Current (possibly perturbed) state - will be set in each loop iteration
-        ga_pos_current = ti.Vector.zero(gs.ti_float, 3)
-        ga_quat_current = ti.Vector.zero(gs.ti_float, 4)
-        gb_pos_current = ti.Vector.zero(gs.ti_float, 3)
-        gb_quat_current = ti.Vector.zero(gs.ti_float, 4)
+        # Current (possibly perturbed) state - initialized to original, updated during perturbations
+        ga_pos_current = ga_pos_original
+        ga_quat_current = ga_quat_original
+        gb_pos_current = gb_pos_original
+        gb_quat_current = gb_quat_original
 
         # Pre-allocate buffers
         is_col_0 = False
@@ -166,12 +166,6 @@ def func_convex_convex_contact_local(
                 )
                 gb_pos_current = gb_result.pos
                 gb_quat_current = gb_result.quat
-            else:
-                # Reset to original (unperturbed) state
-                ga_pos_current = ga_pos_original
-                ga_quat_current = ga_quat_original
-                gb_pos_current = gb_pos_original
-                gb_quat_current = gb_quat_original
 
             if (multi_contact and is_col_0) or (i_detection == 0):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
