@@ -358,6 +358,7 @@ def func_potential_box_edge_normals_local(
     Returns:
         Number of edge normals found
     """
+    # note: original code missing [i_g]
     g_size_x = geoms_info.data[i_g][0] * 0.5
     g_size_y = geoms_info.data[i_g][1] * 0.5
     g_size_z = geoms_info.data[i_g][2] * 0.5
@@ -543,7 +544,6 @@ def func_box_face_local(
     Returns:
         Number of face vertices (4 for valid face, 0 otherwise)
     """
-    # note: original code missing [i_g]
     g_size_x = geoms_info.data[i_g][0]
     g_size_y = geoms_info.data[i_g][1]
     g_size_z = geoms_info.data[i_g][2]
