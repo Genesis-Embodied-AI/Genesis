@@ -466,29 +466,19 @@ def func_box_normal_from_collision_normal(
 ):
     """
     Among the 6 faces of the box, find the one of which normal is closest to the [dir].
+
+    This is a thin wrapper that extracts geometry quaternion from global state
+    and delegates to the thread-local version for the actual computation.
     """
-    # Every box face normal
-    normals = ti.Vector(
-        [1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0],
-        dt=gs.ti_float,
+    quat = geoms_state.quat[i_g, i_b]
+    return multi_contact_local.func_box_normal_from_collision_normal_local(
+        gjk_state,
+        gjk_info,
+        i_g,
+        quat,
+        i_b,
+        dir,
     )
-
-    # Get local collision normal
-    g_quat = geoms_state.quat[i_g, i_b]
-    local_dir = gu.ti_transform_by_quat(dir, gu.ti_inv_quat(g_quat))
-    local_dir = local_dir.normalized()
-
-    # Determine the closest face normal
-    flag = RETURN_CODE.FAIL
-    for i in range(6):
-        n = gs.ti_vec3(normals[3 * i + 0], normals[3 * i + 1], normals[3 * i + 2])
-        if local_dir.dot(n) > gjk_info.contact_face_tol[None]:
-            flag = RETURN_CODE.SUCCESS
-            gjk_state.contact_normals[i_b, 0].normal = n
-            gjk_state.contact_normals[i_b, 0].id = i
-            break
-
-    return flag
 
 
 @ti.func
