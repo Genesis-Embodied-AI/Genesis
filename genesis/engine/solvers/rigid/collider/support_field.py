@@ -7,6 +7,7 @@ import numpy as np
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+from genesis.engine.solvers.rigid.collider import support_field_local
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -132,13 +133,9 @@ def _func_support_world(
     """
     support position for a world direction
     """
-
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
-    v_, vid = _func_support_mesh(support_field_info, d_mesh, i_g)
-    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
-    return v, v_, vid
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_support_world_local(geoms_info, support_field_info, d, i_g, pos, quat)
 
 
 @ti.func
@@ -195,22 +192,9 @@ def _func_support_sphere(
     i_b,
     shrink,
 ):
-    sphere_center = geoms_state.pos[i_g, i_b]
-    sphere_radius = geoms_info.data[i_g][0]
-
-    # Shrink the sphere to a point
-    v = sphere_center
-    v_ = ti.Vector.zero(gs.ti_float, 3)
-    vid = -1
-    if not shrink:
-        v += d * sphere_radius
-
-        # Local position of the support point
-        g_quat = geoms_state.quat[i_g, i_b]
-        local_d = gu.ti_inv_transform_by_quat(d, g_quat)
-        v_ = local_d * sphere_radius
-
-    return v, v_, vid
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_support_sphere_local(geoms_info, d, i_g, pos, quat, shrink)
 
 
 @ti.func
@@ -221,18 +205,9 @@ def _func_support_ellipsoid(
     i_g,
     i_b,
 ):
-    ellipsoid_center = geoms_state.pos[i_g, i_b]
-    ellipsoid_scaled_axis = ti.Vector(
-        [
-            geoms_info.data[i_g][0] ** 2,
-            geoms_info.data[i_g][1] ** 2,
-            geoms_info.data[i_g][2] ** 2,
-        ],
-        dt=gs.ti_float,
-    )
-    ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, geoms_state.quat[i_g, i_b])
-    dist = ellipsoid_scaled_axis / ti.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
-    return ellipsoid_center + d * dist
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_support_ellipsoid_local(geoms_info, d, i_g, pos, quat)
 
 
 @ti.func
@@ -244,23 +219,9 @@ def _func_support_capsule(
     i_b,
     shrink,
 ):
-    res = gs.ti_vec3(0, 0, 0)
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    capsule_center = g_pos
-    capsule_radius = geoms_info.data[i_g][0]
-    capsule_halflength = 0.5 * geoms_info.data[i_g][1]
-
-    if shrink:
-        local_dir = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
-        res[2] = capsule_halflength if local_dir[2] >= 0.0 else -capsule_halflength
-        res = gu.ti_transform_by_trans_quat(res, capsule_center, g_quat)
-    else:
-        capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_quat)
-        capsule_endpoint_side = -1.0 if d.dot(capsule_axis) < 0.0 else 1.0
-        capsule_endpoint = capsule_center + capsule_halflength * capsule_endpoint_side * capsule_axis
-        res = capsule_endpoint + d * capsule_radius
-    return res
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_support_capsule_local(geoms_info, d, i_g, pos, quat, shrink)
 
 
 @ti.func
@@ -293,22 +254,9 @@ def _func_support_box(
     i_g,
     i_b,
 ):
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    d_box = gu.ti_inv_transform_by_quat(d, g_quat)
-
-    v_ = ti.Vector(
-        [
-            (-1.0 if d_box[0] < 0.0 else 1.0) * geoms_info.data[i_g][0] * 0.5,
-            (-1.0 if d_box[1] < 0.0 else 1.0) * geoms_info.data[i_g][1] * 0.5,
-            (-1.0 if d_box[2] < 0.0 else 1.0) * geoms_info.data[i_g][2] * 0.5,
-        ],
-        dt=gs.ti_float,
-    )
-    vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
-    vid += geoms_info.vert_start[i_g]
-    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
-    return v, v_, vid
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_support_box_local(geoms_info, d, i_g, pos, quat)
 
 
 @ti.func
@@ -323,8 +271,8 @@ def _func_count_supports_world(
     """
     Count the number of valid support points for the given world direction.
     """
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(geoms_state.quat[i_g, i_b]))
-    return _func_count_supports_mesh(geoms_state, geoms_info, support_field_info, d_mesh, i_g)
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_count_supports_world_local(geoms_info, support_field_info, d, i_g, quat)
 
 
 @ti.func
@@ -391,10 +339,8 @@ def _func_count_supports_box(
     If the direction has 1 zero component, there are 2 possible support points. If the direction has 2 zero
     components, there are 4 possible support points.
     """
-    g_quat = geoms_state.quat[i_g, i_b]
-    d_box = gu.ti_inv_transform_by_quat(d, g_quat)
-
-    return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()
+    quat = geoms_state.quat[i_g, i_b]
+    return support_field_local._func_count_supports_box_local(geoms_info, d, i_g, quat)
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
