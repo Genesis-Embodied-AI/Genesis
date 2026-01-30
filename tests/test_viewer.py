@@ -158,9 +158,9 @@ def test_mouse_interaction_plugin(png_snapshot):
             substeps=1,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(4.0, 0.0, 3.0),
+            camera_pos=(2.0, 0.0, 1.0),
             camera_lookat=(0.0, 0.0, 0.0),
-            camera_fov=40,
+            camera_fov=30,
             res=CAM_RES,
             run_in_thread=(sys.platform == "linux"),
         ),
