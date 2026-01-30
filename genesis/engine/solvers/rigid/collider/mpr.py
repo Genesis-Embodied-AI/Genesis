@@ -611,51 +611,13 @@ def guess_geoms_center(
     # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
     # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
     # signed distance is computed once again until to find a valid point. This procedure should be cheap.
-    EPS = rigid_global_info.EPS[None]
-
-    g_pos_a = geoms_state.pos[i_ga, i_b]
-    g_pos_b = geoms_state.pos[i_gb, i_b]
-    g_quat_a = geoms_state.quat[i_ga, i_b]
-    g_quat_b = geoms_state.quat[i_gb, i_b]
-    center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], g_pos_a, g_quat_a)
-    center_b = gu.ti_transform_by_trans_quat(geoms_info.center[i_gb], g_pos_b, g_quat_b)
-
-    # Completely different center logics if a normal guess is provided
-    if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-        if (ti.abs(normal_ws) > mpr_info.CCD_EPS[None]).any():
-            # Must start from the center of each bounding box
-            center_a_local = 0.5 * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
-            center_a = gu.ti_transform_by_trans_quat(center_a_local, g_pos_a, g_quat_a)
-            center_b_local = 0.5 * (geoms_init_AABB[i_gb, 7] + geoms_init_AABB[i_gb, 0])
-            center_b = gu.ti_transform_by_trans_quat(center_b_local, g_pos_b, g_quat_b)
-            delta = center_a - center_b
-
-            # Skip offset if normal is roughly pointing in the same direction already.
-            # Note that a threshold of 0.5 would probably make more sense, but this means that the center of each
-            # geometry would significantly affect collision detection, which is undesirable.
-            normal = delta.normalized()
-            if normal_ws.cross(normal).norm() > 0.01:
-                # Compute the target offset
-                offset = delta.dot(normal_ws) * normal_ws - delta
-                offset_norm = offset.norm()
-
-                if offset_norm > EPS:
-                    # Compute the size of the bounding boxes along the target offset direction.
-                    # First, move the direction in local box frame
-                    dir_offset = offset / offset_norm
-                    dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_quat_a)
-                    dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_quat_b)
-                    box_size_a = geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]
-                    box_size_b = geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]
-                    length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
-                    length_b = box_size_b.dot(ti.abs(dir_offset_local_b))
-
-                    # Shift the center of each geometry
-                    offset_ratio = ti.min(offset_norm / (length_a + length_b), 0.5)
-                    center_a = center_a + dir_offset * length_a * offset_ratio
-                    center_b = center_b - dir_offset * length_b * offset_ratio
-
-    return center_a, center_b
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return mpr_local.guess_geoms_center_local(
+        geoms_info, geoms_init_AABB, rigid_global_info, static_rigid_sim_config, mpr_info, i_ga, i_gb, pos_a, quat_a, pos_b, quat_b, normal_ws
+    )
 
 
 @ti.func
