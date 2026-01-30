@@ -453,129 +453,36 @@ def func_epa_init_polytope_2d(
     """
     Create the polytope for EPA from a 1-simplex (line segment).
 
+    This is a thin wrapper that extracts geometry poses from global state
+    and delegates to the thread-local version for the actual computation.
+
     Returns
     -------
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
-
-    # Get the simplex vertices
-    v1 = gjk_state.simplex_vertex.mink[i_b, 0]
-    v2 = gjk_state.simplex_vertex.mink[i_b, 1]
-    diff = v2 - v1
-
-    # Find the element in [diff] with the smallest magnitude, because it will give us the largest cross product
-    min_val = ti.abs(diff[0])
-    min_i = 0
-    for i in ti.static(range(1, 3)):
-        abs_diff_i = ti.abs(diff[i])
-        if abs_diff_i < min_val:
-            min_val = abs_diff_i
-            min_i = i
-
-    # Cross product with the found axis, then rotate it by 120 degrees around the axis [diff] to get three more
-    # points spaced 120 degrees apart
-    rotmat = gu.ti_rotvec_to_R(diff * ti.math.radians(120.0), rigid_global_info.EPS[None])
-    e = gs.ti_vec3(0.0, 0.0, 0.0)
-    e[min_i] = 1.0
-
-    d1 = e.cross(diff)
-    d2 = rotmat @ d1
-    d3 = rotmat @ d2
-
-    # Insert the first two vertices into the polytope
-    vi = ti.Vector([0, 0, 0, 0, 0], dt=ti.i32)
-    for i in range(2):
-        vi[i] = func_epa_insert_vertex_to_polytope(
-            gjk_state,
-            i_b,
-            gjk_state.simplex_vertex.obj1[i_b, i],
-            gjk_state.simplex_vertex.obj2[i_b, i],
-            gjk_state.simplex_vertex.local_obj1[i_b, i],
-            gjk_state.simplex_vertex.local_obj2[i_b, i],
-            gjk_state.simplex_vertex.id1[i_b, i],
-            gjk_state.simplex_vertex.id2[i_b, i],
-            gjk_state.simplex_vertex.mink[i_b, i],
-        )
-
-    # Find three more vertices using [d1, d2, d3] as support vectors, and insert them into the polytope
-    for i in range(3):
-        di = d1
-        if i == 1:
-            di = d2
-        elif i == 2:
-            di = d3
-        di_norm = di.norm()
-        vi[i + 2] = func_epa_support(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            di,
-            di_norm,
-        )
-
-    v3 = gjk_state.polytope_verts.mink[i_b, vi[2]]
-    v4 = gjk_state.polytope_verts.mink[i_b, vi[3]]
-    v5 = gjk_state.polytope_verts.mink[i_b, vi[4]]
-
-    # Build hexahedron (6 faces) from the five vertices.
-    # * This hexahedron would have line [v1, v2] as the central axis, and the other three vertices would be on the
-    # sides of the hexahedron, as they are spaced 120 degrees apart.
-    # * We already know the face and adjacent face indices in building this.
-    # * While building the hexahedron by attaching faces, if the face is very close to the origin, we replace the
-    # 1-simplex with the 2-simplex, and restart from it.
-    for i in range(6):
-        # Vertex indices for the faces in the hexahedron
-        i_v1, i_v2, i_v3 = vi[0], vi[2], vi[3]
-        # Adjacent face indices for the faces in the hexahedron
-        i_a1, i_a2, i_a3 = 1, 3, 2
-        if i == 1:
-            i_v1, i_v2, i_v3 = vi[0], vi[4], vi[2]
-            i_a1, i_a2, i_a3 = 2, 4, 0
-        elif i == 2:
-            i_v1, i_v2, i_v3 = vi[0], vi[3], vi[4]
-            i_a1, i_a2, i_a3 = 0, 5, 1
-        elif i == 3:
-            i_v1, i_v2, i_v3 = vi[1], vi[3], vi[2]
-            i_a1, i_a2, i_a3 = 5, 0, 4
-        elif i == 4:
-            i_v1, i_v2, i_v3 = vi[1], vi[2], vi[4]
-            i_a1, i_a2, i_a3 = 3, 1, 5
-        elif i == 5:
-            i_v1, i_v2, i_v3 = vi[1], vi[4], vi[3]
-            i_a1, i_a2, i_a3 = 4, 2, 3
-
-        if (
-            func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
-            < gjk_info.FLOAT_MIN_SQ[None]
-        ):
-            func_replace_simplex_3(gjk_state, i_b, i_v1, i_v2, i_v3)
-            flag = EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
-            break
-
-    if flag == RETURN_CODE.SUCCESS:
-        if not func_ray_triangle_intersection(v1, v2, v3, v4, v5):
-            # The hexahedron should be convex by definition, but somehow if it is not, we return non-convex flag
-            flag = EPA_POLY_INIT_RETURN_CODE.P2_NONCONVEX
-
-    if flag == RETURN_CODE.SUCCESS:
-        # Initialize face map
-        for i in ti.static(range(6)):
-            gjk_state.polytope_faces_map[i_b, i] = i
-            gjk_state.polytope_faces.map_idx[i_b, i] = i
-        gjk_state.polytope.nfaces_map[i_b] = 6
-
-    return flag
+    pos_a = geoms_state.pos[i_ga, i_b]
+    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_b = geoms_state.pos[i_gb, i_b]
+    quat_b = geoms_state.quat[i_gb, i_b]
+    return epa_local.func_epa_init_polytope_2d_local(
+        geoms_info,
+        verts_info,
+        rigid_global_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        i_b,
+    )
 
 
 @ti.func
