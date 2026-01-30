@@ -28,6 +28,47 @@ from genesis.engine.solvers.rigid.collider.support_field import (
 )
 
 
+
+
+@ti.func
+def _func_support_world_local(
+    support_field_info: array_class.SupportFieldInfo,
+    d,
+    i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Thread-local version of _func_support_world.
+
+    This function finds the support point for mesh geometries using a pre-computed
+    support field. The support field itself is in local coordinates and doesn't need
+    modification; only the transformation to world space uses pos/quat.
+
+    Args:
+        support_field_info: Pre-computed support field data
+        d: Support direction in world frame
+        i_g: Geometry index
+        pos: Geometry position in world frame (thread-local)
+        quat: Geometry quaternion (thread-local)
+
+    Returns:
+        v: Support point in world frame
+        v_: Support point in local frame
+        vid: Vertex ID
+    """
+    # Transform direction to mesh frame
+    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
+
+    # Look up support point in mesh frame (uses pre-computed support field)
+    v_, vid = _func_support_mesh(support_field_info, d_mesh, i_g)
+
+    # Transform support point to world frame
+    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
+
+    return v, v_, vid
+
+
 @ti.func
 def _func_support_sphere_local(
     geoms_info: array_class.GeomsInfo,
@@ -182,45 +223,6 @@ def _func_support_box_local(
     vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
     vid += geoms_info.vert_start[i_g]
     v = gu.ti_transform_by_trans_quat(v_, pos, quat)
-    return v, v_, vid
-
-
-@ti.func
-def _func_support_world_local(
-    support_field_info: array_class.SupportFieldInfo,
-    d,
-    i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
-):
-    """
-    Thread-local version of _func_support_world.
-
-    This function finds the support point for mesh geometries using a pre-computed
-    support field. The support field itself is in local coordinates and doesn't need
-    modification; only the transformation to world space uses pos/quat.
-
-    Args:
-        support_field_info: Pre-computed support field data
-        d: Support direction in world frame
-        i_g: Geometry index
-        pos: Geometry position in world frame (thread-local)
-        quat: Geometry quaternion (thread-local)
-
-    Returns:
-        v: Support point in world frame
-        v_: Support point in local frame
-        vid: Vertex ID
-    """
-    # Transform direction to mesh frame
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
-
-    # Look up support point in mesh frame (uses pre-computed support field)
-    v_, vid = _func_support_mesh(support_field_info, d_mesh, i_g)
-
-    # Transform support point to world frame
-    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
-
     return v, v_, vid
 
 
