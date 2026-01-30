@@ -16,7 +16,8 @@ import sys
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.collider import box_contact, diff_gjk, gjk_local, mpr_local, multi_contact_local
+from genesis.engine.solvers.rigid.collider import diff_gjk, gjk_local, mpr_local, multi_contact_local
+from genesis.engine.solvers.rigid.collider.box_contact import func_plane_box_contact
 from genesis.engine.solvers.rigid.collider.contact import (
     func_add_contact,
     func_add_diff_contact_input,
@@ -74,7 +75,7 @@ def func_convex_convex_contact_local(
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
         # Plane-box collision doesn't use perturbations, so call original function
         if ti.static(sys.platform == "darwin"):
-            box_contact.func_plane_box_contact(
+            func_plane_box_contact(
                 i_ga=i_ga,
                 i_gb=i_gb,
                 i_b=i_b,
