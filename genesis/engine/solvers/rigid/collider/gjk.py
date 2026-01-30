@@ -1987,32 +1987,13 @@ def func_get_discrete_geom_vertex(
 ):
     """
     Get the discrete vertex of the geometry for the given index [i_v].
+
+    This is a thin wrapper that extracts geometry pose from global state
+    and delegates to the thread-local version for the actual computation.
     """
-    geom_type = geoms_info.type[i_g]
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-
-    # Get the vertex position in the local frame of the geometry.
-    v_ = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
-    if geom_type == gs.GEOM_TYPE.BOX:
-        # For the consistency with the [func_support_box] function of [SupportField] class, we handle the box
-        # vertex positions in a different way than the general mesh.
-        v_ = ti.Vector(
-            [
-                (1.0 if (i_v & 1 == 1) else -1.0) * geoms_info.data[i_g][0] * 0.5,
-                (1.0 if (i_v & 2 == 2) else -1.0) * geoms_info.data[i_g][1] * 0.5,
-                (1.0 if (i_v & 4 == 4) else -1.0) * geoms_info.data[i_g][2] * 0.5,
-            ],
-            dt=gs.ti_float,
-        )
-    elif geom_type == gs.GEOM_TYPE.MESH:
-        vert_start = geoms_info.vert_start[i_g]
-        v_ = verts_info.init_pos[vert_start + i_v]
-
-    # Transform the vertex position to the world frame
-    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
-
-    return v, v_
+    pos = geoms_state.pos[i_g, i_b]
+    quat = geoms_state.quat[i_g, i_b]
+    return gjk_local.func_get_discrete_geom_vertex_local(geoms_info, verts_info, i_g, pos, quat, i_v)
 
 
 @ti.func

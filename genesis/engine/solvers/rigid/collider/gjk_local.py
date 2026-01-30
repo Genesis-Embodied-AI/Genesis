@@ -275,3 +275,55 @@ def func_support_local(
         support_point_id_obj2,
         support_point_minkowski,
     )
+
+
+@ti.func
+def func_get_discrete_geom_vertex_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    i_v,
+):
+    """
+    Thread-local version of func_get_discrete_geom_vertex.
+
+    Gets the discrete vertex of a geometry for the given index, transforming
+    it from local to world coordinates using thread-local pos/quat.
+
+    Args:
+        geoms_info: Geometry information (types, dimensions, vertex ranges)
+        verts_info: Vertex information (initial positions)
+        i_g: Geometry index
+        pos: Geometry position in world frame (thread-local, 28 bytes)
+        quat: Geometry quaternion (thread-local, 28 bytes)
+        i_v: Vertex index (relative to geometry)
+
+    Returns:
+        v: Vertex position in world frame
+        v_: Vertex position in local frame
+    """
+    geom_type = geoms_info.type[i_g]
+
+    # Get the vertex position in the local frame of the geometry.
+    v_ = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+    if geom_type == gs.GEOM_TYPE.BOX:
+        # For the consistency with the [func_support_box] function of [SupportField] class, we handle the box
+        # vertex positions in a different way than the general mesh.
+        v_ = ti.Vector(
+            [
+                (1.0 if (i_v & 1 == 1) else -1.0) * geoms_info.data[i_g][0] * 0.5,
+                (1.0 if (i_v & 2 == 2) else -1.0) * geoms_info.data[i_g][1] * 0.5,
+                (1.0 if (i_v & 4 == 4) else -1.0) * geoms_info.data[i_g][2] * 0.5,
+            ],
+            dt=gs.ti_float,
+        )
+    elif geom_type == gs.GEOM_TYPE.MESH:
+        vert_start = geoms_info.vert_start[i_g]
+        v_ = verts_info.init_pos[vert_start + i_v]
+
+    # Transform the vertex position to the world frame using thread-local pos/quat
+    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
+
+    return v, v_
