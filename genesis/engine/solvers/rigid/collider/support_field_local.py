@@ -8,6 +8,41 @@ thread-local perturbations without modifying shared global geometry state.
 These functions are used when parallelizing collision detection across collision
 pairs within the same environment, where each thread needs to work with its own
 perturbed geometry state.
+
+## Functions Included
+
+Thread-local versions that accept pos/quat as parameters:
+- `_func_support_sphere_local`
+- `_func_support_ellipsoid_local`
+- `_func_support_capsule_local`
+- `_func_support_box_local`
+- `_func_support_world_local`
+- `_func_count_supports_world_local`
+- `_func_count_supports_box_local`
+
+## Functions NOT Included (and why)
+
+### Shared Functions (Imported from support_field.py)
+
+- `_func_support_mesh`
+- `_func_count_supports_mesh`
+
+**Why not duplicated:**
+These functions operate entirely in mesh-local coordinates and don't access
+geoms_state at all. They're pure geometric computations on pre-computed support
+fields. Since they're identical in both files, they're imported from support_field.py
+to avoid code duplication.
+
+### Thread-Safe Functions (Used Directly)
+
+- `_func_support_prism`
+
+**Why not localized:**
+This function is for terrain/prism geometries, which are global/static and not
+perturbed during multi-contact. It only reads from `collider_state.prism[i, i_b]`
+(indexed per-environment) and doesn't access `geoms_state.pos` or `geoms_state.quat`.
+Already thread-safe, so both local and non-local code call it directly from
+support_field.py without issues.
 """
 
 import math
