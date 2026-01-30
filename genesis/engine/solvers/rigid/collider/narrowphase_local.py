@@ -222,19 +222,13 @@ def func_convex_convex_contact_local(
 
                 # Apply perturbation starting from original state
                 ga_result = func_rotate_frame_local(
-                    pos=ga_pos_original,
-                    quat=ga_quat_original,
-                    contact_pos=contact_pos_0,
-                    qrot=qrot
+                    pos=ga_pos_original, quat=ga_quat_original, contact_pos=contact_pos_0, qrot=qrot
                 )
                 ga_pos_current = ga_result.pos
                 ga_quat_current = ga_result.quat
 
                 gb_result = func_rotate_frame_local(
-                    pos=gb_pos_original,
-                    quat=gb_quat_original,
-                    contact_pos=contact_pos_0,
-                    qrot=gu.ti_inv_quat(qrot)
+                    pos=gb_pos_original, quat=gb_quat_original, contact_pos=contact_pos_0, qrot=gu.ti_inv_quat(qrot)
                 )
                 gb_pos_current = gb_result.pos
                 gb_quat_current = gb_result.quat
@@ -266,7 +260,8 @@ def func_convex_convex_contact_local(
                 else:
                     ### MPR, MJ_MPR
                     if ti.static(
-                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.MJ_MPR)
+                        collider_static_config.ccd_algorithm
+                        in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.MJ_MPR)
                     ):
                         # Try using MPR before anything else
                         is_mpr_updated = False
@@ -489,7 +484,8 @@ def func_convex_convex_contact_local(
                         n_con = 1
 
                     if ti.static(
-                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.GJK)
+                        collider_static_config.ccd_algorithm
+                        in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.GJK)
                     ):
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
                 else:
@@ -498,7 +494,10 @@ def func_convex_convex_contact_local(
 
             # Subsequent detections: correct contact position and add if valid
             elif multi_contact and is_col_0 > 0 and is_col > 0:
-                if ti.static(collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.GJK)):
+                if ti.static(
+                    collider_static_config.ccd_algorithm
+                    in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.GJK)
+                ):
                     # Project contact points and correct for perturbation
                     contact_point_a = (
                         gu.ti_transform_by_quat(

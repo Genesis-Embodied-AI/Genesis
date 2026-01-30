@@ -15,8 +15,6 @@ import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid import collider
 
 
-
-
 @ti.func
 def func_epa_local(
     geoms_info: array_class.GeomsInfo,

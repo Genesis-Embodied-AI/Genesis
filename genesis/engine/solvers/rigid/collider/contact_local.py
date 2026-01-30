@@ -10,6 +10,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 
+
 @ti.func
 def func_rotate_frame_local(
     pos: ti.types.vector(3, dtype=gs.ti_float),
