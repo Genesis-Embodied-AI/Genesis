@@ -79,7 +79,7 @@ import sys
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.collider import diff_gjk, gjk_local, mpr_local, multi_contact_local
+from genesis.engine.solvers.rigid.collider import diff_gjk, gjk_local, mpr_local, multi_contact_local, gjk
 from genesis.engine.solvers.rigid.collider.box_contact import func_plane_box_contact
 from genesis.engine.solvers.rigid.collider.contact import (
     func_add_contact,
@@ -266,7 +266,7 @@ def func_convex_convex_contact_local(
                 else:
                     ### MPR, MJ_MPR
                     if ti.static(
-                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
+                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.MJ_MPR)
                     ):
                         # Try using MPR before anything else
                         is_mpr_updated = False
@@ -369,7 +369,6 @@ def func_convex_convex_contact_local(
 
                                 # Use original GJK for now
                                 # TODO: Create gjk_local.func_gjk_contact_local
-                                from genesis.engine.solvers.rigid.collider import gjk
 
                                 gjk.func_gjk_contact(
                                     geoms_state,
@@ -490,7 +489,7 @@ def func_convex_convex_contact_local(
                         n_con = 1
 
                     if ti.static(
-                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
+                        collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.GJK)
                     ):
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
                 else:
@@ -499,7 +498,7 @@ def func_convex_convex_contact_local(
 
             # Subsequent detections: correct contact position and add if valid
             elif multi_contact and is_col_0 > 0 and is_col > 0:
-                if ti.static(collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
+                if ti.static(collider_static_config.ccd_algorithm in (narrowphase.CCD_ALGORITHM_CODE.MPR, narrowphase.CCD_ALGORITHM_CODE.GJK)):
                     # Project contact points and correct for perturbation
                     contact_point_a = (
                         gu.ti_transform_by_quat(
