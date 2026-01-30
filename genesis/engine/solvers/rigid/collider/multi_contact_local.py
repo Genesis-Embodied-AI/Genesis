@@ -543,6 +543,7 @@ def func_box_face_local(
     Returns:
         Number of face vertices (4 for valid face, 0 otherwise)
     """
+    # note: original code missing [i_g]
     g_size_x = geoms_info.data[i_g][0]
     g_size_y = geoms_info.data[i_g][1]
     g_size_z = geoms_info.data[i_g][2]
