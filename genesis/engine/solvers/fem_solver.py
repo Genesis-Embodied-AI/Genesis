@@ -1099,13 +1099,15 @@ class FEMSolver(Solver):
             state = None
         return state
 
-    def get_state_render(self, f):
+    def get_state_render(self, f, include_uvs=False):
         self.get_state_render_kernel(f)
         vertices = self.surface_render_v.vertices
         indices = self.surface_render_f.indices
-        uvs = self.surface_render_uvs
 
-        return vertices, indices, uvs
+        if include_uvs:
+            uvs = self.surface_render_uvs
+            return vertices, indices, uvs
+        return vertices, indices
 
     def get_forces(self):
         """

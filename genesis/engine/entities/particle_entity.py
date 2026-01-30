@@ -184,7 +184,6 @@ class ParticleEntity(Entity):
         self._add_particles_to_solver()
         if self._need_skinning:
             self._add_vverts_to_solver()
-            self._add_uvs_and_faces_to_solver()
 
     def _add_particles_to_solver(self):
         raise NotImplementedError
@@ -229,47 +228,6 @@ class ParticleEntity(Entity):
             self.solver.vverts_info.support_weights[i_vv][self.solver._n_vvert_supports - 1] = 1.0 - b.sum()
             for j in range(self.solver._n_vvert_supports):
                 self.solver.vverts_info.support_idxs[i_vv][j] = support_idxs_local[i_vv_, j] + self._particle_start
-
-    def _add_uvs_and_faces_to_solver(self):
-        """Add UV coordinates and face indices to the solver's global buffers."""
-        # Get UVs from vmesh (may be None if no texture)
-        uvs = self._vmesh.uvs if self._vmesh is not None else None
-        if uvs is not None and len(uvs) == self.n_vverts:
-            uvs_np = np.asarray(uvs, dtype=gs.np_float)
-        else:
-            # No UVs available, use zeros
-            uvs_np = np.zeros((self.n_vverts, 2), dtype=gs.np_float)
-
-        # Get face indices and offset them by vvert_start for global indexing
-        faces_np = np.asarray(self._vfaces, dtype=gs.np_int)
-
-        self._kernel_add_uvs_and_faces_to_solver(
-            uvs=uvs_np,
-            faces=faces_np,
-        )
-
-    @ti.kernel
-    def _kernel_add_uvs_and_faces_to_solver(
-        self,
-        uvs: ti.types.ndarray(element_dim=1),
-        faces: ti.types.ndarray(element_dim=1),
-    ):
-        # Copy UVs to solver's global UV buffer
-        for i_vv_ in range(self.n_vverts):
-            i_vv = i_vv_ + self._vvert_start
-            self.solver.vverts_uvs[i_vv] = uvs[i_vv_]
-
-        # Copy faces to solver's global face buffer (with global vertex indices)
-        for i_vf_ in range(self.n_vfaces):
-            i_vf = i_vf_ + self._vface_start
-            # Offset face indices by vvert_start for global vertex indexing
-            self.solver.vfaces_indices[i_vf] = ti.Vector(
-                [
-                    ti.cast(faces[i_vf_][0], gs.ti_int) + self._vvert_start,
-                    ti.cast(faces[i_vf_][1], gs.ti_int) + self._vvert_start,
-                    ti.cast(faces[i_vf_][2], gs.ti_int) + self._vvert_start,
-                ]
-            )
 
     def sample(self):
         """
