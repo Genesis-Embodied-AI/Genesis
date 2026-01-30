@@ -18,6 +18,15 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 
+# Import shared helper functions that operate purely in local/mesh coordinates
+# These don't need pos/quat so they're shared with the non-local version
+# This is safe because support_field.py imports support_field_local as a module,
+# not specific functions, so there's no circular dependency
+from genesis.engine.solvers.rigid.collider.support_field import (
+    _func_count_supports_mesh,
+    _func_support_mesh,
+)
+
 
 @ti.func
 def _func_support_sphere_local(
@@ -216,64 +225,6 @@ def _func_support_world_local(
 
 
 @ti.func
-def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh, i_g):
-    """
-    Support point at mesh frame coordinate.
-
-    This function is unchanged from the original because it operates entirely
-    in the mesh's local coordinate system and doesn't depend on world-space
-    pos/quat. The support field lookup is purely geometric.
-
-    Args:
-        support_field_info: Pre-computed support field data
-        d_mesh: Direction in mesh local coordinates
-        i_g: Geometry index
-
-    Returns:
-        v: Support point in mesh frame
-        vid: Vertex ID in the geometry's vertex list
-    """
-    theta = ti.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
-    phi = ti.acos(d_mesh[2])  # [0, pi]
-
-    support_res = support_field_info.support_res[None]
-    dot_max = gs.ti_float(-1e20)
-    v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
-    vid = 0
-
-    ii = (theta + math.pi) / math.pi / 2 * support_res
-    jj = phi / math.pi * support_res
-
-    for i4 in range(4):
-        i, j = gs.ti_int(0), gs.ti_int(0)
-        if i4 % 2:
-            i = gs.ti_int(ti.math.ceil(ii) % support_res)
-        else:
-            i = gs.ti_int(ti.math.floor(ii) % support_res)
-
-        if i4 // 2 > 0:
-            j = gs.ti_int(ti.math.clamp(ti.math.ceil(jj), 0, support_res - 1))
-            if j == support_res - 1:
-                j = support_res - 2
-        else:
-            j = gs.ti_int(ti.math.clamp(ti.math.floor(jj), 0, support_res - 1))
-            if j == 0:
-                j = 1
-
-        support_idx = gs.ti_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
-        _vid = support_field_info.support_vid[support_idx]
-        pos = support_field_info.support_v[support_idx]
-        dot = pos.dot(d_mesh)
-
-        if dot > dot_max:
-            v = pos
-            dot_max = dot
-            vid = _vid
-
-    return v, vid
-
-
-@ti.func
 def _func_count_supports_world_local(
     support_field_info: array_class.SupportFieldInfo,
     d,
@@ -297,65 +248,6 @@ def _func_count_supports_world_local(
     """
     d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
     return _func_count_supports_mesh(support_field_info, d_mesh, i_g)
-
-
-@ti.func
-def _func_count_supports_mesh(
-    support_field_info: array_class.SupportFieldInfo,
-    d_mesh,
-    i_g,
-):
-    """
-    Count the number of valid support points for a mesh in the given direction.
-
-    This function is unchanged from the original because it operates entirely
-    in the mesh's local coordinate system.
-
-    Args:
-        support_field_info: Pre-computed support field data
-        d_mesh: Direction in mesh local coordinates
-        i_g: Geometry index
-
-    Returns:
-        count: Number of support points with the maximum dot product
-    """
-    theta = ti.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
-    phi = ti.acos(d_mesh[2])  # [0, pi]
-
-    support_res = support_field_info.support_res[None]
-    dot_max = gs.ti_float(-1e20)
-
-    ii = (theta + math.pi) / math.pi / 2 * support_res
-    jj = phi / math.pi * support_res
-
-    count = gs.ti_int(0)
-    for i4 in range(4):
-        i, j = gs.ti_int(0), gs.ti_int(0)
-        if i4 % 2:
-            i = gs.ti_int(ti.math.ceil(ii) % support_res)
-        else:
-            i = gs.ti_int(ti.math.floor(ii) % support_res)
-
-        if i4 // 2 > 0:
-            j = gs.ti_int(ti.math.clamp(ti.math.ceil(jj), 0, support_res - 1))
-            if j == support_res - 1:
-                j = support_res - 2
-        else:
-            j = gs.ti_int(ti.math.clamp(ti.math.floor(jj), 0, support_res - 1))
-            if j == 0:
-                j = 1
-
-        support_idx = gs.ti_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
-        _vid = support_field_info.support_vid[support_idx]
-        pos = support_field_info.support_v[support_idx]
-        dot = pos.dot(d_mesh)
-
-        if dot > dot_max:
-            count = 1
-        elif dot == dot_max:
-            count += 1
-
-    return count
 
 
 @ti.func
