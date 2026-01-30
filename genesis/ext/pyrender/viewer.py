@@ -359,6 +359,23 @@ class Viewer(pyglet.window.Window):
             self._message_opac = 1.0 + self._ticks_till_fade
             self.register_keybinds(Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions))
 
+        # Setup help text functionality
+        self._disable_help_text = disable_help_text
+        if not self._disable_help_text:
+            self._collapse_instructions = True
+            instr_key_str = get_keycode_string(HELP_TEXT_KEY)
+            self._instr_texts: tuple[list[str], list[str]] = (
+                [f"> [{instr_key_str}]: show keyboard instructions"],
+                [f"< [{instr_key_str}]: hide keyboard instructions"],
+            )
+            self._key_instr_texts: list[str] = []
+            self._message_text = None
+            self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
+            self._message_opac = 1.0 + self._ticks_till_fade
+            self.register_keybinds(
+                Keybind(key_code=HELP_TEXT_KEY, name=HELP_TEXT_KEYBIND_NAME, callback=self._toggle_instructions)
+            )
+
         # Setup viewer plugins
         self.plugins: list[ViewerPlugin] = []
         for plugin in plugins:
