@@ -223,7 +223,6 @@ def test_morph_scale(scale, mesh_file, show_viewer, tmp_path):
         )
         assert robot_scaled.n_vgeoms == obj_scaled.n_vgeoms
 
-
     for i_vg in range(obj_orig.n_vgeoms):
         mesh_orig = obj_orig.vgeoms[i_vg].vmesh.trimesh.copy()
         mesh_orig.apply_transform(gu.trans_quat_to_T(obj_orig.base_link.pos, obj_orig.base_link.quat))
@@ -666,6 +665,16 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
             fixed=True,
         )
     )
+
+
+@pytest.mark.required
+def test_plane_texture_path_preservation(show_viewer):
+    """Test that plane primitives preserve texture paths in metadata."""
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    plane = scene.add_entity(gs.morphs.Plane())
+
+    # The texture path should be stored in metadata
+    assert plane.vgeoms[0].vmesh.metadata["texture_path"] == "textures/checker.png"
 
 
 @pytest.mark.required
