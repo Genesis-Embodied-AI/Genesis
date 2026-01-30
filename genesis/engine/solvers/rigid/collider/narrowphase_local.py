@@ -92,8 +92,12 @@ def func_convex_convex_contact_local(
     else:
         EPS = rigid_global_info.EPS[None]
 
+        # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
+        # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
+        # criteria to get rid of redundant contact points seems to be a better option.
         multi_contact = (
             static_rigid_sim_config.enable_multi_contact
+            # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
             and geoms_info.type[i_ga] != gs.GEOM_TYPE.SPHERE
             and geoms_info.type[i_ga] != gs.GEOM_TYPE.ELLIPSOID
             and geoms_info.type[i_gb] != gs.GEOM_TYPE.SPHERE
@@ -147,6 +151,8 @@ def func_convex_convex_contact_local(
 
             # Apply perturbations to thread-local state
             if multi_contact and is_col_0:
+                # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
+                # otherwise it would be more sensitive to ill-conditionning.
                 axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
@@ -191,16 +197,22 @@ def func_convex_convex_contact_local(
                     contact_pos = v1 - 0.5 * penetration * normal
                     is_col = penetration > 0.0
                 else:
-                    # MPR collision detection
+                    ### MPR, MJ_MPR
                     if ti.static(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
                     ):
+                        # Try using MPR before anything else
                         is_mpr_updated = False
                         normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
                         is_mpr_guess_direction_available = (ti.abs(normal_ws) > EPS).any()
 
                         for i_mpr in range(2):
                             if i_mpr == 1:
+                                # Try without warm-start if no contact was detected using it.
+                                # When penetration depth is very shallow, MPR may wrongly classify two geometries as not
+                                # in contact while they actually are. This helps to improve contact persistence without
+                                # increasing much the overall computational cost since the fallback should not be
+                                # triggered very often.
                                 if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
                                         normal_ws = ti.Vector.zero(gs.ti_float, 3)
@@ -229,7 +241,9 @@ def func_convex_convex_contact_local(
                                 )
                                 is_mpr_updated = True
 
-                        # Fallback to GJK for deep penetrations
+                        # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
+                        # large, and either no collision direction was cached or the geometries have large overlap. This
+                        # contact information provided by MPR may be unreliable in these cases.
                         if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                             if penetration > tolerance:
                                 prefer_gjk = not is_mpr_guess_direction_available or (
@@ -237,7 +251,7 @@ def func_convex_convex_contact_local(
                                     >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                                 )
 
-                    # GJK collision detection
+                    ### GJK, MJ_GJK
                     if ti.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         if prefer_gjk:
                             if ti.static(static_rigid_sim_config.requires_grad):
@@ -345,7 +359,10 @@ def func_convex_convex_contact_local(
                                     break
                                 else:
                                     if gjk_state.multi_contact_flag[i_b]:
+                                        # Since we already found multiple contact points, add the discovered contact
+                                        # points and stop multi-contact search.
                                         for i_c in range(n_contacts):
+                                            # Ignore contact points if the number of contacts exceeds the limit.
                                             if i_c < ti.static(collider_static_config.n_contacts_per_pair):
                                                 contact_pos = gjk_state.contact_pos[i_b, i_c]
                                                 normal = gjk_state.normal[i_b, i_c]
@@ -364,6 +381,7 @@ def func_convex_convex_contact_local(
                                                     collider_info,
                                                     errno,
                                                 )
+
                                         break
                                     else:
                                         contact_pos = gjk_state.contact_pos[i_b, 0]
@@ -408,6 +426,7 @@ def func_convex_convex_contact_local(
                     ):
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
                 else:
+                    # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
             # Subsequent detections: correct contact position and add if valid
@@ -430,19 +449,30 @@ def func_convex_convex_contact_local(
                     )
                     contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
-                    # First-order correction of normal direction
+                    # First-order correction of the normal direction.
+                    # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                    # the mininal rotation that makes the corrected twisted normal as closed as possible to the
+                    # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                    # Rodrigues' rotation formula.
                     twist_rotvec = ti.math.clamp(
                         normal.cross(normal_0),
                         -collider_info.mc_perturbation[None],
                         collider_info.mc_perturbation[None],
                     )
                     normal = normal + twist_rotvec.cross(normal)
-                    penetration = normal.dot(contact_point_b - contact_point_a)
 
+                    # Make sure that the penetration is still positive before adding contact point.
+                    # Note that adding some negative tolerance improves physical stability by encouraging persistent
+                    # contact points and thefore more continuous contact forces, without changing the mean-field
+                    # dynamics since zero-penetration contact points should not induce any force.
+                    penetration = normal.dot(contact_point_b - contact_point_a)
                 if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                    # Only change penetration to the initial one, because the normal vector could change abruptly
+                    # under MuJoCo's GJK-EPA.
                     penetration = penetration_0
 
-                # Check for duplicate contacts
+                # Discard contact point is repeated
                 repeated = False
                 for i_c in range(n_con):
                     if not repeated:
@@ -451,7 +481,6 @@ def func_convex_convex_contact_local(
                         if (contact_pos - prev_contact).norm() < tolerance:
                             repeated = True
 
-                # Add contact if not repeated and penetration is positive
                 if not repeated:
                     if penetration > -tolerance:
                         penetration = ti.max(penetration, 0.0)
