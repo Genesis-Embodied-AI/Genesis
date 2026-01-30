@@ -39,6 +39,10 @@ def func_epa_support_local(
     Find support points on the two objects using [dir] and insert them into the polytope,
     using thread-local pos/quat for both geometries.
 
+    Thread-safety note: Geometry indices `i_ga` and `i_gb` are only used to pass through to
+    `func_support_local`, which uses them solely for read-only metadata access (geometry types,
+    vertex ranges, etc.). They do not access `geoms_state.pos` or `geoms_state.quat`.
+
     Parameters
     ----------
     dir: gs.ti_vec3
@@ -119,6 +123,10 @@ def func_epa_init_polytope_2d_local(
 
     Create the polytope for EPA from a 1-simplex (line segment),
     using thread-local pos/quat for both geometries.
+
+    Thread-safety note: Geometry indices `i_ga` and `i_gb` are only used to pass through to
+    `func_epa_support_local`, which uses them solely for read-only metadata access. They do
+    not access `geoms_state.pos` or `geoms_state.quat`.
 
     Returns
     -------
@@ -274,6 +282,10 @@ def func_epa_init_polytope_3d_local(
 
     Create the polytope for EPA from a 2-simplex (triangle),
     using thread-local pos/quat for both geometries.
+
+    Thread-safety note: Geometry indices `i_ga` and `i_gb` are only used to pass through to
+    `func_epa_support_local`, which uses them solely for read-only metadata access. They do
+    not access `geoms_state.pos` or `geoms_state.quat`.
 
     Returns
     -------

@@ -810,6 +810,10 @@ def func_mpr_contact_local(
     works with thread-local geometry poses, enabling race-free multi-contact
     detection when parallelizing across collision pairs.
 
+    Thread-safety note: Geometry indices `i_ga` and `i_gb` are only used for read-only
+    metadata access (geometry types, AABB bounds, etc.) and passing to support functions.
+    They do not access `geoms_state.pos` or `geoms_state.quat`.
+
     Args:
         geoms_info: Geometry information
         geoms_init_AABB: Initial axis-aligned bounding boxes

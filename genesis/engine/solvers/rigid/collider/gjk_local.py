@@ -1071,6 +1071,10 @@ def func_safe_gjk_local(
     Safe GJK algorithm to compute the minimum distance between two convex objects,
     using thread-local pos/quat for both geometries.
 
+    Thread-safety note: Geometry indices `i_ga` and `i_gb` are only used for read-only
+    metadata access (checking geometry types via `func_is_discrete_geoms`) and passing to
+    support functions. They do not access `geoms_state.pos` or `geoms_state.quat`.
+
     This implementation is safer than the one based on the MuJoCo implementation for the following reasons:
     1) It guarantees that the origin is strictly inside the tetrahedron when the intersection is detected.
     2) It guarantees to generate a non-degenerate tetrahedron if there is no numerical error, which is necessary
