@@ -268,16 +268,16 @@ class Viewer(RBC):
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
-    def register_keybinds(self, *keybinds: tuple[Keybind]) -> None:
+    def register_keybinds(self, *keybinds: Keybind) -> None:
         """
         Register a callback function to be called when a key is pressed.
 
         Parameters
         ----------
-        keybinds : tuple[Keybind]
-            The Keybind objects to register. See Keybind documentation for usage.
+        keybinds : Keybind
+            One or more Keybind objects to register. See Keybind documentation for usage.
         """
-        self._pyrender_viewer.register_keybinds(keybinds)
+        self._pyrender_viewer.register_keybinds(*keybinds)
 
     def remap_keybind(
         self,
@@ -287,7 +287,7 @@ class Viewer(RBC):
         new_key_action: KeyAction = KeyAction.PRESS,
     ) -> None:
         """
-        Remap an existing keybind to a new key combination.
+        Remap an existing keybind by name to a new key combination.
         Use `None` for any parameter you do not wish to change.
 
         Parameters
@@ -301,12 +301,23 @@ class Viewer(RBC):
         new_key_action : KeyAction, optional
             The new type of key action (press, hold, release).
         """
-        self._pyrender_viewer._keybindings.rebind(
+        self._pyrender_viewer.remap_keybind(
             keybind_name,
             new_key_code,
             new_modifiers,
             new_key_action,
         )
+
+    def remove_keybind(self, keybind_name: str) -> None:
+        """
+        Remove an existing keybind by name.
+
+        Parameters
+        ----------
+        keybind_name : str
+            The name of the keybind to remove.
+        """
+        self._pyrender_viewer.remove_keybind(keybind_name)
 
     def add_plugin(self, plugin: "ViewerPlugin") -> None:
         """

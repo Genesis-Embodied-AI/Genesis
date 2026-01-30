@@ -76,26 +76,48 @@ def test_default_viewer_plugin(png_snapshot):
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
 
-    # Add a custom keybind
-    flag = False
-
-    def toggle_flag():
-        nonlocal flag
-        flag = True
-
-    scene.viewer.register_keybinds(Keybind(key_code=Key._0, key_action=KeyAction.PRESS, callback=toggle_flag))
-
-    # Press key to toggle flag on
-    pyrender_viewer.dispatch_event("on_key_press", Key._0, 0)
     # Press key to turn off shadows
     pyrender_viewer.dispatch_event("on_key_press", Key.H, 0)
-
     scene.step()
-
-    assert flag, "Custom keybind callback was not called."
-
     # Snapshot should not have shadows
     rgb_arr, *_ = pyrender_viewer.render_offscreen(
         pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
     )
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+    # Add a custom keybind
+    flag = False
+
+    def toggle_flag():
+        nonlocal flag
+        flag = not flag
+
+    scene.viewer.register_keybinds(
+        Keybind(name="toggle_flag", key_code=Key._0, key_action=KeyAction.PRESS, callback=toggle_flag),
+    )
+
+    # Press key to toggle flag on
+    pyrender_viewer.dispatch_event("on_key_press", Key._0, 0)
+    scene.step()
+    assert flag, "Expected custom keybind callback to toggle flag on."
+
+    # Remap the keybind
+    scene.viewer.remap_keybind("toggle_flag", new_key_code=Key._1)
+    pyrender_viewer.dispatch_event("on_key_press", Key._1, 0)
+    scene.step()
+    assert not flag, "Keybind was not rebinded to new key."
+
+    # Error when remapping non-existent keybind
+    with pytest.raises(ValueError):
+        scene.viewer.remap_keybind("non_existent_keybind", new_key_code=Key._2)
+
+    # Error when adding a keybind with same key
+    with pytest.raises(ValueError):
+        scene.viewer.register_keybinds(
+            Keybind(name="conflicting_keybind", key_code=Key._1, key_action=KeyAction.PRESS, callback=lambda: None),
+        )
+
+    # Remove the keybind and press key to verify it no longer works
+    scene.viewer.remove_keybind("toggle_flag")
+    pyrender_viewer.dispatch_event("on_key_press", Key._1, 0)
+    assert not flag, "Keybind was not removed properly."
