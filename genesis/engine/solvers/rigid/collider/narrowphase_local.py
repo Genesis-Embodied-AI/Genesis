@@ -242,14 +242,15 @@ def func_convex_convex_contact_local(
 
                     # Use thread-local support driver
                     v1 = mpr_local.support_driver_local(
-                        geoms_info,
-                        collider_info,
-                        collider_static_config,
-                        support_field_info,
-                        normal,
-                        i_gb,
-                        gb_pos_current,
-                        gb_quat_current,
+                        geoms_info=geoms_info,
+                        collider_state=collider_state,
+                        collider_static_config=collider_static_config,
+                        support_field_info=support_field_info,
+                        direction=normal,
+                        i_g=i_gb,
+                        i_b=i_b,
+                        pos=gb_pos_current,
+                        quat=gb_quat_current,
                     )
                     penetration = normal.dot(v1 - ga_pos_current)
                     contact_pos = v1 - 0.5 * penetration * normal
@@ -280,22 +281,23 @@ def func_convex_convex_contact_local(
                             if not is_mpr_updated:
                                 # Use thread-local MPR function
                                 is_col, normal, penetration, contact_pos = mpr_local.func_mpr_contact_local(
-                                    geoms_info,
-                                    geoms_init_AABB,
-                                    rigid_global_info,
-                                    static_rigid_sim_config,
-                                    collider_info,
-                                    collider_static_config,
-                                    mpr_info,
+                                    geoms_info=geoms_info,
+                                    geoms_init_AABB=geoms_init_AABB,
+                                    rigid_global_info=rigid_global_info,
+                                    static_rigid_sim_config=static_rigid_sim_config,
+                                    collider_state=,
+                                    collider_static_config=collider_static_config,
+                                    mpr_state=,
+                                    mpr_info=mpr_info,
                                     support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    ga_pos_current,
-                                    ga_quat_current,
-                                    gb_pos_current,
-                                    gb_quat_current,
-                                    normal_ws,
+                                    i_ga=i_ga,
+                                    i_gb=i_gb,
+                                    i_b=i_b,
+                                    normal_ws=ga_pos_current,
+                                    pos_a=ga_quat_current,
+                                    quat_a=gb_pos_current,
+                                    pos_b=gb_quat_current,
+                                    quat_b=normal_ws,
                                 )
                                 is_mpr_updated = True
 
