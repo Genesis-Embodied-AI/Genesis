@@ -15,7 +15,7 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-from genesis.vis.keybindings import KeyAction, Keybind, Keybindings, get_keycode_string
+from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, get_keycode_string
 
 # Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
@@ -62,6 +62,9 @@ pyglet.options["shadow_window"] = False
 
 
 MODULE_DIR = os.path.dirname(__file__)
+
+HELP_TEXT_KEY = Key.I
+HELP_TEXT_KEYBIND_NAME = "toggle_instructions"
 
 
 class Viewer(pyglet.window.Window):
@@ -275,15 +278,6 @@ class Viewer(pyglet.window.Window):
         self._keybindings: Keybindings = Keybindings()
         self._held_keys: dict[tuple[int, int], bool] = {}
 
-        # Setup help text functionality
-        self._disable_help_text = disable_help_text
-        self._collapse_instructions = True
-        self._instr_texts: tuple[list[str], list[str]] = ([], [])
-        self._message_text = None
-        self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
-        self._message_opac = 1.0 + self._ticks_till_fade
-        self._instr_keybind_name = "toggle_instructions"
-
         #######################################################################
         # Save internal settings
         #######################################################################
@@ -352,21 +346,29 @@ class Viewer(pyglet.window.Window):
         # Note: context.scene is genesis.engine.scene.Scene
         # Note: context._scene is genesis.ext.pyrender.scene.Scene
 
+        # Setup help text functionality
+        self._disable_help_text = disable_help_text
+        if not self._disable_help_text:
+            self._collapse_instructions = True
+            instr_key_str = get_keycode_string(HELP_TEXT_KEY)
+            self._instr_texts: tuple[list[str], list[str]] = (
+                [f"> [{instr_key_str}]: show keyboard instructions"],
+                [f"< [{instr_key_str}]: hide keyboard instructions"],
+            )
+            self._key_instr_texts: list[str] = []
+            self._message_text = None
+            self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
+            self._message_opac = 1.0 + self._ticks_till_fade
+            self.register_keybinds(
+                Keybind(key_code=HELP_TEXT_KEY, name=HELP_TEXT_KEYBIND_NAME, callback=self._toggle_instructions)
+            )
+
         # Setup viewer plugins
         self.plugins: list[ViewerPlugin] = plugins if plugins is not None else []
         for plugin in self.plugins:
             plugin.build(self, self._camera_node, context.scene)
             # Register pyglet.window event handlers from the plugin
             self.push_handlers(plugin)
-
-        # Register help text keybind after plugins so it appears in the list
-        if not self._disable_help_text:
-            from genesis.vis.keybindings import Key, Keybind
-
-            self.register_keybinds(
-                (Keybind(key_code=Key.I, name=self._instr_keybind_name, callback=self._toggle_instructions),)
-            )
-            self._update_instr_texts()
 
         #######################################################################
         # Initialize OpenGL context and renderer
@@ -500,17 +502,59 @@ class Viewer(pyglet.window.Window):
     def viewer_flags(self, value):
         self._viewer_flags = value
 
-    def register_keybinds(self, keybinds: tuple[Keybind]) -> None:
+    def register_keybinds(self, *keybinds: Keybind) -> None:
         """
         Add a key handler to call a function when the given key is pressed.
 
         Parameters
         ----------
-        keybinds : tuple[Keybind]
-            A tuple of Keybind objects to register.
+        keybinds : Keybind
+            One or more Keybind objects to register.
         """
         for keybind in keybinds:
             self._keybindings.register(keybind)
+        self._update_instr_texts()
+
+    def remap_keybind(
+        self,
+        keybind_name: str,
+        new_key_code: int,
+        new_modifiers: int | None = None,
+        new_key_action: KeyAction = KeyAction.PRESS,
+    ) -> None:
+        """
+        Remap an existing keybind to a new key combination.
+
+        Parameters
+        ----------
+        keybind_name : str
+            The name of the keybind to remap.
+        new_key_code : int
+            The new key code from pyglet.
+        new_modifiers : int | None, optional
+            The new modifier keys pressed.
+        new_key_action : KeyAction, optional
+            The new type of key action (press, hold, release).
+        """
+        self._keybindings.rebind(
+            keybind_name,
+            new_key_code,
+            new_modifiers,
+            new_key_action,
+        )
+        self._update_instr_texts()
+
+    def remove_keybind(self, keybind_name: str) -> None:
+        """
+        Remove an existing keybind.
+
+        Parameters
+        ----------
+        keybind_name : str
+            The name of the keybind to remove.
+        """
+        self._keybindings.remove(keybind_name)
+        self._update_instr_texts()
 
     def close(self):
         """Close the viewer.
@@ -1261,17 +1305,14 @@ class Viewer(pyglet.window.Window):
 
     def _update_instr_texts(self):
         """Update the instruction text based on current keybindings."""
-        if len(self._keybindings) != len(self._instr_texts[1]) - 1:
-            self.instr_key_str = get_keycode_string(self._keybindings.get_by_name(self._instr_keybind_name).key_code)
-            kb_texts = [
-                f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
-                for kb in self._keybindings.keybinds
-                if kb.name != self._instr_keybind_name and kb.key_action != KeyAction.RELEASE
-            ]
-            self._instr_texts = (
-                [f"> [{self.instr_key_str}]: show keyboard instructions"],
-                [f"< [{self.instr_key_str}]: hide keyboard instructions"] + kb_texts,
-            )
+        if self._disable_help_text:
+            return
+
+        self._key_instr_texts = self._instr_texts[0] + [
+            f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
+            for kb in self._keybindings.keybinds
+            if kb.name != HELP_TEXT_KEYBIND_NAME and kb.key_action != KeyAction.RELEASE
+        ]
 
     def _toggle_instructions(self):
         """Toggle the display of keyboard instructions."""
@@ -1320,7 +1361,7 @@ class Viewer(pyglet.window.Window):
             )
         else:
             self._renderer.render_texts(
-                self._instr_texts[1],
+                self._key_instr_texts,
                 TEXT_PADDING,
                 self._viewport_size[1] - TEXT_PADDING,
                 font_pt=FONT_SIZE,

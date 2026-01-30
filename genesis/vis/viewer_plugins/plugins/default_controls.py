@@ -25,21 +25,19 @@ class DefaultControlsPlugin(ViewerPlugin):
         super().build(viewer, camera, scene)
 
         self.viewer.register_keybinds(
-            (
-                Keybind(key_code=Key.R, name="record_video", callback=self._toggle_record_video),
-                Keybind(key_code=Key.S, name="save_image", callback=self._save_image),
-                Keybind(key_code=Key.Z, name="reset_camera", callback=self._reset_camera),
-                Keybind(key_code=Key.A, name="camera_rotation", callback=self._toggle_cam_rotation),
-                Keybind(key_code=Key.H, name="shadow", callback=self._toggle_shadow),
-                Keybind(key_code=Key.F, name="face_normals", callback=self._toggle_face_normals),
-                Keybind(key_code=Key.V, name="vertex_normals", callback=self._toggle_vertex_normals),
-                Keybind(key_code=Key.W, name="world_frame", callback=self._toggle_world_frame),
-                Keybind(key_code=Key.L, name="link_frame", callback=self._toggle_link_frame),
-                Keybind(key_code=Key.D, name="wireframe", callback=self._toggle_wireframe),
-                Keybind(key_code=Key.C, name="camera_frustum", callback=self._toggle_camera_frustum),
-                Keybind(key_code=Key.P, name="reload_shader", callback=self._reload_shader),
-                Keybind(key_code=Key.F11, name="fullscreen_mode", callback=self._toggle_fullscreen),
-            )
+            Keybind(key_code=Key.R, name="record_video", callback=self._toggle_record_video),
+            Keybind(key_code=Key.S, name="save_image", callback=self._save_image),
+            Keybind(key_code=Key.Z, name="reset_camera", callback=self._reset_camera),
+            Keybind(key_code=Key.A, name="camera_rotation", callback=self._toggle_cam_rotation),
+            Keybind(key_code=Key.H, name="shadow", callback=self._toggle_shadow),
+            Keybind(key_code=Key.F, name="face_normals", callback=self._toggle_face_normals),
+            Keybind(key_code=Key.V, name="vertex_normals", callback=self._toggle_vertex_normals),
+            Keybind(key_code=Key.W, name="world_frame", callback=self._toggle_world_frame),
+            Keybind(key_code=Key.L, name="link_frame", callback=self._toggle_link_frame),
+            Keybind(key_code=Key.D, name="wireframe", callback=self._toggle_wireframe),
+            Keybind(key_code=Key.C, name="camera_frustum", callback=self._toggle_camera_frustum),
+            Keybind(key_code=Key.P, name="reload_shader", callback=self._reload_shader),
+            Keybind(key_code=Key.F11, name="fullscreen_mode", callback=self._toggle_fullscreen),
         )
 
     def _toggle_cam_rotation(self):
