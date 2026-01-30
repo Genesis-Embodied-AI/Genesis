@@ -1662,14 +1662,12 @@ def count_support_driver(
     This is a thin wrapper that extracts geometry pose from global state
     and delegates to the thread-local version for the actual computation.
     """
-    pos = geoms_state.pos[i_g, i_b]
     quat = geoms_state.quat[i_g, i_b]
     return gjk_local.count_support_driver_local(
         geoms_info,
         support_field_info,
         d,
         i_g,
-        pos,
         quat,
     )
 

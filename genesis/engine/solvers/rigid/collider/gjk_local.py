@@ -1193,14 +1193,13 @@ def count_support_driver_local(
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
     quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Thread-local version of count_support_driver.
 
     Count the number of possible support points in the given direction,
-    using thread-local pos/quat instead of reading from geoms_state.
+    using thread-local quat instead of reading from geoms_state.
     """
     geom_type = geoms_info.type[i_g]
     count = 1
@@ -1241,7 +1240,6 @@ def func_count_support_local(
             support_field_info,
             dir if i == 0 else -dir,
             i_ga if i == 0 else i_gb,
-            pos_a if i == 0 else pos_b,
             quat_a if i == 0 else quat_b,
         )
 
